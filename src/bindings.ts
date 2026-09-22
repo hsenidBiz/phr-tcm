@@ -337,6 +337,13 @@ export const commands = {
 	autoRunSignIn: (organization: string, project: string, accountKey: string) => typedError<SignInOutcome_Serialize, string>(__TAURI_INVOKE("auto_run_sign_in", { organization, project, accountKey })),
 	/**  Throw a saved session away, so the next sign-in goes through the form. */
 	autoRunForgetSession: (accountKey: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_session", { accountKey })),
+	/**
+	 *  Run the selection unattended and return the finished run. Progress
+	 *  arrives as `ReplayProgress` events while this is pending.
+	 */
+	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, browserName, watch })),
+	/**  Ask the unattended run in progress to stop after the step it is on. */
+	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -1516,6 +1523,15 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  A case from the frontend's selection: enough to run it (`case_id`) and
+ *  enough to report on it before its script has even loaded (`title`).
+ */
+export type ReplayCase = {
+	case_id: number,
+	title: string,
 };
 
 /**

@@ -88,7 +88,11 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
     Ok(())
 }
 
-fn close_browser(mut browser: LaunchedBrowser) {
+/// Kill the process and drop its throwaway profile. Shared with
+/// `autorun_replay`, whose `RealBrowsers` closes one of these after every
+/// case (and on the way out of a failed open) so a background browser can
+/// never outlive the run that started it.
+pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
     let _ = browser.child.kill();
     let _ = std::fs::remove_dir_all(&browser.profile_dir);
 }

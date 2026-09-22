@@ -74,7 +74,9 @@ pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<Path
 
 /// The arguments the run needs: a debugging port to drive it through, a
 /// throwaway profile so no cookie or extension from yesterday leaks into
-/// today's result, and NOTHING that hides the window.
+/// today's result, and nothing that hides the window BY ITSELF - a
+/// supervised run never does; an unattended run adds `background_args`
+/// unless the person asked to watch (see `commands::autorun_replay`).
 ///
 /// The three `--disable-*` switches keep the APPLICATION UNDER TEST running
 /// at full speed when its window is minimised or another window covers it.
@@ -105,6 +107,14 @@ pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     args.extend(extra.iter().map(|s| s.to_string()));
     args.extend(start_page);
     args
+}
+
+/// Extra switches for an unattended run nobody is watching: headless, at a
+/// fixed desktop-sized viewport so the page under test lays out the same
+/// way it would on a real screen rather than whatever default a headless
+/// window happens to start at.
+pub fn background_args() -> [&'static str; 2] {
+    ["--headless=new", "--window-size=1366,900"]
 }
 
 /// Ask the OS for a port, then let it go: the browser binds it a moment
@@ -139,8 +149,10 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
     launch_with(which, &[])
 }
 
-/// The same, with extra switches. The app never passes any: the window is
-/// always visible. The live tests pass `--headless=new`.
+/// The same, with extra switches. A supervised run never passes any: the
+/// window is always visible. An unattended run passes `background_args`
+/// unless the person asked to watch, so it can run headless; the live
+/// tests pass `--headless=new` for the same reason.
 pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowser, String> {
     let candidates = browser_candidates(
         which,

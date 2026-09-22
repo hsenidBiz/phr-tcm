@@ -3,7 +3,7 @@
 //! - are unit tested here; actually starting a browser is an ignored
 //! test, like the updater's live download check.
 
-use v2_lib::browser::launch::{args_with, edge_candidates, free_port, launch_args};
+use v2_lib::browser::launch::{args_with, background_args, edge_candidates, free_port, launch_args};
 use std::path::{Path, PathBuf};
 
 /// Both Program Files roots are searched, 64-bit first: an Edge in
@@ -169,4 +169,20 @@ fn a_browser_name_maps_to_its_enum_and_falls_back_to_edge() {
     assert_eq!(Browser::from_name("edge"), Browser::Edge);
     assert_eq!(Browser::from_name("firefox"), Browser::Edge);
     assert_eq!(Browser::from_name(""), Browser::Edge);
+}
+
+// ---- Unattended replay runs in the background --------------------------
+
+/// An unattended run has nobody to watch it, so it opens headless at a
+/// fixed desktop size - a watched run (supervised, or unattended with
+/// "watch" asked for) gets neither switch.
+#[test]
+fn a_background_browser_is_headless_at_a_desktop_size() {
+    let extra = background_args();
+    let args = args_with(9333, Path::new("C:/tmp/p"), &extra);
+    assert!(args.iter().any(|a| a == "--headless=new"));
+    assert!(args.iter().any(|a| a == "--window-size=1366,900"));
+    // And a watched one has neither.
+    let shown = args_with(9333, Path::new("C:/tmp/p"), &[]);
+    assert!(!shown.iter().any(|a| a.starts_with("--headless")));
 }

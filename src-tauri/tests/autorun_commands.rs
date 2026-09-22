@@ -5,6 +5,7 @@
 use v2_lib::autorun::store::{load_run, load_script, save_run, save_run_guarded};
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{describe_session_error, import_scripts_from_path, safe_run_id};
+use v2_lib::commands::autorun_replay::{replay_timing, OneAtATime};
 
 struct TempDir(std::path::PathBuf);
 
@@ -174,4 +175,25 @@ fn importing_a_utf8_file_with_a_bom_keeps_non_ascii_text_intact() {
         }
         other => panic!("unexpected action: {other:?}"),
     }
+}
+
+// ---- Unattended replay's IPC shell --------------------------------------
+
+/// Only one unattended run may be going at a time; the second caller is
+/// refused until the first one's claim is dropped.
+#[test]
+fn only_one_unattended_run_at_a_time_and_the_claim_is_given_back() {
+    let first = OneAtATime::claim().expect("nothing is running");
+    assert!(OneAtATime::claim().is_none(), "a second run must be refused while the first is going");
+    drop(first);
+    assert!(OneAtATime::claim().is_some(), "a finished run must free the slot");
+}
+
+/// Nobody is watching a background run, so it does not pause to highlight
+/// where it is about to click - a watched one still does.
+#[test]
+fn nobody_is_watching_a_background_run_so_it_does_not_pause_to_point() {
+    assert_eq!(replay_timing(false).highlight_ms, 0);
+    assert!(replay_timing(true).highlight_ms > 0);
+    assert_eq!(replay_timing(false).action_ms, v2_lib::browser::timing::Timing::default().action_ms);
 }
