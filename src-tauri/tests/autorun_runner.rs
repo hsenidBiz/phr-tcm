@@ -54,7 +54,7 @@ fn a_sign_in_reads_as_one_action_outcome() {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions }
+    StepScript { step_number: 1, actions, unchecked: None }
 }
 
 #[tokio::test]

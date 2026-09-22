@@ -254,6 +254,11 @@ export const commands = {
 	 */
 	account?: string | null,
 	steps: StepScript_Serialize[],
+	/**
+	 *  How many times an assistant has repaired this script since a person
+	 *  last saved it from the editor. Absent when 0.
+	 */
+	repairs?: number,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
 	/**
@@ -899,6 +904,11 @@ export type CaseScript_Deserialize = {
 	 */
 	account?: string | null,
 	steps: StepScript_Deserialize[],
+	/**
+	 *  How many times an assistant has repaired this script since a person
+	 *  last saved it from the editor. Absent when 0.
+	 */
+	repairs?: number,
 };
 
 /**
@@ -914,6 +924,11 @@ export type CaseScript_Serialize = {
 	 */
 	account?: string | null,
 	steps: StepScript_Serialize[],
+	/**
+	 *  How many times an assistant has repaired this script since a person
+	 *  last saved it from the editor. Absent when 0.
+	 */
+	repairs?: number,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -1813,12 +1828,24 @@ export type StepScript = StepScript_Serialize | StepScript_Deserialize;
 export type StepScript_Deserialize = {
 	step_number: number,
 	actions: Action_Deserialize[],
+	/**
+	 *  Why this step's expected result is not checked by the script, when
+	 *  it is not. The floor accepts a step with an expected result and no
+	 *  check only when this says why, and the app shows the sentence.
+	 */
+	unchecked?: string | null,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
 export type StepScript_Serialize = {
 	step_number: number,
 	actions: Action_Serialize[],
+	/**
+	 *  Why this step's expected result is not checked by the script, when
+	 *  it is not. The floor accepts a step with an expected result and no
+	 *  check only when this says why, and the app shows the sentence.
+	 */
+	unchecked?: string | null,
 };
 
 export type SubmitItemResult = {

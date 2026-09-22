@@ -18,11 +18,20 @@ pub mod store;
 
 use crate::browser::actions::{Action, ActionOutcome};
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 /// The actions that carry out one numbered step of a test case.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct StepScript {
     pub step_number: i32,
     pub actions: Vec<Action>,
+    /// Why this step's expected result is not checked by the script, when
+    /// it is not. The floor accepts a step with an expected result and no
+    /// check only when this says why, and the app shows the sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unchecked: Option<String>,
 }
 
 /// How one test case is driven. Keyed by the Azure DevOps case id so a
@@ -36,6 +45,10 @@ pub struct CaseScript {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     pub steps: Vec<StepScript>,
+    /// How many times an assistant has repaired this script since a person
+    /// last saved it from the editor. Absent when 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub repairs: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]

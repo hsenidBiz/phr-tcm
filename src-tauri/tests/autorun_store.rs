@@ -52,7 +52,9 @@ fn script() -> CaseScript {
                 Action::Click { selector: "text=Sign in".into() },
                 Action::CheckText { value: "Dashboard".to_string() },
             ],
+            unchecked: None,
         }],
+        repairs: 0,
     }
 }
 
@@ -172,7 +174,9 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![Action::CheckText { value: "ok".to_string() }],
+            unchecked: None,
         }],
+        repairs: 0,
     }
 }
 
@@ -219,7 +223,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, steps: vec![] }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, steps: vec![], repairs: 0 }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -234,7 +238,8 @@ fn a_step_with_no_actions_is_still_accepted() {
         case_id: 60,
         title: "Manual step included".to_string(),
         account: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![] }],
+        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
+        repairs: 0,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
@@ -453,6 +458,36 @@ fn a_run_file_written_before_unattended_runs_still_loads_and_is_rewritten_unchan
     assert!(run.published.is_none());
     assert_eq!(run.cases[0].proposed, "");
     assert_eq!(serde_json::to_value(&run).unwrap(), old, "a supervised run must be written exactly as before");
+}
+
+/// A script saved before this plan has neither `unchecked` nor `repairs`
+/// in its JSON. It must still load with both defaulted, and be written
+/// back byte-for-byte identical - the new fields never appear just
+/// because the type now knows how to carry them.
+#[test]
+fn a_script_saved_before_this_plan_is_written_exactly_as_before() {
+    let old = serde_json::json!({ "case_id": 7, "title": "t",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }] });
+    let sc: v2_lib::autorun::CaseScript = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(sc.repairs, 0);
+    assert_eq!(sc.steps[0].unchecked, None);
+    assert_eq!(serde_json::to_value(&sc).unwrap(), old);
+}
+
+/// `unchecked` round-trips with `repairs`, and a blank reason (an
+/// assistant that filled the field but said nothing) is refused at save
+/// time the same way a missing one would be.
+#[test]
+fn an_unchecked_step_needs_a_reason_and_repairs_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut sc: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "repairs": 2,
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://a.example/" }], "unchecked": "the PDF preview cannot be read" }] })).unwrap();
+    v2_lib::autorun::store::save_scripts_atomically(dir.path(), std::slice::from_ref(&sc)).unwrap();
+    let back = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(back, sc);
+    sc.steps[0].unchecked = Some("   ".into());
+    let err = v2_lib::autorun::store::save_scripts_atomically(dir.path(), std::slice::from_ref(&sc)).unwrap_err().to_string();
+    assert!(err.contains("case 7 step 1") && err.contains("reason"), "{err}");
 }
 
 /// An unattended run's proposal travels apart from `verdict`, which stays

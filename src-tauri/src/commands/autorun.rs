@@ -179,7 +179,10 @@ pub fn auto_run_load_script(
 
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_save_script(app: tauri::AppHandle, script: CaseScript) -> Result<(), String> {
+pub fn auto_run_save_script(app: tauri::AppHandle, mut script: CaseScript) -> Result<(), String> {
+    // A person saving from the editor is a fresh start for the assistant's
+    // repair count, whatever the editor happened to send.
+    script.repairs = 0;
     // Through the same helper the bundle paths use, as a bundle of one:
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be

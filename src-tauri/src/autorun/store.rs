@@ -141,6 +141,14 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
             }
         }
         for step in &sc.steps {
+            if let Some(reason) = &step.unchecked {
+                if reason.trim().is_empty() {
+                    return Err(SaveScriptsError::Invalid(format!(
+                        "case {} step {}: unchecked needs a reason, not an empty string",
+                        sc.case_id, step.step_number
+                    )));
+                }
+            }
             for (i, action) in step.actions.iter().enumerate() {
                 let text = serde_json::to_string(action).unwrap_or_default();
                 if crate::autorun::recipe::has_placeholder(&text) {
