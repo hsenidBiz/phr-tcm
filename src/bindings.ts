@@ -1524,14 +1524,18 @@ export type RelinkOutcome = {
  */
 export type ReplayProgress = {
 	run_id: string,
+	/**  0-based position in the selection. */
 	index: number,
 	total: number,
 	case_id: number,
 	title: string,
 	/**  "opening", "signing_in", "step" or "done" */
 	phase: string,
+	/**  Meaningful for "step" and "signing_in" (0). */
 	step_number: number,
+	/**  How many steps the script has - the same on every phase of a case. */
 	steps: number,
+	/**  Meaningful for "done". */
 	proposed: string,
 };
 

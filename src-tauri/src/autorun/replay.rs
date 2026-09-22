@@ -213,11 +213,16 @@ pub async fn run_selection<B: Browsers>(
             break;
         }
         let index = i as u32;
+        // The script's own step count, not what the case actually ran -
+        // it must read the same on every phase of a case, including
+        // "done", whether the browser opened or the case has a script at
+        // all. 0 only when there is genuinely no script to count.
+        let mut count = 0u32;
         let record = match store::load_script(root, *case_id) {
             Err(why) => unrun(*case_id, title, "", format!("the script could not be read: {why}")),
             Ok(None) => unrun(*case_id, title, "", "this case has no script on this machine".into()),
             Ok(Some(script)) => {
-                let count = script.steps.len() as u32;
+                count = script.steps.len() as u32;
                 progress(tell(&run_id, index, total, *case_id, title, "opening", 0, count, ""));
                 match browsers.open().await {
                     Err(why) => unrun(*case_id, title, "Blocked", format!("the browser did not open: {why}")),
@@ -236,12 +241,11 @@ pub async fn run_selection<B: Browsers>(
             }
         };
         let proposed = record.proposed.clone();
-        let steps_done = record.steps.len() as u32;
         run.cases.push(record);
         if let Err(e) = store::save_run(root, run) {
             save_error.get_or_insert(e);
         }
-        progress(tell(&run_id, index, total, *case_id, title, "done", 0, steps_done, &proposed));
+        progress(tell(&run_id, index, total, *case_id, title, "done", 0, count, &proposed));
     }
 
     save_error.map_or(Ok(()), Err)

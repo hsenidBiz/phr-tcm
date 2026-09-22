@@ -353,6 +353,39 @@ async fn the_run_is_on_disk_after_every_case() {
 }
 
 #[tokio::test]
+async fn a_save_that_fails_does_not_stop_the_run_and_is_reported_at_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    // `save_run` needs `root/runs` to be a directory it can create or
+    // already use; a plain FILE sitting at that path makes every save
+    // fail, the same shape a real disk problem (permissions, a stray
+    // file) would take.
+    std::fs::write(root.join("runs"), b"not a directory").unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(common::FakePage::default().driver()), Some(common::FakePage::default().driver())].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string()), (2, "case 2".to_string())];
+    let cancel = AtomicBool::new(false);
+    let mut done_count = 0;
+    let res = run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |e: ReplayProgress| {
+        if e.phase == "done" {
+            done_count += 1;
+        }
+    })
+    .await;
+
+    assert!(res.is_err(), "the first save error should be reported at the end");
+    assert_eq!(run.cases.len(), 2, "a save that fails must not stop the run");
+    assert_eq!(done_count, 2, "both cases still reach done");
+}
+
+#[tokio::test]
 async fn stopping_leaves_out_what_never_started_and_marks_what_did() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -402,12 +435,24 @@ async fn a_case_with_no_script_is_recorded_as_such() {
     let mut run = new_run("run-x");
     let cases = vec![(999, "ghost case".to_string())];
     let cancel = AtomicBool::new(false);
-    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let mut done_steps = None;
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |e: ReplayProgress| {
+        if e.phase == "done" {
+            done_steps = Some(e.steps);
+        }
+    })
+    .await
+    .unwrap();
 
     assert_eq!(browsers.opened, 0);
     let rec = &run.cases[0];
     assert!(rec.steps.is_empty());
     assert_eq!(rec.reason, "this case has no script on this machine");
+    // There is genuinely no script to count, so `steps` on "done" reads 0
+    // - never `record.steps.len()`, which would also be 0 here but for
+    // the wrong reason (no sign-in step recorded, not "the script has no
+    // steps").
+    assert_eq!(done_steps, Some(0));
 }
 
 #[tokio::test]
@@ -436,10 +481,12 @@ async fn progress_tells_the_story_in_order() {
     let cancel = AtomicBool::new(false);
     let mut phases = vec![];
     let mut totals = vec![];
+    let mut step_counts = vec![];
     let mut done_proposed = None;
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |e: ReplayProgress| {
         phases.push(e.phase.clone());
         totals.push(e.total);
+        step_counts.push(e.steps);
         if e.phase == "done" {
             done_proposed = Some(e.proposed.clone());
         }
@@ -449,6 +496,9 @@ async fn progress_tells_the_story_in_order() {
 
     assert_eq!(phases, vec!["opening", "signing_in", "step", "step", "done"]);
     assert!(totals.iter().all(|&t| t == 1), "{totals:?}");
+    // The script's own step count - 2 - on every phase, "done" included,
+    // never what the case actually got through.
+    assert!(step_counts.iter().all(|&s| s == 2), "{step_counts:?}");
     assert_eq!(done_proposed, Some(run.cases[0].proposed.clone()));
 }
 

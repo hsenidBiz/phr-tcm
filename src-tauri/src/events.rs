@@ -138,14 +138,18 @@ pub struct SlowdownRequested {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct ReplayProgress {
     pub run_id: String,
+    /// 0-based position in the selection.
     pub index: u32,
     pub total: u32,
     pub case_id: i32,
     pub title: String,
     /// "opening", "signing_in", "step" or "done"
     pub phase: String,
+    /// Meaningful for "step" and "signing_in" (0).
     pub step_number: i32,
+    /// How many steps the script has - the same on every phase of a case.
     pub steps: u32,
+    /// Meaningful for "done".
     pub proposed: String,
 }
 
