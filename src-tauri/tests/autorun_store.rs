@@ -623,3 +623,17 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         "every screenshot is removed along with the runs, even one an unpublished run still referenced"
     );
 }
+
+/// A `runs/` directory that cannot be listed is not the same thing as one
+/// that was never created: the first is a real failure (permissions, or -
+/// as reproduced here - something else sitting where the directory should
+/// be) and must reach the caller as an error naming the path, never get
+/// folded into the same "0 removed" a genuinely empty root returns.
+#[test]
+fn clear_runs_reports_an_unreadable_runs_directory_instead_of_zero() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("runs"), b"not a directory").unwrap();
+
+    let err = clear_runs(dir.path()).unwrap_err();
+    assert!(err.contains("runs"), "the message should name the path that failed: {err}");
+}

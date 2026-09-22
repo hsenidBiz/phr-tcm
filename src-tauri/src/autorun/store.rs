@@ -427,6 +427,19 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     Ok(removed)
 }
 
+/// `Ok(None)` for a directory nobody has created yet - the same "nothing
+/// to clear" reading `list_runs` gives a missing `runs/`. Any other read
+/// error (permissions, or something that is not a directory at all) is
+/// handed back as a message naming the path, instead of being folded into
+/// "0 removed" the way a caller cannot tell apart from genuine success.
+fn existing_dir(path: &Path) -> Result<Option<std::fs::ReadDir>, String> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read {}: {e}", path.display())),
+    }
+}
+
 /// Delete every saved run, and every screenshot with it - including runs
 /// that were already sent to Azure DevOps. The record Azure DevOps holds
 /// is the durable one; the confirm the screen shows before calling this
@@ -435,10 +448,12 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
 /// anything to the person reading the toast).
 ///
 /// An empty or missing root removes nothing and returns 0, the same as
-/// `list_runs` reads nothing back from one.
+/// `list_runs` reads nothing back from one - but a directory that exists
+/// and cannot be listed (permissions, or a file sitting where `runs/`
+/// should be) is a real failure, reported rather than swallowed as zero.
 pub fn clear_runs(root: &Path) -> Result<usize, String> {
     let mut removed = 0usize;
-    if let Ok(entries) = std::fs::read_dir(runs_dir(root)) {
+    if let Some(entries) = existing_dir(&runs_dir(root))? {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|x| x == "json") {
@@ -450,7 +465,7 @@ pub fn clear_runs(root: &Path) -> Result<usize, String> {
             }
         }
     }
-    if let Ok(entries) = std::fs::read_dir(shots_dir(root)) {
+    if let Some(entries) = existing_dir(&shots_dir(root))? {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
