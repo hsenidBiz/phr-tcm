@@ -1196,6 +1196,43 @@ fn a_long_parenthetical_inside_a_quote_is_kept() {
     );
 }
 
+/// The writing guide now asks for on-screen names in quotation marks: "the
+/// \"Save\" button", not "the Save button". Confirms `clean_expected`
+/// treats a short inline quoted UI name like any other UI string - kept
+/// verbatim, sentence-cased and given its own trailing stop like unquoted
+/// text - rather than reading it as message text the way it reads `It
+/// reads "..."` (round 4) or as an alert to preserve wholesale.
+#[test]
+fn a_quoted_on_screen_name_in_an_expected_result_is_left_alone() {
+    assert_eq!(
+        clean_expected("The \"Save\" button is disabled"),
+        "The \"Save\" button is disabled."
+    );
+    assert_eq!(
+        clean_expected("the \"leave requests\" page is shown"),
+        "The \"leave requests\" page is shown."
+    );
+}
+
+/// The same convention in an ACTION: `optimize` only squashes whitespace in
+/// actions, so a quoted on-screen name must survive byte-for-byte - neither
+/// stripped nor rewritten as if it were an alert. No module is set, so the
+/// only preamble is the default launch step; the quoted step itself is
+/// checked as the last one, whatever else got prepended in front of it.
+#[test]
+fn a_quoted_on_screen_name_in_an_action_survives_the_optimizer_untouched() {
+    let c = case(
+        "Saves the form",
+        "",
+        "",
+        vec![step("Click the \"Save\" button", "The \"Save\" button is disabled")],
+    );
+    let (out, _) = optimize(vec![c], None);
+    let last = out[0].steps.last().expect("the case still has its own step");
+    assert_eq!(last.action, "Click the \"Save\" button");
+    assert_eq!(last.expected, "The \"Save\" button is disabled.");
+}
+
 /// Punctuation-only reformatting is not a rewrite. When no sentence was
 /// actually removed from the preconditions, the text stays byte-for-byte
 /// and preconditions_rewritten stays empty - it is the signal a caller

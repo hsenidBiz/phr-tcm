@@ -2107,7 +2107,14 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         furthermore, however, harness, exciting, groundbreaking, cutting-edge,\n\
         remarkable, it, remains to be seen, glimpse into, navigating,\n\
         landscape, stark, testament, in summary, in conclusion, moreover,\n\
-        boost, skyrocketing, opened up, powerful, inquiries, ever-evolving.\n\n\
+        boost, skyrocketing, opened up, powerful, inquiries, ever-evolving.\n\
+        - MUST put the name of anything the tester looks for on screen in\n\
+        double quotation marks: the \"Save\" button, the \"Leave Requests\"\n\
+        page, the \"Search employees\" placeholder, the \"Status\" column,\n\
+        the \"Approved\" tab, the \"Your changes were saved\" message. The\n\
+        name inside the quotes is the exact text on screen, capitalised as\n\
+        the application shows it. Without quotes a tester cannot tell the\n\
+        word \"save\" from the button \"Save\".\n\n\
         IMPORTANT: review every case before handing it back and make sure\n\
         there are no em dashes.\n\n\
         ## area\n\
@@ -2195,6 +2202,31 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         signs in as one of them, and a weak negative - one unrated goal out\n\
         of two, where four out of five would have caught an implementation\n\
         that passes on any rating.\n\n\
+        ## Edge cases worth writing\n\
+        A set that only walks the happy path is not finished. For each\n\
+        feature, add the edge cases a tester can run from the application\n\
+        itself in a few minutes, each as its own case with the branch in\n\
+        its title:\n\n\
+        - Access: open the page's address without signing in, or as a role\n\
+        that should not see it; the expected result is what the application\n\
+        shows instead (the sign-in page, a permission message), named\n\
+        exactly.\n\
+        - Required and empty: submit with a required field blank, with only\n\
+        spaces, at the field's maximum length, and one over it.\n\
+        - Boundaries the form shows: the smallest and largest value a field\n\
+        accepts, a date at the edge of the allowed range, zero and a\n\
+        negative number where the field is numeric.\n\
+        - State: the same action twice (double submit, refresh after\n\
+        saving, back button after a save), and an item edited by someone\n\
+        else in between when the application shows that.\n\
+        - Absence: the list with nothing in it, a search with no matches, a\n\
+        filter that removes everything; the expected result is the empty\n\
+        state's own words.\n\n\
+        Do NOT write cases that need developer tools, a modified request,\n\
+        a database change, a disconnected network, or a clock change: a\n\
+        tester cannot run them from the application, and a case nobody can\n\
+        run is worse than none. If a spec names such a behaviour, put it in\n\
+        `reviewer_notes` as a note for the developers instead.\n\n\
         ## Allowed Module values (live)\n{module_lines}\n\n\
         ## Tags this project already uses\n\
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\

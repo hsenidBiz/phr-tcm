@@ -434,6 +434,58 @@ async fn guide_carries_format_rules_and_live_modules() {
     );
 }
 
+/// Slices the guide body to the text under `heading`, up to (not
+/// including) the next `##` heading, or the end of the body when `heading`
+/// is the last one. Every guide test that reads a single section should
+/// use this instead of hand-rolling `.split(...).nth(1)...` at the call
+/// site.
+fn section<'a>(body: &'a str, heading: &str) -> &'a str {
+    let start = body.find(heading).unwrap_or_else(|| panic!("heading {heading:?} not found in guide")) + heading.len();
+    let rest = &body[start..];
+    match rest.find("\n## ") {
+        Some(end) => &rest[..end],
+        None => rest,
+    }
+}
+
+/// The owner asked for two things: a section teaching what a "reasonable"
+/// edge case is (one a tester can run from the application itself, not one
+/// that needs developer tools or a database change), and a rule that puts
+/// on-screen names in double quotation marks so "save" the word and "Save"
+/// the button are never confused.
+#[tokio::test]
+async fn the_guide_asks_for_reasonable_edge_cases_and_quoted_names() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login"]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, g) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.23.2").await;
+    assert_eq!(status, 200, "{g}");
+
+    let edge = section(&g, "## Edge cases worth writing");
+    assert!(edge.contains("without signing in"), "the one edge case the owner named must be there: {edge}");
+    assert!(
+        edge.contains("Do NOT write cases that need developer tools"),
+        "the boundary of a reasonable edge case must be stated: {edge}"
+    );
+    assert!(edge.contains("reviewer_notes"), "{edge}");
+
+    let style = section(&g, "## Writing style");
+    assert!(style.contains("double quotation marks"), "{style}");
+    assert!(style.contains("the \"Save\" button"), "{style}");
+
+    // Order: edge cases come after one-branch and before the live modules.
+    let a = g.find("## One branch per case").unwrap();
+    let b = g.find("## Edge cases worth writing").unwrap();
+    let c = g.find("## Allowed Module values").unwrap();
+    assert!(a < b && b < c, "edge cases must sit between one-branch and the live modules: {g}");
+}
+
 /// The quote rule: a citation either carries the source's own words
 /// verbatim, or states one of the fixed exemptions - never a paraphrase
 /// dressed up as a quote. Pinned separately from the round-3 assertions
