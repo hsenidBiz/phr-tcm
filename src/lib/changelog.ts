@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.16",
+    date: "2026-09-22",
+    items: [
+      "When Azure DevOps refuses to create a test suite for your access level, the app now takes the same route the Boards \"Add Test\" button does, so the uploaded cases still land in a requirement suite and appear in Run Tests. If that route ever stops working, the cases are still uploaded, the message says how to create the suite by hand, and Settings → Logs has exactly what Azure DevOps answered.",
+      "A refused suite is now asked for once per area instead of once per test plan (the permission is per area), so an upload no longer waits through dozens of refusals. The message names the access level it needs first (Basic + Test Plans), then the area permission.",
+      "Every refused call (401, 403, 404) now records what Azure DevOps said in Settings → Logs, so a bug report carries the reason and not just the status.",
+    ],
+  },
+  {
     version: "1.25.15",
     date: "2026-09-22",
     items: [
