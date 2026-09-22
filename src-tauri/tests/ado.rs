@@ -583,6 +583,7 @@ fn client_source_has_no_delete_calls() {
         include_str!("../src/ado/transport.rs"),
         include_str!("../src/ado/endpoints.rs"),
         include_str!("../src/ado_testplan/mod.rs"),
+        include_str!("../src/ado_testplan/boards.rs"),
         include_str!("../src/ado_testplan/plans.rs"),
         include_str!("../src/ado_testplan/runs.rs"),
         include_str!("../src/ado_testplan/history.rs"),

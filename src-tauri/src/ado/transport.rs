@@ -14,7 +14,9 @@ use super::{AdoClient, AdoError};
 /// A URL as it should appear in the log: no scheme, and without the
 /// `api-version` every single call carries. Keeps a request line readable
 /// while still naming the exact endpoint that was hit.
-fn tidy(url: &str) -> String {
+/// `pub(crate)` for the Boards route, which logs its own request line
+/// before sending it and must tidy that URL the same way `send` does.
+pub(crate) fn tidy(url: &str) -> String {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))

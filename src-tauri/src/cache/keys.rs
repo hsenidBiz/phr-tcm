@@ -39,6 +39,27 @@ pub fn suite_tree(base_url: &str, org: &str, project: &str) -> String {
     format!("suite-tree:{base_url}|{org}|{project}")
 }
 
+/// How long the Boards fallback reuses the ids its URL needs. A project's
+/// GUID never changes and a team's area scope changes when somebody
+/// reorganises the project, not during an upload - and the fallback only
+/// runs at all after the documented API has already refused, so paying for
+/// these lookups twice in one session is pure delay.
+pub const BOARDS_IDS_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The project's GUID and default team id, for the Boards route's URL
+/// (session tier only). The base_url is in the key for the same reason as
+/// `suite`: parallel tests on different mock servers must not collide.
+pub fn project_id(base_url: &str, org: &str, project: &str) -> String {
+    format!("project-id:{base_url}|{org}|{project}")
+}
+
+/// The team whose area covers one area path, for the Boards route's
+/// `teamId` (session tier only). Keyed by the area, not the PBI: two PBIs
+/// in the same area share the answer.
+pub fn area_team(base_url: &str, org: &str, project: &str, area: &str) -> String {
+    format!("area-team:{base_url}|{org}|{project}|{area}")
+}
+
 /// A fetched wiki page, for the review page's spec pane. Ten minutes: the
 /// keep-in-step refresh re-renders the page on every focus, and the wiki
 /// does not move that fast.

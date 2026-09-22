@@ -18,6 +18,7 @@ pub mod permissions;
 pub mod throttle;
 mod transport;
 pub use transport::{NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
+pub(crate) use transport::tidy;
 
 use serde::{Deserialize, Serialize};
 

@@ -8,8 +8,10 @@
 //! Layout: this file owns the shared types, pure helpers and the plan URL
 //! base; `plans` owns plan/suite discovery and find-or-create; `runs` owns
 //! points, runs, results and attachments; `history` owns the recent-runs
-//! outcome sweep.
+//! outcome sweep; `boards` owns the internal portal route used only when
+//! the documented suite create is refused for the account's access level.
 
+pub mod boards;
 mod entries;
 mod history;
 mod plans;
