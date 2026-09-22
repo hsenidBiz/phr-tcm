@@ -17,12 +17,13 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconAccounts, IconEdit, IconImport, IconRecipe } from "../../lib/actionIcons";
+import { IconAccounts, IconEdit, IconImport, IconRecipe, IconUnattended } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import AccountsDialog from "./AccountsDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
+import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
 
@@ -108,6 +109,11 @@ export default function AutoRun({
   });
   /** The case ids queued for a run. `null` means no run is open. */
   const [running, setRunning] = useState<number[] | null>(null);
+  /** The case ids queued for an UNATTENDED run. Its own state, separate
+   * from `running` - the two panes are never open at once (both come from
+   * the same sticky bar), but they are different flows with different
+   * dialogs. */
+  const [replaying, setReplaying] = useState<number[] | null>(null);
   /** Ticked cases, by id. A bulk run is these, in list order. */
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [grouped, setGrouped] = useState(
@@ -267,6 +273,10 @@ export default function AutoRun({
           <Button size="sm" onClick={() => setRunning(selectedInOrder)}>
             Run {selectedInOrder.length} selected
           </Button>
+          <Button size="sm" variant="outline" onClick={() => setReplaying(selectedInOrder)}>
+            <IconUnattended aria-hidden />
+            Run {selectedInOrder.length} unattended
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
             Clear
           </Button>
@@ -364,6 +374,33 @@ export default function AutoRun({
                 // The selection has been run - leaving it ticked invites a
                 // second run of cases that were just decided.
                 setSelected(new Set());
+              }}
+            />
+          );
+        })()}
+
+      {replaying != null &&
+        (() => {
+          const picked = replaying
+            .map((id) => rows.find((x) => x.id === id))
+            .filter((c): c is (typeof rows)[number] => Boolean(c))
+            .map((c) => ({ id: c.id, title: c.title }));
+          if (picked.length === 0) return null;
+          return (
+            <ReplayPane
+              org={org}
+              project={project}
+              pbiId={pbi.id}
+              cases={picked}
+              onClose={() => setReplaying(null)}
+              onFinished={() => {
+                setReplaying(null);
+                // Same reasoning as the supervised pane's onClose - the
+                // selection has been run, so leaving it ticked invites a
+                // second run of cases that were just decided.
+                setSelected(new Set());
+                void queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+                toast.success("Unattended run finished. Review it under Past runs.");
               }}
             />
           );

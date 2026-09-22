@@ -63,6 +63,8 @@ export {
   ChevronRight as IconNext,
   ClipboardCheck as IconReview,
   Play as IconRun,
+  // Starting a run nobody has to sit in front of - a person picks IconRun.
+  Bot as IconUnattended,
   Flag as IconFinish,
 
   // Capturing evidence during a run

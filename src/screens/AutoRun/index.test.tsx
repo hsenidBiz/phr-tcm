@@ -249,3 +249,16 @@ test("finishing a run clears the selection it ran", async () => {
     expect(screen.queryByRole("button", { name: "Run 1 selected" })).not.toBeInTheDocument(),
   );
 });
+
+test("with cases ticked the bar offers both a supervised and an unattended run", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Run 2 unattended" }));
+  expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
+});
