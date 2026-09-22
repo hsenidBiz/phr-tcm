@@ -7,6 +7,7 @@
 //! a person has reviewed a run and presses Send.
 
 pub mod accounts;
+pub mod floor;
 pub mod guide;
 pub mod publish;
 pub mod recipe;
