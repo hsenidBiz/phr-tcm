@@ -938,6 +938,12 @@ export default function App() {
               onSelect={(w) => {
                 logUi(`nav: work/${w}`);
                 setWorkSection(w);
+                // A manual section pick supersedes any pending notification
+                // handoff - otherwise a focus the target screen never got
+                // to claim (the board failed to load, say) could pop its
+                // drawer later, on a screen the user navigated to on
+                // their own and was not expecting it to react to.
+                setWorkFocus(null);
               }}
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
@@ -962,7 +968,13 @@ export default function App() {
               setPbi={setPbiRaw}
               account={status.data?.account ?? null}
               workMode={workMode}
-              onToggleWork={() => setWorkMode((w) => !w)}
+              onToggleWork={() => {
+                setWorkMode((w) => !w);
+                // Same reasoning as the rail's onSelect: leaving Work
+                // Manager (or entering it by hand) drops a stale focus
+                // rather than letting it surface on whatever is next.
+                setWorkFocus(null);
+              }}
               onOpenSettings={toggleSettings}
               settingsOpen={section === "settings" && !workMode}
               locked={tourOpen}

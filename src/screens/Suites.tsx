@@ -357,7 +357,7 @@ export default function Suites({
       });
 
     const pbiSuite = onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? onOpenPbi : null;
-    const isRequirementSuite = s.suite_type === "requirementTestSuite" && s.requirement_id;
+    const isRequirementSuite = Boolean(s.suite_type === "requirementTestSuite" && s.requirement_id);
     const more: MoreAction[] = [
       ...(onSetCurrentPbi && isRequirementSuite
         ? [{ label: "Use as current PBI", onSelect: () => useAsPbi.mutate(s) }]

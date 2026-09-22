@@ -790,7 +790,25 @@ test("a focused pull request that no listed group can hold says so", async () =>
   renderPanel({ focus: { repo: "billing", id: 99 }, onFocusHandled: handled });
   await vi.waitFor(() =>
     expect(toast.info).toHaveBeenCalledWith(
-      "Pull request !99 is not listed here. Track the billing repository to see it.",
+      "PR #99 is not listed here. Track the billing repository to see it.",
+    ),
+  );
+  expect(handled).toHaveBeenCalledTimes(1);
+});
+
+/// ...and when it WOULD be held, just in the group the user turned off,
+/// the toast has to say that instead - tracking a repo would not help.
+test("a focused pull request that is one of yours, with the group hidden, says so", async () => {
+  localStorage.setItem("tcm-v2-pr-yours:acme/Web", "off");
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(99, { repo: "billing" })] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 99 }, onFocusHandled: handled });
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith(
+      "PR #99 is one of yours. Turn on Your Pull Requests to see it.",
     ),
   );
   expect(handled).toHaveBeenCalledTimes(1);

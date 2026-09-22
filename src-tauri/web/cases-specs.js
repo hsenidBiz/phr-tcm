@@ -194,7 +194,7 @@
 
   // Heading ids for the citation links: spec-<i>-<slug>, -2, -3 on repeats.
   // Every heading gets a stable id this way, both for jumpTo's own
-  // scrollIntoView and for a hand-written link inside a spec document that
+  // scrollWithin and for a hand-written link inside a spec document that
   // wants to target one directly.
   function anchorHeadings(pane) {
     var articles = pane.querySelectorAll('.spec-doc');

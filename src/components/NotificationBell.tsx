@@ -173,7 +173,7 @@ export default function NotificationBell({
                           <button
                             aria-label={`Open in Azure DevOps: ${n.title}`}
                             title="Open in Azure DevOps"
-                            className="shrink-0 rounded p-0.5 text-faint hover:text-accent"
+                            className="shrink-0 rounded p-1 text-faint hover:text-accent"
                             onClick={() =>
                               openUrl(n.href!).catch(() =>
                                 toast.error("Could not open the browser."),

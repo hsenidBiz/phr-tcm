@@ -861,13 +861,19 @@ export default function PrPanel({
     if (focus == null || !overview.isSuccess) return;
     const holds = (list: PullRequest[]) =>
       list.some((p) => p.repo === focus.repo && p.id === focus.id);
+    const isMine = holds(overview.data.mine);
     const couldHold =
       holds(overview.data.awaiting) ||
-      (showYours && holds(overview.data.mine)) ||
+      (showYours && isMine) ||
       trackedRepos.some((r) => r.name === focus.repo);
     if (!couldHold) {
+      // "Your Pull Requests" hidden is a different dead end than not
+      // tracking the repo: the PR IS on this page's data, just not
+      // rendered, so the fix is to flip the toggle, not track a repo.
       toast.info(
-        `Pull request !${focus.id} is not listed here. Track the ${focus.repo} repository to see it.`,
+        !showYours && isMine
+          ? `PR #${focus.id} is one of yours. Turn on Your Pull Requests to see it.`
+          : `PR #${focus.id} is not listed here. Track the ${focus.repo} repository to see it.`,
       );
       handledRef.current?.();
       return;
@@ -875,7 +881,7 @@ export default function PrPanel({
     // A tracked repo could hold it, but its pages are fetched a page at a
     // time: if no row has claimed the focus by now, it is behind "Load more".
     const timer = window.setTimeout(() => {
-      toast.info(`Pull request !${focus.id} is not on this page.`);
+      toast.info(`PR #${focus.id} is not on this page.`);
       handledRef.current?.();
     }, 4000);
     return () => window.clearTimeout(timer);
