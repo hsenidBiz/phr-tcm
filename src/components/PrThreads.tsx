@@ -19,16 +19,7 @@ import { Skeleton } from "./ui/skeleton";
 import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/history";
 import { unwrap } from "../lib/ipc";
-
-/** Azure DevOps has more statuses than it has meanings. Everything that is
- * not still open counts as settled, including the empty string it sends for
- * a thread nobody has ever resolved either way - that one reads as active,
- * which is why the check is written as "not one of the settled ones"
- * rather than as a list of open ones. */
-const SETTLED = ["fixed", "wontfix", "closed", "bydesign"];
-export function isResolved(status: string): boolean {
-  return SETTLED.includes(status.trim().toLowerCase());
-}
+import { isResolved } from "../lib/threadStatus";
 
 /** What Azure DevOps calls it, in words a reader recognises. */
 function statusLabel(status: string): string {

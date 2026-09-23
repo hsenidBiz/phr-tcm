@@ -1,8 +1,7 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
-import RunnerWindow from "./screens/RunnerWindow";
 import { TooltipLayer } from "./components/ui/tooltip";
 import { initTheme } from "./lib/theme";
 import { initUiClickLog, logUi } from "./lib/uiLog";
@@ -46,7 +45,9 @@ if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
 }
 
 // The compact always-on-top runner opens as a second webview window on the
-// same bundle, routed by hash (see RunTests -> openRunnerWindow).
+// same bundle, routed by hash (see RunTests -> openRunnerWindow). Loaded
+// on demand, so the main window does not parse it at startup.
+const RunnerWindow = lazy(() => import("./screens/RunnerWindow"));
 const Root = window.location.hash === "#runner" ? RunnerWindow : App;
 
 // Errors outside render (handlers, promises) never reach a boundary; the
@@ -59,7 +60,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       {/* A render that throws shows a fallback with a Reload instead of
           taking the whole window white, and logs what threw. */}
       <ErrorBoundary>
-        <Root />
+        <Suspense fallback={null}>
+          <Root />
+        </Suspense>
       </ErrorBoundary>
       {/* One per window: turns every `title` in the tree into the app's
           own tooltip. See components/ui/tooltip.tsx. */}

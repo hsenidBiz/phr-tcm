@@ -11,7 +11,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands, type PullRequest } from "../bindings";
-import { isResolved } from "../components/PrThreads";
+import { isResolved } from "../lib/threadStatus";
 import { unwrap } from "../lib/ipc";
 import { notePrComments, notePrOverview } from "../lib/notifications";
 

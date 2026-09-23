@@ -55,7 +55,6 @@ import AnimatedContent from "./components/AnimatedContent";
 import ChangelogModal from "./components/ChangelogModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
-import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { AUTO_RUN_ENABLED, SHORTCUT_ORDER, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
@@ -69,14 +68,21 @@ import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { getTheme, initTheme } from "./lib/theme";
-import EditCases from "./screens/EditCases";
-import ImportFile from "./screens/ImportFile";
-import ManualEntry from "./screens/ManualEntry";
-import CreateWorkItem from "./screens/CreateWorkItem";
-import PrPanel from "./screens/PrPanel";
-import RunTests from "./screens/RunTests";
+// The sign-in screen is the first thing every launch shows (tokens live in
+// memory only), so it is the one screen bundled up front. Every other screen
+// and the command palette load on demand: on a slow machine the whole bundle
+// is parsed before anything is drawn, and most of it is screens nobody has
+// opened yet. The tour waits for its anchors, so a screen arriving a moment
+// after the tab switch is fine there too.
 import SignIn from "./screens/SignIn";
-import ViewCases from "./screens/ViewCases";
+const EditCases = lazy(() => import("./screens/EditCases"));
+const ImportFile = lazy(() => import("./screens/ImportFile"));
+const ManualEntry = lazy(() => import("./screens/ManualEntry"));
+const CreateWorkItem = lazy(() => import("./screens/CreateWorkItem"));
+const PrPanel = lazy(() => import("./screens/PrPanel"));
+const RunTests = lazy(() => import("./screens/RunTests"));
+const ViewCases = lazy(() => import("./screens/ViewCases"));
+const CommandPalette = lazy(() => import("./components/CommandPalette"));
 /** Compile-time dev gate: statically false in `tauri build`, so everything
  * behind it (and the dev/ module itself) is dead-code-eliminated from
  * released builds. Test mode opts out so vitest sees the plain app. */
@@ -95,12 +101,14 @@ const DevPanel: ComponentType<{
   workMode: boolean;
   onShowSignIn: () => void;
 }> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
-import AiBridge from "./screens/AiBridge";
-import AutoRun from "./screens/AutoRun";
-import Settings from "./screens/Settings";
-import Suites from "./screens/Suites";
-import ManageCases from "./screens/ManageCases";
-import WorkBoard from "./screens/WorkBoard";
+const AiBridge = lazy(() => import("./screens/AiBridge"));
+// Development builds only (AUTO_RUN_ENABLED); lazy, so a release never
+// loads it at all.
+const AutoRun = lazy(() => import("./screens/AutoRun"));
+const Settings = lazy(() => import("./screens/Settings"));
+const Suites = lazy(() => import("./screens/Suites"));
+const ManageCases = lazy(() => import("./screens/ManageCases"));
+const WorkBoard = lazy(() => import("./screens/WorkBoard"));
 import { IconRefresh } from "./lib/actionIcons";
 
 /** How often to look for a new release, in the background. */
@@ -904,12 +912,14 @@ export default function App() {
         position="bottom-right"
         toastOptions={{ className: "select-none" }}
       />
-      <CommandPalette
-        onNavigate={goToSection}
-        org={org}
-        onSwitchProject={setProject}
-        onToggleWork={() => setWorkMode((w) => !w)}
-      />
+      <Suspense fallback={null}>
+        <CommandPalette
+          onNavigate={goToSection}
+          org={org}
+          onSwitchProject={setProject}
+          onToggleWork={() => setWorkMode((w) => !w)}
+        />
+      </Suspense>
 
       <TitleBar
         title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
@@ -1085,6 +1095,10 @@ export default function App() {
                 : "min-h-0 flex-1 overflow-y-auto p-6"
             }
           >
+            {/* Screens load on demand (see the imports). The boundary sits
+                outside the fade wrapper, so the fade-in plays when a screen
+                has arrived rather than on an empty box. */}
+            <Suspense fallback={null}>
             {!signedIn ? (
               <SignIn signingIn={signIn.isPending} onSignIn={() => signIn.mutate()}>
                 {DEV_TOOLS && (
@@ -1215,6 +1229,7 @@ export default function App() {
                 {section === "settings" && <Settings org={org} project={project} />}
               </AnimatedContent>
             )}
+            </Suspense>
           </main>
           </div>
         </div>
