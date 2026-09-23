@@ -33,6 +33,7 @@ pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
 pub mod report;
+pub mod run_order;
 pub mod spec_pane;
 pub mod speccov;
 pub mod state;
@@ -58,7 +59,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, auth, autorun, autorun_publish, autorun_replay, board, bugs, cases,
-        discovery, misc, prs, queue, runs, testplan, workspace,
+        discovery, misc, prs, queue, run_order, runs, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -213,7 +214,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::register_db_server,
             ai_tools::unregister_db_server,
             workspace::ensure_cases_dir,
-            workspace::copy_into_cases
+            workspace::copy_into_cases,
+            run_order::get_run_order,
+            run_order::save_run_order
         ])
 }
 

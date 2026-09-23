@@ -658,6 +658,19 @@ export const commands = {
 	 *  `.test-cases/.history`, never deleted.
 	 */
 	copyIntoCases: (root: string, source: string) => typedError<CopiedIn, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
+	/**
+	 *  The PBI's suggested run order, or why it could not be read. Never
+	 *  fails for "no file" or "damaged file" - see `RunOrderRead`.
+	 */
+	getRunOrder: (organization: string, project: string, pbiId: number) => typedError<RunOrderRead_Serialize, AdoError>(__TAURI_INVOKE("get_run_order", { organization, project, pbiId })),
+	/**
+	 *  Save `cases` as the PBI's suggested run order. Fills `format`/`version`,
+	 *  `saved_by` (the signed-in account from `AuthState`, or "unknown" when
+	 *  somehow absent) and `saved_at` (now, UTC), saves, and returns the file
+	 *  that was written so the caller can show who saved it and when without a
+	 *  second read.
+	 */
+	saveRunOrder: (organization: string, project: string, pbiId: number, cases: RunOrderCase_Deserialize[]) => typedError<RunOrderFile_Serialize, AdoError>(__TAURI_INVOKE("save_run_order", { organization, project, pbiId, cases })),
 };
 
 /** Events */
@@ -1711,6 +1724,76 @@ export type RunAttachmentOut = {
 	file_name: string,
 	b64: string,
 };
+
+/**
+ *  One case's place in the suggested order. `group` is the case's area
+ *  where known (the grouping the tree view uses) - optional because not
+ *  every writer of this file knows it.
+ */
+export type RunOrderCase = RunOrderCase_Serialize | RunOrderCase_Deserialize;
+
+/**
+ *  One case's place in the suggested order. `group` is the case's area
+ *  where known (the grouping the tree view uses) - optional because not
+ *  every writer of this file knows it.
+ */
+export type RunOrderCase_Deserialize = {
+	id: number,
+	group?: string | null,
+};
+
+/**
+ *  One case's place in the suggested order. `group` is the case's area
+ *  where known (the grouping the tree view uses) - optional because not
+ *  every writer of this file knows it.
+ */
+export type RunOrderCase_Serialize = {
+	id: number,
+	group?: string | null,
+};
+
+export type RunOrderFile = RunOrderFile_Serialize | RunOrderFile_Deserialize;
+
+export type RunOrderFile_Deserialize = {
+	format: string,
+	version: number,
+	/**  The signed-in account, as the app shows it in the context bar. */
+	saved_by: string,
+	/**  RFC 3339, UTC, e.g. "2026-09-23T10:15:00Z". */
+	saved_at: string,
+	cases: RunOrderCase_Deserialize[],
+};
+
+export type RunOrderFile_Serialize = {
+	format: string,
+	version: number,
+	/**  The signed-in account, as the app shows it in the context bar. */
+	saved_by: string,
+	/**  RFC 3339, UTC, e.g. "2026-09-23T10:15:00Z". */
+	saved_at: string,
+	cases: RunOrderCase_Serialize[],
+};
+
+/**
+ *  What reading a PBI's run order found. Never an error on its own - a
+ *  missing or damaged file falls back to spec order (design §6); only a
+ *  transport/auth failure on the PBI read itself is an `Err`.
+ */
+export type RunOrderRead = RunOrderRead_Serialize | RunOrderRead_Deserialize;
+
+/**
+ *  What reading a PBI's run order found. Never an error on its own - a
+ *  missing or damaged file falls back to spec order (design §6); only a
+ *  transport/auth failure on the PBI read itself is an `Err`.
+ */
+export type RunOrderRead_Deserialize = ({ state: "none" }) & { file?: never; reason?: never } | ({ state: "found"; file: RunOrderFile_Deserialize }) & { reason?: never } | ({ state: "unreadable"; reason: string }) & { file?: never };
+
+/**
+ *  What reading a PBI's run order found. Never an error on its own - a
+ *  missing or damaged file falls back to spec order (design §6); only a
+ *  transport/auth failure on the PBI read itself is an `Err`.
+ */
+export type RunOrderRead_Serialize = ({ state: "none" }) & { file?: never; reason?: never } | ({ state: "found"; file: RunOrderFile_Serialize }) & { reason?: never } | ({ state: "unreadable"; reason: string }) & { file?: never };
 
 export type RunOutcome = {
 	outcome: string,

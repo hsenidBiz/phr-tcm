@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod misc;
 pub mod prs;
 pub mod queue;
+pub mod run_order;
 pub mod runs;
 pub mod testplan;
 pub mod workspace;
