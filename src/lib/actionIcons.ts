@@ -95,6 +95,8 @@ export {
   SendHorizontal as IconSendResults,
 
   // Everything else
+  // Opening the calendar to choose a date (DateField).
+  CalendarDays as IconPickDate,
   LogIn as IconSignIn,
   RefreshCw as IconRefresh,
   Plug as IconRegister,
