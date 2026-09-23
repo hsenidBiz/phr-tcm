@@ -7,13 +7,16 @@ import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { loadWatches } from "../../lib/fileSync";
 import { unwrap } from "../../lib/ipc";
 import { loadMyOrder, onMyOrderChanged, reconcile, type OrderKey } from "../../lib/runOrder";
 import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
+import { testerOrderSources } from "../../lib/testerOrderStart";
 import { noteFor, runOrderQueryOptions } from "../RunPanel/useRunOrder";
 import CaseOrderList from "./CaseOrderList";
 
-type StartFrom = "saved" | "azure" | "mine";
+/** `file:<path>` starts from one watched draft's tester order. */
+type StartFrom = "saved" | "azure" | "mine" | `file:${string}`;
 
 /**
  * Suite Management's second order editor for a PBI's suite (design doc
@@ -78,9 +81,21 @@ export default function SuggestedOrder({
     [org, planId, suiteId, myOrderRev],
   );
 
+  // An optimized draft whose cases were all uploaded earlier: the upload
+  // saved no suggested order for it (it only does when it creates a case),
+  // but the Import tab still remembers the file, ids and tester order
+  // included, so its order can be started from here.
+  const testerSources = useMemo(
+    () => testerOrderSources(loadWatches(org, pbiId), cases.map((c) => c.id)),
+    [org, pbiId, cases],
+  );
+  const testerSourceFor = (from: StartFrom) => testerSources.find((s) => `file:${s.path}` === from);
+
   const idsFor = (from: StartFrom): number[] => {
     if (from === "saved" && file) return reconcile(file.cases.map((c) => c.id), specIds);
     if (from === "mine" && myOrder) return reconcile(myOrder, specIds);
+    const tester = testerSourceFor(from);
+    if (tester) return reconcile(tester.ids, specIds);
     return specIds;
   };
 
@@ -118,6 +133,7 @@ export default function SuggestedOrder({
     ...(file ? [{ value: "saved" as const, label: "Saved suggested order" }] : []),
     { value: "azure" as const, label: "Order in Azure DevOps" },
     ...(myOrder ? [{ value: "mine" as const, label: "My order on this machine" }] : []),
+    ...testerSources.map((s) => ({ value: `file:${s.path}` as const, label: s.label })),
   ];
 
   const changeStartFrom = (from: StartFrom) => {
@@ -141,10 +157,13 @@ export default function SuggestedOrder({
   const save = useMutation({
     mutationFn: () => {
       // Each case keeps the group it had in the saved file; a case with no
-      // prior group (or no saved file at all) gets none.
+      // prior group (or no saved file at all) gets none. Started from a
+      // draft's tester order, the draft's areas come first - the groups an
+      // upload of that file would have written.
       const groupOf = new Map(file?.cases.map((c) => [c.id, c.group]) ?? []);
+      const fileGroups = testerSourceFor(startFrom)?.groups;
       const payload: RunOrderCase[] = order.map((c) => {
-        const group = groupOf.get(c.id);
+        const group = fileGroups?.get(c.id) ?? groupOf.get(c.id);
         return group ? { id: c.id, group } : { id: c.id };
       });
       return unwrap(commands.saveRunOrder(org, project, pbiId, payload));

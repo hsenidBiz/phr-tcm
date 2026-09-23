@@ -369,3 +369,76 @@ test("a case removed from the suite disappears from the list and the save payloa
     cases: [{ id: 202 }, { id: 201 }, { id: 203 }],
   });
 });
+
+/** Remembers a watched draft for PBI 42 the way the Import tab does, with
+ * each case stamped with its work item id after upload. */
+function watchDraft(path: string, cases: Array<{ id: number | null; order: number | null; area?: string }>) {
+  const snapshot = cases.map((c, i) => ({
+    title: `Case ${i}`,
+    steps: [],
+    tags: "",
+    automation_status: "Not Automated",
+    module_value: "",
+    preconditions: "",
+    update_id: c.id,
+    tester_order: c.order,
+    area: c.area ?? "",
+  }));
+  localStorage.setItem("tcm-v2-watch:acme/42", JSON.stringify([{ path, stamp: "s1", snapshot }]));
+}
+
+test("an already-uploaded optimized file offers its tester order as a start", async () => {
+  watchDraft("C:/work/login.json", [
+    { id: 201, order: 2 },
+    { id: 203, order: 1 },
+  ]);
+  mount();
+  await orderList();
+  fireEvent.click(startFromPicker());
+  fireEvent.click(screen.getByRole("option", { name: "Tester order from login.json" }));
+  // The file's cases in tester order, then the suite's other case in spec order.
+  expect(await idsOnScreen()).toEqual([203, 201, 202]);
+});
+
+test("a file with a case lacking a tester order offers no tester order start", async () => {
+  watchDraft("C:/work/login.json", [
+    { id: 201, order: 1 },
+    { id: 203, order: null },
+  ]);
+  mount();
+  await orderList();
+  fireEvent.click(startFromPicker());
+  expect(screen.queryByRole("option", { name: /Tester order from/ })).not.toBeInTheDocument();
+});
+
+test("saving from a tester order start groups cases by the file's area", async () => {
+  watchDraft("C:/work/login.json", [
+    { id: 203, order: 1, area: "Auth / Lockout" },
+    { id: 201, order: 2, area: "Auth" },
+    { id: 202, order: 3 },
+  ]);
+  const { calls } = mount((cmd) => {
+    if (cmd === "get_run_order") return { state: "found", file: FILE([{ id: 201 }, { id: 202, group: "Old" }, { id: 203 }]) };
+    if (cmd === "save_run_order") return FILE([{ id: 203 }, { id: 201 }, { id: 202 }]);
+  });
+  await orderList();
+  await vi.waitFor(() => expect(startFromPicker()).toHaveTextContent("Saved suggested order"));
+  fireEvent.click(startFromPicker());
+  fireEvent.click(screen.getByRole("option", { name: "Tester order from login.json" }));
+  expect(await idsOnScreen()).toEqual([203, 201, 202]);
+  fireEvent.click(screen.getByRole("button", { name: "Save suggested order" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "save_run_order")).toBe(true));
+  // The file's areas are the groups; a case with no area in the file keeps
+  // the group the saved order already gave it.
+  expect(calls.find((c) => c.cmd === "save_run_order")?.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    pbiId: 42,
+    cases: [
+      { id: 203, group: "Auth / Lockout" },
+      { id: 201, group: "Auth" },
+      { id: 202, group: "Old" },
+    ],
+  });
+});
