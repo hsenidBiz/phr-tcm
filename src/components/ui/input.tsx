@@ -24,7 +24,7 @@ const SM_TWIN: Record<string, string> = {
 };
 
 function smTwin(className?: string): string | undefined {
-  const size = className?.split(/\s+/).find((c) => c in SM_TWIN);
+  const size = className?.split(/\s+/).find((c) => Object.prototype.hasOwnProperty.call(SM_TWIN, c));
   return size ? SM_TWIN[size] : undefined;
 }
 
@@ -42,7 +42,7 @@ export const Textarea = forwardRef<
   <XiodTextarea
     ref={ref}
     className={cn(
-      "flex resize-y overflow-hidden text-sm [&>textarea]:h-full [&>textarea]:min-h-0 [&>textarea]:resize-none [&>textarea]:[field-sizing:fixed] [&>textarea]:placeholder:text-faint",
+      "flex resize-y overflow-hidden text-sm [&>textarea]:min-h-0 [&>textarea]:resize-none [&>textarea]:[field-sizing:fixed] [&>textarea]:placeholder:text-faint",
       className,
       smTwin(className),
     )}

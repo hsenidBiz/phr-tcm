@@ -16,7 +16,18 @@ test("the call site's classes size the box; the field inside fills it", () => {
   expect(field).toHaveAttribute("data-slot", "textarea");
   expect(box("Notes")).toHaveAttribute("data-slot", "textarea-control");
   expect(box("Notes")).toHaveClass("h-40", "w-full", "font-mono");
-  expect(box("Notes")).toHaveClass("[&>textarea]:h-full", "[&>textarea]:min-h-0", "[&>textarea]:[field-sizing:fixed]");
+  expect(box("Notes")).toHaveClass("[&>textarea]:min-h-0", "[&>textarea]:[field-sizing:fixed]");
+});
+
+// I-3: a percentage height (h-full) against a box whose own height comes
+// from min-h-*/flex-1 - an indefinite height - resolves to auto, so it
+// cannot fill it; only the flex box's own default stretch can. A box sized
+// by min-h-*/flex-1 alone (no h-*) must never carry that class on the
+// field, in any window size.
+test("a box sized by min-h/flex-1 alone relies on the flex box's own stretch, not a height on the field", () => {
+  render(<Textarea aria-label="Notes" className="min-h-40 flex-1" />);
+  expect(box("Notes")).toHaveClass("min-h-40", "flex-1");
+  expect(box("Notes")).not.toHaveClass("[&>textarea]:h-full");
 });
 
 test("the box is what the user drags taller", () => {
