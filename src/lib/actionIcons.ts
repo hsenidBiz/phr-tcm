@@ -43,6 +43,9 @@ export {
   // same move a drag makes.
   ArrowUp as IconMoveUp,
   ArrowDown as IconMoveDown,
+  // Choosing the order a list of cases runs in, in one dialog: a numbered
+  // list, because what it sets is which case comes first.
+  ListOrdered as IconSetOrder,
   FolderPlus as IconNewSuite,
   // Copying selected cases into another suite: a folder with an arrow in.
   FolderInput as IconCopyToSuite,

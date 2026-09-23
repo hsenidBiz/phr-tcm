@@ -264,6 +264,9 @@ test("Save sends the list, groups from the tester-order file then the saved file
     { file: FILE([{ id: 201 }, { id: 202, group: "Old" }, { id: 203 }]), view: "suggested" },
     (cmd) => (cmd === "save_run_order" ? NEW : undefined),
   );
+  // The disk copy is rewritten too - a spy on the shared QueryClient
+  // confirms the run-order key is invalidated, not just optimistically set.
+  const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
   pick("Tester order from login.json");
   fireEvent.click(screen.getByRole("button", { name: "Save for everyone" }));
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -281,6 +284,7 @@ test("Save sends the list, groups from the tester-order file then the saved file
   });
   // The shared entry Run Tests reads carries the new file at once.
   expect(qc.getQueryData(["run-order", "acme", "Web", 42])).toEqual({ state: "found", file: NEW });
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["run-order", "acme", "Web", 42] });
   expect(onUseView).toHaveBeenCalledWith("suggested");
   expect(onClose).toHaveBeenCalled();
 });
