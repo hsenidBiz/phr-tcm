@@ -7,8 +7,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use v2_lib::db::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_path, Connection, Output, Runner,
-    CHAR_CAP, NOT_INSTALLED, ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_path, Connection,
+    Output, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV, ROW_CAP,
+    SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
 use v2_lib::db_defaults::DB_PRESETS;
 
@@ -20,21 +21,27 @@ struct FakeRunner {
     status: i32,
     stdout: String,
     stderr: String,
-    calls: Mutex<Vec<(PathBuf, Vec<String>, Duration)>>,
+    calls: Mutex<Vec<(PathBuf, Vec<String>, Duration, Vec<(String, String)>)>>,
 }
 
 impl FakeRunner {
     fn answering(stdout: &str) -> FakeRunner {
         FakeRunner { stdout: stdout.to_string(), ..Default::default() }
     }
-    fn calls(&self) -> Vec<(PathBuf, Vec<String>, Duration)> {
+    fn calls(&self) -> Vec<(PathBuf, Vec<String>, Duration, Vec<(String, String)>)> {
         self.calls.lock().unwrap().clone()
     }
 }
 
 impl Runner for FakeRunner {
-    async fn run(&self, exe: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
-        self.calls.lock().unwrap().push((exe.to_path_buf(), args.to_vec(), timeout));
+    async fn run(
+        &self,
+        exe: &Path,
+        args: &[String],
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        self.calls.lock().unwrap().push((exe.to_path_buf(), args.to_vec(), timeout, env.to_vec()));
         Ok(Output {
             status: self.status,
             stdout: self.stdout.clone(),
@@ -179,15 +186,24 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert_eq!(value_after(&args, "-S"), "sgdev01db02.cloud");
     assert_eq!(value_after(&args, "-d"), "hrm main");
     assert_eq!(value_after(&args, "-U"), "a_readonly");
-    // The password is one argument, byte for byte, with no quoting of any
-    // kind - it never passes through a shell, so there is nothing to escape.
-    assert_eq!(value_after(&args, "-P"), c.password);
+    // The password is not an argument at all: an argument is readable in the
+    // process list for as long as sqlcmd runs. It travels in the
+    // environment, byte for byte, as the pms-sql skill passes it.
+    assert!(!args.iter().any(|a| a == "-P" || a.contains(&c.password)), "{args:?}");
+    assert_eq!(sqlcmd_env(&c), vec![(PASSWORD_ENV.to_string(), c.password.clone())]);
+    assert_eq!(PASSWORD_ENV, "SQLCMDPASSWORD");
     assert_eq!(value_after(&args, "-Q"), "SELECT 1\nFROM t");
     assert_eq!(value_after(&args, "-t"), TIMEOUT_SECS.to_string());
     assert_eq!(value_after(&args, "-t"), "30");
     assert_eq!(value_after(&args, "-s"), "\t");
-    assert_eq!(value_after(&args, "-y"), "0");
-    assert_eq!(value_after(&args, "-Y"), "0");
+    // No -y/-Y: sqlcmd 15 (the ODBC tools' sqlcmd, the one most machines
+    // have) refuses "-W and -y/-Y" outright - "Sqlcmd: The -W and the -y/-Y
+    // options are mutually exclusive." - so every call failed before it
+    // reached a server (2026-09-23). And -y 0 on its own drops the header
+    // row. -W alone keeps the header and trims the padding.
+    assert!(!args.iter().any(|a| a == "-y" || a == "-Y"), "{args:?}");
+    assert_eq!(value_after(&args, "-f"), "65001");
+    assert_eq!(value_after(&args, "-l"), LOGIN_TIMEOUT_SECS.to_string());
     assert!(args.contains(&"-C".to_string()), "{args:?}");
     assert!(args.contains(&"-b".to_string()), "{args:?}");
     assert!(args.contains(&"-W".to_string()), "{args:?}");
@@ -195,7 +211,7 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!args.iter().any(|a| a == "-h" || a == "-h-1"), "{args:?}");
     // Every flag is an element of its own, exactly once: nothing was glued
     // into a command line that something downstream could re-split.
-    for flag in ["-S", "-d", "-U", "-P", "-C", "-s", "-W", "-y", "-Y", "-t", "-b", "-Q"] {
+    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-Q"] {
         assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
     }
 
@@ -419,4 +435,37 @@ fn the_env_override_decides_where_sqlcmd_is_or_that_it_is_missing() {
         Some(v) => std::env::set_var(SQLCMD_OVERRIDE, v),
         None => std::env::remove_var(SQLCMD_OVERRIDE),
     }
+}
+
+/// The password reaches sqlcmd through its own environment variable, and
+/// nowhere in the arguments - through `run_sql`, not just the builder.
+#[tokio::test]
+async fn the_password_travels_in_the_environment_not_the_arguments() {
+    let c = read_only_preset();
+    let fake = FakeRunner::answering("n\n-\n1\n");
+    run_sql(&fake, Path::new("sqlcmd.exe"), &c, "SELECT 1 AS n").await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(!calls[0].1.iter().any(|a| a.contains(&c.password)), "{:?}", calls[0].1);
+    assert_eq!(calls[0].3, vec![(PASSWORD_ENV.to_string(), c.password.clone())]);
+}
+
+/// With -W, sqlcmd cuts a variable-length value at 256 characters, and -W
+/// cannot be combined with the -y that would widen it. A value exactly that
+/// long may have been cut, so the answer says so instead of passing a
+/// truncated value off as the whole thing.
+#[tokio::test]
+async fn a_value_at_the_cut_length_is_said_out_loud() {
+    let at_cut = "x".repeat(CUT_AT);
+    let fake = FakeRunner::answering(&format!("wide\n----\n{at_cut}\n\n(1 rows affected)\n"));
+    let (text, _) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT wide FROM t").await.unwrap();
+    assert!(text.contains(&at_cut), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("... ") && l.contains("256 characters")), "{text}");
+
+    let shorter = "x".repeat(CUT_AT - 1);
+    let fake = FakeRunner::answering(&format!("wide\n----\n{shorter}\n\n(1 rows affected)\n"));
+    let (text, _) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT wide FROM t").await.unwrap();
+    assert!(!text.contains("256 characters"), "{text}");
 }

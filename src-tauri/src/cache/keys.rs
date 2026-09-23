@@ -60,6 +60,19 @@ pub fn area_team(base_url: &str, org: &str, project: &str, area: &str) -> String
     format!("area-team:{base_url}|{org}|{project}|{area}")
 }
 
+/// How long the AI bridge reuses a database lookup's answer. A schema
+/// changes when a deploy script runs, not while an assistant explores it,
+/// and a lookup costs up to three sqlcmd runs - so asking the same thing
+/// twice in ten minutes costs nothing the second time.
+pub const DB_LOOKUP_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// One database lookup's rendered answer (session tier only). The server
+/// and database are in the key: switching the AI Bridge tab to another
+/// connection must never answer from the last one.
+pub fn db_lookup(server: &str, database: &str, limit: usize, query: &str) -> String {
+    format!("db-lookup:{server}|{database}|{limit}|{query}")
+}
+
 /// A fetched wiki page, for the review page's spec pane. Ten minutes: the
 /// keep-in-step refresh re-renders the page on every focus, and the wiki
 /// does not move that fast.

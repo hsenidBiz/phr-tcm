@@ -1694,11 +1694,19 @@ mod db_tests {
         stdout: String,
         stderr: String,
         calls: Mutex<Vec<Vec<String>>>,
+        /// Answers handed out one per call, before `stdout` takes over.
+        in_turn: Mutex<std::collections::VecDeque<String>>,
     }
 
     impl FakeRunner {
         fn answering(stdout: &str) -> FakeRunner {
             FakeRunner { stdout: stdout.to_string(), ..Default::default() }
+        }
+        fn answering_in_turn(answers: &[&str]) -> FakeRunner {
+            FakeRunner {
+                in_turn: Mutex::new(answers.iter().map(|a| a.to_string()).collect()),
+                ..Default::default()
+            }
         }
         fn failing(stderr: &str) -> FakeRunner {
             FakeRunner { status: 1, stderr: stderr.to_string(), ..Default::default() }
@@ -1713,14 +1721,12 @@ mod db_tests {
             &self,
             _exe: &Path,
             args: &[String],
+            _env: &[(String, String)],
             _timeout: Duration,
         ) -> Result<Output, String> {
             self.calls.lock().unwrap().push(args.to_vec());
-            Ok(Output {
-                status: self.status,
-                stdout: self.stdout.clone(),
-                stderr: self.stderr.clone(),
-            })
+            let stdout = self.in_turn.lock().unwrap().pop_front().unwrap_or_else(|| self.stdout.clone());
+            Ok(Output { status: self.status, stdout, stderr: self.stderr.clone() })
         }
     }
 
@@ -2029,19 +2035,44 @@ dbo\tLeaveRequest\t1240\tLeaveRequestId int | LeaveTypeId int\tLeaveTypeId -> db
 \n\
 (1 rows affected)\n";
 
+    const RANKED: &str = "sch\ttab\tscore\n\
+---\t---\t-----\n\
+dbo\tLeaveRequest\t160\n\
+\n\
+(1 rows affected)\n";
+
     #[tokio::test]
-    async fn a_lookup_runs_one_read_and_renders_it() {
-        let fake = FakeRunner::answering(TWO_TABLES);
+    async fn a_lookup_ranks_then_reads_the_details_of_the_tables_it_picked() {
+        let fake = FakeRunner::answering_in_turn(&[RANKED, TWO_TABLES]);
         let out = run_lookup(&fake, &exe(), &read_only(), "leave request", 10)
             .await
             .expect("a lookup runs");
 
         assert!(out.contains("dbo.LeaveRequest (1240 rows est.)"), "{out}");
         assert!(out.contains("foreign key: LeaveTypeId -> dbo.LeaveType(LeaveTypeId)"), "{out}");
-        assert_eq!(fake.calls().len(), 1, "one statement, not a round trip per table");
-        // Whatever else the statement is, it is a read.
-        let sent = fake.calls()[0].last().unwrap().clone();
-        assert_eq!(classify(&sent), Verdict::Read, "{sent}");
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 2, "the ranking, then the details - never a trip per table");
+        let rank = calls[0].last().unwrap().clone();
+        let detail = calls[1].last().unwrap().clone();
+        // PeoplesHR first, as the PHR X DB server searches.
+        assert!(rank.contains("TABLE_SCHEMA = N'PeoplesHR'"), "{rank}");
+        assert!(detail.contains("(N'dbo', N'LeaveRequest', 160)"), "{detail}");
+        // Whatever else they are, both statements are reads.
+        assert_eq!(classify(&rank), Verdict::Read, "{rank}");
+        assert_eq!(classify(&detail), Verdict::Read, "{detail}");
+    }
+
+    #[tokio::test]
+    async fn a_lookup_with_nothing_in_peopleshr_searches_every_schema() {
+        let fake = FakeRunner::answering_in_turn(&["", RANKED, TWO_TABLES]);
+        let out = run_lookup(&fake, &exe(), &read_only(), "leave request", 10)
+            .await
+            .expect("a lookup runs");
+        assert!(out.contains("dbo.LeaveRequest (1240 rows est.)"), "{out}");
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 3, "PeoplesHR, every schema, the details");
+        assert!(calls[0].last().unwrap().contains("TABLE_SCHEMA = N'PeoplesHR'"));
+        assert!(!calls[1].last().unwrap().contains("TABLE_SCHEMA = N'"), "{:?}", calls[1]);
     }
 
     /// A bare name is a different question from a topic: "what is in this
@@ -2074,7 +2105,12 @@ dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
         let fake = FakeRunner::answering("");
         let out = run_lookup(&fake, &exe(), &read_only(), "Leave", 10).await.expect("it runs");
         assert_eq!(out, "no table or column matches those words", "{out}");
-        assert_eq!(fake.calls().len(), 2, "the describe, then the lookup");
+        // Nothing ranked, so there are no details to read.
+        assert_eq!(
+            fake.calls().len(),
+            3,
+            "the describe, the ranking in PeoplesHR, the ranking in every schema"
+        );
     }
 
     #[tokio::test]

@@ -173,9 +173,16 @@ fn data_row_count(text: &str) -> usize {
 /// The tables and columns behind some words.
 ///
 /// A bare table name is answered with that table's whole column list; a
-/// topic with the ranked lookup. Both are one SELECT, and a name that
-/// turns out to be no table falls through to the ranking - so an
-/// assistant can type either without knowing which it typed.
+/// topic with the ranked lookup. A name that turns out to be no table falls
+/// through to the ranking - so an assistant can type either without knowing
+/// which it typed.
+///
+/// The ranking looks in the `PeoplesHR` schema first, as the PHR X DB
+/// server does: the HR databases also hold `PeoplesHRDAP` copies of many
+/// tables, and `PeoplesHR` is the right one. Only when nothing matches
+/// there is every schema searched. Then one more statement reads the
+/// details for the tables it picked - see `schema` for why that is two
+/// round trips and not one.
 pub async fn run_lookup<R: Runner>(
     r: &R,
     exe: &Path,
@@ -198,7 +205,16 @@ pub async fn run_lookup<R: Runner>(
             return Ok(described);
         }
     }
-    let tsv = read(r, exe, c, &schema::lookup_sql(query, "", limit)).await?;
+    let preferred = crate::db_defaults::DEFAULT_SCHEMA_FILTER;
+    let mut picked =
+        schema::parse_ranked(&read(r, exe, c, &schema::lookup_sql(query, preferred, limit)).await?);
+    if picked.is_empty() {
+        picked = schema::parse_ranked(&read(r, exe, c, &schema::lookup_sql(query, "", limit)).await?);
+    }
+    if picked.is_empty() {
+        return Ok(schema::render_lookup(""));
+    }
+    let tsv = read(r, exe, c, &schema::detail_sql(query, &picked)).await?;
     Ok(schema::render_lookup(&tsv))
 }
 

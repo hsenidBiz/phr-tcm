@@ -653,6 +653,18 @@ async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(ready) => ready,
         Err(refused) => return refused,
     };
+    // Kept here, not in `run_lookup`, so the lookup itself stays a plain
+    // function of what sqlcmd answers - and only an answer is kept, never
+    // a failure, so a server that was briefly unreachable is asked again.
+    let key = crate::cache::keys::db_lookup(
+        &connection.server,
+        &connection.database,
+        limit,
+        &query.to_lowercase(),
+    );
+    if let Some(hit) = crate::cache::session_fresh::<String>(&key, crate::cache::keys::DB_LOOKUP_TTL) {
+        return (200, hit);
+    }
     match crate::db::query::run_lookup(
         &crate::db::RealRunner,
         &exe,
@@ -662,7 +674,10 @@ async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
     )
     .await
     {
-        Ok(text) => (200, text),
+        Ok(text) => {
+            crate::cache::session_put(&key, text.clone());
+            (200, text)
+        }
         Err(refused) => refused,
     }
 }

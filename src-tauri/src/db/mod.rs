@@ -16,8 +16,11 @@ pub use guard::{
     access_for, access_for_user, allowed, classify, Access, Verdict, MAX_SQL_CHARS,
     READ_ONLY_SENTENCE,
 };
-pub use schema::{describe_sql, lookup_sql, render_describe, render_lookup};
+pub use schema::{
+    describe_sql, detail_sql, lookup_sql, parse_ranked, render_describe, render_lookup, Picked,
+};
 pub use sqlcmd::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_path, Connection, Output,
-    RealRunner, Runner, CHAR_CAP, NOT_INSTALLED, ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_path, Connection,
+    Output, RealRunner, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV,
+    ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };

@@ -6,16 +6,12 @@
 //! one batch. Everything that leaves this module - a failure, and the rows
 //! themselves - has been through `hide_password` first.
 //!
-//! What that does NOT cover: `-P` is a command-line argument, so for as
-//! long as sqlcmd is running, anyone on this machine can read the password
-//! out of the process list (`tasklist /v`, Process Explorer, `wmic
-//! process`). Passing it through the environment or a prompt would close
-//! that window; neither is worth building here, because these are the
-//! shipped credentials described in `db_defaults.rs` - reachable only from
-//! the company network, behind their own sign-in, on a device-locked
-//! machine. The owner's call there covers this too. If a person ever types
-//! their OWN database password into the AI Bridge form, this note is the
-//! thing to revisit first.
+//! The password is NOT an argument. An argument can be read out of the
+//! process list (`tasklist /v`, Process Explorer, `wmic process`) for as
+//! long as sqlcmd runs, so it travels in sqlcmd's own `SQLCMDPASSWORD`
+//! environment variable, set on the child process only - the same way the
+//! pms-sql skill has always run it. Both sqlcmd 15 (the ODBC tools) and
+//! go-sqlcmd read it.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -33,6 +29,19 @@ pub const CHAR_CAP: usize = 60_000;
 /// How long sqlcmd gets, both as its own query timeout and as the wall
 /// clock the process is killed against.
 pub const TIMEOUT_SECS: u64 = 30;
+
+/// How long sqlcmd waits to connect before it gives up. Without it sqlcmd
+/// 15 waits its own default, and a server that is off the network then
+/// costs most of `TIMEOUT_SECS` before anyone hears why.
+pub const LOGIN_TIMEOUT_SECS: u64 = 15;
+
+/// The variable sqlcmd reads the password from when `-P` is not given.
+pub const PASSWORD_ENV: &str = "SQLCMDPASSWORD";
+
+/// Where sqlcmd cuts a variable-length value when `-W` is on. `-y` would
+/// widen it, and sqlcmd 15 refuses `-y` together with `-W` - so a value
+/// exactly this long may have been cut, and the answer says so.
+pub const CUT_AT: usize = 256;
 
 /// What to say when sqlcmd is nowhere on the machine.
 pub const NOT_INSTALLED: &str = "sqlcmd is not installed on this machine - install it with `winget install sqlcmd` (or the SQL Server command line tools), then try again";
@@ -204,6 +213,7 @@ pub trait Runner {
         &self,
         exe: &Path,
         args: &[String],
+        env: &[(String, String)],
         timeout: Duration,
     ) -> impl std::future::Future<Output = Result<Output, String>>;
 }
@@ -212,12 +222,20 @@ pub trait Runner {
 pub struct RealRunner;
 
 impl Runner for RealRunner {
-    async fn run(&self, exe: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
+    async fn run(
+        &self,
+        exe: &Path,
+        args: &[String],
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<Output, String> {
         use std::process::Stdio;
 
         let mut command = tokio::process::Command::new(exe);
         command
             .args(args)
+            // The child's environment only - the app's own is never touched.
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -245,12 +263,20 @@ impl Runner for RealRunner {
 /// command line to quote and therefore nothing to escape, which is the
 /// whole reason the password can be passed at all.
 ///
-/// The flags, checked against go-sqlcmd 1.10's own `-?`: `-S` server, `-d`
-/// database, `-U` user, `-P` password, `-C` trust the server certificate,
-/// `-s` column separator, `-W` trim trailing spaces, `-t` query timeout,
-/// `-b` exit on error, `-y`/`-Y` no width truncation, `-Q` the statement
-/// and exit. `-h` is deliberately absent: the header row is what names the
-/// columns in the answer.
+/// The flags, the set the pms-sql skill runs and both sqlcmd 15 (the ODBC
+/// tools) and go-sqlcmd accept: `-S` server, `-d` database, `-U` user,
+/// `-C` trust the server certificate, `-b` exit on error, `-f 65001`
+/// UTF-8 in and out, `-l` login timeout, `-t` query timeout, `-W` trim
+/// trailing spaces, `-s` column separator, `-Q` the statement and exit.
+///
+/// Two things deliberately absent. `-y`/`-Y`: sqlcmd 15 refuses them
+/// together with `-W` ("The -W and the -y/-Y options are mutually
+/// exclusive") before it dials anything - 1.25.16/17 passed both, and every
+/// call failed on a machine with the ODBC tools' sqlcmd. `-y 0` alone
+/// keeps whole values but drops the header row, which is what names the
+/// columns, so `-W` wins and a value at `CUT_AT` is flagged instead. And
+/// `-h`, for the same reason. The password is not here at all - see
+/// `sqlcmd_env`.
 pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-S".into(),
@@ -259,27 +285,46 @@ pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
         c.database.clone(),
         "-U".into(),
         c.user.clone(),
-        "-P".into(),
-        c.password.clone(),
     ];
     if c.trust_cert {
         args.push("-C".into());
     }
     args.extend([
-        "-s".into(),
-        "\t".into(),
-        "-W".into(),
-        "-y".into(),
-        "0".into(),
-        "-Y".into(),
-        "0".into(),
+        "-b".into(),
+        "-f".into(),
+        "65001".into(),
+        "-l".into(),
+        LOGIN_TIMEOUT_SECS.to_string(),
         "-t".into(),
         TIMEOUT_SECS.to_string(),
-        "-b".into(),
+        "-W".into(),
+        "-s".into(),
+        "\t".into(),
         "-Q".into(),
         sql.to_string(),
     ]);
     args
+}
+
+/// The child process's environment: the password, where sqlcmd looks for it
+/// when `-P` is not given. Never an argument - see the module note.
+pub fn sqlcmd_env(c: &Connection) -> Vec<(String, String)> {
+    vec![(PASSWORD_ENV.to_string(), c.password.clone())]
+}
+
+/// A notice when some value is exactly `CUT_AT` characters long - where
+/// sqlcmd stops. The header and the dashes rule under it are skipped.
+fn cut_notice(stdout: &str) -> Option<String> {
+    let hit = stdout
+        .lines()
+        .skip(2)
+        .any(|line| line.split('\t').any(|cell| cell.trim_end().chars().count() == CUT_AT));
+    hit.then(|| {
+        format!(
+            "... a value is exactly {CUT_AT} characters, which is where sqlcmd cuts text - it may be longer: select SUBSTRING(column, {}, {CUT_AT}) to read on",
+            CUT_AT + 1
+        )
+    })
 }
 
 /// Runs one statement and returns the tab-separated text, capped, and
@@ -299,7 +344,7 @@ pub async fn run_sql<R: Runner>(
 
     let args = sqlcmd_args(c, sql);
     let out = r
-        .run(exe, &args, Duration::from_secs(TIMEOUT_SECS))
+        .run(exe, &args, &sqlcmd_env(c), Duration::from_secs(TIMEOUT_SECS))
         .await
         .map_err(|e| hide_password(&e, &c.password))?;
 
@@ -316,7 +361,11 @@ pub async fn run_sql<R: Runner>(
         };
         return Err(hide_password(&said, &c.password));
     }
-    let (text, capped) = cap(&out.stdout);
+    let (mut text, capped) = cap(&out.stdout);
+    if let Some(notice) = cut_notice(&out.stdout) {
+        text.push('\n');
+        text.push_str(&notice);
+    }
     Ok((hide_password(&text, &c.password), capped))
 }
 

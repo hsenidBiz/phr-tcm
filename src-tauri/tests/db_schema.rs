@@ -1,22 +1,27 @@
-//! The ranked schema lookup: one SELECT over the database's own catalogue,
-//! and the text an assistant reads back from it.
+//! The ranked schema lookup: a ranking in one scan of the catalogue, the
+//! details for the tables it picked, and the text an assistant reads back.
 
-use v2_lib::db::{classify, describe_sql, lookup_sql, render_describe, render_lookup, Verdict};
+use v2_lib::db::{
+    classify, describe_sql, detail_sql, lookup_sql, parse_ranked, render_describe, render_lookup,
+    Picked, Verdict,
+};
 
 #[test]
-fn the_lookup_is_one_statement_its_own_guard_calls_a_read() {
+fn the_ranking_is_one_scan_its_own_guard_calls_a_read() {
     let sql = lookup_sql("leave request", "PeoplesHR", 10);
 
-    assert!(sql.contains("INFORMATION_SCHEMA.TABLES"), "{sql}");
-    assert!(sql.contains("INFORMATION_SCHEMA.COLUMNS"), "{sql}");
-    assert!(sql.contains("sys.foreign_keys"), "{sql}");
-    assert!(sql.contains("sys.foreign_key_columns"), "{sql}");
+    assert!(sql.contains("FROM INFORMATION_SCHEMA.COLUMNS c"), "{sql}");
     assert!(sql.contains("TABLE_SCHEMA = N'PeoplesHR'"), "{sql}");
     assert!(sql.contains("N'leave'"), "{sql}");
     assert!(sql.contains("N'request'"), "{sql}");
     assert!(sql.contains("TOP (10)"), "{sql}");
-    // The foreign keys are folded in rather than fetched by a second trip.
-    assert!(sql.contains("STRING_AGG"), "{sql}");
+    assert!(sql.contains("GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME"), "{sql}");
+    // What made the old single statement time out on a 13,000-table
+    // database: a second catalogue view, and per-row EXISTS tests against a
+    // ranking SQL Server recomputed for every row (2026-09-23).
+    assert!(!sql.contains("INFORMATION_SCHEMA.TABLES"), "{sql}");
+    assert!(!sql.contains("EXISTS"), "{sql}");
+    assert!(!sql.contains("CROSS JOIN"), "{sql}");
     // The scores the ranking is built from.
     for score in ["100", "60", "40", "20"] {
         assert!(sql.contains(score), "{score} missing from {sql}");
@@ -75,21 +80,57 @@ fn a_query_with_no_words_is_still_a_read_that_can_match_nothing() {
 #[test]
 fn a_table_matching_two_words_outranks_one_matching_only_one() {
     let sql = lookup_sql("leave request", "PeoplesHR", 10);
-    // The per-term scores are added up. Under MAX, a table called
-    // "LeaveRequest" scored the same 60 as one called "Leave".
-    assert!(sql.contains("SUM(CASE WHEN LOWER(t.TABLE_NAME)"), "{sql}");
-    assert!(sql.contains("SUM(CASE WHEN LOWER(c.COLUMN_NAME)"), "{sql}");
-    assert!(!sql.contains("MAX(CASE"), "{sql}");
+    // The per-term scores are ADDED inside one expression, so a table
+    // called "LeaveRequest" scores 120 where one called "Leave" scores 60.
+    // MAX only ever works across a table's rows, never across the terms.
+    assert!(sql.contains("ELSE 0 END + CASE WHEN LOWER(c.TABLE_NAME)"), "{sql}");
+    assert!(sql.contains("ELSE 0 END + CASE WHEN LOWER(c.COLUMN_NAME)"), "{sql}");
     assert_eq!(classify(&sql), Verdict::Read);
 }
 
+fn picked(pairs: &[(&str, &str, i64)]) -> Vec<Picked> {
+    pairs
+        .iter()
+        .map(|(sch, tab, score)| Picked { sch: sch.to_string(), tab: tab.to_string(), score: *score })
+        .collect()
+}
+
 #[test]
-fn the_columns_and_the_keys_are_gathered_only_for_the_tables_that_were_picked() {
-    // Without this the two aggregates run over every table in the database
-    // and are then thrown away by the join.
-    let sql = lookup_sql("leave", "PeoplesHR", 10);
-    assert_eq!(sql.matches("EXISTS (SELECT 1 FROM picked").count(), 2, "{sql}");
+fn the_details_are_read_only_for_the_tables_that_were_picked() {
+    let sql = detail_sql("leave", &picked(&[("dbo", "LeaveRequest", 160), ("dbo", "LeaveType", 60)]));
+    // The picked tables arrive as constants, so nothing is ranked again.
+    assert!(sql.contains("(VALUES (N'dbo', N'LeaveRequest', 160), (N'dbo', N'LeaveType', 60))"), "{sql}");
+    assert_eq!(sql.matches("JOIN picked p").count(), 2, "the columns and the keys: {sql}");
+    assert!(!sql.contains("EXISTS"), "{sql}");
+    assert!(sql.contains("sys.foreign_keys"), "{sql}");
+    assert!(sql.contains("sys.foreign_key_columns"), "{sql}");
+    assert!(sql.contains("STRING_AGG"), "{sql}");
+    assert!(sql.contains("LIKE N'%leave%'"), "only the columns that match the words: {sql}");
     assert_eq!(classify(&sql), Verdict::Read);
+    assert_eq!(sql.matches(';').count(), 0, "a semicolon would read as a second statement");
+
+    // A name read back from the database is escaped like anything else.
+    let odd = detail_sql("x", &picked(&[("o'neill", "it's", 1)]));
+    assert!(odd.contains("(N'o''neill', N'it''s', 1)"), "{odd}");
+    assert_eq!(classify(&odd), Verdict::Read);
+}
+
+#[test]
+fn the_ranking_answer_parses_into_the_picked_tables_in_order() {
+    let tsv = "sch\ttab\tscore\n\
+---\t---\t-----\n\
+PeoplesHR\tperf_performance_cycle\t160\r\n\
+PeoplesHR\tperf_cycle_calibration\t100\n\
+\n\
+(2 rows affected)\n";
+    assert_eq!(
+        parse_ranked(tsv),
+        picked(&[("PeoplesHR", "perf_performance_cycle", 160), ("PeoplesHR", "perf_cycle_calibration", 100)])
+    );
+    assert!(parse_ranked("").is_empty());
+    assert!(parse_ranked("sch\ttab\tscore\n---\t---\t---\n\n(0 rows affected)\n").is_empty());
+    // Anything that is not three cells ending in a number is not a table.
+    assert!(parse_ranked("Msg 208, Level 16\nInvalid object name\n").is_empty());
 }
 
 /// The shape sqlcmd writes with `-s "\t" -W`: a header, its dashes, then a

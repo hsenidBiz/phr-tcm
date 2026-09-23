@@ -1,72 +1,87 @@
 //! A ranked lookup over the database's own catalogue, so the assistant can
 //! find the right table by describing it rather than by guessing names.
 //!
-//! One SELECT, deliberately: it has to pass the same guard every other
-//! statement passes, and a guard that made an exception for its own query
-//! would not be a guard. That rules out dynamic SQL, temp tables and a
-//! second round trip for the foreign keys - the keys are folded into the
-//! same statement with `STRING_AGG` (SQL Server 2017 and later).
+//! Two SELECTs, each through the same guard every other statement passes:
+//! `lookup_sql` ranks the tables in ONE scan of `INFORMATION_SCHEMA.COLUMNS`
+//! (the way the PHR X DB server searches), and `detail_sql` then reads the
+//! matching columns, foreign keys and row counts for the picked tables only,
+//! named as constants.
+//!
+//! It used to be one statement, with the details gathered for "the tables
+//! in `picked`" through `EXISTS`. On the real hrmmain database (13,000+
+//! tables) SQL Server re-ran the whole ranking for every row it tested, and
+//! the lookup never answered inside sqlcmd's 30 s - with or without a schema
+//! filter (measured 2026-09-23). Ranked in one scan it takes about 1.5 s,
+//! the details about 1.6 s, and the old single statement over the new
+//! ranking still 4 s: two round trips are the fast shape, not a compromise.
 
 /// How many tables a lookup may ask for, whatever it was asked for.
 const MAX_LIMIT: usize = 100;
 
 /// A term that no table or column can be called, used when the query had
-/// no words in it at all: the scores then stay at zero and the `score > 0`
-/// filter returns nothing, which is the honest answer.
+/// no words in it at all: nothing then matches, which is the honest answer.
 const NO_TERM: &str = "~no~such~term~";
 
-/// The SQL for one lookup. `schema_filter` limits `TABLE_SCHEMA` when it is
-/// not empty; `limit` becomes the `TOP (n)`.
+/// One table the ranking picked, with its score.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picked {
+    pub sch: String,
+    pub tab: String,
+    pub score: i64,
+}
+
+/// The ranking: one scan of the column catalogue, grouped by table.
+///
+/// A row matches when its table's name OR its column's name contains a
+/// term. Per table, the name's score is the same on every row (so `MAX`
+/// reads it back) and the best column is the `MAX` of the column scores:
+/// table score + best column, the ranking this lookup has always used. The
+/// per-term scores are ADDED, so a table matching two words outranks one
+/// matching only one. `schema_filter` limits `TABLE_SCHEMA` when it is not
+/// empty; `limit` becomes the `TOP (n)`. Answers `sch, tab, score`.
 pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
     let terms = terms_of(query);
-    let values = terms
-        .iter()
-        .map(|t| format!("(N'{}')", escape(t)))
-        .collect::<Vec<String>>()
-        .join(", ");
-    // The same predicate on both catalogue views, so a filtered lookup
-    // never scores a table from one schema against a column from another.
     let where_schema = if schema_filter.trim().is_empty() {
         String::new()
     } else {
-        format!(" AND {{}}.TABLE_SCHEMA = N'{}'", escape(schema_filter.trim()))
+        format!(" AND c.TABLE_SCHEMA = N'{}'", escape(schema_filter.trim()))
     };
-    let tables_schema = where_schema.replace("{}", "t");
-    let columns_schema = where_schema.replace("{}", "c");
     let top = limit.clamp(1, MAX_LIMIT);
-
     format!(
-        "WITH terms AS (
-    SELECT term FROM (VALUES {values}) AS v(term)
-), tables_scored AS (
-    SELECT t.TABLE_SCHEMA AS sch, t.TABLE_NAME AS tab,
-           SUM(CASE WHEN LOWER(t.TABLE_NAME) = v.term THEN 100
-                    WHEN LOWER(t.TABLE_NAME) LIKE N'%' + v.term + N'%' THEN 60
-                    ELSE 0 END) AS tab_score
-    FROM INFORMATION_SCHEMA.TABLES t CROSS JOIN terms v
-    WHERE 1 = 1{tables_schema}
-    GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME
-), columns_scored AS (
-    SELECT c.TABLE_SCHEMA AS sch, c.TABLE_NAME AS tab, c.COLUMN_NAME AS col, c.DATA_TYPE AS typ,
-           SUM(CASE WHEN LOWER(c.COLUMN_NAME) = v.term THEN 40
-                    WHEN LOWER(c.COLUMN_NAME) LIKE N'%' + v.term + N'%' THEN 20
-                    ELSE 0 END) AS col_score
-    FROM INFORMATION_SCHEMA.COLUMNS c CROSS JOIN terms v
-    WHERE 1 = 1{columns_schema}
-    GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE
-), ranked AS (
-    SELECT s.sch, s.tab, s.tab_score + ISNULL((SELECT MAX(k.col_score) FROM columns_scored k
-                                               WHERE k.sch = s.sch AND k.tab = s.tab), 0) AS score
-    FROM tables_scored s
-), picked AS (
-    SELECT TOP ({top}) sch, tab, score FROM ranked WHERE score > 0 ORDER BY score DESC, tab
+        "SELECT TOP ({top}) c.TABLE_SCHEMA AS sch, c.TABLE_NAME AS tab,
+       MAX({table_score}) + MAX({column_score}) AS score
+FROM INFORMATION_SCHEMA.COLUMNS c
+WHERE ({table_like} OR {column_like}){where_schema}
+GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME
+ORDER BY score DESC, c.TABLE_NAME",
+        table_score = score_of(&terms, "c.TABLE_NAME", 100, 60),
+        column_score = score_of(&terms, "c.COLUMN_NAME", 40, 20),
+        table_like = any_like(&terms, "c.TABLE_NAME"),
+        column_like = any_like(&terms, "c.COLUMN_NAME"),
+    )
+}
+
+/// The details for the picked tables: the columns that matched the words,
+/// the foreign keys, and a row estimate. The tables arrive as constants, so
+/// nothing here has to work out again which tables they were. Answers
+/// `sch, tab, rows_est, cols, fks` - what `render_lookup` reads.
+pub fn detail_sql(query: &str, picked: &[Picked]) -> String {
+    let terms = terms_of(query);
+    let values = picked
+        .iter()
+        .map(|p| format!("(N'{}', N'{}', {})", escape(&p.sch), escape(&p.tab), p.score))
+        .collect::<Vec<String>>()
+        .join(", ");
+    format!(
+        "WITH picked AS (
+    SELECT sch, tab, score FROM (VALUES {values}) AS p(sch, tab, score)
 ), matched AS (
-    SELECT k.sch, k.tab,
-           STRING_AGG(CAST(k.col + N' ' + k.typ AS NVARCHAR(MAX)), N' | ') AS col_text
-    FROM columns_scored k
-    WHERE k.col_score > 0
-      AND EXISTS (SELECT 1 FROM picked p WHERE p.sch = k.sch AND p.tab = k.tab)
-    GROUP BY k.sch, k.tab
+    SELECT c.TABLE_SCHEMA AS sch, c.TABLE_NAME AS tab,
+           STRING_AGG(CAST(c.COLUMN_NAME + N' ' + c.DATA_TYPE AS NVARCHAR(MAX)), N' | ') AS col_text
+    FROM INFORMATION_SCHEMA.COLUMNS c
+    JOIN picked p ON p.sch = c.TABLE_SCHEMA AND p.tab = c.TABLE_NAME
+    WHERE {column_like}
+    GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME
 ), links AS (
     SELECT fs.name AS sch, fo.name AS tab,
            STRING_AGG(CAST(pc.name + N' -> ' + rs.name + N'.' + ro.name + N'(' + rc.name + N')' AS NVARCHAR(MAX)), N' | ') AS fk_text
@@ -74,11 +89,11 @@ pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
     JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
     JOIN sys.objects fo ON fo.object_id = fk.parent_object_id
     JOIN sys.schemas fs ON fs.schema_id = fo.schema_id
+    JOIN picked p ON p.sch = fs.name AND p.tab = fo.name
     JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
     JOIN sys.objects ro ON ro.object_id = fk.referenced_object_id
     JOIN sys.schemas rs ON rs.schema_id = ro.schema_id
     JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
-    WHERE EXISTS (SELECT 1 FROM picked p WHERE p.sch = fs.name AND p.tab = fo.name)
     GROUP BY fs.name, fo.name
 )
 SELECT p.sch AS sch, p.tab AS tab,
@@ -90,8 +105,53 @@ SELECT p.sch AS sch, p.tab AS tab,
 FROM picked p
 LEFT JOIN matched m ON m.sch = p.sch AND m.tab = p.tab
 LEFT JOIN links l ON l.sch = p.sch AND l.tab = p.tab
-ORDER BY p.score DESC, p.tab"
+ORDER BY p.score DESC, p.tab",
+        column_like = any_like(&terms, "c.COLUMN_NAME"),
     )
+}
+
+/// The tables `lookup_sql`'s answer names, in its order. sqlcmd's header,
+/// rule and footer are skipped, and so is anything that is not three cells
+/// ending in a whole number.
+pub fn parse_ranked(tsv: &str) -> Vec<Picked> {
+    tsv.lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .filter(|line| !line.trim().is_empty() && !is_rule(line) && !is_footer(line))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('\t').map(str::trim).collect();
+            match cells.as_slice() {
+                [sch, tab, score] if !sch.is_empty() && !tab.is_empty() => score
+                    .parse::<i64>()
+                    .ok()
+                    .map(|score| Picked { sch: sch.to_string(), tab: tab.to_string(), score }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The per-term scores for one name, added: an exact match, a partial one,
+/// or nothing.
+fn score_of(terms: &[String], expr: &str, exact: u32, partial: u32) -> String {
+    terms
+        .iter()
+        .map(|t| {
+            let t = escape(t);
+            format!(
+                "CASE WHEN LOWER({expr}) = N'{t}' THEN {exact} WHEN LOWER({expr}) LIKE N'%{t}%' THEN {partial} ELSE 0 END"
+            )
+        })
+        .collect::<Vec<String>>()
+        .join(" + ")
+}
+
+/// Whether a name contains any of the terms.
+fn any_like(terms: &[String], expr: &str) -> String {
+    terms
+        .iter()
+        .map(|t| format!("LOWER({expr}) LIKE N'%{}%'", escape(t)))
+        .collect::<Vec<String>>()
+        .join(" OR ")
 }
 
 /// The words of a query: lower-cased, split on everything that is not a

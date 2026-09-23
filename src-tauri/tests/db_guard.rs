@@ -223,3 +223,44 @@ fn allowed_passes_reads_everywhere_and_writes_only_on_the_dev_login() {
     assert!(allowed("DROP TABLE t", Access::DevWrites).unwrap_err().contains("DROP"));
     assert!(allowed("DROP TABLE t", Access::ReadOnly).unwrap_err().contains("DROP"));
 }
+
+/// T-SQL needs no semicolon between statements, so "one statement" cannot
+/// be judged by semicolons alone. Every chain below was confirmed as valid
+/// T-SQL by the server itself (SET PARSEONLY ON, sgdev01db02, 2026-09-23)
+/// and got past the guard in 1.25.17 - on the dev login it would have run.
+#[test]
+fn a_second_statement_without_a_semicolon_is_refused() {
+    for sql in [
+        "SELECT 1 KILL 1",
+        "SELECT 1 USE master",
+        "SELECT 1 DBCC DROPCLEANBUFFERS",
+        "SELECT 1 WAITFOR DELAY '00:00:25'",
+        "SELECT 1 SHUTDOWN",
+        "SELECT 1 DECLARE @x INT",
+        "SELECT 1 AS a SET NOCOUNT ON",
+        "SELECT 1 UPDATE STATISTICS dbo.X",
+        "SELECT 1 AS a DISABLE TRIGGER ALL ON dbo.X",
+        "SELECT 1 AS a ENABLE TRIGGER ALL ON dbo.X",
+        "SELECT 1 BEGIN TRAN",
+        "SELECT 1 CHECKPOINT",
+        "UPDATE dbo.X SET a = 1 KILL 1",
+    ] {
+        let why = refusal(sql);
+        assert!(!why.is_empty(), "{sql}");
+    }
+}
+
+/// The words that close that gap must not refuse what a person ordinarily
+/// writes: names that merely contain them, literals, brackets, a query
+/// hint, and the SET that belongs to an UPDATE.
+#[test]
+fn closing_the_chain_gap_leaves_ordinary_statements_alone() {
+    assert_eq!(classify("SELECT BEGIN_DATE, STATUS_ENABLED, KILL_SWITCH FROM dbo.T"), Verdict::Read);
+    assert_eq!(classify("SELECT 'KILL 1; USE master' AS s"), Verdict::Read);
+    assert_eq!(classify("SELECT [Use], [Kill], [Set] FROM dbo.T"), Verdict::Read);
+    assert_eq!(
+        classify("SELECT a FROM dbo.T OPTION (USE HINT ('FORCE_LEGACY_CARDINALITY_ESTIMATION'))"),
+        Verdict::Read
+    );
+    assert_eq!(classify("UPDATE dbo.T SET a = 1 WHERE id = 2"), Verdict::Write);
+}

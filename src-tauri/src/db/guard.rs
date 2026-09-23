@@ -55,6 +55,30 @@ const REFUSED_WORDS: &[&str] = &[
     "OPENROWSET",
     "OPENQUERY",
     "OPENDATASOURCE",
+    // T-SQL needs no semicolon between statements: `SELECT 1 KILL 1` is
+    // two statements, and the semicolon check below never sees it. Each of
+    // these can only START a statement - none belongs inside a SELECT or a
+    // single INSERT/UPDATE/DELETE/MERGE - so finding one anywhere means a
+    // second statement was welded on. Confirmed with SET PARSEONLY ON on
+    // sgdev01db02 (2026-09-23); in 1.25.17 they all passed as reads.
+    "KILL",
+    "SHUTDOWN",
+    "DBCC",
+    "CHECKPOINT",
+    "RECONFIGURE",
+    "WAITFOR",
+    "DECLARE",
+    "DISABLE",
+    "ENABLE",
+    "BULK",
+    "STATISTICS",
+    "SETUSER",
+    "REVERT",
+    "BEGIN",
+    "COMMIT",
+    "ROLLBACK",
+    "WRITETEXT",
+    "UPDATETEXT",
 ];
 
 /// The verbs that change data. Searched as whole words anywhere in the
@@ -153,6 +177,15 @@ pub fn classify(sql: &str) -> Verdict {
             ));
         }
     }
+    // USE switches database, which is a second statement - except inside a
+    // query hint, where `OPTION (USE HINT (...))` and `OPTION (USE PLAN
+    // N'...')` are part of the SELECT itself.
+    if words_after(&upper, "USE").iter().any(|next| next != "HINT" && next != "PLAN") {
+        return refused(
+            "USE is not allowed here: it starts a second statement - send one statement at a time"
+                .to_string(),
+        );
+    }
     if let Some(prefix) = procedure_call(&upper) {
         return refused(format!(
             "a stored procedure call ({prefix}) is not allowed here: these tools run SELECT statements only"
@@ -167,6 +200,15 @@ pub fn classify(sql: &str) -> Verdict {
             // erring towards Write only ever asks for a better connection.
             if WRITE_WORDS.iter().any(|w| has_word(&upper, w)) {
                 return Verdict::Write;
+            }
+            // A SELECT has no SET in it. One that does has a second
+            // statement welded on without a semicolon (`SELECT 1 SET
+            // NOCOUNT ON`); the SET of an UPDATE never reaches this line.
+            if has_word(&upper, "SET") {
+                return refused(
+                    "a second statement (SET) is not allowed here: send one statement at a time"
+                        .to_string(),
+                );
             }
             // `SELECT ... INTO newtable` is the one way a SELECT creates a
             // table, and it does not go near any of the DDL words above.
@@ -306,6 +348,26 @@ fn has_word(upper: &str, word: &str) -> bool {
         }
     }
     false
+}
+
+/// The word after each whole-word occurrence of `word` ("" at the end).
+fn words_after(upper: &str, word: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(at) = upper[from..].find(word) {
+        let start = from + at;
+        let end = start + word.len();
+        let before = upper[..start].chars().next_back();
+        let after = upper[end..].chars().next();
+        if !before.is_some_and(is_name_char) && !after.is_some_and(is_name_char) {
+            out.push(leading_word(&upper[end..]));
+        }
+        from = end;
+        if from >= upper.len() {
+            break;
+        }
+    }
+    out
 }
 
 /// `sp_` or `xp_` starting a name anywhere in the statement: the shape of
