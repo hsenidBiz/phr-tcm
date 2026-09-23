@@ -81,6 +81,23 @@
   --color-muted: var(--color-surface-2);
 }
 
+/* 5b. Under sonner (richColors) a success, error or warning toast was
+       tinted, so an error read as an error at a glance. XiodUI colours
+       only the 16px icon; the tint comes back here, from the app's own
+       status colours so every theme keeps it. */
+[data-slot="toast-viewport"] > [data-type="success"] {
+  background-color: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+}
+[data-slot="toast-viewport"] > [data-type="error"] {
+  background-color: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+}
+[data-slot="toast-viewport"] > [data-type="warning"] {
+  background-color: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+}
+
 /* 6. XiodUI animates in plain CSS transitions. The app's rule (index.css,
       "Motion") is that none of it plays when the OS asks for less. */
 @media (prefers-reduced-motion: reduce) {

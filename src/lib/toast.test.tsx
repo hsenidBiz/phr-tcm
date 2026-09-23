@@ -76,6 +76,27 @@ test("without a duration, a toast stays four seconds - sonner's default, which e
   expect(left === null || left.closest("[data-ending-style]") !== null).toBe(true);
 });
 
+test("duration Infinity keeps a toast until it is dismissed, as it did under sonner", () => {
+  vi.useFakeTimers();
+  render(<Toaster />);
+  act(() => {
+    toast.error("Stays", { duration: Infinity });
+  });
+  act(() => {
+    vi.advanceTimersByTime(60_000);
+  });
+  expect(screen.getByText("Stays").closest("[data-ending-style]")).toBeNull();
+});
+
+test("a toast's kind is on its own element, directly in the viewport - the hook xiod-theme.css tints it by", async () => {
+  render(<Toaster />);
+  act(() => {
+    toast.error("Tinted");
+  });
+  const root = (await screen.findByText("Tinted")).closest('[data-slot="toast-viewport"] > *');
+  expect(root?.getAttribute("data-type")).toBe("error");
+});
+
 test("dismiss() with no id clears every toast", async () => {
   render(<Toaster />);
   act(() => {

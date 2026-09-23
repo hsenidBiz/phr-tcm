@@ -16,7 +16,8 @@ import { toastManager } from "xiod-ui/toast";
 export type ToastOptions = {
   /** A second line under the message. */
   description?: ReactNode;
-  /** How long it stays, in ms. Left out, the host's default (4 s). */
+  /** How long it stays, in ms. Left out, the host's default (4 s);
+   * `Infinity` keeps it until dismissed, as under sonner. */
   duration?: number;
   /** One button on the toast. Clicking it runs `onClick` and dismisses the
    * toast, as sonner's action did. */
@@ -39,7 +40,9 @@ function show(kind: Kind | undefined, message: ReactNode, opts: ToastOptions = {
     type: kind,
     title: message,
     description: opts.description,
-    timeout: opts.duration,
+    // Base UI's "until dismissed" is 0; Infinity would reach setTimeout,
+    // which fires at once.
+    timeout: opts.duration === Infinity ? 0 : opts.duration,
     actionProps: action
       ? {
           children: action.label,
