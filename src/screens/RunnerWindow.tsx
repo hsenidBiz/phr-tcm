@@ -22,6 +22,7 @@ import {
   loadMyOrder,
   moveAfter,
   onMyOrderChanged,
+  reconcile,
   resortUpcoming,
   saveMyOrder,
   type OrderKey,
@@ -128,8 +129,9 @@ export default function RunnerWindow() {
   const [idx, setIdx] = useState(0);
   // This window's own order of case ids (design doc §5.2): null until the
   // fetch below has something to seed it from. Reordered by "Run next..."
-  // and by another window's My-order save; Prev/Next and the fetch/backfill
-  // merge never touch it once it is set, except to append a late arrival.
+  // and by another window's My-order save; the fetch/backfill merge only
+  // inserts a late arrival at its fetch position - it never otherwise
+  // touches what Prev/Next walk.
   const [order, setOrder] = useState<number[] | null>(null);
   const [states, setStates] = useState<Record<number, CaseState>>({});
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
@@ -230,27 +232,42 @@ export default function RunnerWindow() {
   // Seed `order` the first time there is anything to seed it with, then
   // only ever EXTEND it: a case that arrives later (the backfill fetch
   // landing after first paint, e.g. a Tested-By-less id the session still
-  // named) is placed in its fetch position - just before the nearest case
-  // already on screen that follows it in `arrivedIds` - never dropped,
-  // never bumping something the tester already reordered. A case moved by
-  // "Run next..." or another window's My order is untouched here.
+  // named) is inserted at its fetch position - just before the nearest
+  // case already on screen that follows it in `arrivedIds` - never
+  // dropped, never bumping something the tester already reordered. A case
+  // moved by "Run next..." or another window's My order is untouched here.
   useEffect(() => {
-    setOrder((prev) => {
-      if (!prev) return arrivedIds;
-      const idSet = new Set(arrivedIds);
-      const kept = prev.filter((id) => idSet.has(id));
-      const keptSet = new Set(kept);
-      const newIds = arrivedIds.filter((id) => !keptSet.has(id));
-      if (newIds.length === 0) return kept.length === prev.length ? prev : kept;
-      const fetchPos = new Map(arrivedIds.map((id, i) => [id, i]));
-      const result = [...kept];
-      for (const id of newIds) {
-        const myPos = fetchPos.get(id)!;
-        const before = result.findIndex((keptId) => (fetchPos.get(keptId) ?? Infinity) > myPos);
-        result.splice(before < 0 ? result.length : before, 0, id);
-      }
-      return result;
-    });
+    if (!order) {
+      setOrder(arrivedIds);
+      return;
+    }
+    const idSet = new Set(arrivedIds);
+    const kept = order.filter((id) => idSet.has(id));
+    const keptSet = new Set(kept);
+    const newIds = arrivedIds.filter((id) => !keptSet.has(id));
+    const shrank = kept.length !== order.length;
+    if (newIds.length === 0 && !shrank) return; // nothing this render changed
+
+    const fetchPos = new Map(arrivedIds.map((id, i) => [id, i]));
+    const result = [...kept];
+    for (const id of newIds) {
+      const myPos = fetchPos.get(id)!;
+      const before = result.findIndex((keptId) => (fetchPos.get(keptId) ?? Infinity) > myPos);
+      result.splice(before < 0 ? result.length : before, 0, id);
+    }
+    setOrder(result);
+
+    // A late arrival (or a case dropping out of the fetch) must not swap
+    // the case on screen out from under the tester once they have moved
+    // past the first case or put anything into this one - only the very
+    // first, still-untouched paint lets an earlier-ranked late arrival
+    // become the new current case.
+    const oldId = order[idx] ?? null;
+    const touched = idx > 0 || (oldId != null && states[oldId] !== undefined);
+    if (touched && oldId != null) {
+      const newIdx = result.indexOf(oldId);
+      if (newIdx >= 0 && newIdx !== idx) setIdx(newIdx);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivedKey]);
 
@@ -272,6 +289,13 @@ export default function RunnerWindow() {
   idxRef.current = idx;
   const statesRef = useRef(states);
   statesRef.current = states;
+  // The raw My order this window itself last saved (JSON, for a cheap deep
+  // compare), so the listener below can recognise its OWN save echoing
+  // back even when the stored order it started from did not match this
+  // window's order (Run Tests may have this suite open on a different
+  // view) - comparing "did the re-sort change anything" alone is not
+  // enough for that case.
+  const ownSaveRef = useRef<string | null>(null);
 
   const runNextCandidates = current ? list.slice(idx + 1).filter((c) => !states[c.id]?.outcome) : [];
 
@@ -284,30 +308,45 @@ export default function RunnerWindow() {
     const baseOrder = order ?? arrivedIds;
     const next = moveAfter(baseOrder, chosen, current.id);
     setOrder(next);
+    // setOrder only takes effect on the NEXT render - update the ref
+    // immediately too, so a My-order event arriving before then (the
+    // save below emits one) still resorts against this window's true
+    // current order, not the stale one from before the choice.
+    orderRef.current = next;
     // moveAfter never repositions the case it is moving PAST, but find the
     // new spot by id rather than assume that holds.
     const newIdx = next.indexOf(current.id);
     if (newIdx >= 0 && newIdx !== idx) setIdx(newIdx);
-    const mineBase = loadMyOrder(orderKey) ?? baseOrder;
-    saveMyOrder(orderKey, moveAfter(mineBase, chosen, current.id));
+    // The stored My order can be stale, sorted differently than this
+    // window (Run Tests may be showing a suggested/spec view while this
+    // machine already has a My order from an earlier session), or simply
+    // missing the case just chosen or the one on screen entirely (a bare
+    // moveAfter would then be a no-op) - reconcile it against this
+    // window's own ids first, so the save always carries the choice.
+    const mine = reconcile(loadMyOrder(orderKey) ?? baseOrder, baseOrder);
+    const saved = moveAfter(mine, chosen, current.id);
+    ownSaveRef.current = JSON.stringify(saved);
+    saveMyOrder(orderKey, saved);
   };
 
   // Run Tests and this window stay in step (design doc §5.2): a My-order
   // save from either one re-sorts only the cases after the one on screen,
-  // here. Ignore an event whose resulting order equals what is already on
-  // screen - that is this window's OWN save (above) echoing back.
+  // here. Ignore this window's OWN save (above) echoing back.
   useEffect(() => {
     if (!orderKey) return;
     const un = onMyOrderChanged((k) => {
       if (k.org !== orderKey.org || k.planId !== orderKey.planId || k.suiteId !== orderKey.suiteId) return;
       const prevOrder = orderRef.current;
       if (!prevOrder) return;
-      const mine = loadMyOrder(orderKey) ?? [];
+      const rawMine = loadMyOrder(orderKey);
+      if (ownSaveRef.current != null && JSON.stringify(rawMine) === ownSaveRef.current) return;
+      const mine = rawMine ?? [];
       const isMarked = (id: number) => Boolean(statesRef.current[id]?.outcome);
       const oldId = prevOrder[idxRef.current];
       const next = resortUpcoming(prevOrder, idxRef.current, isMarked, mine);
       if (next.length === prevOrder.length && next.every((id, i) => id === prevOrder[i])) return;
       setOrder(next);
+      orderRef.current = next;
       // resortUpcoming never touches idx's own slot or anything at/before
       // it, but find the case by id rather than assume that holds.
       const newIdx = next.indexOf(oldId);
@@ -316,6 +355,11 @@ export default function RunnerWindow() {
     return () => {
       un.then((f) => f()).catch(() => {});
     };
+    // Deps are the key's own fields, not `orderKey` itself (a fresh object
+    // every render) or anything read inside the callback (current order/
+    // idx/states, `ownSaveRef`) - those are read live through the refs
+    // above on purpose, so this only re-subscribes if the SUITE changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderKey?.org, orderKey?.planId, orderKey?.suiteId]);
   const st = (current && states[current.id]) || emptyState();
   const currentPoint = points.data?.find((p) => p.test_case_id === current?.id);

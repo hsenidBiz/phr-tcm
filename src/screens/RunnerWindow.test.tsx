@@ -815,7 +815,17 @@ test("a My order save from elsewhere re-sorts the upcoming cases, leaving the on
   localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([201, 203, 202]));
   await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
 
-  // Still on Alpha - the event never moves the case on screen.
+  // Wait for an OBSERVABLE effect of the re-sort - Run next's own order -
+  // rather than asserting "still on Alpha" the instant after the emit,
+  // which would pass even if the listener never ran at all.
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  await vi.waitFor(() => {
+    const opts = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(opts).toEqual(["Charlie check", "Bravo check"]);
+  });
+  closeRunNext();
+
+  // The re-sort only ever touches what comes AFTER the current case.
   expect(screen.getByText("Alpha check")).toBeInTheDocument();
 
   // Next now walks to Charlie, per the new order.
@@ -847,4 +857,104 @@ test("marked cases after the current one keep their position under a re-sort", a
   await screen.findByText("Delta check");
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Charlie check");
+});
+
+test("Run next is hidden once every later case is marked", async () => {
+  mockRunnerCases([
+    { ...fullCase, id: 201, title: "Alpha check" },
+    { ...fullCase, id: 202, title: "Bravo check" },
+  ]);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Bravo check");
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Alpha check");
+
+  // Bravo was the only later case, and it is marked now - nothing left to
+  // pick, so the picker itself is gone (not just empty).
+  expect(screen.queryByRole("combobox", { name: "Run next" })).not.toBeInTheDocument();
+});
+
+// This window's own My-order save must never echo back and undo the
+// choice that produced it - regardless of what the STORED My order looked
+// like before the save (Run Tests can leave a different one behind).
+test("choosing Run next lands Next on the chosen case even when the stored My order already differs from this window's own order", async () => {
+  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([204, 203, 202, 201]));
+  mockRunnerCases(RUN4);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
+});
+
+test("choosing Run next reconciles a stored My order that is missing the chosen or current case", async () => {
+  // Neither Alpha (current) nor Charlie (chosen) is in here at all - a
+  // bare moveAfter on this would be a no-op and drop the choice.
+  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([202]));
+  mockRunnerCases(RUN4);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
+    202, 201, 203, 204,
+  ]);
+});
+
+test("a late backfill never swaps the case on screen once the tester has touched it", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      caseIds: [999, 201, 202], // 999 has no Tested-By link and ranks FIRST.
+    }),
+  );
+  let resolveBackfill!: (v: unknown) => void;
+  const backfillPromise = new Promise((resolve) => {
+    resolveBackfill = resolve;
+  });
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...fullCase, id: 201, title: "Alpha check" },
+        { ...fullCase, id: 202, title: "Bravo check" },
+      ];
+    if (cmd === "test_cases_by_ids") {
+      expect((args as { ids: number[] }).ids).toEqual([999]);
+      return backfillPromise;
+    }
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  // The tester marks the case on screen BEFORE 999 arrives.
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+
+  // 999 lands now, ranked FIRST by the session - but the tester already
+  // touched Alpha, so it must not swap out from under them.
+  resolveBackfill([{ ...fullCase, id: 999, title: "Unlinked case" }]);
+  await vi.waitFor(() =>
+    expect(
+      screen.getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "2/3"),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.getByText("Alpha check")).toBeInTheDocument();
 });
