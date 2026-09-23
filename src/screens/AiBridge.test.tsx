@@ -337,6 +337,13 @@ const PRESETS = [
 /// is typed the picker keeps showing that choice rather than snapping back
 /// to blank.
 test("Your own database clears the connection for typing and stays selected for a hand-entered one", async () => {
+  // Seed a stored connection that MATCHES a preset, so picking "Your own
+  // database" has something real to clear - starting from empty would let
+  // the emptiness assertions below pass even if clearing never ran.
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
+    exe_path: "", db_type: "mssql", schema_filter: "PeoplesHR",
+    connection_string: PRESETS[0].connection_string,
+  }));
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
@@ -345,6 +352,7 @@ test("Your own database clears the connection for typing and stays selected for 
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   fireEvent.click(await screen.findByLabelText("Default connections"));
+  expect(screen.getByLabelText("Database host")).toHaveValue("dev");
   fireEvent.click(await screen.findByText("Your own database"));
   expect(screen.getByLabelText("Database host")).toHaveValue("");
   expect(screen.getByLabelText("Database name")).toHaveValue("");
@@ -373,6 +381,34 @@ test("a stored connection that matches no preset shows as Your own database", as
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByLabelText("Default connections")).toHaveTextContent("Your own database");
+  localStorage.clear();
+});
+
+/// The themed Combobox calls onChange even for the option already selected.
+/// Picking "Your own database" while it already IS the current choice must
+/// not wipe out what was hand-typed there.
+test("picking Your own database again does not clear an already hand-entered connection", async () => {
+  const HAND =
+    "Server=sql.example.local;Database=Payroll;User Id=reader;Password=p;TrustServerCertificate=True;";
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
+    exe_path: "", db_type: "mssql", schema_filter: "",
+    connection_string: HAND,
+  }));
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_server_presets") return PRESETS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByLabelText("Default connections")).toHaveTextContent("Your own database");
+
+  // The trigger already reads "Your own database" - open the list and pick
+  // the OPTION with that name, not the trigger's own label text.
+  fireEvent.click(screen.getByLabelText("Default connections"));
+  fireEvent.click(await screen.findByRole("option", { name: "Your own database" }));
+
+  expect(JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!).connection_string).toBe(HAND);
+  expect(screen.getByLabelText("Database host")).toHaveValue("sql.example.local");
   localStorage.clear();
 });
 
@@ -761,6 +797,9 @@ test("a tool with no project config is labelled global", async () => {
 /// one thing left to do - restart the coding session that read the old
 /// file at startup. Tools without the server registered are left alone.
 test("picking a preset re-registers the DB server where it is registered, then says to restart", async () => {
+  // The PHR X option is on: this is the case where syncing a leftover
+  // registration's config is exactly what should happen.
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   const registered: Array<{ id: string; conn: string }> = [];
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
@@ -786,6 +825,49 @@ test("picking a preset re-registers the DB server where it is registered, then s
   await waitFor(() => expect(registered).toHaveLength(1));
   expect(registered[0]).toEqual({ id: "vscode", conn: "Server=qa;Database=b;User Id=ro;" });
   expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
+});
+
+/// With the PHR X option off, picking a preset must never re-register the
+/// separate server, even where a leftover registration still exists and a
+/// stored config still carries its exe_path - that would silently refresh
+/// a password copy the leftover notice tells people to remove.
+test("with the PHR X option off, picking a preset does not sync a leftover PHR X registration", async () => {
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
+      db_type: "mssql",
+      schema_filter: "PeoplesHR",
+      connection_string: "Server=dev;Database=a;User Id=ro;",
+    }),
+  );
+  let registerCalled = false;
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
+      ];
+    if (cmd === "db_server_presets")
+      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
+    if (cmd === "register_db_server") {
+      registerCalled = true;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("QA — read only"));
+
+  // Give the form time to pick up the new connection before asserting the
+  // registration call that should never happen didn't.
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!).connection_string).toBe(
+      "Server=qa;Database=b;User Id=ro;",
+    ),
+  );
+  expect(registerCalled).toBe(false);
 });
 
 test("the tool list offers only the switchable tools, by their human names", async () => {

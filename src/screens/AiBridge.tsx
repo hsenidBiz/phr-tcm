@@ -671,9 +671,21 @@ export default function AiBridge() {
                   options={[...dbPresets.data!.map((p) => p.label), OWN_DATABASE]}
                   onChange={(label) => {
                     if (label === OWN_DATABASE) {
+                      // The themed Combobox calls onChange even when the
+                      // already-selected option is picked again. Clear the
+                      // connection only when there is a preset's string to
+                      // clear, or nothing typed yet - a hand-entered string
+                      // that matches no preset is kept as is.
+                      const matchesPreset = dbPresets.data!.some(
+                        (p) => p.connection_string === db.connection_string,
+                      );
                       setOwnPicked(true);
-                      editDb({ connection_string: "" });
-                      setRawConn(false);
+                      if (matchesPreset || !db.connection_string.trim()) {
+                        editDb({ connection_string: "" });
+                        setRawConn(false);
+                      } else if (isRepresentable(db.connection_string)) {
+                        setRawConn(false);
+                      }
                       return;
                     }
                     const preset = dbPresets.data!.find((p) => p.label === label);
@@ -687,11 +699,16 @@ export default function AiBridge() {
                       editDb(patch);
                       setRawConn(!isRepresentable(preset.connection_string));
                       // Push the new string into every config that carries
-                      // the server, so the file agrees with the form.
-                      const ids = installed
-                        .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
-                        .map((t) => t.id);
-                      if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
+                      // the server, so the file agrees with the form - but
+                      // only when the PHR X option is switched on. With it
+                      // off, a leftover registration is left alone here;
+                      // the only action offered for it is Unregister.
+                      if (showPhrx) {
+                        const ids = installed
+                          .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
+                          .map((t) => t.id);
+                        if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
+                      }
                     }
                   }}
                 />
