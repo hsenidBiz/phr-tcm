@@ -1,4 +1,4 @@
-Runner game, bundled for an optional extra in Settings.
+Runner game, bundled with the app.
 
 Source:  github.com/wayou/t-rex-runner
 Commit:  5455bfa408ec6b707c7300ff194b7390733a766d (2022-06-08)

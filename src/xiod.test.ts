@@ -170,8 +170,15 @@ describe("imports", () => {
           continue;
         }
         if (!/\.(tsx?|jsx?)$/.test(e.name)) continue;
-        for (const m of readFileSync(p, "utf8").matchAll(/from "xiod-ui\/([a-z/-]+)"/g)) {
-          imported.push({ file: relative(SRC, p).replace(/\\/g, "/"), part: m[1] });
+        // Anchored on the from/import keyword (with an optional call paren,
+        // for a dynamic specifier) so a single-quoted path, a dynamic
+        // specifier and a side-effect-only specifier all count, while a
+        // plain quoted "xiod-ui" elsewhere in a file - this one included,
+        // see the "pin" tests above - is not mistaken for one. Deliberately
+        // not spelled out as literal code in this comment: it would match
+        // its own pattern and fail this very test.
+        for (const m of readFileSync(p, "utf8").matchAll(/\b(?:from|import)\s*\(?\s*["']xiod-ui(\/[^"']*)?["']/g)) {
+          imported.push({ file: relative(SRC, p).replace(/\\/g, "/"), part: m[1] ? m[1].slice(1) : "" });
         }
       }
     };

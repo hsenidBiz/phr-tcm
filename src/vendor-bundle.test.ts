@@ -118,3 +118,17 @@ test("the app's CSP lets the window frame its own pages and nothing else", () =>
     expect(frame).toBe("frame-src 'self'");
   }
 });
+
+// The BSD notice both licences require has to actually be in the notices
+// file, not just a filename check that the licences themselves are still
+// bundled - an edit to the notices file could otherwise quietly drop it.
+test("every line of both runner licences is reproduced in the notices file", () => {
+  const notices = readFileSync(join(ROOT, "public/THIRD-PARTY-NOTICES.txt"), "utf8");
+  for (const name of ["LICENSE", "LICENSE.chromium"]) {
+    const lines = readFileSync(join(RUNNER, name), "utf8")
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(notices).toContain(line);
+  }
+});
