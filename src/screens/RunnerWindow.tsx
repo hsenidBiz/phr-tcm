@@ -24,6 +24,7 @@ import {
   onMyOrderChanged,
   resortUpcoming,
   saveMyOrder,
+  saveOrderView,
   type OrderKey,
 } from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
@@ -119,9 +120,10 @@ async function readClipboardImageB64(): Promise<string | null> {
 
 export default function RunnerWindow() {
   const session = loadRunnerSession();
-  // This suite's My-order key (design doc §4.3): null for a suite-less
-  // session (there isn't one), which is also when "Run next..." and the
-  // cross-window sync below both quietly do nothing.
+  // This suite's My-order key (design doc §4.3): every RunnerSession names
+  // a suite, so this is null only when there is no session at all (the
+  // runner window opened with nothing to run) - which is also when "Run
+  // next..." and the cross-window sync below both quietly do nothing.
   const orderKey: OrderKey | null = session
     ? { org: session.org, planId: session.planId, suiteId: session.suiteId }
     : null;
@@ -333,12 +335,22 @@ export default function RunnerWindow() {
     // Run next choice. So every stored id is kept as-is, and only this
     // window's own ids still missing from it (never saved before, or
     // newly arrived) are appended, in this window's order.
-    const stored = loadMyOrder(orderKey) ?? [];
-    const have = new Set(stored);
-    const mine = [...new Set(stored), ...baseOrder.filter((id) => !have.has(id))];
+    // With nothing stored yet, seed from the session's caseOrder (RunPanel's
+    // full list, design doc §5.2) rather than just this window's own ids -
+    // a selective run only ever fetches its caseIds, and starting My order
+    // from that alone would silently drop every case outside this run the
+    // moment it is first created.
+    const storedRaw = loadMyOrder(orderKey);
+    const seed = storedRaw ?? session?.caseOrder ?? baseOrder;
+    const have = new Set(seed);
+    const mine = [...new Set(seed), ...baseOrder.filter((id) => !have.has(id))];
     const saved = moveAfter(mine, chosen, current.id);
     ownSaveRef.current = JSON.stringify(saved);
     saveMyOrder(orderKey, saved);
+    // Mirrors Run Tests' own rule (useRunOrder's commit()): reordering
+    // copies the order into My order and switches the view to it, so Run
+    // Tests' listener - already re-reading on this same save - follows.
+    saveOrderView(orderKey, "mine");
   };
 
   // Run Tests and this window stay in step (design doc §5.2): a My-order

@@ -35,7 +35,8 @@ import {
   IconUndo,
 } from "../../lib/actionIcons";
 import type { OrderView } from "../../lib/runOrder";
-import { ORDER_LABELS, useRunOrder } from "./useRunOrder";
+import { ORDER_LABELS, runOrderQueryOptions, useRunOrder } from "./useRunOrder";
+import { suiteCasesKey } from "../ManageCases/suiteCasesQuery";
 
 
 export { outcomeLabel };
@@ -166,6 +167,15 @@ export default function RunPanel({
   const refreshPoints = () => {
     qc.invalidateQueries({ queryKey: ["points"] });
     qc.invalidateQueries({ queryKey: ["run-history"] });
+    // The disk seed makes both of these look fresh even right after an
+    // upload or a Suite Management save changed them (design doc §4.4);
+    // Refresh must force a real re-read, not just repaint from the seed.
+    qc.invalidateQueries({ queryKey: runOrderQueryOptions(org, project, pbiId).queryKey });
+    if (suite.data) {
+      qc.invalidateQueries({
+        queryKey: suiteCasesKey(org, project, suite.data.plan_id, suite.data.suite_id),
+      });
+    }
   };
 
   // The full re-resolve (Shift-click, or automatic when the cached suite
@@ -299,6 +309,11 @@ export default function RunPanel({
       suiteId: suite.data!.suite_id,
       pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
       caseIds,
+      // The runner ignores this while caseIds restricts the run, but keeps
+      // it as the base "Run next..." seeds My order from - so choosing a
+      // case outside a selective run's caseIds still lands it in the
+      // suite's full order, not just the handful this run covers.
+      caseOrder: order.displayOrder,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
   /** Groups on screen not yet folded - Collapse all folds these too. */

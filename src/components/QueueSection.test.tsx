@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
+import { cacheKeys, cacheWrite } from "../lib/cache";
 import QueueSection from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
@@ -74,6 +75,24 @@ function renderQueue(
       <Harness initial={initial} watches={extra?.watches} onWatchPatched={extra?.onWatchPatched} />
     </QueryClientProvider>,
   );
+}
+
+/** Same harness as `renderQueue`, but hands back the QueryClient so a test
+ * can pre-seed a query and check it comes out invalidated. */
+function renderQueueWithClient(
+  initial: TestCase[],
+  extra?: {
+    watches?: WatchedFile[];
+    onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+  },
+) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(
+    <QueryClientProvider client={qc}>
+      <Harness initial={initial} watches={extra?.watches} onWatchPatched={extra?.onWatchPatched} />
+    </QueryClientProvider>,
+  );
+  return { ...result, qc };
 }
 
 function baseMocks() {
@@ -705,6 +724,43 @@ test("unchanged rows go to the upload as order hints, with their place in the qu
     { index: 0, id: 201, spec_order: 1, tester_order: 2, area: "Login" },
     { index: 2, id: 202, spec_order: 3, tester_order: 3, area: "" },
   ]);
+});
+
+/// A created case can change the suite order and/or the suggested run
+/// order (design doc §4.1, §4.2). Run Tests and Suite Management must not
+/// go on serving what they had cached before the upload.
+test("an upload that creates a case invalidates the run order and suite cases caches", async () => {
+  cacheWrite(cacheKeys.runOrder("acme", "Web", 42), { state: "found", file: { cases: [] } });
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      return [{ index: 0, title: "Login works", action: "created", id: 900, error: null }];
+    }
+    return undefined;
+  });
+  const { qc } = renderQueueWithClient([makeCase()]);
+  qc.setQueryData(["run-order", "acme", "Web", 42], { state: "found", file: { cases: [] } });
+  qc.setQueryData(["suite-cases", "acme", "Web", 1, 2], []);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() =>
+    expect(qc.getQueryState(["run-order", "acme", "Web", 42])?.isInvalidated).toBe(true),
+  );
+  expect(qc.getQueryState(["suite-cases", "acme", "Web", 1, 2])?.isInvalidated).toBe(true);
+  expect(cacheReadRunOrder()).toBeNull();
+
+  function cacheReadRunOrder() {
+    return JSON.parse(localStorage.getItem(`tcm-v2-cache:${cacheKeys.runOrder("acme", "Web", 42)}`) ?? "null");
+  }
 });
 
 /// The upload succeeded but an order did not save: the backend says which

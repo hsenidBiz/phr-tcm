@@ -912,6 +912,46 @@ test("choosing Run next reconciles a stored My order that is missing the chosen 
   ]);
 });
 
+// The runner only ever fetches the cases in a selective run's caseIds, but
+// RunPanel now hands over caseOrder too - the whole list's order the
+// session was opened from (design doc §5.2 fix). With no My order saved
+// yet, the first "Run next..." choice should seed from that fuller order,
+// not from just this run's own (narrower) ids - otherwise a case outside
+// the run would be silently dropped the moment My order is first created.
+test("with no stored My order, Run next seeds My order from the session's caseOrder - keeping cases outside this run", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      caseIds: [201, 203, 204],
+      caseOrder: [201, 202, 203, 204],
+    }),
+  );
+  mockRunnerCases(RUN4);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  fireEvent.click(screen.getByRole("option", { name: "Delta check" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Delta check");
+
+  // 202 (Bravo) was never part of this run at all, yet the saved My order
+  // still carries it - taken from caseOrder, not dropped - sitting after
+  // the moved case (204) exactly as it did after 204 in caseOrder.
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
+    201, 204, 202, 203,
+  ]);
+  // Mirrors Run Tests' own rule: reordering switches the view to My order.
+  expect(localStorage.getItem("tcm-v2-run-order-view:acme/9/91")).toBe("mine");
+});
+
 test("choosing Run next keeps stored ids from outside this run, in their own relative order", async () => {
   // 301 and 302 are not among this run's cases at all (the runner only
   // ever holds the cases selected for THIS run) - a Run next choice must

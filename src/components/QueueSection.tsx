@@ -26,6 +26,7 @@ import {
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
+import { cacheKeys, cacheRemove } from "../lib/cache";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 import { loadNotes, saveNote } from "../lib/caseNotes";
@@ -865,6 +866,17 @@ export default function QueueSection({
 
     qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
+    // A created case can move the suite's spec order and/or the PBI's
+    // suggested run order (design doc §4.1, §4.2). Run Tests and Suite
+    // Management must not go on serving what they cached before the
+    // upload - drop both the query and the persisted copy, and widen the
+    // suite-cases invalidation to every suite for this org/project since
+    // this screen does not know which suite the upload landed in.
+    if (results.some((r) => r.action === "created")) {
+      qc.invalidateQueries({ queryKey: ["run-order", org, project, sentFor] });
+      cacheRemove(cacheKeys.runOrder(org, project, sentFor));
+      qc.invalidateQueries({ queryKey: ["suite-cases", org, project] });
+    }
   }
 
   /** Stop listening without letting jsdom's missing event internals turn a
