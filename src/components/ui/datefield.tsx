@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { IconPickDate } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import Calendar from "./calendar";
@@ -57,10 +57,27 @@ export default function DateField({
     close();
   };
 
-  const date = toDate(value);
+  // Memoised on value: XiodCalendar resets its visible month whenever
+  // `selected`'s identity changes (calendar.js), so a fresh Date on every
+  // render would snap a paged-away month back if the drawer re-renders
+  // while the panel is open (a query refetch, say).
+  const date = useMemo(() => toDate(value), [value]);
 
   return (
-    <div ref={ref} className={cn("relative", className)}>
+    <div
+      ref={ref}
+      className={cn("relative", className)}
+      onKeyDown={(e) => {
+        // Scoped to this field, not the panel: a Shift+Tab out of the
+        // calendar can land focus back on the trigger while the panel is
+        // still open, and Escape there must still close only the panel,
+        // not bubble to the drawer's window-level Escape (which would
+        // close the drawer and its unsaved draft).
+        if (!open || e.key !== "Escape") return;
+        e.stopPropagation();
+        close();
+      }}
+    >
       <button
         ref={trigger}
         type="button"
@@ -84,16 +101,7 @@ export default function DateField({
       </button>
 
       {open && (
-        <div
-          className="absolute left-0 top-full z-40 mt-1 rounded-2xl border border-border bg-surface p-1 shadow-xl"
-          onKeyDown={(e) => {
-            // Close the calendar only. The drawer around it closes on a
-            // window-level Escape, and would take its unsaved draft along.
-            if (e.key !== "Escape") return;
-            e.stopPropagation();
-            close();
-          }}
-        >
+        <div className="absolute left-0 top-full z-40 mt-1 rounded-2xl border border-border bg-surface p-1 shadow-xl">
           <Calendar selected={date} onSelect={(d) => settle(d ? toIso(d) : "")} />
           <div className="flex justify-end border-t border-border px-3 py-1.5 text-xs">
             <button type="button" className="text-muted hover:text-danger" onClick={() => settle("")}>

@@ -52,12 +52,15 @@ test("Clear empties it", () => {
   expect(screen.getByRole("button", { name: "Target date" })).toHaveTextContent("Pick a date");
 });
 
-test("the calendar's own Today sets today", () => {
+test("the calendar's own Today sets today, closes the panel, and returns focus", () => {
   const onChange = vi.fn();
   render(<Host onChange={onChange} />);
-  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  const field = screen.getByRole("button", { name: "Target date" });
+  fireEvent.click(field);
   fireEvent.click(screen.getByRole("button", { name: "Today" }));
   expect(onChange).toHaveBeenLastCalledWith(iso(new Date()));
+  expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
+  expect(field).toHaveFocus();
 });
 
 // The field lives in the work-item drawer, whose window-level Escape closes
@@ -71,6 +74,27 @@ test("Escape closes the calendar and nothing behind it", () => {
     const field = screen.getByRole("button", { name: "Target date" });
     fireEvent.click(field);
     fireEvent.keyDown(screen.getByRole("button", { name: "Thursday, September 10, 2026" }), { key: "Escape" });
+    expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(behind).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", behind);
+  }
+});
+
+// A Shift+Tab from the calendar's prev-month button lands back on the
+// trigger while the panel is still open. Escape there must still close
+// only the panel, not bubble to the drawer's window-level listener.
+test("Escape on the trigger, while the panel is open, closes only the panel", () => {
+  const behind = vi.fn();
+  window.addEventListener("keydown", behind);
+  try {
+    render(<Host initial="2026-09-10" />);
+    const field = screen.getByRole("button", { name: "Target date" });
+    fireEvent.click(field);
+    expect(screen.getByText("September 2026")).toBeInTheDocument();
+
+    fireEvent.keyDown(field, { key: "Escape" });
     expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
     expect(field).toHaveFocus();
     expect(behind).not.toHaveBeenCalled();
