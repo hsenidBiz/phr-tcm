@@ -109,7 +109,7 @@ test("with no saved order the default is Azure DevOps order", async () => {
   expect(await idsOnScreen()).toEqual([201, 202, 203]);
   expect(await screen.findByText("No suggested run order yet.")).toBeInTheDocument();
   fireEvent.click(startFromPicker());
-  expect(screen.queryByRole("option", { name: "Suggested run order" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Saved suggested order" })).not.toBeInTheDocument();
   expect(screen.queryByRole("option", { name: "My order on this machine" })).not.toBeInTheDocument();
 });
 
