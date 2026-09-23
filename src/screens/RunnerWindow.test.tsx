@@ -1,7 +1,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MY_ORDER_EVENT } from "../lib/runOrder";
 import RunnerWindow from "./RunnerWindow";
@@ -736,7 +736,7 @@ test("Snip minimizes the runner and Cancel snip restores it", async () => {
   expect(screen.getByRole("button", { name: "Snip" })).toBeInTheDocument();
 });
 
-// --- "Run next..." and staying in step with Run Tests (design doc §5.2) ---
+// --- Staying in step with Run Tests (design doc §5.2) ---
 
 const RUN3 = [
   { ...fullCase, id: 201, title: "Alpha check" },
@@ -764,73 +764,25 @@ function mockRunnerCases(cases: typeof RUN3) {
   );
 }
 
-const closeRunNext = () =>
-  fireEvent.keyDown(screen.getByPlaceholderText("Search…"), { key: "Escape" });
-
-test("Run next lists only the later cases with no outcome yet", async () => {
-  mockRunnerCases(RUN3);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  // Both later cases are unmarked - both are offered.
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  expect(screen.getByRole("option", { name: "Bravo check" })).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: "Charlie check" })).toBeInTheDocument();
-  closeRunNext();
-
-  // Mark Bravo, then come back to Alpha.
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Bravo check");
-  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
-  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
-  await screen.findByText("Alpha check");
-
-  // Bravo is marked now - only Charlie is offered.
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  expect(screen.queryByRole("option", { name: "Bravo check" })).not.toBeInTheDocument();
-  expect(screen.getByRole("option", { name: "Charlie check" })).toBeInTheDocument();
-});
-
-test("choosing a case in Run next moves it next and writes My order under the session key", async () => {
-  mockRunnerCases(RUN3);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Charlie check");
-
-  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
-    201, 203, 202,
-  ]);
-});
-
-test("a My order save from elsewhere re-sorts the upcoming cases, leaving the one on screen alone", async () => {
+test("a My order save from Run Tests re-sorts the upcoming cases, leaving the one on screen alone", async () => {
   mockRunnerCases(RUN3);
   renderRunner();
   await screen.findByText("Alpha check");
 
   localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([201, 203, 202]));
-  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
-
-  // Wait for an OBSERVABLE effect of the re-sort - Run next's own order -
-  // rather than asserting "still on Alpha" the instant after the emit,
-  // which would pass even if the listener never ran at all.
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  await vi.waitFor(() => {
-    const opts = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(opts).toEqual(["Charlie check", "Bravo check"]);
+  // act() flushes the listener's state update, so the Next click below
+  // walks the re-sorted order - without the listener, Next lands on Bravo.
+  await act(async () => {
+    await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
   });
-  closeRunNext();
 
   // The re-sort only ever touches what comes AFTER the current case.
   expect(screen.getByText("Alpha check")).toBeInTheDocument();
 
-  // Next now walks to Charlie, per the new order.
+  // Next now walks to Charlie, per the new order, not Bravo.
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Charlie check");
+  expect(screen.queryByText("Bravo check")).not.toBeInTheDocument();
 });
 
 test("marked cases after the current one keep their position under a re-sort", async () => {
@@ -857,123 +809,6 @@ test("marked cases after the current one keep their position under a re-sort", a
   await screen.findByText("Delta check");
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Charlie check");
-});
-
-test("Run next is hidden once every later case is marked", async () => {
-  mockRunnerCases([
-    { ...fullCase, id: 201, title: "Alpha check" },
-    { ...fullCase, id: 202, title: "Bravo check" },
-  ]);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Bravo check");
-  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
-  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
-  await screen.findByText("Alpha check");
-
-  // Bravo was the only later case, and it is marked now - nothing left to
-  // pick, so the picker itself is gone (not just empty).
-  expect(screen.queryByRole("combobox", { name: "Run next" })).not.toBeInTheDocument();
-});
-
-// This window's own My-order save must never echo back and undo the
-// choice that produced it - regardless of what the STORED My order looked
-// like before the save (Run Tests can leave a different one behind).
-test("choosing Run next lands Next on the chosen case even when the stored My order already differs from this window's own order", async () => {
-  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([204, 203, 202, 201]));
-  mockRunnerCases(RUN4);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Charlie check");
-});
-
-test("choosing Run next reconciles a stored My order that is missing the chosen or current case", async () => {
-  // Neither Alpha (current) nor Charlie (chosen) is in here at all - a
-  // bare moveAfter on this would be a no-op and drop the choice.
-  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([202]));
-  mockRunnerCases(RUN4);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Charlie check");
-  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
-    202, 201, 203, 204,
-  ]);
-});
-
-// The runner only ever fetches the cases in a selective run's caseIds, but
-// RunPanel now hands over caseOrder too - the whole list's order the
-// session was opened from (design doc §5.2 fix). With no My order saved
-// yet, the first "Run next..." choice should seed from that fuller order,
-// not from just this run's own (narrower) ids - otherwise a case outside
-// the run would be silently dropped the moment My order is first created.
-test("with no stored My order, Run next seeds My order from the session's caseOrder - keeping cases outside this run", async () => {
-  localStorage.setItem(
-    "tcm-v2-runner-session",
-    JSON.stringify({
-      org: "acme",
-      project: "Web",
-      planId: 9,
-      planName: "Plan",
-      suiteId: 91,
-      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
-      caseIds: [201, 203, 204],
-      caseOrder: [201, 202, 203, 204],
-    }),
-  );
-  mockRunnerCases(RUN4);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  fireEvent.click(screen.getByRole("option", { name: "Delta check" }));
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Delta check");
-
-  // 202 (Bravo) was never part of this run at all, yet the saved My order
-  // still carries it - taken from caseOrder, not dropped - sitting after
-  // the moved case (204) exactly as it did after 204 in caseOrder.
-  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
-    201, 204, 202, 203,
-  ]);
-  // Mirrors Run Tests' own rule: reordering switches the view to My order.
-  expect(localStorage.getItem("tcm-v2-run-order-view:acme/9/91")).toBe("mine");
-});
-
-test("choosing Run next keeps stored ids from outside this run, in their own relative order", async () => {
-  // 301 and 302 are not among this run's cases at all (the runner only
-  // ever holds the cases selected for THIS run) - a Run next choice must
-  // not cut them from the tester's suite-wide My order.
-  localStorage.setItem(
-    "tcm-v2-run-order:acme/9/91",
-    JSON.stringify([301, 302, 204, 203, 202, 201]),
-  );
-  mockRunnerCases(RUN4);
-  renderRunner();
-  await screen.findByText("Alpha check");
-
-  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
-  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
-
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByText("Charlie check");
-  // 301 and 302 survive, still in their original relative order; Charlie
-  // (203, the chosen case) now sits directly after Alpha (201, current).
-  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
-    301, 302, 204, 202, 201, 203,
-  ]);
 });
 
 test("a late backfill never swaps the case on screen once the tester has touched it", async () => {

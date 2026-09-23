@@ -11,22 +11,13 @@ import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import HistoryDots from "../components/HistoryDots";
 import { Button } from "../components/ui/button";
-import Combobox from "../components/ui/combobox";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { blobToB64 } from "../lib/blob";
 import { emitPointRecorded } from "../lib/runnerBus";
-import {
-  loadMyOrder,
-  moveAfter,
-  onMyOrderChanged,
-  resortUpcoming,
-  saveMyOrder,
-  saveOrderView,
-  type OrderKey,
-} from "../lib/runOrder";
+import { loadMyOrder, onMyOrderChanged, resortUpcoming, type OrderKey } from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { getTheme } from "../lib/theme";
@@ -122,15 +113,15 @@ export default function RunnerWindow() {
   const session = loadRunnerSession();
   // This suite's My-order key (design doc §4.3): every RunnerSession names
   // a suite, so this is null only when there is no session at all (the
-  // runner window opened with nothing to run) - which is also when "Run
-  // next..." and the cross-window sync below both quietly do nothing.
+  // runner window opened with nothing to run) - which is also when the
+  // cross-window sync below quietly does nothing.
   const orderKey: OrderKey | null = session
     ? { org: session.org, planId: session.planId, suiteId: session.suiteId }
     : null;
   const [idx, setIdx] = useState(0);
   // This window's own order of case ids (design doc §5.2): null until the
-  // fetch below has something to seed it from. Reordered by "Run next..."
-  // and by another window's My-order save; the fetch/backfill merge only
+  // fetch below has something to seed it from. Reordered only by a My-order
+  // save in Run Tests; the fetch/backfill merge only
   // inserts a late arrival at its fetch position - it never otherwise
   // touches what Prev/Next walk.
   const [order, setOrder] = useState<number[] | null>(null);
@@ -223,7 +214,7 @@ export default function RunnerWindow() {
   // The cases as fetched, in the session's hinted order. This seeds `order`
   // below and supplies any case that arrives after the first paint (the
   // backfill query) - once seeded, `order` is what actually decides what
-  // Prev/Next/"Run next..." walk, not this.
+  // Prev/Next walk, not this.
   const arrived = [...(base ?? []), ...(missingIds.length ? (backfill.data ?? []) : [])]
     .filter((c) => !caseFilter || caseFilter.has(c.id))
     .sort((a, b) => (sessionRank.get(a.id) ?? Infinity) - (sessionRank.get(b.id) ?? Infinity));
@@ -236,7 +227,7 @@ export default function RunnerWindow() {
   // named) is inserted at its fetch position - just before the nearest
   // case already on screen that follows it in `arrivedIds` - never
   // dropped, never bumping something the tester already reordered. A case
-  // moved by "Run next..." or another window's My order is untouched here.
+  // moved by a My-order save in Run Tests is untouched here.
   useEffect(() => {
     if (!order) {
       setOrder(arrivedIds);
@@ -259,8 +250,7 @@ export default function RunnerWindow() {
     setOrder(result);
     // setOrder only takes effect on the NEXT render - a My-order event
     // (or another render-triggering update) landing before then must see
-    // this insertion, not the stale order from before it, the same reason
-    // "Run next..." keeps this ref in step with setOrder below.
+    // this insertion, not the stale order from before it.
     orderRef.current = result;
 
     // A late arrival (or a case dropping out of the fetch) must not swap
@@ -295,76 +285,19 @@ export default function RunnerWindow() {
   idxRef.current = idx;
   const statesRef = useRef(states);
   statesRef.current = states;
-  // The raw My order this window itself last saved (JSON, for a cheap deep
-  // compare), so the listener below can recognise its OWN save echoing
-  // back even when the stored order it started from did not match this
-  // window's order (Run Tests may have this suite open on a different
-  // view) - comparing "did the re-sort change anything" alone is not
-  // enough for that case.
-  const ownSaveRef = useRef<string | null>(null);
 
-  const runNextCandidates = current ? list.slice(idx + 1).filter((c) => !states[c.id]?.outcome) : [];
-
-  /** "Run next...": the chosen case moves directly after the one on screen,
-   * in both this window's order and (design doc §5.2) My order for this
-   * suite - so Run Tests, reopened, follows the same choice. */
-  const chooseRunNext = (idStr: string) => {
-    const chosen = Number(idStr);
-    if (!current || !orderKey || !Number.isFinite(chosen)) return;
-    const baseOrder = order ?? arrivedIds;
-    const next = moveAfter(baseOrder, chosen, current.id);
-    setOrder(next);
-    // setOrder only takes effect on the NEXT render - update the ref
-    // immediately too, so a My-order event arriving before then (the
-    // save below emits one) still resorts against this window's true
-    // current order, not the stale one from before the choice.
-    orderRef.current = next;
-    // moveAfter never repositions the case it is moving PAST, but find the
-    // new spot by id rather than assume that holds.
-    const newIdx = next.indexOf(current.id);
-    if (newIdx >= 0 && newIdx !== idx) setIdx(newIdx);
-    // The stored My order can be stale, sorted differently than this
-    // window (Run Tests may be showing a suggested/spec view while this
-    // machine already has a My order from an earlier session), or simply
-    // missing the case just chosen or the one on screen entirely (a bare
-    // moveAfter would then be a no-op). It can also hold ids this window
-    // has never heard of: the runner only ever carries the cases selected
-    // for THIS run (RunPanel filters before opening it), while My order is
-    // the tester's order for the whole suite - reconcile() against this
-    // window's own ids would silently drop every one of those on a single
-    // Run next choice. So every stored id is kept as-is, and only this
-    // window's own ids still missing from it (never saved before, or
-    // newly arrived) are appended, in this window's order.
-    // With nothing stored yet, seed from the session's caseOrder (RunPanel's
-    // full list, design doc §5.2) rather than just this window's own ids -
-    // a selective run only ever fetches its caseIds, and starting My order
-    // from that alone would silently drop every case outside this run the
-    // moment it is first created.
-    const storedRaw = loadMyOrder(orderKey);
-    const seed = storedRaw ?? session?.caseOrder ?? baseOrder;
-    const have = new Set(seed);
-    const mine = [...new Set(seed), ...baseOrder.filter((id) => !have.has(id))];
-    const saved = moveAfter(mine, chosen, current.id);
-    ownSaveRef.current = JSON.stringify(saved);
-    saveMyOrder(orderKey, saved);
-    // Mirrors Run Tests' own rule (useRunOrder's commit()): reordering
-    // copies the order into My order and switches the view to it, so Run
-    // Tests' listener - already re-reading on this same save - follows.
-    saveOrderView(orderKey, "mine");
-  };
-
-  // Run Tests and this window stay in step (design doc §5.2): a My-order
-  // save from either one re-sorts only the cases after the one on screen,
-  // here. Ignore this window's OWN save (above) echoing back.
+  // The runner follows Run Tests (design doc §5.2): reordering there saves
+  // My order, and that re-sorts only the cases after the one on screen,
+  // here. The runner itself never writes an order - Next already skips,
+  // and reordering belongs to Run Tests (the owner removed a "Run next"
+  // picker here on 2026-09-23 as a second, clumsier way to do the same).
   useEffect(() => {
     if (!orderKey) return;
     const un = onMyOrderChanged((k) => {
       if (k.org !== orderKey.org || k.planId !== orderKey.planId || k.suiteId !== orderKey.suiteId) return;
       const prevOrder = orderRef.current;
       if (!prevOrder) return;
-      const rawMine = loadMyOrder(orderKey);
-      if (ownSaveRef.current != null && JSON.stringify(rawMine) === ownSaveRef.current) return;
-      const mine = rawMine ?? [];
+      const mine = loadMyOrder(orderKey) ?? [];
       const isMarked = (id: number) => Boolean(statesRef.current[id]?.outcome);
       const oldId = prevOrder[idxRef.current];
       const next = resortUpcoming(prevOrder, idxRef.current, isMarked, mine);
@@ -381,7 +314,7 @@ export default function RunnerWindow() {
     };
     // Deps are the key's own fields, not `orderKey` itself (a fresh object
     // every render) or anything read inside the callback (current order/
-    // idx/states, `ownSaveRef`) - those are read live through the refs
+    // idx/states) - those are read live through the refs
     // above on purpose, so this only re-subscribes if the SUITE changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderKey?.org, orderKey?.planId, orderKey?.suiteId]);
@@ -1274,17 +1207,6 @@ export default function RunnerWindow() {
           <IconNext aria-hidden />
           Next
         </Button>
-        {runNextCandidates.length > 0 && (
-          <Combobox
-            ariaLabel="Run next"
-            className="w-44"
-            triggerClassName="py-1"
-            placeholder="Run next…"
-            value=""
-            onChange={chooseRunNext}
-            items={runNextCandidates.map((c) => ({ value: String(c.id), label: c.title }))}
-          />
-        )}
         <Button
           className="ml-auto"
           size="sm"

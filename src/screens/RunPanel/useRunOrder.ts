@@ -7,7 +7,7 @@
 // calls reorderSuiteCases or saveRunOrder.
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useReducer } from "react";
+import { useMemo, useReducer } from "react";
 import { toast } from "sonner";
 import { commands, type TestPoint } from "../../bindings";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
@@ -17,7 +17,6 @@ import {
   clearMyOrder,
   loadMyOrder,
   loadOrderView,
-  onMyOrderChanged,
   reconcile,
   saveMyOrder,
   saveOrderView,
@@ -151,7 +150,7 @@ export function useRunOrder({
   const suiteId = suite?.suite_id ?? 0;
   const key: OrderKey | null = suite ? { org, planId, suiteId } : null;
   // Local reads (My order, the chosen view) are re-done on every bump: a
-  // move here, a reset, or the runner saving a new My order.
+  // move here, a reset, or a new view. Only this screen writes My order.
   const [rev, bump] = useReducer((n: number) => n + 1, 0);
 
   const runOrder = useQuery(runOrderQueryOptions(org, project, pbiId));
@@ -190,18 +189,6 @@ export function useRunOrder({
     { view: "spec" as const, disabled: false },
     ...(myOrder ? [{ view: "mine" as const, disabled: false }] : []),
   ];
-
-  // The runner saves My order when a tester picks "Run next..."; re-read
-  // it so this list follows.
-  useEffect(() => {
-    if (!keyStr) return;
-    const un = onMyOrderChanged((k) => {
-      if (k.org === org && k.planId === planId && k.suiteId === suiteId) bump();
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [keyStr, org, planId, suiteId]);
 
   const specIds = useMemo(
     () => specOrderOf(points, suiteCases.data?.map((c) => c.id)),

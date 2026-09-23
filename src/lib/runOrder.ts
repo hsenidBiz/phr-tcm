@@ -45,8 +45,8 @@ export function moveAfter(order: readonly number[], id: number, afterId: number)
 /** After position `idx`, the UNMARKED cases are re-sorted by `rank` into the
  * slots unmarked cases held; marked cases and everything at or before idx
  * stay where they are. Ids not in `rank` keep their relative order at the
- * end of the unmarked slots (used by the runner's "Run next..." - design
- * doc §5.2). */
+ * end of the unmarked slots (used by the runner to follow a My order saved
+ * in Run Tests - design doc §5.2). */
 export function resortUpcoming(
   list: readonly number[],
   idx: number,

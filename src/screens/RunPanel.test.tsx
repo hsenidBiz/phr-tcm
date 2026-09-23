@@ -1,10 +1,8 @@
-import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
-import { MY_ORDER_EVENT } from "../lib/runOrder";
 import { writeSuiteSeed } from "../lib/suiteSeed";
 import RunPanel from "./RunPanel";
 
@@ -717,22 +715,6 @@ test("a failed read of the run order shows the note and greys out Suggested", as
   expect(screen.getByRole("option", { name: "Suggested run order" })).toBeDisabled();
 });
 
-/// A selective run's session must still carry the FULL list's order
-/// (design doc §5.2's "Run next..." needs it to reach cases the run
-/// itself does not cover), not just the handful of ids picked to run.
-test("a selective run's session carries the full list's order alongside the selected ids", async () => {
-  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 303 }, { id: 301 }, { id: 302 }]) });
-  renderPanel();
-  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
-
-  fireEvent.click(screen.getByText("Charlie check"));
-  fireEvent.click(screen.getByRole("button", { name: /Run 1 in runner/ }));
-
-  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  expect(session.caseIds).toEqual([303]);
-  expect(session.caseOrder).toEqual([303, 301, 302]);
-});
-
 test("moving a row copies the order into My order on this machine and never writes a shared order", async () => {
   const calls: string[] = [];
   mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]), calls });
@@ -885,45 +867,6 @@ test("with storage unavailable a move says so and stays on the order it was on",
   expect(toast.info).not.toHaveBeenCalled();
   expect(orderPicker()).toHaveTextContent("Suggested run order");
   expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]);
-});
-
-test("the list follows My order saved by the runner for this suite, and ignores another suite's", async () => {
-  localStorage.setItem(MY_KEY, JSON.stringify([301, 302, 303]));
-  localStorage.setItem("tcm-v2-run-order-view:acme/9/91", "mine");
-  mockOrder({ points: ABC });
-  renderPanel();
-  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
-  expect(orderPicker()).toHaveTextContent("My order");
-
-  // The runner writes a new My order; the event names another suite first.
-  localStorage.setItem(MY_KEY, JSON.stringify([303, 302, 301]));
-  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 92 });
-  await new Promise((r) => setTimeout(r, 30));
-  expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]);
-
-  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
-  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]));
-});
-
-/// The runner's "Run next..." now saves both the order AND the view
-/// (design doc §5.2 fix, mirroring useRunOrder's own commit()) - so a
-/// tester who was looking at Suggested run order when they opened the
-/// runner comes back to My order already selected, not stuck on Suggested
-/// while the ids underneath it quietly changed.
-test("a My order saved by the runner switches the picker away from Suggested, not just the row order", async () => {
-  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 301 }, { id: 302 }, { id: 303 }]) });
-  renderPanel();
-  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
-  expect(orderPicker()).toHaveTextContent("Suggested run order");
-
-  // What the runner's chooseRunNext does on a Run next choice: save My
-  // order, then the view, then emit the change.
-  localStorage.setItem(MY_KEY, JSON.stringify([303, 302, 301]));
-  localStorage.setItem("tcm-v2-run-order-view:acme/9/91", "mine");
-  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
-
-  await vi.waitFor(() => expect(orderPicker()).toHaveTextContent("My order"));
-  expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]);
 });
 
 test("the chosen order is remembered for the suite across a remount", async () => {

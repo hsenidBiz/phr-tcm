@@ -309,11 +309,6 @@ export default function RunPanel({
       suiteId: suite.data!.suite_id,
       pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
       caseIds,
-      // The runner ignores this while caseIds restricts the run, but keeps
-      // it as the base "Run next..." seeds My order from - so choosing a
-      // case outside a selective run's caseIds still lands it in the
-      // suite's full order, not just the handful this run covers.
-      caseOrder: order.displayOrder,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
   /** Groups on screen not yet folded - Collapse all folds these too. */
