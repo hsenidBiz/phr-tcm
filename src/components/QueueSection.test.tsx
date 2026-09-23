@@ -523,8 +523,7 @@ test("Remove all with every row selected does not crash the screen", async () =>
   renderQueue([makeCase({ title: "One" }), makeCase({ title: "Two" })]);
   const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    // The checkbox is named by its wrapping label, which reads this at zero selected.
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select cases for bulk actions" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
   } finally {
     quiet.mockRestore();

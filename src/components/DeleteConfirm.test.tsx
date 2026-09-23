@@ -17,9 +17,7 @@ const CASES = [
 function armAndDelete() {
   fireEvent.click(
     screen.getByRole("checkbox", {
-      // XiodUI's checkbox takes its name from the wrapping <label>, which
-      // spells out the exact count - match on the stable prefix instead.
-      name: /I understand/,
+      name: "I understand these test cases will be permanently deleted",
     }),
   );
   fireEvent.click(screen.getByRole("button", { name: /Permanently delete 2/ }));
@@ -70,7 +68,7 @@ test("the delete button is dead until the permanence is acknowledged", () => {
   expect(screen.getByRole("button", { name: /Permanently delete 2/ })).toBeDisabled();
   fireEvent.click(
     screen.getByRole("checkbox", {
-      name: /I understand/,
+      name: "I understand these test cases will be permanently deleted",
     }),
   );
   expect(screen.getByRole("button", { name: /Permanently delete 2/ })).toBeEnabled();

@@ -266,8 +266,7 @@ test("the password is not shown in plain text, in either editing mode", async ()
 
   // The raw single-string editor holds the password too, so it is masked
   // just as it was before the builder existed.
-  // The checkbox is named by its wrapping label's own visible text.
-  fireEvent.click(screen.getByRole("checkbox", { name: "Edit as one string" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Edit connection string as text" }));
   expect(screen.getByLabelText("Connection string")).toHaveAttribute("type", "password");
 });
 

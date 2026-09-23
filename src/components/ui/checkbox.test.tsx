@@ -79,3 +79,35 @@ test("a click on the box still reaches the row it sits in, once", () => {
   expect(row).toHaveBeenCalledTimes(1);
   expect(onChange).toHaveBeenCalledWith(false);
 });
+
+// I-1: Base UI's own wrapping-<label> fallback only applies when nothing
+// else already names the box. An explicit ariaLabel must win over it -
+// otherwise a call site whose visible label text differs from its
+// ariaLabel gets a wrong (or, per Base UI's embedded-control substitution,
+// doubled) accessible name.
+test("an explicit ariaLabel wins over the wrapping label's own words", () => {
+  const onChange = vi.fn();
+  render(
+    <label>
+      <Checkbox ariaLabel="Select all queued cases" checked={false} onCheckedChange={onChange} />
+      Select cases for bulk actions
+    </label>,
+  );
+  const box = screen.getByRole("checkbox", { name: "Select all queued cases" });
+  expect(screen.queryByRole("checkbox", { name: /Select cases for bulk actions/ })).toBeNull();
+  // Still one toggle for a click on the words, same as with no ariaLabel at all.
+  fireEvent.click(screen.getByText("Select cases for bulk actions"));
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledWith(true);
+  expect(box).toBeInTheDocument();
+});
+
+test("with no ariaLabel, a wrapping label still names the box", () => {
+  render(
+    <label>
+      <Checkbox checked={false} onCheckedChange={() => {}} />
+      Group by title
+    </label>,
+  );
+  expect(screen.getByRole("checkbox", { name: "Group by title" })).toBeInTheDocument();
+});

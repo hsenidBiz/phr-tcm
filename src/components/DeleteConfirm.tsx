@@ -133,11 +133,13 @@ export default function DeleteConfirm({
 
       {/* The button stays dead until the finality is acknowledged - for
           an action with no undo, one deliberate extra click is the whole
-          difference between a decision and a slip. XiodUI's checkbox names
-          itself from the wrapping label (see checkbox.tsx), so no separate
-          ariaLabel here - one would only get echoed back as a duplicate. */}
+          difference between a decision and a slip. */}
       <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted">
-        <Checkbox checked={acknowledged} onCheckedChange={setAcknowledged} />
+        <Checkbox
+          checked={acknowledged}
+          ariaLabel="I understand these test cases will be permanently deleted"
+          onCheckedChange={setAcknowledged}
+        />
         I understand {cases.length === 1 ? "this test case" : `these ${cases.length} test cases`} will
         be permanently deleted and cannot be restored.
       </label>
