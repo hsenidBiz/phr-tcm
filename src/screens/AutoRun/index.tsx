@@ -323,10 +323,11 @@ export default function AutoRun({
           <IconClearResults aria-hidden />
           Clear results
         </Button>
+        {/* XiodUI's checkbox takes its name from the wrapping label - no
+            separate ariaLabel, or it would only echo back as a duplicate. */}
         <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
           <Checkbox
             checked={grouped}
-            ariaLabel="Group by title"
             onCheckedChange={(on) => {
               setGrouped(on);
               try {

@@ -31,15 +31,20 @@ test("a switch bounces only once it has been used, not as the screen appears", (
 });
 
 test("the checkbox tick is always there to draw in; the mixed state shows a dash instead", () => {
+  const TICK = "M5.252 12.7 10.2 18.63 18.748 5.37";
+  const DASH = "M5.252 12h13.496";
+  const mark = () =>
+    screen
+      .getByRole("checkbox", { name: "Pick" })
+      .querySelector('[data-slot="checkbox-indicator"] path')
+      ?.getAttribute("d");
   const { rerender } = render(<Checkbox checked={false} onCheckedChange={() => {}} ariaLabel="Pick" />);
-  const box = screen.getByRole("checkbox", { name: "Pick" });
-  expect(box).toHaveClass("t-check");
   // Present while unchecked, so checking can DRAW it rather than pop it in.
-  expect(box.querySelector(".t-check-tick")).not.toBeNull();
+  expect(mark()).toBe(TICK);
   rerender(<Checkbox checked onCheckedChange={() => {}} ariaLabel="Pick" />);
-  expect(box.querySelector(".t-check-tick")).not.toBeNull();
+  expect(mark()).toBe(TICK);
   rerender(<Checkbox checked={false} indeterminate onCheckedChange={() => {}} ariaLabel="Pick" />);
-  expect(box.querySelector(".t-check-tick")).toBeNull();
+  expect(mark()).toBe(DASH);
 });
 
 test("a modal's panel scales in over a fading backdrop", () => {

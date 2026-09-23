@@ -743,12 +743,11 @@ export default function AiBridge() {
           <div className="space-y-2 rounded-md border border-border/60 p-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted">CONNECTION_STRING</span>
+              {/* XiodUI's checkbox takes its name from the wrapping label -
+                  no separate ariaLabel, or it would only echo back as a
+                  duplicate. */}
               <label className="flex items-center gap-1.5 text-[11px] text-faint">
-                <Checkbox
-                  ariaLabel="Edit connection string as text"
-                  checked={rawConn}
-                  onCheckedChange={setRawConn}
-                />
+                <Checkbox checked={rawConn} onCheckedChange={setRawConn} />
                 Edit as one string
               </label>
             </div>
@@ -818,9 +817,11 @@ export default function AiBridge() {
                     />
                   </label>
                 </div>
+                {/* XiodUI's checkbox takes its name from the wrapping
+                    label - no separate ariaLabel, or it would only echo
+                    back as a duplicate. */}
                 <label className="flex items-center gap-2 text-xs text-muted">
                   <Checkbox
-                    ariaLabel="Trust the server certificate"
                     checked={conn.trustCert}
                     onCheckedChange={(v) => editConn({ trustCert: v })}
                   />

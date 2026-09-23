@@ -93,8 +93,10 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
           <IconAdd aria-hidden />
           Add account
         </Button>
+        {/* XiodUI's checkbox takes its name from the wrapping label - no
+            separate ariaLabel, or it would only echo back as a duplicate. */}
         <label className="flex items-center gap-2 text-xs text-muted">
-          <Checkbox checked={show} onCheckedChange={setShow} ariaLabel="Show passwords" />
+          <Checkbox checked={show} onCheckedChange={setShow} />
           Show passwords
         </label>
       </div>

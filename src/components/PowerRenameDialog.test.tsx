@@ -66,7 +66,7 @@ test("a title over the Azure DevOps limit blocks apply", () => {
 
 test("an invalid regex is reported and blocks apply", () => {
   mount();
-  fireEvent.click(screen.getByLabelText(/Regular expression/i));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Regular expression/i }));
   type("Find", "(unclosed");
   expect(screen.getByRole("alert")).toHaveTextContent(/not valid/i);
   expect(screen.getByRole("button", { name: /Rename/ })).toBeDisabled();

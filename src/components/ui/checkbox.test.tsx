@@ -25,3 +25,57 @@ test("checked wins over a stale indeterminate flag", () => {
   render(<Checkbox checked indeterminate onCheckedChange={() => {}} ariaLabel="All" />);
   expect(screen.getByRole("checkbox", { name: "All" })).toHaveAttribute("aria-checked", "true");
 });
+
+// A wrapping <label> is how most boxes in the app get their name
+// (PowerRenameDialog, multiselect, BulkEditDialog): it must name the box,
+// and one click - on the words or on the box - must toggle it once.
+test("a wrapping label names the box, and clicking its text toggles once", () => {
+  const onChange = vi.fn();
+  render(
+    <label>
+      <Checkbox checked={false} onCheckedChange={onChange} />
+      Apply module
+    </label>,
+  );
+  expect(screen.getByRole("checkbox", { name: "Apply module" })).toHaveAttribute("data-slot", "checkbox");
+  fireEvent.click(screen.getByText("Apply module"));
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledWith(true);
+});
+
+test("clicking the box itself inside a label also toggles once", () => {
+  const onChange = vi.fn();
+  render(
+    <label>
+      <Checkbox checked={false} onCheckedChange={onChange} />
+      Match case
+    </label>,
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Match case" }));
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledWith(true);
+});
+
+test("Space toggles it", () => {
+  const onChange = vi.fn();
+  render(<Checkbox checked={false} onCheckedChange={onChange} ariaLabel="Pick" />);
+  const box = screen.getByRole("checkbox", { name: "Pick" });
+  fireEvent.keyDown(box, { key: " " });
+  fireEvent.keyUp(box, { key: " " });
+  expect(onChange).toHaveBeenCalledWith(true);
+});
+
+// QueueRow puts a box inside a clickable row and relies on the row hearing
+// the click - once.
+test("a click on the box still reaches the row it sits in, once", () => {
+  const row = vi.fn();
+  const onChange = vi.fn();
+  render(
+    <div onClick={row}>
+      <Checkbox checked onCheckedChange={onChange} ariaLabel="Select Login works" />
+    </div>,
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Login works" }));
+  expect(row).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledWith(false);
+});

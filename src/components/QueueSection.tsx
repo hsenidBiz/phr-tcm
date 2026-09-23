@@ -1603,9 +1603,10 @@ export default function QueueSection({
           came from - the file and the queue must not disagree. */}
       {queue.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2/50 px-3 py-1.5 text-xs">
+          {/* XiodUI's checkbox takes its name from the wrapping label - no
+              separate ariaLabel, or it would only echo back as a duplicate. */}
           <label className="flex items-center gap-2 text-muted">
             <Checkbox
-              ariaLabel="Select all queued cases"
               checked={selected.size === queue.length && queue.length > 0}
               onCheckedChange={(v) =>
                 setSelected(v ? new Set(queue.map((_, i) => i)) : new Set())
