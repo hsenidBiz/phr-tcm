@@ -702,8 +702,11 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   });
 
   // The attachment lands as this case's next pasted-*.png thumbnail
-  // (the fullscreen viewer holds a second copy of the same image).
-  expect((await screen.findAllByAltText("pasted-201-1.png")).length).toBeGreaterThan(0);
+  // (the fullscreen viewer holds a second copy of the same image). The
+  // paste -> file read -> attach -> render chain is several async hops, and
+  // under the full suite's parallel load it has overrun the default 1 s
+  // wait while passing every time alone - so it gets App.test's longer one.
+  expect((await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 })).length).toBeGreaterThan(0);
 });
 
 /** Single-screen snipping: the runner covers the very thing the tester
