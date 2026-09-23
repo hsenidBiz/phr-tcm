@@ -138,6 +138,25 @@ describe("theme bridge", () => {
     expect(guard).toContain("transition: none !important;");
     expect(guard).toContain("animation: none !important;");
   });
+
+  // A Base UI ToastPortal mounts once at app start and stays in <body> at
+  // its own z-50 (toast.js); the shared Modal and the work-item drawer
+  // portal in later at the same z-50, so without a higher value the later
+  // one in the DOM paints over the toast and dims it under its scrim.
+  test("the toast viewport's z-index clears the shared Modal, the drawer and the unlock confetti", () => {
+    const rule = bridge().match(/\[data-slot="toast-viewport"\]\s*\{[^}]*z-index:\s*(\d+)\s*!important;[^}]*\}/);
+    expect(rule).not.toBeNull();
+    const toastZ = Number(rule![1]);
+    // Modal and the drawer both use Tailwind's z-50 utility.
+    expect(read("src", "components", "ui", "modal.tsx")).toMatch(/\bz-50\b/);
+    expect(read("src", "components", "WorkItemDrawer.tsx")).toMatch(/\bz-50\b/);
+    expect(toastZ).toBeGreaterThan(50);
+    // The unlock confetti canvas (lib/confetti.ts) is the highest other
+    // overlay in the app; read its actual value rather than assume it.
+    const confettiZ = Number(read("src", "lib", "confetti.ts").match(/zIndex:\s*"(\d+)"/)?.[1]);
+    expect(confettiZ).toBeGreaterThan(0);
+    expect(toastZ).toBeGreaterThan(confettiZ);
+  });
 });
 
 describe("imports", () => {

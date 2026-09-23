@@ -98,6 +98,19 @@
   border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
 }
 
+/* 5c. Base UI's ToastPortal mounts the viewport into <body> once, at app
+       start, and stays there at its own z-50 (toast.js). The shared Modal's
+       backdrop and the work-item drawer's own overlay are portalled into
+       <body> later and also sit at z-50, so with equal z-index the one
+       later in the DOM - the dialog - paints over the toast and dims it
+       under its scrim. !important beats Tailwind's .z-50 utility, which
+       has the same specificity. 70 clears the highest overlay in the app
+       (the unlock confetti canvas, lib/confetti.ts, at z-index 60) as well
+       as every Modal and the drawer (z-50). */
+[data-slot="toast-viewport"] {
+  z-index: 70 !important;
+}
+
 /* 6. XiodUI animates in plain CSS transitions. The app's rule (index.css,
       "Motion") is that none of it plays when the OS asks for less. */
 @media (prefers-reduced-motion: reduce) {
