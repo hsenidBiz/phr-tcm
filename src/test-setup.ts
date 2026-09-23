@@ -31,6 +31,11 @@ if (!Element.prototype.scrollIntoView) {
 // jsdom has no Element.getAnimations - Base UI's ScrollArea viewport calls it
 // (with `{ subtree: true }`) to wait out any transform animation before it
 // recomputes thumb geometry; an empty list makes it skip straight past that.
+// It also feeds Base UI's shared useAnimationsFinished path, so every Base UI
+// popup in the suite (the command dialog, toast, any later part) now takes
+// the async Promise.all([]) exit instead of the old synchronous one - closer
+// to a real browser, and the full suite still passes, but it is a timing
+// change worth knowing about on a machine with a documented App.test flake.
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }

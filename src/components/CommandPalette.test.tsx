@@ -110,3 +110,28 @@ test("Enter runs the highlighted row - the first, as the palette opens - and clo
   expect(onNavigate).toHaveBeenCalledWith(first.id);
   await waitFor(() => expect(screen.queryByPlaceholderText(/Type a command/)).not.toBeInTheDocument());
 });
+
+// cmdk matched a query's letters as a subsequence of a row's label, gaps
+// allowed - "chk upd" found "Check for updates" without typing it out. The
+// move to XiodUI's Command must keep that, not fall back to a plain
+// substring search that only prefixes or exact fragments would pass.
+test("a query's letters find a row as a subsequence, in order, gaps allowed", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+
+  fireEvent.change(input, { target: { value: "chk upd" } });
+  expect(await screen.findByText("Check for updates")).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: "tgl theme" } });
+  expect(await screen.findByText("Toggle theme")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Check for updates")).not.toBeInTheDocument());
+
+  // Same letters as "Toggle theme", reversed: present in the row, but not
+  // in order, so no row should match.
+  fireEvent.change(input, { target: { value: "emeht elggot" } });
+  expect(await screen.findByText("No results.")).toBeInTheDocument();
+});

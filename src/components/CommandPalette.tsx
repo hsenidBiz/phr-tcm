@@ -27,6 +27,35 @@ import { VISIBLE_CASE_ITEMS, sectionShortcut, type Section } from "./Sidebar";
 type Entry = { value: string; label: string; keys?: string; run: () => void };
 type Group = { value: string; items: Entry[] };
 
+/** True if every character of `needle` occurs in `haystack` in the same
+ * order, gaps allowed - a subsequence match, case-insensitive. This is the
+ * matching cmdk did before the move to XiodUI; Base UI's own filter is a
+ * plain substring `contains`, which "chk upd" or "tgl theme" would fail. */
+function isSubsequence(needle: string, haystack: string): boolean {
+  if (needle === "") return true;
+  let i = 0;
+  for (const ch of haystack) {
+    if (ch === needle[i]) i += 1;
+    if (i === needle.length) return true;
+  }
+  return false;
+}
+
+/** The palette's search: a row matches if the query's letters appear in
+ * its label in order, spaces in the query ignored ("chk upd" -> "Check for
+ * updates"). Base UI's `filter` is boolean-only - it has no ranking hook -
+ * so matching rows stay in the order they were declared rather than being
+ * sorted by match quality the way cmdk used to.
+ *
+ * XiodUI's `Command` collapses `Autocomplete`'s generic item type to
+ * `unknown` (`React.ComponentProps<typeof Autocomplete>` erases it), so
+ * `item` is cast back to `Entry` - safe, since every item this palette
+ * renders comes from `groups` below. */
+function paletteFilter(item: unknown, query: string): boolean {
+  const entry = item as Entry;
+  return isSubsequence(query.toLowerCase().replace(/\s+/g, ""), entry.label.toLowerCase());
+}
+
 export default function CommandPalette({
   onNavigate,
   org,
@@ -117,7 +146,7 @@ export default function CommandPalette({
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <CommandDialogPopup aria-label="Command palette">
-        <Command items={groups}>
+        <Command items={groups} filter={paletteFilter}>
           <CommandInput placeholder="Type a command or search" />
           <CommandPanel>
             <CommandEmpty>No results.</CommandEmpty>
