@@ -7,7 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import AccountsDialog from "./AccountsDialog";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
+vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 afterEach(() => { clearMocks(); vi.clearAllMocks(); });
 
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {

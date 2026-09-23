@@ -7,7 +7,7 @@
  * version" - a claim the app had not checked and could not make, told to
  * exactly the person most likely to be running something stale.
  */
-import { toast } from "sonner";
+import { toast } from "./toast";
 import type { UpdateStatus } from "../bindings";
 
 export function reportUpdateCheck(status: UpdateStatus): void {

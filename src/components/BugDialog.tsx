@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type TestCaseFull } from "../bindings";
 import { blobToB64 } from "../lib/blob";
 import { unwrapStr } from "../lib/ipc";

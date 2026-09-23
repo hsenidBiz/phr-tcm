@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import {
   commands,

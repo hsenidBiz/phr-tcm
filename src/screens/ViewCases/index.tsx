@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
 import CountUp from "../../components/CountUp";
 import PickPbiEmpty from "../../components/PickPbiEmpty";

@@ -5,7 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile, { specEntryFor } from "./ImportFile";
-import { Toaster } from "sonner";
+import { Toaster } from "../components/ui/toaster";
 
 afterEach(() => {
   clearMocks();

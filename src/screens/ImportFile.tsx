@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import {
   forgetRecentImport,
   loadRecentImports,

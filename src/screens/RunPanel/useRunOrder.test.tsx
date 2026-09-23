@@ -2,13 +2,13 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
 import type { TestPoint } from "../../bindings";
 import type { GroupMode } from "../../lib/runOrder";
 import { useRunOrder } from "./useRunOrder";
 
-vi.mock("sonner", () => ({
+vi.mock("../../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 

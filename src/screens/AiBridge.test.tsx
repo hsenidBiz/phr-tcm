@@ -2,7 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { Toaster } from "sonner";
+import { Toaster } from "../components/ui/toaster";
 import AiBridge from "./AiBridge";
 import { dbConnectionSnapshot, subscribeDbSettings } from "../lib/dbServer";
 

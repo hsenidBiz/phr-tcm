@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
 import { memo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";

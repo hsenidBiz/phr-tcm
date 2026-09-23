@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
@@ -22,7 +22,7 @@ let onScreen = true;
 // Fix round 1 (C2 hold): toasts are asserted by content below - no
 // <Toaster/> is mounted in these tests, so the real module has nothing to
 // render them into.
-vi.mock("sonner", () => ({
+vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 

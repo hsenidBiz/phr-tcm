@@ -11,7 +11,8 @@ import {
   type ComponentType,
   useSyncExternalStore,
 } from "react";
-import { Toaster, toast } from "sonner";
+import { toast } from "./lib/toast";
+import { Toaster } from "./components/ui/toaster";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
@@ -67,7 +68,7 @@ import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
 import { loadPrefs, savePrefs } from "./lib/prefs";
-import { getTheme, initTheme } from "./lib/theme";
+import { initTheme } from "./lib/theme";
 // The sign-in screen is the first thing every launch shows (tokens live in
 // memory only), so it is the one screen bundled up front. Every other screen
 // and the command palette load on demand: on a slow machine the whole bundle
@@ -905,13 +906,9 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
-      {/* select-none: dragging a toast to dismiss must not highlight its text. */}
-      <Toaster
-        theme={getTheme() === "light" ? "light" : "dark"}
-        richColors
-        position="bottom-right"
-        toastOptions={{ className: "select-none" }}
-      />
+      {/* The window's one toast host. XiodUI's toasts are select-none
+          already, so dragging one away highlights nothing. */}
+      <Toaster />
       <Suspense fallback={null}>
         <CommandPalette
           onNavigate={goToSection}

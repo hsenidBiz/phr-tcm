@@ -6,7 +6,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";

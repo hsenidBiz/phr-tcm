@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { buildConnString, EMPTY_FIELDS, isRepresentable, parseConnString, type ConnFields } from "../lib/connString";

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, events, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";

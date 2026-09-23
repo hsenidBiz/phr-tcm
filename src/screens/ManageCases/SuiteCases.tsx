@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";

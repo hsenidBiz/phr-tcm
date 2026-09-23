@@ -3,12 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import PrPanel from "./PrPanel";
 
 // The panel's "that pull request is not here" notices are toasts; assert on
 // the mock the way every other screen's tests do.
-vi.mock("sonner", () => ({
+vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 

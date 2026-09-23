@@ -11,7 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, MessageSquare, RotateCcw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { commands, type PrThread } from "../bindings";
 import AstryxIsland from "./AstryxIsland";

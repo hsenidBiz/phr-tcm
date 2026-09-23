@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, Fold
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
 import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu";
 import ScanProgress from "../components/ScanProgress";

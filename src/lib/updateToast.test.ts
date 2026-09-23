@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
 
 const toast = vi.hoisted(() => ({ info: vi.fn(), warning: vi.fn(), success: vi.fn() }));
-vi.mock("sonner", () => ({ toast }));
+vi.mock("./toast", () => ({ toast }));
 
 import { reportUpdateCheck } from "./updateToast";
 

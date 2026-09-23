@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { Collapse } from "../components/ui/collapse";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
 import PrThreads from "../components/PrThreads";

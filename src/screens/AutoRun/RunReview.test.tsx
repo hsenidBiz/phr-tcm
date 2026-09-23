@@ -6,7 +6,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Toaster } from "sonner";
+import { Toaster } from "../../components/ui/toaster";
 import { afterEach, expect, test, vi } from "vitest";
 import RunReview from "./RunReview";
 

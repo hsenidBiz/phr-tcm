@@ -3,12 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import SuiteCases from "./SuiteCases";
 import { caseRow } from "./testSupport";
 
-vi.mock("sonner", () => ({
+vi.mock("../../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 const { openDialog } = vi.hoisted(() => ({ openDialog: vi.fn() }));

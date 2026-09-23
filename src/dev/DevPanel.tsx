@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../tour/tourState";
 import { Button } from "../components/ui/button";

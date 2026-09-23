@@ -11,7 +11,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useReducer } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, type TestPoint } from "../../bindings";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { groupIndices } from "../../lib/grouping";

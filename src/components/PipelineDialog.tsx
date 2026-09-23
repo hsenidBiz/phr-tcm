@@ -21,7 +21,7 @@ import {
 import { Collapse, useSettled } from "./ui/collapse";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type BuildStage, type PrBuild } from "../bindings";
 import { cn } from "../lib/cn";
 import { copyText } from "../lib/clipboard";

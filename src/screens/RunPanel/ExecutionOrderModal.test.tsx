@@ -2,12 +2,12 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import ExecutionOrderModal from "./ExecutionOrderModal";
 
-vi.mock("sonner", () => ({
+vi.mock("../../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 

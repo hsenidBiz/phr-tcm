@@ -3,7 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, type TestCaseFull } from "../../bindings";
 import BulkEditDialog from "../../components/BulkEditDialog";
 import PowerRenameDialog, { type RenameTarget } from "../../components/PowerRenameDialog";

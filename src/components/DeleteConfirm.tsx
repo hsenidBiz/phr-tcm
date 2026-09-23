@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type DeleteOutcome } from "../bindings";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { IconCancel, IconRemove } from "../lib/actionIcons";

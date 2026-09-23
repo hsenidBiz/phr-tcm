@@ -29,7 +29,7 @@ import {
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import PastRuns from "./PastRuns";

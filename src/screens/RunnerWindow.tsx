@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Pin, PinOff, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import HoverDismissToaster from "../components/HoverDismissToaster";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
@@ -21,7 +21,6 @@ import { emitPointRecorded } from "../lib/runnerBus";
 import { loadMyOrder, onMyOrderChanged, resortUpcoming, type OrderKey } from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
-import { getTheme } from "../lib/theme";
 import { outcomeLabel } from "./RunPanel";
 import {
   IconAttach,
@@ -883,7 +882,7 @@ export default function RunnerWindow() {
       {/* Hover-to-dismiss: the paste confirmation lands on the outcome
           buttons, and a hand heading for one should not have to wait it
           out or drag it away. */}
-      <HoverDismissToaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
+      <HoverDismissToaster />
       <header
         data-tauri-drag-region
         className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"

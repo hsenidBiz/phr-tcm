@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { useLightbox } from "@astryxdesign/core/Lightbox";
 import AstryxIsland from "../../components/AstryxIsland";
 import { commands, type RunOutcome, type TestPoint } from "../../bindings";

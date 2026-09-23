@@ -1,10 +1,10 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { caseRow, expandSuite, mountScreen } from "./testSupport";
 
-vi.mock("sonner", () => ({
+vi.mock("../../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FolderTree } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { commands, type PlanWithSuites, type SuiteRef } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";

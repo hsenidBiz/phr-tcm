@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";

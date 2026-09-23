@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { marked } from "marked";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type WorkComment } from "../bindings";
 import { IconPost } from "../lib/actionIcons";
 import { unwrap } from "../lib/ipc";

@@ -9,7 +9,7 @@
 import { Bell, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { cn } from "../lib/cn";
 import { IconOpenInBrowser } from "../lib/actionIcons";
 import {

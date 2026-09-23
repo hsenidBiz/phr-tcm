@@ -7,7 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 import { commands, type CreatedItem, type PbiHit } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
 import TagsField from "../components/TagsField";
