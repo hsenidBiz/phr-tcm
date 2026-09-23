@@ -986,8 +986,9 @@ export default function AiBridge() {
         ) : null}
 
         <p className="text-[11px] text-faint">
-          These settings are stored on this machine so you can register another editor
-          without retyping them, and are written into each tool's MCP config.{" "}
+          {(showPhrx || phrxLeftover.length > 0)
+            ? "These settings are stored on this machine so you can register another editor without retyping them, and are written into each tool's MCP config."
+            : "These settings are stored on this machine."}{" "}
           <button
             className="underline underline-offset-2 hover:text-danger"
             onClick={() => {

@@ -138,14 +138,17 @@ the board's test count.
   of guessing, without a separate server: `db_lookup` finds the tables
   and columns behind a topic (or lists one named table's full column
   list), and `db_query` runs a single SQL statement and reads back the
-  result. Change the default connection in the app and the registered
-  tool configs update with you.
+  result. Change the connection in the app and it reaches an assistant on
+  its next call - the app pushes the change straight to its own bridge,
+  there is no tool config file to keep in step.
 - An older option, the separate PHR X database MCP server, still exists
   for whoever still runs it. It is off unless switched on in Settings -
   the app's own tools above replaced it - and, if it was switched on
   before, a tool that still has it registered can unregister it on the
   AI Bridge tab even with the option off, so a stale registration is
-  never stranded there.
+  never stranded there. With the option on, picking a different
+  connection also re-registers PHR X in every tool config that already
+  carries it, so that copy of the connection string stays in step too.
 - The app runs `sqlcmd` itself to reach the database - it is not bundled,
   so the app looks for it on PATH, in the ODBC 17/18 client tools
   folders, and in `C:\Program Files\sqlcmd`, and says so plainly when
