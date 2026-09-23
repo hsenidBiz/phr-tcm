@@ -36,8 +36,7 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "../lib/workingDir";
-import { globalAllowedSnapshot, saveScope, scopeSnapshot, showDbSnapshot, subscribeAiScope, subscribeShowDb } from "../lib/aiScope";
-import { subscribeTour, tourRunningSnapshot } from "../tour/tourState";
+import { globalAllowedSnapshot, saveScope, scopeSnapshot, showPhrxSnapshot, subscribeAiScope, subscribeShowPhrx } from "../lib/aiScope";
 import {
   IconBrowse,
   IconConfirm,
@@ -93,10 +92,11 @@ export default function AiBridge() {
   const globalAllowed = useSyncExternalStore(subscribeAiScope, globalAllowedSnapshot);
   const scopeChoice = useSyncExternalStore(subscribeAiScope, scopeSnapshot);
   const global = globalAllowed && scopeChoice === "global";
-  // The PHR-X card is on by default, but hides when the Settings switch is
-  // off - except during the guided tour, whose step is anchored on it.
-  const showDb = useSyncExternalStore(subscribeShowDb, showDbSnapshot);
-  const tourRunning = useSyncExternalStore(subscribeTour, tourRunningSnapshot);
+  // The connection card is always shown - it is the app's own database
+  // tools' setup, not optional. Registering the separate PHR X server
+  // stays opt-in from Settings; it predates those tools and most people
+  // no longer need it.
+  const showPhrx = useSyncExternalStore(subscribeShowPhrx, showPhrxSnapshot);
   // What every call below is told: the repository, or null for the whole
   // machine (detection reads the global configs on null; registration is
   // ALSO told `global` explicitly, so null alone can never mean "global").
@@ -283,6 +283,10 @@ export default function AiBridge() {
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
   const dbReady = isDbConfigComplete(db);
+  // A tool can still carry a PHR X registration from before the option was
+  // switched off (or from before it existed at all) - that row has to stay
+  // reachable so the leftover connection string can be removed from it.
+  const phrxLeftover = installed.filter((t) => (t.registered_servers ?? []).includes(DB_SERVER));
 
   const repoCard = (
     <section data-tour="ai-repos" className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -611,7 +615,6 @@ export default function AiBridge() {
           as grid columns 2 and 3 - and space-y's child margins would
           leak through contents into the outer grid, where gap does not. */}
       <div className="grid gap-6 2xl:contents">
-      {(showDb || tourRunning) && (
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
@@ -793,114 +796,148 @@ export default function AiBridge() {
           </div>
         </div>
 
-        {/* Everything below registers the company's SEPARATE database MCP
-            server. It predates the tools above and is no longer how a
-            lookup happens, so it is secondary now rather than the point
-            of the card. */}
-        <div className="space-y-2 border-t border-border/60 pt-3">
-          <p className="text-xs text-muted">
-            Optional: register the company&apos;s own database MCP server beside this
-            one. It is no longer needed for lookups. Point it at the built{" "}
-            <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and it receives
-            the connection above.
-          </p>
+        {showPhrx ? (
+          <>
+            {/* Everything below registers the company's SEPARATE database MCP
+                server. It predates the tools above and is no longer how a
+                lookup happens, so it is secondary now rather than the point
+                of the card. */}
+            <div className="space-y-2 border-t border-border/60 pt-3">
+              <p className="text-xs text-muted">
+                Optional: register the company&apos;s own database MCP server beside this
+                one. It is no longer needed for lookups. Point it at the built{" "}
+                <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and it receives
+                the connection above.
+              </p>
 
-          <div className="flex items-end gap-2">
-            <label className="min-w-0 flex-1 text-xs text-muted">
-              Server path (file or folder)
-              <Input
-                aria-label="Database server path"
-                className="mt-1 w-full py-1.5 text-xs"
-                placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
-                value={db.exe_path}
-                onChange={(e) => editDb({ exe_path: e.target.value })}
-              />
-            </label>
-            <Button size="sm" variant="outline" onClick={pickExe}>
-              <IconBrowse aria-hidden />
-              File
-            </Button>
-            <Button size="sm" variant="outline" onClick={pickFolder}>
-              <IconBrowse aria-hidden />
-              Folder
-            </Button>
-          </div>
+              <div className="flex items-end gap-2">
+                <label className="min-w-0 flex-1 text-xs text-muted">
+                  Server path (file or folder)
+                  <Input
+                    aria-label="Database server path"
+                    className="mt-1 w-full py-1.5 text-xs"
+                    placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
+                    value={db.exe_path}
+                    onChange={(e) => editDb({ exe_path: e.target.value })}
+                  />
+                </label>
+                <Button size="sm" variant="outline" onClick={pickExe}>
+                  <IconBrowse aria-hidden />
+                  File
+                </Button>
+                <Button size="sm" variant="outline" onClick={pickFolder}>
+                  <IconBrowse aria-hidden />
+                  Folder
+                </Button>
+              </div>
 
-          <label className="block text-xs text-muted">
-            DB_TYPE
-            <Select
-              aria-label="Database type"
-              className="mt-1 w-full"
-              triggerClassName="py-1.5 text-xs"
-              value={db.db_type}
-              onChange={(e) => editDb({ db_type: e.target.value })}
-            >
-              <option value="mssql">mssql</option>
-              <option value="sqlserver">sqlserver</option>
-            </Select>
-          </label>
+              <label className="block text-xs text-muted">
+                DB_TYPE
+                <Select
+                  aria-label="Database type"
+                  className="mt-1 w-full"
+                  triggerClassName="py-1.5 text-xs"
+                  value={db.db_type}
+                  onChange={(e) => editDb({ db_type: e.target.value })}
+                >
+                  <option value="mssql">mssql</option>
+                  <option value="sqlserver">sqlserver</option>
+                </Select>
+              </label>
 
-          <label className="block text-xs text-muted">
-            SCHEMA_FILTER <span className="text-faint">(optional)</span>
-            <Input
-              aria-label="Schema filter"
-              className="mt-1 w-full py-1.5 text-xs"
-              placeholder="dbo,hr — blank uses the server's default"
-              value={db.schema_filter}
-              onChange={(e) => editDb({ schema_filter: e.target.value })}
-            />
-          </label>
-        </div>
+              <label className="block text-xs text-muted">
+                SCHEMA_FILTER <span className="text-faint">(optional)</span>
+                <Input
+                  aria-label="Schema filter"
+                  className="mt-1 w-full py-1.5 text-xs"
+                  placeholder="dbo,hr — blank uses the server's default"
+                  value={db.schema_filter}
+                  onChange={(e) => editDb({ schema_filter: e.target.value })}
+                />
+              </label>
+            </div>
 
-        {!dbReady ? (
-          <p className="text-xs text-faint">
-            Fill in the executable and connection string to enable registration.
-          </p>
-        ) : installed.length === 0 ? (
-          <p className="text-xs text-muted">No supported AI tools detected on this machine.</p>
-        ) : (
-          <ul className="space-y-2 border-t border-border/60 pt-2">
-            {installed.map((t) => (
-              <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-text">{t.name}</span>
-                {/* The same label as the list above: which config this row
-                    is about is exactly what a person needs to know before
-                    putting a connection string into it. */}
-                <span className="flex-1 text-xs text-faint">
-                  {t.scope === "project" ? "in this repo" : "global"}
-                </span>
-                {(t.registered_servers ?? []).includes(DB_SERVER) ? (
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-success">Registered ✓</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
-                      onClick={() => unregisterDb.mutate(t.id)}
-                    >
-                      <IconUnregister aria-hidden />
-                      {unregisterDb.isPending && unregisterDb.variables === t.id
-                        ? "Removing"
-                        : "Unregister"}
-                    </Button>
+            {!dbReady ? (
+              <p className="text-xs text-faint">
+                Fill in the executable and connection string to enable registration.
+              </p>
+            ) : installed.length === 0 ? (
+              <p className="text-xs text-muted">No supported AI tools detected on this machine.</p>
+            ) : (
+              <ul className="space-y-2 border-t border-border/60 pt-2">
+                {installed.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-text">{t.name}</span>
+                    {/* The same label as the list above: which config this row
+                        is about is exactly what a person needs to know before
+                        putting a connection string into it. */}
+                    <span className="flex-1 text-xs text-faint">
+                      {t.scope === "project" ? "in this repo" : "global"}
+                    </span>
+                    {(t.registered_servers ?? []).includes(DB_SERVER) ? (
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs text-success">Registered ✓</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
+                          onClick={() => unregisterDb.mutate(t.id)}
+                        >
+                          <IconUnregister aria-hidden />
+                          {unregisterDb.isPending && unregisterDb.variables === t.id
+                            ? "Removing"
+                            : "Unregister"}
+                        </Button>
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={registerDb.isPending && registerDb.variables === t.id}
+                        onClick={() => registerDb.mutate(t.id)}
+                      >
+                        <IconRegister aria-hidden />
+                        {registerDb.isPending && registerDb.variables === t.id
+                          ? "Registering"
+                          : "Register"}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : phrxLeftover.length > 0 ? (
+          <div className="space-y-2 border-t border-border/60 pt-3">
+            <p className="text-xs text-muted">
+              The PHR X database server is still registered with the tools below. This
+              app&apos;s own database tools replace it, and its registration keeps the
+              connection string, password included, in that tool&apos;s settings file.
+              Unregister it to remove that copy.
+            </p>
+            <ul className="space-y-2">
+              {phrxLeftover.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-text">{t.name}</span>
+                  <span className="flex-1 text-xs text-faint">
+                    {t.scope === "project" ? "in this repo" : "global"}
                   </span>
-                ) : (
                   <Button
                     size="sm"
-                    variant="outline"
-                    disabled={registerDb.isPending && registerDb.variables === t.id}
-                    onClick={() => registerDb.mutate(t.id)}
+                    variant="ghost"
+                    disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
+                    onClick={() => unregisterDb.mutate(t.id)}
                   >
-                    <IconRegister aria-hidden />
-                    {registerDb.isPending && registerDb.variables === t.id
-                      ? "Registering"
-                      : "Register"}
+                    <IconUnregister aria-hidden />
+                    {unregisterDb.isPending && unregisterDb.variables === t.id
+                      ? "Removing"
+                      : "Unregister"}
                   </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <p className="text-[11px] text-faint">
           These settings are stored on this machine so you can register another editor
@@ -919,11 +956,12 @@ export default function AiBridge() {
             }}
           >
             Forget them
-          </button>{" "}
-          — this clears the form only; unregister above to remove them from a tool.
+          </button>
+          {(showPhrx || phrxLeftover.length > 0)
+            ? ". This clears the form only. Unregister above to remove them from a tool."
+            : "."}
         </p>
       </section>
-      )}
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>

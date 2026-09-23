@@ -67,32 +67,33 @@ export function scopeSnapshot(): RegistrationScope {
   return loadScope();
 }
 
-const SHOW_DB_KEY = "tcm-v2-ai-show-db";
+const SHOW_PHRX_KEY = "tcm-v2-ai-show-phrx";
 
-/** Whether the AI Bridge tab shows the company database (PHR-X) card.
- * On by default; only the OFF choice is stored, so a fresh profile and a
- * cleared one both show it. */
-export function loadShowDb(): boolean {
+/** Whether the AI Bridge tab offers registering the separate PHR X DB server.
+ * Off by default: the app's own database tools replaced it. Only the ON
+ * choice is stored. A new key rather than the old show-db one, whose
+ * default was on and hid the whole database card, connection included. */
+export function loadShowPhrx(): boolean {
   try {
-    return localStorage.getItem(SHOW_DB_KEY) !== "off";
+    return localStorage.getItem(SHOW_PHRX_KEY) === "on";
   } catch {
-    return true;
+    return false;
   }
 }
 
-export function saveShowDb(on: boolean): void {
+export function saveShowPhrx(on: boolean): void {
   try {
-    if (on) localStorage.removeItem(SHOW_DB_KEY);
-    else localStorage.setItem(SHOW_DB_KEY, "off");
+    if (on) localStorage.setItem(SHOW_PHRX_KEY, "on");
+    else localStorage.removeItem(SHOW_PHRX_KEY);
   } catch {
     // storage unavailable -> nothing is remembered
   }
   notify();
 }
 
-export function showDbSnapshot(): boolean {
-  return loadShowDb();
+export function showPhrxSnapshot(): boolean {
+  return loadShowPhrx();
 }
 
 /** Same listener set as the scope values above - reuse it under its own name. */
-export const subscribeShowDb = subscribeAiScope;
+export const subscribeShowPhrx = subscribeAiScope;

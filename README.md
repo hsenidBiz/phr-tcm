@@ -134,12 +134,18 @@ the board's test count.
   allowed module values, the tags in use and the writing style test cases
   follow: short active sentences, exact values, no em dashes.
 - A badge beside the tab title shows whether the bridge is running.
-- An optional company database server registers alongside the bridge, so
-  an assistant can check real data instead of guessing. Change the
-  default connection in the app and the registered tool configs update
-  with you. Two tools: `db_lookup` finds the tables and columns behind a
-  topic (or lists one named table's full column list), and `db_query`
-  runs a single SQL statement and reads back the result.
+- The app's own database tools let an assistant check real data instead
+  of guessing, without a separate server: `db_lookup` finds the tables
+  and columns behind a topic (or lists one named table's full column
+  list), and `db_query` runs a single SQL statement and reads back the
+  result. Change the default connection in the app and the registered
+  tool configs update with you.
+- An older option, the separate PHR X database MCP server, still exists
+  for whoever still runs it. It is off unless switched on in Settings -
+  the app's own tools above replaced it - and, if it was switched on
+  before, a tool that still has it registered can unregister it on the
+  AI Bridge tab even with the option off, so a stale registration is
+  never stranded there.
 - The app runs `sqlcmd` itself to reach the database - it is not bundled,
   so the app looks for it on PATH, in the ODBC 17/18 client tools
   folders, and in `C:\Program Files\sqlcmd`, and says so plainly when
@@ -157,11 +163,12 @@ the board's test count.
   and a statement gets 30 seconds before it is stopped.
 - Every statement the assistant sends is logged - whether it ran or was
   refused, a write kept whole and a read shortened - and never with
-  credentials. What logging cannot hide: while `sqlcmd` is running, the
-  connection's password is one of its own command-line arguments, so it
-  is readable from this machine's process list for that moment. Worth
-  knowing if you ever type your own database password into this form
-  rather than using a connection the app shipped with.
+  credentials. The password reaches `sqlcmd` through its own
+  `SQLCMDPASSWORD` environment variable rather than a command-line
+  argument, so it does not appear in this machine's process list. That is
+  not the same as saying nothing else on this machine can read it: a
+  password typed into this form is stored here, in the app's own
+  settings, in plain text.
 
 ### Work Manager
 - A To Do, In Progress and Done board of your work items, or a team's,

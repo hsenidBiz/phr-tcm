@@ -4,7 +4,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "sonner";
 import AiBridge from "./AiBridge";
-import { setTourRunning } from "../tour/tourState";
 import { dbConnectionSnapshot, subscribeDbSettings } from "../lib/dbServer";
 
 afterEach(() => {
@@ -200,6 +199,7 @@ test("the tab still renders when the status query fails", async () => {
 const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
 
 test("the database server cannot be registered until it is configured", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
@@ -212,6 +212,7 @@ test("the database server cannot be registered until it is configured", async ()
 });
 
 test("configuring the database server persists it and enables registration", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   let sent: unknown;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
@@ -336,6 +337,7 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
     connection_string: "Server=sgdev01db02.cloud;Database=phrx;User Id=ro;TrustServerCertificate=True;",
     schema_filter: "PeoplesHR",
   };
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -575,6 +577,7 @@ test("Register passes the working repository and the disabled tools along", asyn
 test("a warning from register_db_server is shown instead of the success toast", async () => {
   const warning =
     "The connection string is in .cursor/mcp.json, which git is tracking in this repository";
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
@@ -597,6 +600,7 @@ test("a warning from register_db_server is shown instead of the success toast", 
 });
 
 test("no warning means the plain success toast", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
@@ -668,6 +672,7 @@ test("a tool with nothing left globally is not offered the retire button", async
 /// which config a connection string is about to go into is exactly what a
 /// person needs to know before clicking Register.
 test("the database server list labels each row's scope too", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   localStorage.setItem(
     "tcm-v2-db-mcp",
     JSON.stringify({
@@ -803,42 +808,61 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   ]);
 });
 
-test("the database card hides when switched off in Settings, except during the tour", async () => {
-  localStorage.setItem("tcm-v2-ai-show-db", "off");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return [];
-    if (cmd === "db_server_defaults") return null;
-    return [];
-  });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { unmount } = renderBridge(qc);
-  await screen.findByText("How it works");
-  expect(screen.queryByText("Company database (PHR-X)")).not.toBeInTheDocument();
-  unmount();
-
-  setTourRunning(true);
-  renderBridge(qc);
-  expect(await screen.findByText("Company database")).toBeInTheDocument();
-  setTourRunning(false);
-  localStorage.clear();
-});
-
 // --------------------------------------------- the database tools' switches
 
-/// The card is about the connection the app's OWN tools use now. The
-/// PHR-X server it used to be about is still registerable, below and
-/// optional, and the heading no longer claims the card for it.
-test("the Company database card leads with the connection, not the PHR-X server", async () => {
+/// The card is about the connection the app's OWN tools use now, and it is
+/// always there - registering the separate PHR X server is opt-in from
+/// Settings, off by default.
+test("the connection is always shown; the PHR X option is not, by default", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS; // none has phr-db-mcp registered
+    // Default connections only render once a preset shipped - without this
+    // the combobox is absent regardless of the PHR X option below.
+    if (cmd === "db_server_presets")
+      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByText("Company database")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Default connections")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
+  expect(screen.queryByText(/no longer needed for lookups/)).not.toBeInTheDocument();
+});
+
+test("switched on in Settings, the PHR X option appears as before", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  expect(await screen.findByText("Company database")).toBeInTheDocument();
-  expect(screen.queryByText("Company database (PHR-X)")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Database server path")).toBeInTheDocument();
   expect(screen.getByText(/no longer needed for lookups/)).toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("with the option off, a tool that still has PHR X registered can unregister it", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases", "phr-db-mcp"], scope: "project" },
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm-testcases"], scope: "project" },
+      ];
+    if (cmd === "unregister_db_server") { calls.push((args as { id: string }).id); return null; }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const notice = await screen.findByText(/still registered with the tools below/);
+  // No executable path configured, and still the row is there to remove it.
+  expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Register$/ })).not.toBeInTheDocument();
+  // Scoped to the notice's own row, not the "Connect your AI tools" list
+  // above it, where both tools also show an Unregister button for the
+  // unrelated tcm-testcases server.
+  const leftover = within(notice.closest("div") as HTMLElement);
+  fireEvent.click(leftover.getByRole("button", { name: /Unregister/ }));
+  await waitFor(() => expect(calls).toEqual(["claude-code"]));
 });
 
 /// Off by default, and unmovable on a connection the backend would refuse

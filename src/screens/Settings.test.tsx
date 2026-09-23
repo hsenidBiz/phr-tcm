@@ -262,17 +262,16 @@ test("cancelling the import confirmation touches nothing", async () => {
   expect(imported).toBe(false);
 });
 
-test("the PHR-X card switch persists its choice, on by default", async () => {
+test("the PHR X option switch is off by default and persists ON only", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  const sw = await screen.findByLabelText("Show the company database section on the AI Bridge tab");
-  expect(sw).toBeChecked();
-  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
+  const sw = await screen.findByLabelText("Offer the PHR X database server on the AI Bridge tab");
+  expect(sw).not.toBeChecked();
   fireEvent.click(sw);
-  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBe("off");
+  expect(localStorage.getItem("tcm-v2-ai-show-phrx")).toBe("on");
   fireEvent.click(sw);
-  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-ai-show-phrx")).toBeNull();
   localStorage.clear();
 });
 
