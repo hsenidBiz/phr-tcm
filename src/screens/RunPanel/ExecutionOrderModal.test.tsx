@@ -321,6 +321,14 @@ test("a failed save says why and keeps the modal open", async () => {
   expect(screen.getByRole("button", { name: "Save for everyone" })).toBeInTheDocument();
 });
 
+test("Save for everyone is disabled until the list actually changes from the saved order", () => {
+  mount({ file: FILE([{ id: 203 }, { id: 201 }, { id: 202 }]), view: "suggested" });
+  expect(screen.getByRole("button", { name: "Save for everyone" })).toBeDisabled();
+
+  fireEvent.click(within(orderList()).getByRole("button", { name: "Move #201 up" }));
+  expect(screen.getByRole("button", { name: "Save for everyone" })).toBeEnabled();
+});
+
 test("without a PBI there is no Save for everyone", () => {
   mount({ pbiId: 0 });
   expect(screen.queryByRole("button", { name: "Save for everyone" })).not.toBeInTheDocument();

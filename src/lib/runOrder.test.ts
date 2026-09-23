@@ -4,7 +4,6 @@ import {
   emitMyOrderChanged,
   loadMyOrder,
   loadOrderView,
-  moveAfter,
   MY_ORDER_EVENT,
   onMyOrderChanged,
   reconcile,
@@ -42,25 +41,6 @@ test("reconcile: empty order falls back to spec order", () => {
 
 test("reconcile: empty spec reconciles to empty", () => {
   expect(reconcile([1, 2, 3], [])).toEqual([]);
-});
-
-// --- moveAfter -----------------------------------------------------------
-
-test("moveAfter: moves an id to the middle of the list", () => {
-  expect(moveAfter([1, 2, 3, 4], 4, 1)).toEqual([1, 4, 2, 3]);
-});
-
-test("moveAfter: moves an id to the end of the list", () => {
-  expect(moveAfter([1, 2, 3, 4], 1, 4)).toEqual([2, 3, 4, 1]);
-});
-
-test("moveAfter: a missing id is a no-op", () => {
-  expect(moveAfter([1, 2, 3], 99, 1)).toEqual([1, 2, 3]);
-  expect(moveAfter([1, 2, 3], 1, 99)).toEqual([1, 2, 3]);
-});
-
-test("moveAfter: moving an id after itself is a no-op", () => {
-  expect(moveAfter([1, 2, 3], 2, 2)).toEqual([1, 2, 3]);
 });
 
 // --- resortUpcoming --------------------------------------------------------

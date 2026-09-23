@@ -2,7 +2,7 @@
 // the Execution order modal, plus a tester's own order for one suite on this
 // machine (never written to Azure DevOps - see design doc §4.3/§4.4) and
 // the cross-window event that keeps Run Tests and the runner in step when
-// the runner saves a new My order (design doc §5.2).
+// Run Tests' Execution order modal saves My order (design doc §5.2).
 
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { RunOrderCase } from "../bindings";
@@ -30,17 +30,6 @@ export function reconcile(order: readonly number[], spec: readonly number[]): nu
     }
   }
   return kept;
-}
-
-/** `id` moved to directly after `afterId` (no-op if either is missing or
- * equal). */
-export function moveAfter(order: readonly number[], id: number, afterId: number): number[] {
-  if (id === afterId || !order.includes(id) || !order.includes(afterId)) {
-    return [...order];
-  }
-  const without = order.filter((x) => x !== id);
-  const afterIdx = without.indexOf(afterId);
-  return [...without.slice(0, afterIdx + 1), id, ...without.slice(afterIdx + 1)];
 }
 
 /** After position `idx`, the UNMARKED cases are re-sorted by `rank` into the

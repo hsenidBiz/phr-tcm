@@ -34,7 +34,11 @@ const SUITE = { plan_id: 9, suite_id: 91 };
 const MY_KEY = "tcm-v2-run-order:acme/9/91";
 const VIEW_KEY = "tcm-v2-run-order-view:acme/9/91";
 
-function mountHook(runOrder: unknown = { state: "none" }, entries: number[] = [303, 301, 302]) {
+function mountHook(
+  runOrder: unknown = { state: "none" },
+  entries: number[] = [303, 301, 302],
+  grouped = false,
+) {
   mockIPC((cmd) => {
     switch (cmd) {
       case "get_run_order":
@@ -52,7 +56,7 @@ function mountHook(runOrder: unknown = { state: "none" }, entries: number[] = [3
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
   return renderHook(
-    () => useRunOrder({ org: "acme", project: "Web", pbiId: 42, suite: SUITE, points: POINTS, grouped: false }),
+    () => useRunOrder({ org: "acme", project: "Web", pbiId: 42, suite: SUITE, points: POINTS, grouped }),
     { wrapper },
   );
 }
@@ -99,6 +103,37 @@ test("saveMine stores the list as My order on this machine and makes it the list
   expect(result.current.myOrder).toEqual([302, 303, 301]);
   expect(result.current.ordered.map((p) => p.test_case_id)).toEqual([302, 303, 301]);
   expect(toast.info).not.toHaveBeenCalled();
+});
+
+test("saveMine on a grouped list stores the order Run Tests displays, not the raw flat list", async () => {
+  // 301 and 302 are grouped "Auth", 303 is grouped "Billing". The modal
+  // hands back a flat order that interleaves the two groups (301, 303,
+  // 302); Run Tests would show them gathered by group instead (301, 302
+  // together, then 303) - My order must match what is actually on screen.
+  const FILE = {
+    format: "tcm-run-order",
+    version: 1,
+    saved_by: "lead@example.com",
+    saved_at: "2026-09-23T10:15:00Z",
+    cases: [
+      { id: 301, group: "Auth" },
+      { id: 302, group: "Auth" },
+      { id: 303, group: "Billing" },
+    ],
+  };
+  const { result } = mountHook({ state: "found", file: FILE }, [303, 301, 302], true);
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  let ok = false;
+  act(() => {
+    ok = result.current.saveMine([301, 303, 302]);
+  });
+
+  expect(ok).toBe(true);
+  const stored = JSON.parse(localStorage.getItem(MY_KEY) as string);
+  expect(stored).toEqual([301, 302, 303]);
+  expect(result.current.myOrder).toEqual([301, 302, 303]);
+  expect(result.current.ordered.map((p) => p.test_case_id)).toEqual([301, 302, 303]);
 });
 
 test("saveMine with storage unavailable says so and changes nothing", async () => {

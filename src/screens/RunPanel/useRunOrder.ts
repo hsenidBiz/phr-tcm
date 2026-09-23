@@ -71,6 +71,30 @@ export function sortPoints(points: readonly TestPoint[], order: readonly number[
 /** The ordered points as sections: by the suggested file's groups when it
  * has any, else by title. Each section gathers its members and sections
  * follow their first case, so the list reads top to bottom in the order. */
+/** `ids` (a permutation of the suite's case ids) in the order Run Tests will
+ * actually show them when grouping is on: sectioned the same way `sections`
+ * is (`sectionsFor` over the points sorted to `ids`), then flattened back to
+ * case ids. Used so a My order saved from a grouped list matches the rows
+ * on screen - and so the runner, which ranks by the stored My order, agrees
+ * with what the tester saw. */
+export function displayOrder(
+  ids: readonly number[],
+  points: readonly TestPoint[],
+  groupOf: Map<number, string> | null,
+): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const { pts } of sectionsFor(sortPoints(points, ids), groupOf)) {
+    for (const p of pts) {
+      if (p.test_case_id != null && !seen.has(p.test_case_id)) {
+        seen.add(p.test_case_id);
+        out.push(p.test_case_id);
+      }
+    }
+  }
+  return out;
+}
+
 export function sectionsFor(ordered: readonly TestPoint[], groupOf: Map<number, string> | null): PointSection[] {
   let keys: string[];
   if (groupOf) {
@@ -99,7 +123,7 @@ export const sentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${
  * Run Tests' toolbar and under Start from in the Execution order modal. A
  * reason that already sends the reader to the logs is not told to go there
  * twice. */
-export function noteFor(reason: string): string {
+function noteFor(reason: string): string {
   const head = `The suggested run order could not be read: ${sentence(reason)}`;
   return /Settings\s*(→|,)\s*Logs/.test(reason) ? head : `${head} See Settings → Logs.`;
 }
@@ -211,10 +235,15 @@ export function useRunOrder({
    * to a My order that is not there would mislead. */
   const saveMine = (ids: readonly number[]): boolean => {
     if (!key) return false;
-    saveMyOrder(key, ids);
+    // Grouping regroups the flat list the modal hands back (`sections`
+    // above does the same); store what Run Tests will actually display, or
+    // the runner - which ranks upcoming cases by this very order - would
+    // follow a sequence the tester never saw.
+    const toStore = grouped ? displayOrder(ids, points, groupOf) : [...ids];
+    saveMyOrder(key, toStore);
     // Read it back: with storage unavailable the save is silently dropped.
     const saved = loadMyOrder(key);
-    if (!saved || saved.length !== ids.length || saved.some((id, i) => id !== ids[i])) {
+    if (!saved || saved.length !== toStore.length || saved.some((id, i) => id !== toStore[i])) {
       toast.error("Your own order could not be saved on this machine.");
       return false;
     }

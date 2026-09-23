@@ -460,6 +460,7 @@ export default function RunPanel({
               variant="outline"
               size="sm"
               disabled={order.loading}
+              title={order.loading ? "Loading the run order…" : undefined}
               onClick={() => setOrderOpen(true)}
             >
               <IconSetOrder aria-hidden />

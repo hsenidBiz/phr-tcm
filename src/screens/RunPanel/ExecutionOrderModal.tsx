@@ -111,6 +111,14 @@ export default function ExecutionOrderModal({
     setSelected(new Set());
   };
 
+  // Save for everyone is pointless when it would only re-stamp saved_by and
+  // saved_at on the file already there - the old Suite Management editor
+  // disabled its own Save the same way. Spec order or My order happening to
+  // match by coincidence still counts as a genuine save (a different start
+  // becoming the suggested order is a real change); only Suggested left
+  // untouched is a no-op.
+  const unchangedFromSaved = startFrom === "suggested" && file != null && sameOrder(order, toCases(idsFor("suggested")));
+
   // A stored order left exactly as it is changes only which order the list
   // shows, so a stored My order survives a switch to Suggested or Spec.
   // Anything else is the tester's own list.
@@ -222,7 +230,12 @@ export default function ExecutionOrderModal({
             <Button
               variant="outline"
               size="sm"
-              title="Save as the suggested run order every tester starts from"
+              disabled={unchangedFromSaved}
+              title={
+                unchangedFromSaved
+                  ? "This is already the suggested run order - move a case first"
+                  : "Save as the suggested run order every tester starts from"
+              }
               onClick={() => setConfirming(true)}
             >
               <IconShare aria-hidden />

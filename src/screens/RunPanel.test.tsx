@@ -672,6 +672,18 @@ test("opens in the suggested run order when the PBI has one, not the points' ord
   await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
 });
 
+test("the Set execution order button explains itself while the run order is still loading", async () => {
+  // get_run_order never resolves - the button stays disabled by
+  // order.loading for as long as that read is outstanding.
+  mockOrder({ points: ABC, runOrder: () => new Promise(() => {}) });
+  renderPanel();
+  await screen.findByText("Alpha check");
+
+  const button = screen.getByRole("button", { name: "Set execution order" });
+  expect(button).toBeDisabled();
+  expect(button).toHaveAttribute("title", "Loading the run order…");
+});
+
 test("the list has no order controls of its own; one button opens the modal", async () => {
   mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
   renderPanel();
