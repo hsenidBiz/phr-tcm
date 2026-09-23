@@ -1,7 +1,9 @@
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { MY_ORDER_EVENT } from "../lib/runOrder";
 import RunnerWindow from "./RunnerWindow";
 
 // getCurrentWindow() must be a no-op in jsdom - and its methods must
@@ -732,4 +734,117 @@ test("Snip minimizes the runner and Cancel snip restores it", async () => {
   await vi.waitFor(() => expect(windowMock.unminimize).toHaveBeenCalled());
   await vi.waitFor(() => expect(windowMock.setFocus).toHaveBeenCalled());
   expect(screen.getByRole("button", { name: "Snip" })).toBeInTheDocument();
+});
+
+// --- "Run next..." and staying in step with Run Tests (design doc §5.2) ---
+
+const RUN3 = [
+  { ...fullCase, id: 201, title: "Alpha check" },
+  { ...fullCase, id: 202, title: "Bravo check" },
+  { ...fullCase, id: 203, title: "Charlie check" },
+];
+
+const RUN4 = [
+  { ...fullCase, id: 201, title: "Alpha check" },
+  { ...fullCase, id: 202, title: "Bravo check" },
+  { ...fullCase, id: 203, title: "Charlie check" },
+  { ...fullCase, id: 204, title: "Delta check" },
+];
+
+// Events mocked for real (shouldMockEvents), so an emit reaches this
+// window's listener the way another window's My-order save would.
+function mockRunnerCases(cases: typeof RUN3) {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "run_history") return [];
+      if (cmd === "pbi_test_cases_full") return cases;
+      if (cmd === "list_test_points") return [];
+    },
+    { shouldMockEvents: true },
+  );
+}
+
+const closeRunNext = () =>
+  fireEvent.keyDown(screen.getByPlaceholderText("Search…"), { key: "Escape" });
+
+test("Run next lists only the later cases with no outcome yet", async () => {
+  mockRunnerCases(RUN3);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  // Both later cases are unmarked - both are offered.
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  expect(screen.getByRole("option", { name: "Bravo check" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Charlie check" })).toBeInTheDocument();
+  closeRunNext();
+
+  // Mark Bravo, then come back to Alpha.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Bravo check");
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Alpha check");
+
+  // Bravo is marked now - only Charlie is offered.
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  expect(screen.queryByRole("option", { name: "Bravo check" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Charlie check" })).toBeInTheDocument();
+});
+
+test("choosing a case in Run next moves it next and writes My order under the session key", async () => {
+  mockRunnerCases(RUN3);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
+
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
+    201, 203, 202,
+  ]);
+});
+
+test("a My order save from elsewhere re-sorts the upcoming cases, leaving the one on screen alone", async () => {
+  mockRunnerCases(RUN3);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([201, 203, 202]));
+  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
+
+  // Still on Alpha - the event never moves the case on screen.
+  expect(screen.getByText("Alpha check")).toBeInTheDocument();
+
+  // Next now walks to Charlie, per the new order.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
+});
+
+test("marked cases after the current one keep their position under a re-sort", async () => {
+  mockRunnerCases(RUN4);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  // Mark Bravo, then come back to Alpha - it stays marked from here on.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Bravo check");
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Alpha check");
+
+  // Another window's My order puts Delta ahead of Charlie.
+  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([201, 204, 202, 203]));
+  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
+
+  // Bravo (marked) is still the very next case - untouched by the re-sort.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Bravo check");
+  // Delta now comes before Charlie, per the new order.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Delta check");
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
 });

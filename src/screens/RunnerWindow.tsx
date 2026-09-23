@@ -11,12 +11,21 @@ import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import HistoryDots from "../components/HistoryDots";
 import { Button } from "../components/ui/button";
+import Combobox from "../components/ui/combobox";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { blobToB64 } from "../lib/blob";
 import { emitPointRecorded } from "../lib/runnerBus";
+import {
+  loadMyOrder,
+  moveAfter,
+  onMyOrderChanged,
+  resortUpcoming,
+  saveMyOrder,
+  type OrderKey,
+} from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { getTheme } from "../lib/theme";
@@ -110,7 +119,18 @@ async function readClipboardImageB64(): Promise<string | null> {
 
 export default function RunnerWindow() {
   const session = loadRunnerSession();
+  // This suite's My-order key (design doc §4.3): null for a suite-less
+  // session (there isn't one), which is also when "Run next..." and the
+  // cross-window sync below both quietly do nothing.
+  const orderKey: OrderKey | null = session
+    ? { org: session.org, planId: session.planId, suiteId: session.suiteId }
+    : null;
   const [idx, setIdx] = useState(0);
+  // This window's own order of case ids (design doc §5.2): null until the
+  // fetch below has something to seed it from. Reordered by "Run next..."
+  // and by another window's My-order save; Prev/Next and the fetch/backfill
+  // merge never touch it once it is set, except to append a late arrival.
+  const [order, setOrder] = useState<number[] | null>(null);
   const [states, setStates] = useState<Record<number, CaseState>>({});
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
   // The window is created with the remembered pin preference (openRunner
@@ -178,14 +198,14 @@ export default function RunnerWindow() {
   // order the Run Tests list showed - the session carries that order
   // (caseIds for a selective run, caseOrder as a hint for a full one) and
   // the runner follows it. Unlisted cases keep fetch order, at the end.
-  const order = session?.caseIds?.length ? session.caseIds : (session?.caseOrder ?? []);
+  const sessionOrder = session?.caseIds?.length ? session.caseIds : (session?.caseOrder ?? []);
 
   // The PBI fetch only sees Tested-By links, but a suite can hold cases
   // without one - and a suite-scoped session has no PBI at all. Any session
   // case the fetch missed is fetched by id, so "Run N" never quietly walks
   // fewer than N. `base` is null until the picture is known.
   const base = (session?.pbi.id ?? 0) > 0 ? (cases.data ?? null) : [];
-  const missingIds = base ? order.filter((id) => !base.some((c) => c.id === id)) : [];
+  const missingIds = base ? sessionOrder.filter((id) => !base.some((c) => c.id === id)) : [];
   const backfill = useQuery({
     queryKey: ["runner-backfill", session?.org, missingIds],
     queryFn: () =>
@@ -196,11 +216,107 @@ export default function RunnerWindow() {
     retry: false,
   });
 
-  const rank = new Map(order.map((id, i) => [id, i]));
-  const list = [...(base ?? []), ...(missingIds.length ? (backfill.data ?? []) : [])]
+  const sessionRank = new Map(sessionOrder.map((id, i) => [id, i]));
+  // The cases as fetched, in the session's hinted order. This seeds `order`
+  // below and supplies any case that arrives after the first paint (the
+  // backfill query) - once seeded, `order` is what actually decides what
+  // Prev/Next/"Run next..." walk, not this.
+  const arrived = [...(base ?? []), ...(missingIds.length ? (backfill.data ?? []) : [])]
     .filter((c) => !caseFilter || caseFilter.has(c.id))
-    .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+    .sort((a, b) => (sessionRank.get(a.id) ?? Infinity) - (sessionRank.get(b.id) ?? Infinity));
+  const arrivedIds = arrived.map((c) => c.id);
+  const arrivedKey = arrivedIds.join(",");
+
+  // Seed `order` the first time there is anything to seed it with, then
+  // only ever EXTEND it: a case that arrives later (the backfill fetch
+  // landing after first paint, e.g. a Tested-By-less id the session still
+  // named) is placed in its fetch position - just before the nearest case
+  // already on screen that follows it in `arrivedIds` - never dropped,
+  // never bumping something the tester already reordered. A case moved by
+  // "Run next..." or another window's My order is untouched here.
+  useEffect(() => {
+    setOrder((prev) => {
+      if (!prev) return arrivedIds;
+      const idSet = new Set(arrivedIds);
+      const kept = prev.filter((id) => idSet.has(id));
+      const keptSet = new Set(kept);
+      const newIds = arrivedIds.filter((id) => !keptSet.has(id));
+      if (newIds.length === 0) return kept.length === prev.length ? prev : kept;
+      const fetchPos = new Map(arrivedIds.map((id, i) => [id, i]));
+      const result = [...kept];
+      for (const id of newIds) {
+        const myPos = fetchPos.get(id)!;
+        const before = result.findIndex((keptId) => (fetchPos.get(keptId) ?? Infinity) > myPos);
+        result.splice(before < 0 ? result.length : before, 0, id);
+      }
+      return result;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivedKey]);
+
+  const arrivedById = new Map(arrived.map((c) => [c.id, c]));
+  // Before `order` is seeded (the effect above has not committed yet), fall
+  // back to the fetch order directly so the first paint is not empty.
+  const list = order
+    ? order.map((id) => arrivedById.get(id)).filter((c): c is TestCaseFull => Boolean(c))
+    : arrived;
   const current = list[idx];
+
+  // Latest-value refs for the My-order listener below: it is registered
+  // once per session (re-subscribing on every mark or reorder would risk a
+  // missed event in the gap), so it reads state through these instead of a
+  // stale closure.
+  const orderRef = useRef<number[] | null>(null);
+  orderRef.current = order;
+  const idxRef = useRef(idx);
+  idxRef.current = idx;
+  const statesRef = useRef(states);
+  statesRef.current = states;
+
+  const runNextCandidates = current ? list.slice(idx + 1).filter((c) => !states[c.id]?.outcome) : [];
+
+  /** "Run next...": the chosen case moves directly after the one on screen,
+   * in both this window's order and (design doc §5.2) My order for this
+   * suite - so Run Tests, reopened, follows the same choice. */
+  const chooseRunNext = (idStr: string) => {
+    const chosen = Number(idStr);
+    if (!current || !orderKey || !Number.isFinite(chosen)) return;
+    const baseOrder = order ?? arrivedIds;
+    const next = moveAfter(baseOrder, chosen, current.id);
+    setOrder(next);
+    // moveAfter never repositions the case it is moving PAST, but find the
+    // new spot by id rather than assume that holds.
+    const newIdx = next.indexOf(current.id);
+    if (newIdx >= 0 && newIdx !== idx) setIdx(newIdx);
+    const mineBase = loadMyOrder(orderKey) ?? baseOrder;
+    saveMyOrder(orderKey, moveAfter(mineBase, chosen, current.id));
+  };
+
+  // Run Tests and this window stay in step (design doc §5.2): a My-order
+  // save from either one re-sorts only the cases after the one on screen,
+  // here. Ignore an event whose resulting order equals what is already on
+  // screen - that is this window's OWN save (above) echoing back.
+  useEffect(() => {
+    if (!orderKey) return;
+    const un = onMyOrderChanged((k) => {
+      if (k.org !== orderKey.org || k.planId !== orderKey.planId || k.suiteId !== orderKey.suiteId) return;
+      const prevOrder = orderRef.current;
+      if (!prevOrder) return;
+      const mine = loadMyOrder(orderKey) ?? [];
+      const isMarked = (id: number) => Boolean(statesRef.current[id]?.outcome);
+      const oldId = prevOrder[idxRef.current];
+      const next = resortUpcoming(prevOrder, idxRef.current, isMarked, mine);
+      if (next.length === prevOrder.length && next.every((id, i) => id === prevOrder[i])) return;
+      setOrder(next);
+      // resortUpcoming never touches idx's own slot or anything at/before
+      // it, but find the case by id rather than assume that holds.
+      const newIdx = next.indexOf(oldId);
+      if (newIdx >= 0 && newIdx !== idxRef.current) setIdx(newIdx);
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [orderKey?.org, orderKey?.planId, orderKey?.suiteId]);
   const st = (current && states[current.id]) || emptyState();
   const currentPoint = points.data?.find((p) => p.test_case_id === current?.id);
 
@@ -1086,6 +1202,17 @@ export default function RunnerWindow() {
           <IconNext aria-hidden />
           Next
         </Button>
+        {runNextCandidates.length > 0 && (
+          <Combobox
+            ariaLabel="Run next"
+            className="w-44"
+            triggerClassName="py-1"
+            placeholder="Run next…"
+            value=""
+            onChange={chooseRunNext}
+            items={runNextCandidates.map((c) => ({ value: String(c.id), label: c.title }))}
+          />
+        )}
         <Button
           className="ml-auto"
           size="sm"
