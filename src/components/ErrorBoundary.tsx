@@ -18,10 +18,14 @@ import { commands } from "../bindings";
 /** Best-effort: the log is a diagnostic, never a reason to fail twice. */
 function record(kind: string, message: string, detail?: string): void {
   const line = detail ? `${kind}: ${message}\n${detail}` : `${kind}: ${message}`;
+  // The call is async, so a failure arrives as a rejected promise, not a
+  // throw. Left unhandled it fired the unhandledrejection hook below, which
+  // logged again and failed again - an endless loop on a spare CPU core.
+  // Outside the webview (tests, a plain browser) there is no bridge at all.
   try {
-    void commands.logUi(line.slice(0, 4000));
+    commands.logUi(line.slice(0, 4000)).catch(() => {});
   } catch {
-    // Outside the webview (tests, a plain browser) there is no bridge.
+    // A synchronous throw from a missing bridge, same answer.
   }
 }
 
