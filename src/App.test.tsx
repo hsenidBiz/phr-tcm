@@ -10,6 +10,7 @@ import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
 import { resetForTests as resetNotifications } from "./lib/notifications";
+import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -41,6 +42,9 @@ afterEach(() => {
   // The notification store keeps an in-memory copy per org; clearing
   // storage alone would leave one test's bell items in the next one.
   resetNotifications();
+  // This machine's optional extras switch is a module-level store: a
+  // failed assertion mid-test must not leave it unlocked for later tests.
+  resetExtrasStore();
 });
 
 function renderApp() {
@@ -76,6 +80,25 @@ test("signed out: sign-in view only, no sidebar tabs", async () => {
     await screen.findByRole("button", { name: /sign in with microsoft/i }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Manual Entry" })).not.toBeInTheDocument();
+});
+
+// Rust owns this machine's optional extras switch; App has to ask for it on
+// mount, or a restarted release build that is unlocked in Rust shows no
+// Auto Run until someone happens to open Settings (the only other caller).
+// A signed-out mount is cheap - it waits on none of the lazily loaded
+// screens that make this file's other tests slow - so this pins the
+// startup call without touching the flaky paths.
+test("the app asks for this machine's optional extras switch at startup", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update") return null;
+    if (cmd === "get_extras_unlocked") return true;
+  });
+  renderApp();
+  await waitFor(() => expect(extrasUnlockedSnapshot()).toBe(true));
+  expect(calls.filter((c) => c === "get_extras_unlocked")).toHaveLength(1);
 });
 
 test("sidebar shows the v1 tabs and switches screens", async () => {

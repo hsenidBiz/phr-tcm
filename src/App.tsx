@@ -329,6 +329,13 @@ export default function App() {
     void hydrateExtras();
   }, []);
 
+  // If Auto Run stops being offered while it is the open tab (the optional
+  // extras got reset, or a future lock path outside Settings), move off it
+  // rather than leave the "Auto Run" heading over a blank body.
+  useEffect(() => {
+    if (!autoRunShown && section === "autorun") setSection("manual");
+  }, [autoRunShown, section]);
+
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
