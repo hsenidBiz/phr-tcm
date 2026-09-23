@@ -16,7 +16,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: "1.25.22",
     date: "2026-09-23",
     items: [
-      "The runner no longer has Run next. Next already moves past a case, and reordering the list in Run Tests sets the order you run in; the runner still follows that order as you change it.",
+      "Run Tests has a Set execution order button, one place to choose the order you run in. Start from the suggested run order, the spec order, your own order, or the tester order of an optimized file the Import tab is following, arrange the cases, then choose Use this order to keep it on this machine or Save for everyone to make it the order every tester starts from.",
+      "To keep the screen simple, Run Tests no longer has the Order list, the move buttons and drag handles on each case and group, or Reset: all of that is in the Execution order window now. The Suggested run order section in Suite Management has moved there as well; Suite Management's own Azure DevOps order editor is unchanged.",
+      "The runner no longer has Run next. Next already moves past a case, and when you rearrange cases in the Execution order window, an open runner follows.",
     ],
   },
   {
