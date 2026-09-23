@@ -20,7 +20,8 @@ import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { getTheme, setTheme } from "../lib/theme";
 import { tourRunningSnapshot } from "../tour/tourState";
-import { VISIBLE_CASE_ITEMS, sectionShortcut, type Section } from "./Sidebar";
+import { sectionShortcut, visibleCaseItems, type Section } from "./Sidebar";
+import { useAutoRunVisible } from "../lib/extras";
 
 /** One row. `value` is unique across the whole palette; `label` is what
  * shows and what typing filters on; `keys` is its shortcut hint. */
@@ -68,6 +69,7 @@ export default function CommandPalette({
   onToggleWork: () => void;
 }) {
   const qc = useQueryClient();
+  const autoRun = useAutoRunVisible();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -105,10 +107,10 @@ export default function CommandPalette({
       items: [
         // One row per sidebar tab, hint digit = its Ctrl+N slot, both read
         // off the same list App's shortcut handler uses.
-        ...VISIBLE_CASE_ITEMS.map((i) => ({
+        ...visibleCaseItems(autoRun).map((i) => ({
           value: `go:${i.id}`,
           label: i.label,
-          keys: sectionShortcut(i.id),
+          keys: sectionShortcut(i.id, autoRun),
           run: () => onNavigate(i.id),
         })),
         { value: "go:settings", label: "Settings", run: () => onNavigate("settings") },

@@ -57,7 +57,8 @@ import ChangelogModal from "./components/ChangelogModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
-import Sidebar, { AUTO_RUN_ENABLED, SHORTCUT_ORDER, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
+import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
+import { hydrateExtras, useAutoRunVisible } from "./lib/extras";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -103,8 +104,9 @@ const DevPanel: ComponentType<{
   onShowSignIn: () => void;
 }> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
 const AiBridge = lazy(() => import("./screens/AiBridge"));
-// Development builds only (AUTO_RUN_ENABLED); lazy, so a release never
-// loads it at all.
+// Shown in development builds, and in a release build whose optional
+// extras are unlocked (lib/extras); lazy, so nobody who never opens it
+// loads it.
 const AutoRun = lazy(() => import("./screens/AutoRun"));
 const Settings = lazy(() => import("./screens/Settings"));
 const Suites = lazy(() => import("./screens/Suites"));
@@ -173,6 +175,7 @@ export default function App() {
   const qc = useQueryClient();
   const initial = loadPrefs();
   const [section, setSection] = useState<Section>(initial.section);
+  const autoRunShown = useAutoRunVisible();
   const [org, setOrgRaw] = useState(initial.org);
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
@@ -320,14 +323,15 @@ export default function App() {
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
+  // This machine's optional extras switch lives in Rust; ask once, so a
+  // release build whose extras are unlocked shows Auto Run.
+  useEffect(() => {
+    void hydrateExtras();
+  }, []);
+
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    // The sidebar's rows, in order: without the dev-only Auto Run row
-    // (release builds) the numbers close up, so release builds have
-    // Ctrl+6 Search Suites, Ctrl+7 Suite Management, Ctrl+8 AI Bridge.
-    // The palette's hints read the same list, so they cannot drift.
-    const order = SHORTCUT_ORDER;
     const onKey = (e: KeyboardEvent) => {
       if (tourRunningSnapshot()) return; // the tour drives, not the keyboard
       if (!e.ctrlKey && !e.metaKey) return;
@@ -336,6 +340,11 @@ export default function App() {
         setWorkMode((w) => !w);
         return;
       }
+      // Read at the moment of the press: the rows close up around a
+      // hidden Auto Run row (a release build whose optional extras are
+      // locked), and unlocking can add it while the app runs. The
+      // palette's hints read the same list, so they cannot drift.
+      const order = shortcutOrder();
       const n = Number(e.key);
       if (n >= 1 && n <= order.length) {
         e.preventDefault();
@@ -1210,7 +1219,7 @@ export default function App() {
                     }
                   />
                 )}
-                {AUTO_RUN_ENABLED && section === "autorun" && (
+                {autoRunShown && section === "autorun" && (
                   <AutoRun org={org} project={project} pbi={pbi} />
                 )}
                 {section === "manage" && (

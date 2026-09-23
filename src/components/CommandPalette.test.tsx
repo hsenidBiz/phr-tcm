@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "./CommandPalette";
-import { SHORTCUT_ORDER, VISIBLE_CASE_ITEMS, sectionShortcut } from "./Sidebar";
+import { sectionShortcut, shortcutOrder, visibleCaseItems } from "./Sidebar";
 
 afterEach(() => {
   clearMocks();
@@ -63,9 +63,9 @@ test("every Go-to hint is the section's 1-based slot in the shortcut order", asy
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   await screen.findByPlaceholderText(/Type a command/);
 
-  expect(VISIBLE_CASE_ITEMS.length).toBeGreaterThan(0);
-  for (const item of VISIBLE_CASE_ITEMS) {
-    const slot = SHORTCUT_ORDER.indexOf(item.id) + 1;
+  expect(visibleCaseItems().length).toBeGreaterThan(0);
+  for (const item of visibleCaseItems()) {
+    const slot = shortcutOrder().indexOf(item.id) + 1;
     expect(sectionShortcut(item.id)).toBe(`mod+${slot}`);
     // The Kbd badge sits beside the label inside the same row, and the
     // digit is the last thing in it.
@@ -101,7 +101,7 @@ test("Enter runs the highlighted row - the first, as the palette opens - and clo
   const { onNavigate } = renderPalette();
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   const input = await screen.findByPlaceholderText(/Type a command/);
-  const first = VISIBLE_CASE_ITEMS[0];
+  const first = visibleCaseItems()[0];
   await waitFor(() =>
     expect(screen.getByText(first.label).closest('[data-slot="command-item"]')).toHaveAttribute("data-highlighted"),
   );

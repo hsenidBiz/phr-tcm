@@ -106,7 +106,7 @@ export const DEV_ONLY_TOOLS = [
 
 /** True in `tauri dev` and in this test suite, false in `tauri build` - a
  * compile-time constant, read once at module load. Mirrors
- * `Sidebar.tsx`'s `AUTO_RUN_ENABLED` and `ai_tools.rs`'s `dev_build()`. */
+ * `lib/extras.ts`'s `autoRunVisible` and `ai_tools.rs`'s `dev_build()`. */
 export const DEV_BUILD: boolean = import.meta.env.DEV;
 
 /** Whether the Auto Run tools are offered right now: always in a

@@ -22,6 +22,7 @@ import {
   sidebarCollapsedSnapshot,
   subscribeSidebar,
 } from "../lib/sidebarState";
+import { autoRunVisible, useAutoRunVisible } from "../lib/extras";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
@@ -43,12 +44,6 @@ type Item<T extends string> = {
   note?: string;
 };
 
-/** Auto Run ships only in development builds: it is still "In Dev", and a
- * released app should not offer a tab that is not finished. `DEV` is true
- * for `tauri dev` and for vitest, false in `tauri build` - so the tests
- * still see the tab, and the release does not. */
-export const AUTO_RUN_ENABLED: boolean = import.meta.env.DEV;
-
 export const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
   { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
@@ -66,21 +61,26 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
 
-/** The rows the rail actually shows: CASE_ITEMS minus Auto Run outside
- * development. Ctrl+1..N and the palette's "mod+N" hints are both read
- * off this list, so a number can never open one screen and be labelled
- * as another. */
-export const VISIBLE_CASE_ITEMS: Item<Section>[] = CASE_ITEMS.filter(
-  (i) => i.id !== "autorun" || AUTO_RUN_ENABLED,
-);
+/** The rows the rail shows: CASE_ITEMS, with Auto Run only where it is
+ * offered - always in a development build (`import.meta.env.DEV`: true for
+ * `tauri dev` and vitest, false in `tauri build`), and in a release build
+ * while this machine's optional extras are unlocked (lib/extras). A
+ * function, not a constant: the answer can change while the app runs.
+ * Ctrl+1..N and the palette's "mod+N" hints are both read off this list,
+ * so a number can never open one screen and be labelled as another. */
+export function visibleCaseItems(autoRun: boolean = autoRunVisible()): Item<Section>[] {
+  return CASE_ITEMS.filter((i) => i.id !== "autorun" || autoRun);
+}
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. */
-export const SHORTCUT_ORDER: Section[] = VISIBLE_CASE_ITEMS.map((i) => i.id);
+export function shortcutOrder(autoRun: boolean = autoRunVisible()): Section[] {
+  return visibleCaseItems(autoRun).map((i) => i.id);
+}
 
-/** The Astryx Kbd string for a section's shortcut ("mod+3"), or undefined
- * for sections that have no number (Settings, or a hidden tab). */
-export function sectionShortcut(section: Section): string | undefined {
-  const n = SHORTCUT_ORDER.indexOf(section);
+/** The shortcut string for a section ("mod+3"), or undefined for sections
+ * that have no number (Settings, or a hidden tab). */
+export function sectionShortcut(section: Section, autoRun: boolean = autoRunVisible()): string | undefined {
+  const n = shortcutOrder(autoRun).indexOf(section);
   return n === -1 ? undefined : `mod+${n + 1}`;
 }
 
@@ -115,7 +115,10 @@ export default function Sidebar<T extends string = Section>({
   locked?: boolean;
   liveItem?: T | null;
 }) {
-  const list = items ?? (VISIBLE_CASE_ITEMS as unknown as Item<T>[]);
+  // Subscribed, so unlocking or resetting the optional extras adds or
+  // removes the Auto Run row at once.
+  const autoRun = useAutoRunVisible();
+  const list = items ?? (visibleCaseItems(autoRun) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
   // below still writes storage and publishes exactly as before.

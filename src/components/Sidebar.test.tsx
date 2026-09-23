@@ -1,9 +1,10 @@
 // The rail's badge bubbles: a count on an item when something arrived,
 // nothing at all when the count is zero.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import Sidebar, { WORK_ITEMS, type WorkSection } from "./Sidebar";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import Sidebar, { WORK_ITEMS, shortcutOrder, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 
 afterEach(() => {
@@ -70,6 +71,41 @@ test("Suite Management is offered in release builds", async () => {
 
   vi.unstubAllEnvs();
   vi.resetModules();
+});
+
+/// A release build shows Auto Run once this machine's optional extras are
+/// unlocked, and hides it again when they are reset - live, without a
+/// reload, because the rail subscribes to the switch.
+test("in a release build Auto Run appears once unlocked and goes again when reset", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const release = await import("./Sidebar");
+  const extras = await import("../lib/extras");
+  mockIPC(() => null);
+
+  render(<release.default section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(release.shortcutOrder()).not.toContain("autorun");
+
+  await act(() => extras.setExtrasUnlocked(true));
+  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(release.shortcutOrder()).toContain("autorun");
+  expect(release.sectionShortcut("autorun")).toBe("mod+6");
+
+  await act(() => extras.setExtrasUnlocked(false));
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(release.sectionShortcut("autorun")).toBeUndefined();
+
+  clearMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+/// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
+/// the answer comes.
+test("the shortcut order with and without Auto Run", () => {
+  expect(shortcutOrder(true)).toEqual(["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai"]);
+  expect(shortcutOrder(false)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
 });
 
 test("zero and absent counts render no bubble", () => {
