@@ -5,7 +5,7 @@ import { CHANGELOG } from "../lib/changelog";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
-import { SAVE_FAILED, useExtrasSequence } from "./settingsExtras";
+import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
@@ -76,7 +76,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   const resetExtras = () => {
     setExtrasUnlocked(false)
       .then(() => setConfirmReset(false))
-      .catch(() => toast.error(SAVE_FAILED));
+      .catch((e) => toast.error(saveFailedMessage(e)));
   };
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());

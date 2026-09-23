@@ -622,9 +622,10 @@ fn auto_run_tools_are_offered_in_a_dev_build_or_once_unlocked() {
     assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, false)), DEV_ONLY_TOOLS.to_vec());
 }
 
-/// The policy: the seven Auto Run tools are development-build only, and
-/// the core set can never be switched off - whatever the frontend's list
-/// says, in either build kind.
+/// The policy: the seven Auto Run tools are offered wherever Auto Run is
+/// (a development build, or a release build once unlocked), and the core
+/// set can never be switched off - whatever the frontend's list says, in
+/// either build kind.
 ///
 /// Validate, optimise and merge joined the core set: finishing a draft is
 /// part of writing one, and an assistant that can write cases but cannot

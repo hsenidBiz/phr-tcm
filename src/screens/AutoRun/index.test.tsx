@@ -275,7 +275,7 @@ test("with cases ticked the bar offers both a supervised and an unattended run",
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
 });
 
-// ---- Clear scripts / Clear results (development build only) ------------
+// ---- Clear scripts / Clear results (shown wherever Auto Run is: dev, or unlocked) ----
 
 test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {
   // No case has a script, and no run exists on this machine.

@@ -2,10 +2,12 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   autoRunVisible,
+  extrasHydratedSnapshot,
   extrasUnlockedSnapshot,
   hydrateExtras,
   resetExtrasStore,
   setExtrasUnlocked,
+  shouldLeaveAutoRun,
   subscribeExtras,
 } from "./extras";
 
@@ -65,6 +67,44 @@ test("a slow read that answers after a save does not undo it", async () => {
   answer(false);
   await read;
   expect(extrasUnlockedSnapshot()).toBe(true);
+});
+
+// Regression for M-1: on a release build, the redirect that steers away
+// from Auto Run once it disappears must not fire on the very first render,
+// before Rust's answer to get_extras_unlocked comes back - or a saved
+// Auto Run tab on an unlocked machine gets bounced to Manual Entry on
+// every restart.
+test("hydration starts false and flips true once the read settles, success or not", async () => {
+  expect(extrasHydratedSnapshot()).toBe(false);
+  mockIPC((cmd) => (cmd === "get_extras_unlocked" ? true : undefined));
+  await hydrateExtras();
+  expect(extrasHydratedSnapshot()).toBe(true);
+});
+
+test("hydration flips true even when there is no IPC to answer it", async () => {
+  mockIPC(() => {
+    throw new Error("no IPC here");
+  });
+  await hydrateExtras();
+  expect(extrasHydratedSnapshot()).toBe(true);
+});
+
+test("resetting the store for tests also resets the hydrated flag", async () => {
+  mockIPC((cmd) => (cmd === "get_extras_unlocked" ? true : undefined));
+  await hydrateExtras();
+  expect(extrasHydratedSnapshot()).toBe(true);
+  resetExtrasStore();
+  expect(extrasHydratedSnapshot()).toBe(false);
+});
+
+test("the Auto Run redirect waits for hydration before it fires", () => {
+  // Not hydrated yet: never redirect, whatever autoRunShown says right now.
+  expect(shouldLeaveAutoRun("autorun", false, false)).toBe(false);
+  expect(shouldLeaveAutoRun("autorun", true, false)).toBe(false);
+  // Hydrated: redirect only off Auto Run, and only once it is not shown.
+  expect(shouldLeaveAutoRun("autorun", false, true)).toBe(true);
+  expect(shouldLeaveAutoRun("autorun", true, true)).toBe(false);
+  expect(shouldLeaveAutoRun("manual", false, true)).toBe(false);
 });
 
 test("a development build shows Auto Run whatever the switch says", () => {

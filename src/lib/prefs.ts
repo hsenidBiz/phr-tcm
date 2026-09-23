@@ -14,7 +14,11 @@ export type Prefs = {
   workMode: boolean;
 };
 
-const SECTIONS: Section[] = ["manual", "import", "edit", "view", "run", "suites", "manage", "ai", "settings"];
+// Every value of the Section union - kept in sync with Sidebar.tsx's own
+// CASE_ITEMS plus "settings". Missing one here silently downgrades a saved
+// tab to "manual" on the next launch (that hid a real bug in Auto Run: see
+// lib/extras.ts's shouldLeaveAutoRun and its test).
+const SECTIONS: Section[] = ["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai", "settings"];
 
 export function loadPrefs(): Prefs {
   const defaults: Prefs = {

@@ -17,10 +17,24 @@ let unlocked = false;
 let generation = 0;
 const listeners = new Set<() => void>();
 
+/** True once `hydrateExtras` has settled at least once, success or not.
+ * `unlocked` starts false the same way a locked machine would read, so
+ * nothing that only checks its value can tell "locked" from "still
+ * waiting on Rust's answer" - this is that third state, for callers (the
+ * App shell's Auto Run redirect) that must not act before it flips. */
+let hydrated = false;
+const hydratedListeners = new Set<() => void>();
+
 function publish(next: boolean): void {
   if (next === unlocked) return;
   unlocked = next;
   for (const l of [...listeners]) l();
+}
+
+function publishHydrated(): void {
+  if (hydrated) return;
+  hydrated = true;
+  for (const l of [...hydratedListeners]) l();
 }
 
 export function subscribeExtras(cb: () => void): () => void {
@@ -30,12 +44,24 @@ export function subscribeExtras(cb: () => void): () => void {
   };
 }
 
+export function subscribeExtrasHydrated(cb: () => void): () => void {
+  hydratedListeners.add(cb);
+  return () => {
+    hydratedListeners.delete(cb);
+  };
+}
+
 export function extrasUnlockedSnapshot(): boolean {
   return unlocked;
 }
 
+export function extrasHydratedSnapshot(): boolean {
+  return hydrated;
+}
+
 /** Ask Rust. Outside the app (a test without IPC, a browser preview) the
- * answer is simply "as it was" - locked, from a fresh start. */
+ * answer is simply "as it was" - locked, from a fresh start. Either way,
+ * `hydrated` flips once this settles. */
 export async function hydrateExtras(): Promise<void> {
   const started = generation;
   try {
@@ -43,6 +69,8 @@ export async function hydrateExtras(): Promise<void> {
     if (started === generation) publish(Boolean(on));
   } catch {
     // no IPC here
+  } finally {
+    if (started === generation) publishHydrated();
   }
 }
 
@@ -65,13 +93,26 @@ export function useExtrasUnlocked(): boolean {
   return useSyncExternalStore(subscribeExtras, extrasUnlockedSnapshot);
 }
 
+export function useExtrasHydrated(): boolean {
+  return useSyncExternalStore(subscribeExtrasHydrated, extrasHydratedSnapshot);
+}
+
 export function useAutoRunVisible(): boolean {
   const on = useExtrasUnlocked();
   return AUTO_RUN_DEV || on;
 }
 
-/** Tests only: back to locked, without telling anyone. */
+/** Whether the App shell's redirect off Auto Run (it stopped being offered
+ * while it was the open tab) should fire right now. False until hydration
+ * settles, so a release build with a saved Auto Run tab is not bounced to
+ * Manual Entry before Rust's answer to `get_extras_unlocked` arrives. */
+export function shouldLeaveAutoRun(section: string, autoRunShown: boolean, hydrated: boolean): boolean {
+  return hydrated && !autoRunShown && section === "autorun";
+}
+
+/** Tests only: back to locked and un-hydrated, without telling anyone. */
 export function resetExtrasStore(): void {
   unlocked = false;
   generation = 0;
+  hydrated = false;
 }

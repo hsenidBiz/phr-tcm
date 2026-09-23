@@ -10,8 +10,17 @@ import { SEQUENCE_LENGTH, SHAKE_FROM, isEditableTarget, next } from "../lib/extr
 import { toast } from "../lib/toast";
 import { tourRunningSnapshot } from "../tour/tourState";
 
-/** Said when the switch cannot be saved (Rust logs the reason). */
+/** Fallback for a save failure that is not an Error (Rust logs the
+ * reason either way). `setExtrasUnlocked` throws `Error(r.error)`, so the
+ * real wording comes from Rust's own sentence (commands/misc.rs) and is
+ * toasted as-is - kept here only so the two never drift apart. */
 export const SAVE_FAILED = "Could not save this setting. The app log in Settings has the details.";
+
+/** The message to toast for a failed save: the thrown Error's own text
+ * when there is one, else the fallback above. */
+export function saveFailedMessage(e: unknown): string {
+  return e instanceof Error ? e.message : SAVE_FAILED;
+}
 
 /** Replay the panel's short shake. Removing the class and forcing a style
  * read lets the same animation play again on the very next press. */
@@ -32,8 +41,8 @@ async function complete(): Promise<void> {
   // the next launch would be a lie.
   try {
     await setExtrasUnlocked(true);
-  } catch {
-    toast.error(SAVE_FAILED);
+  } catch (e) {
+    toast.error(saveFailedMessage(e));
     return;
   }
   if (!reducedMotion()) burstConfetti();

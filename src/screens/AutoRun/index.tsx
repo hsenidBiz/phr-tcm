@@ -299,9 +299,10 @@ export default function AutoRun({
           <IconRecipe aria-hidden />
           Sign-in recipe
         </Button>
-        {/* Development-only housekeeping - the whole Auto Run tab is gated
-            in one place (`autoRunVisible` in lib/extras.ts), so no further
-            gating belongs here. Disabled rather than hidden:
+        {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
+            whole tab is gated in one place (`autoRunVisible` in
+            lib/extras.ts), so no further gating belongs here. Disabled
+            rather than hidden:
             a button that vanishes the moment it would do nothing invites
             "where did it go", where greyed-out with nothing to do reads as
             exactly that. */}

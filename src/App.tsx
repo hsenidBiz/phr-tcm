@@ -58,7 +58,7 @@ import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
-import { hydrateExtras, useAutoRunVisible } from "./lib/extras";
+import { hydrateExtras, shouldLeaveAutoRun, useAutoRunVisible, useExtrasHydrated } from "./lib/extras";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -176,6 +176,7 @@ export default function App() {
   const initial = loadPrefs();
   const [section, setSection] = useState<Section>(initial.section);
   const autoRunShown = useAutoRunVisible();
+  const extrasHydrated = useExtrasHydrated();
   const [org, setOrgRaw] = useState(initial.org);
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
@@ -331,10 +332,13 @@ export default function App() {
 
   // If Auto Run stops being offered while it is the open tab (the optional
   // extras got reset, or a future lock path outside Settings), move off it
-  // rather than leave the "Auto Run" heading over a blank body.
+  // rather than leave the "Auto Run" heading over a blank body. Gated on
+  // hydration: extrasHydrated starts false the same way a locked machine
+  // reads, so without the gate a restart with a saved Auto Run tab bounces
+  // straight to Manual Entry before hydrateExtras' answer comes back.
   useEffect(() => {
-    if (!autoRunShown && section === "autorun") setSection("manual");
-  }, [autoRunShown, section]);
+    if (shouldLeaveAutoRun(section, autoRunShown, extrasHydrated)) setSection("manual");
+  }, [autoRunShown, section, extrasHydrated]);
 
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.

@@ -66,6 +66,10 @@ fn saving_creates_the_folder() {
 #[test]
 fn the_switch_is_read_at_start_and_written_through() {
     assert!(!unlocked(), "locked until something says otherwise");
+    // Must run before `init` anywhere in this process sets DIR - it is a
+    // OnceLock, set at most once for the whole test binary.
+    assert!(set_unlocked(true).is_err(), "nowhere to save before init runs");
+    assert!(!unlocked(), "a refused save must not be published either");
     let dir = TempDir::new();
     save(dir.path(), true).unwrap();
     init(dir.path().to_path_buf());

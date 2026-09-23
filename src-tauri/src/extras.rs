@@ -61,12 +61,13 @@ pub fn unlocked() -> bool {
 }
 
 /// Save first, then publish: a switch that could not be saved is not
-/// reported as on, only to come back off at the next launch. Before `init`
-/// (tests) there is nowhere to save, and it changes in memory only.
+/// reported as on, only to come back off at the next launch. `init` has to
+/// have run first - without it there is nowhere to save, and reporting
+/// success would leave the person thinking a switch is on that is gone at
+/// the next launch.
 pub fn set_unlocked(on: bool) -> Result<(), String> {
-    if let Some(dir) = DIR.get() {
-        save(dir, on)?;
-    }
+    let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
+    save(dir, on)?;
     UNLOCKED.store(on, Ordering::SeqCst);
     Ok(())
 }
