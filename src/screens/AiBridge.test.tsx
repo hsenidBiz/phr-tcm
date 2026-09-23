@@ -958,6 +958,11 @@ test("the connection is always shown; the PHR X option is not, by default", asyn
   expect(await screen.findByLabelText("Default connections")).toBeInTheDocument();
   expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
   expect(screen.queryByText(/no longer needed for lookups/)).not.toBeInTheDocument();
+  // Nothing is registered, so there is no leftover to remove either.
+  expect(screen.queryByText(/still registered with the tools below/)).not.toBeInTheDocument();
+  // The Forget paragraph's clause about unregistering only makes sense
+  // when there is a PHR X part to point at.
+  expect(screen.queryByText(/Unregister above to remove them/)).not.toBeInTheDocument();
 });
 
 test("switched on in Settings, the PHR X option appears as before", async () => {
@@ -984,15 +989,18 @@ test("with the option off, a tool that still has PHR X registered can unregister
     if (cmd === "unregister_db_server") { calls.push((args as { id: string }).id); return null; }
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const notice = await screen.findByText(/still registered with the tools below/);
+  await screen.findByText(/still registered with the tools below/);
   // No executable path configured, and still the row is there to remove it.
   expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Register$/ })).not.toBeInTheDocument();
-  // Scoped to the notice's own row, not the "Connect your AI tools" list
-  // above it, where both tools also show an Unregister button for the
-  // unrelated tcm-testcases server.
-  const leftover = within(notice.closest("div") as HTMLElement);
-  fireEvent.click(leftover.getByRole("button", { name: /Unregister/ }));
+  // The Forget paragraph now has something to point at.
+  expect(screen.getByText(/Unregister above to remove them/)).toBeInTheDocument();
+  // The accessible name says which tool, so it is unambiguous even next to
+  // the "Connect your AI tools" list above, where both tools also show an
+  // Unregister button for the unrelated tcm-testcases server.
+  fireEvent.click(
+    screen.getByRole("button", { name: "Unregister the PHR X server from Claude Code" }),
+  );
   await waitFor(() => expect(calls).toEqual(["claude-code"]));
 });
 
@@ -1019,7 +1027,7 @@ test("creating, updating and deleting is off, and disabled on a read-only connec
   expect(writes).toBeDisabled();
   // And the reason it cannot be moved is on screen, not implied.
   expect(
-    screen.getByText(/Only on the Dev - dev login connection/),
+    screen.getByText(/Only on a dev login connection/),
   ).toBeInTheDocument();
 
   fireEvent.click(writes);

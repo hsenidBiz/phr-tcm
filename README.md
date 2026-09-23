@@ -156,8 +156,9 @@ the board's test count.
 - Reading and writing are two separate switches on the AI Bridge tab.
   "Company database (read)" turns the two tools on at all - SELECT only.
   The create/update/delete switch is off by default, greyed out unless
-  the chosen connection is the Dev - dev login one, and a write still
-  needs both: that switch on AND that connection, or it is refused.
+  the chosen connection is a dev login one (a user ending in
+  `_devlogin`), and a write still needs both: that switch on AND that
+  connection, or it is refused.
 - Every statement is classified before it is allowed anywhere near
   sqlcmd. DROP, TRUNCATE, ALTER, CREATE, EXEC, a backup or a restore, and
   anything that reaches another server or process (OPENROWSET,

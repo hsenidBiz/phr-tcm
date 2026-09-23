@@ -301,6 +301,25 @@ export default function AiBridge() {
   // reachable so the leftover connection string can be removed from it.
   const phrxLeftover = installed.filter((t) => (t.registered_servers ?? []).includes(DB_SERVER));
 
+  // The PHR X Unregister button: identical whether it sits beside "Registered
+  // check" in the on-branch's tool list or is the only control in the
+  // leftover-notice row, so one render keeps the two in sync. The visible
+  // label stays "Unregister" - the accessible name is the one that says
+  // which server and which tool, for the tests and for anyone using a
+  // screen reader on a page with more than one Unregister button.
+  const unregisterDbButton = (t: (typeof installed)[number]) => (
+    <Button
+      size="sm"
+      variant="ghost"
+      aria-label={`Unregister the PHR X server from ${t.name}`}
+      disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
+      onClick={() => unregisterDb.mutate(t.id)}
+    >
+      <IconUnregister aria-hidden />
+      {unregisterDb.isPending && unregisterDb.variables === t.id ? "Removing" : "Unregister"}
+    </Button>
+  );
+
   const repoCard = (
     <section data-tour="ai-repos" className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center gap-2">
@@ -836,8 +855,8 @@ export default function AiBridge() {
               />
             </div>
             <p className="text-[11px] text-faint">
-              Only on the Dev - dev login connection, and every statement is written to
-              the log.
+              Only on a dev login connection (a user ending in _devlogin), and every
+              statement is written to the log.
             </p>
           </div>
         </div>
@@ -923,17 +942,7 @@ export default function AiBridge() {
                     {(t.registered_servers ?? []).includes(DB_SERVER) ? (
                       <span className="flex items-center gap-2">
                         <span className="text-xs text-success">Registered ✓</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
-                          onClick={() => unregisterDb.mutate(t.id)}
-                        >
-                          <IconUnregister aria-hidden />
-                          {unregisterDb.isPending && unregisterDb.variables === t.id
-                            ? "Removing"
-                            : "Unregister"}
-                        </Button>
+                        {unregisterDbButton(t)}
                       </span>
                     ) : (
                       <Button
@@ -968,17 +977,7 @@ export default function AiBridge() {
                   <span className="flex-1 text-xs text-faint">
                     {t.scope === "project" ? "in this repo" : "global"}
                   </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
-                    onClick={() => unregisterDb.mutate(t.id)}
-                  >
-                    <IconUnregister aria-hidden />
-                    {unregisterDb.isPending && unregisterDb.variables === t.id
-                      ? "Removing"
-                      : "Unregister"}
-                  </Button>
+                  {unregisterDbButton(t)}
                 </li>
               ))}
             </ul>
