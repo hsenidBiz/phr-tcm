@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.19",
+    date: "2026-09-23",
+    items: [
+      "AI Bridge: the Company database connection is always shown now, since it is what the app's own database tools use. Switching database takes effect on the assistant's next call, with no need to restart its session.",
+      "The connection picker has \"Your own database\": choose it and enter the server, database, user and password of a database the app did not ship with. A connection you enter yourself is read only unless its user is a dev login.",
+      "The separate PHR X database server is no longer offered by default; the app's own database tools replace it. Turn it back on in Settings if you still need it. If an AI tool still has it registered, the AI Bridge tab lists that tool with an Unregister button, since that registration keeps a copy of the database password in the tool's settings file.",
+    ],
+  },
+  {
     version: "1.25.18",
     date: "2026-09-23",
     items: [
