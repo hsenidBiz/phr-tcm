@@ -1,12 +1,11 @@
 /* XiodUI (xiod-ui, pinned 1.0.3) drawn in the app's own colours.
 
    XiodUI's own stylesheet (its `styles` export) is deliberately NOT
-   imported. Its
-   @theme block redefines --color-border, --color-muted, --color-accent,
-   --color-success and --color-warning - names this app already owns, and
-   in two cases uses differently (the app's `text-muted` is grey TEXT,
-   XiodUI's `bg-muted` a faint WASH) - and its base layer restyles every
-   element's border and outline. What it would have provided is rebuilt
+   imported. Its @theme block redefines --color-border, --color-muted,
+   --color-accent, --color-success and --color-warning - names this app
+   already owns, and in two cases uses differently (the app's
+   `text-muted` is grey TEXT, XiodUI's `bg-muted` a faint WASH) - and its
+   base layer restyles every element's border and outline. What it would have provided is rebuilt
    here from the app's tokens, so every theme and accent preset in
    index.css reaches the XiodUI parts with no second palette to keep in
    step.

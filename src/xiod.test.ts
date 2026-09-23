@@ -76,7 +76,7 @@ describe("notices", () => {
 describe("theme bridge", () => {
   test("index.css brings the bridge in, and XiodUI's own stylesheet stays out", () => {
     expect(indexCss()).toContain('@import "./xiod-theme.css";');
-    for (const css of [indexCss(), bridge()]) expect(css).not.toMatch(/xiod-ui\/(styles|themes)/);
+    for (const css of [indexCss(), bridge()]) expect(css).not.toMatch(/xiod-ui\/(dist\/)?(styles|themes)/);
   });
 
   test("the bridge names no colour of its own - tokens only", () => {
