@@ -28,6 +28,17 @@ const ALPHA_ID: &str = "11111111-2222-3333-4444-555555555555";
 const DEFAULT_TEAM_ID: &str = "99999999-8888-7777-6666-555555555555";
 const PBI: i32 = 145386;
 
+/// A mock server no other test has used. `MockServer::start()` hands out
+/// servers from a pool, URL and all, and the project id and team are
+/// cached per server URL for the whole run (design: they never change
+/// within a session). A pooled server could arrive with the previous
+/// test's team already cached, so a mock expecting one team lookup saw
+/// none - the flaky `the_two_spellings_of_an_area_share_one_cached_team`.
+/// A server of its own has a fresh port, so its cache starts empty.
+async fn unshared_server() -> MockServer {
+    MockServer::builder().start().await
+}
+
 fn route_path() -> String {
     format!("/{ORG}/{PROJECT_ID}/_api/_testManagement/AddWitTestCasesToRequirementSuite")
 }
@@ -87,7 +98,7 @@ fn the_body_is_the_three_integers_the_controller_named() {
 
 #[tokio::test]
 async fn boards_route_posts_the_body_and_reads_the_plan_id() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("POST"))
         .and(path(route_path()))
         .and(query_param("teamId", GAMMA_ID))
@@ -118,7 +129,7 @@ async fn boards_route_posts_the_body_and_reads_the_plan_id() {
 /// guess from - say what came back instead.
 #[tokio::test]
 async fn boards_route_without_a_plan_id_is_an_error_not_a_guess() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("POST"))
         .and(path(route_path()))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -143,7 +154,7 @@ async fn boards_route_without_a_plan_id_is_an_error_not_a_guess() {
 /// no use), a 400 names the field the body got wrong.
 #[tokio::test]
 async fn boards_route_refusals_come_back_as_the_usual_variants() {
-    let forbidding = MockServer::start().await;
+    let forbidding = unshared_server().await;
     Mock::given(method("POST"))
         .and(path(route_path()))
         .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
@@ -158,7 +169,7 @@ async fn boards_route_refusals_come_back_as_the_usual_variants() {
         .unwrap_err();
     assert!(matches!(err, AdoError::Forbidden), "got {err:?}");
 
-    let complaining = MockServer::start().await;
+    let complaining = unshared_server().await;
     Mock::given(method("POST"))
         .and(path(route_path()))
         .respond_with(
@@ -182,7 +193,7 @@ async fn boards_route_refusals_come_back_as_the_usual_variants() {
 
 #[tokio::test]
 async fn the_project_id_is_read_once_and_cached() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -203,7 +214,7 @@ async fn the_project_id_is_read_once_and_cached() {
 /// come back with either slash and in whatever case someone typed.
 #[tokio::test]
 async fn the_team_is_the_one_whose_area_covers_the_pbi_longest_match_wins() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
         .respond_with(
@@ -244,7 +255,7 @@ async fn the_team_is_the_one_whose_area_covers_the_pbi_longest_match_wins() {
 /// that already found the project id.
 #[tokio::test]
 async fn no_covering_team_means_the_default_team() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -284,7 +295,7 @@ async fn no_covering_team_means_the_default_team() {
 /// sitting there in the list.
 #[tokio::test]
 async fn a_team_the_account_cannot_read_is_skipped_not_fatal() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
         .respond_with(
@@ -318,7 +329,7 @@ async fn a_team_the_account_cannot_read_is_skipped_not_fatal() {
 /// project's default team, not an error that strands the upload.
 #[tokio::test]
 async fn every_team_unreadable_still_lands_on_the_default_team() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -362,7 +373,7 @@ async fn every_team_unreadable_still_lands_on_the_default_team() {
 /// what went wrong instead of sending a URL with a hole in it.
 #[tokio::test]
 async fn an_unreadable_project_id_is_said_not_sent() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(
@@ -387,7 +398,7 @@ async fn an_unreadable_project_id_is_said_not_sent() {
 /// decides whether the team lookup is paid for again.
 #[tokio::test]
 async fn the_two_spellings_of_an_area_share_one_cached_team() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
         .respond_with(
@@ -422,7 +433,7 @@ async fn the_two_spellings_of_an_area_share_one_cached_team() {
 /// covers that, and this one is the path a reply that stopped would take.)
 #[tokio::test]
 async fn the_fallback_ends_with_the_suite_the_plan_holds() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -513,7 +524,7 @@ async fn the_fallback_ends_with_the_suite_the_plan_holds() {
 /// asked, and no id is resolved on the way to not asking it.
 #[tokio::test]
 async fn the_fallback_refuses_an_empty_id_list_before_any_request() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let err = client
         .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", 0, &[])
@@ -534,7 +545,7 @@ async fn the_fallback_refuses_an_empty_id_list_before_any_request() {
 /// something other than what it is here to do. Say both ids.
 #[tokio::test]
 async fn the_fallback_says_when_the_named_plan_has_no_suite() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -663,7 +674,7 @@ fn project_reply_without_a_default_team() -> serde_json::Value {
 async fn an_unreadable_default_team_is_an_error_only_where_it_is_needed() {
     // Nothing covers the PBI's area, so the default team is the answer -
     // and there isn't one.
-    let needed = MockServer::start().await;
+    let needed = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(
@@ -693,7 +704,7 @@ async fn an_unreadable_default_team_is_an_error_only_where_it_is_needed() {
 
     // Same project reply, but a team owns the area: the missing field is
     // never read, so it is never a problem.
-    let covered = MockServer::start().await;
+    let covered = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(
@@ -727,7 +738,7 @@ async fn an_unreadable_default_team_is_an_error_only_where_it_is_needed() {
 /// about permission and still stops it.
 #[tokio::test]
 async fn a_team_list_the_account_cannot_read_falls_back_to_the_default_team() {
-    let refused = MockServer::start().await;
+    let refused = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -750,7 +761,7 @@ async fn a_team_list_the_account_cannot_read_falls_back_to_the_default_team() {
         DEFAULT_TEAM_ID
     );
 
-    let broken = MockServer::start().await;
+    let broken = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -777,7 +788,7 @@ async fn a_team_list_the_account_cannot_read_falls_back_to_the_default_team() {
 /// the plan's suites are not listed at all.
 #[tokio::test]
 async fn a_reply_that_names_the_suite_is_not_followed_by_a_listing() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
@@ -836,7 +847,7 @@ async fn a_reply_that_names_the_suite_is_not_followed_by_a_listing() {
 /// finished first.
 #[tokio::test]
 async fn the_team_scopes_are_read_several_at_a_time() {
-    let server = MockServer::start().await;
+    let server = unshared_server().await;
     Mock::given(method("GET"))
         .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
