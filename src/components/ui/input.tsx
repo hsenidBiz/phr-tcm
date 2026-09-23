@@ -1,4 +1,5 @@
 import { forwardRef, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { Textarea as XiodTextarea } from "xiod-ui/textarea";
 import { cn } from "../../lib/cn";
 
 const base =
@@ -11,10 +12,41 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 );
 Input.displayName = "Input";
 
+/** XiodUI's text area sets its own size at sm: and up (`sm:text-sm`), and a
+ * breakpoint class always outranks a plain one - so a call site's `text-xs`
+ * would lose in any window wider than 640px. Its sm: twin goes along with
+ * it. Whole class names, so Tailwind finds them in this file. */
+const SM_TWIN: Record<string, string> = {
+  "text-xs": "sm:text-xs",
+  "text-sm": "sm:text-sm",
+  "text-base": "sm:text-base",
+  "text-lg": "sm:text-lg",
+};
+
+function smTwin(className?: string): string | undefined {
+  const size = className?.split(/\s+/).find((c) => c in SM_TWIN);
+  return size ? SM_TWIN[size] : undefined;
+}
+
+/**
+ * XiodUI's text area: a styled box with the field filling it. The call
+ * site's `className` sizes the BOX (h-*, w-*, flex-1, min-h-*, margins, a
+ * ring), which is also what the user drags taller; the field fills it and
+ * does not grow with its content. Every other prop, `ref` included, lands
+ * on the `<textarea>`.
+ */
 export const Textarea = forwardRef<
   HTMLTextAreaElement,
   TextareaHTMLAttributes<HTMLTextAreaElement>
 >(({ className, ...props }, ref) => (
-  <textarea ref={ref} className={cn(base, className)} {...props} />
+  <XiodTextarea
+    ref={ref}
+    className={cn(
+      "flex resize-y overflow-hidden text-sm [&>textarea]:h-full [&>textarea]:min-h-0 [&>textarea]:resize-none [&>textarea]:[field-sizing:fixed] [&>textarea]:placeholder:text-faint",
+      className,
+      smTwin(className),
+    )}
+    {...props}
+  />
 ));
 Textarea.displayName = "Textarea";
