@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.20",
+    date: "2026-09-23",
+    items: [
+      "Run Tests now has an Order picker: Suggested run order (the order every tester starts from, when the PBI has one), Spec order (the order Azure DevOps shows) and My order. Drag a case, or use Move up and Move down, to put the cases in your own order. That order is kept on this machine only, so it never changes what other testers or Azure DevOps see.",
+      "Uploading a file that creates new test cases now puts the PBI's suite in the order the cases were written against the spec, and saves the file's suggested run order on the PBI for everyone. An upload that only updates cases leaves the order alone.",
+      "The runner has Run next: pick which of the remaining cases you want to run next, and Next goes straight to it. Run Tests follows the same order.",
+      "Suite Management has a new Suggested run order section for a PBI's suite: start from the saved order, the order in Azure DevOps or your own order, arrange the cases, and save it as the order every tester starts from. The existing editor is now labelled Order in Azure DevOps.",
+    ],
+  },
+  {
     version: "1.25.19",
     date: "2026-09-23",
     items: [
