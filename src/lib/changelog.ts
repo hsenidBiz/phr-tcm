@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.18",
+    date: "2026-09-23",
+    items: [
+      "Fixed: the AI Bridge database tools could not reach the database. The sqlcmd found on most machines refused the options the app passed, so every table lookup and query failed. They now work with that sqlcmd, and a value that may have been cut short at 256 characters is flagged as such.",
+      "Table lookups on large databases are much faster (a few seconds instead of timing out). PeoplesHR is searched first and every schema only when nothing matches there, and asking the same thing again within ten minutes answers instantly.",
+      "The database password is no longer passed on sqlcmd's command line, where other programs on the machine could read it.",
+      "Statements that chain a second command after a query without a semicolon are now refused, like any other second statement.",
+    ],
+  },
+  {
     version: "1.25.17",
     date: "2026-09-23",
     items: [
