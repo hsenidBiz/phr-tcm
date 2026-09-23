@@ -106,6 +106,13 @@ const caseIdsOf = (pts: readonly TestPoint[]): number[] => {
  * the reasons from the backend are fragments without one. */
 const sentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
 
+/** The one line under the picker. A reason that already sends the reader
+ * to the logs is not told to go there twice. */
+function noteFor(reason: string): string {
+  const head = `The suggested run order could not be read: ${sentence(reason)}`;
+  return /Settings\s*(→|,)\s*Logs/.test(reason) ? head : `${head} See Settings → Logs.`;
+}
+
 export function useRunOrder({
   org,
   project,
@@ -157,11 +164,9 @@ export function useRunOrder({
 
   const read = runOrder.data;
   const file = read?.state === "found" ? read.file : null;
-  const note = runOrder.isError
-    ? `The suggested run order could not be read: ${sentence(runOrder.error.message)} See Settings → Logs.`
-    : read?.state === "unreadable"
-      ? `The suggested run order could not be read: ${sentence(read.reason)} See Settings → Logs.`
-      : null;
+  const unreadable = runOrder.isError || read?.state === "unreadable";
+  const reason = runOrder.isError ? runOrder.error.message : read?.state === "unreadable" ? read.reason : null;
+  const note = reason == null ? null : noteFor(reason);
 
   const keyStr = key ? `${org}/${planId}/${suiteId}` : "";
   const myOrder = useMemo(() => (key ? loadMyOrder(key) : null), [keyStr, rev]);
@@ -169,10 +174,12 @@ export function useRunOrder({
 
   const available = (v: OrderView) => (v === "suggested" ? file != null : v === "mine" ? myOrder != null : true);
   const view: OrderView = storedView && available(storedView) ? storedView : file ? "suggested" : "spec";
-  const options: OrderView[] = [
-    ...(file ? (["suggested"] as const) : []),
-    "spec" as const,
-    ...(myOrder ? (["mine"] as const) : []),
+  // An unreadable file still lists Suggested, greyed out: the tester sees
+  // there is one, and the note says why it is not in use (design doc §6).
+  const options: { view: OrderView; disabled: boolean }[] = [
+    ...(file || unreadable ? [{ view: "suggested" as const, disabled: !file }] : []),
+    { view: "spec" as const, disabled: false },
+    ...(myOrder ? [{ view: "mine" as const, disabled: false }] : []),
   ];
 
   // The runner saves My order when a tester picks "Run next..."; re-read
@@ -216,7 +223,15 @@ export function useRunOrder({
 
   const commit = (next: SuiteCase[]) => {
     if (!key) return;
-    saveMyOrder(key, next.map((c) => c.id));
+    const ids = next.map((c) => c.id);
+    saveMyOrder(key, ids);
+    // Read it back: with storage unavailable the save is silently dropped,
+    // and switching to a My order that is not there would mislead.
+    const saved = loadMyOrder(key);
+    if (!saved || saved.length !== ids.length || saved.some((id, i) => id !== ids[i])) {
+      toast.error("Your own order could not be saved on this machine.");
+      return;
+    }
     if (view !== "mine") {
       saveOrderView(key, "mine");
       toast.info("Now using your own order, on this machine.");
@@ -243,6 +258,9 @@ export function useRunOrder({
   };
   const dropCase = (caseId: number, targetId: number) => {
     if (caseId === targetId) return;
+    // Grouped, a drop into another section would snap back when the list
+    // regroups: the same rule as the arrows, so it is not applied at all.
+    if (grouped && !siblingsOf(caseId).includes(targetId)) return;
     commit(moveBlock(asCases(), new Set([caseId]), targetId));
   };
 

@@ -48,6 +48,10 @@ test("every stand-in command is answered locally", async () => {
   // either stand-in later is a test failure, not a silent regression.
   expect(TOUR_STAND_IN_COMMANDS).toContain("canDeleteTestCases");
   expect(TOUR_STAND_IN_COMMANDS).toContain("dbServerDefaults");
+  // Run Tests reads the suggested run order; saving one is a write, and a
+  // write that gets through during the tour must find the real call.
+  expect(TOUR_STAND_IN_COMMANDS).toContain("getRunOrder");
+  expect(TOUR_STAND_IN_COMMANDS).not.toContain("saveRunOrder");
 
   // No mockIPC in this file: a call that fell through to the real binding
   // would reject, because vitest has no Tauri runtime behind it. Every

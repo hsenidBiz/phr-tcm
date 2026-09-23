@@ -462,9 +462,9 @@ export default function RunPanel({
               value={order.view}
               onChange={(e) => order.changeView(e.target.value as OrderView)}
             >
-              {order.options.map((v) => (
-                <option key={v} value={v}>
-                  {ORDER_LABELS[v]}
+              {order.options.map((o) => (
+                <option key={o.view} value={o.view} disabled={o.disabled}>
+                  {ORDER_LABELS[o.view]}
                 </option>
               ))}
             </Select>

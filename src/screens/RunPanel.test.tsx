@@ -1,8 +1,10 @@
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
+import { MY_ORDER_EVENT } from "../lib/runOrder";
 import { writeSuiteSeed } from "../lib/suiteSeed";
 import RunPanel from "./RunPanel";
 
@@ -563,6 +565,8 @@ type OrderMock = {
   points: Array<{ point_id: number; test_case_id: number; name: string; config?: string }>;
   entries?: number[];
   runOrder?: unknown;
+  /** get_run_order fails with this AdoError instead of answering. */
+  runOrderError?: unknown;
   calls?: string[];
 };
 
@@ -577,15 +581,12 @@ const RUN_ORDER_FILE = (cases: Array<{ id: number; group?: string }>) => ({
   },
 });
 
-function mockOrder({ points, entries, runOrder, calls }: OrderMock) {
+// Events are mocked for real here (shouldMockEvents), so an emit reaches
+// the screen's listeners the way another window's save would.
+function mockOrder({ points, entries, runOrder, runOrderError, calls }: OrderMock) {
   mockIPC((cmd) => {
     calls?.push(cmd);
     switch (cmd) {
-      case "plugin:event|listen":
-        return 1;
-      case "plugin:event|unlisten":
-      case "plugin:event|emit":
-        return null;
       case "run_history":
         return [];
       case "ensure_pbi_suite":
@@ -608,9 +609,10 @@ function mockOrder({ points, entries, runOrder, calls }: OrderMock) {
           entry_type: "testCase",
         }));
       case "get_run_order":
+        if (runOrderError) return Promise.reject(runOrderError);
         return runOrder ?? { state: "none" };
     }
-  });
+  }, { shouldMockEvents: true });
 }
 
 const ABC = [
@@ -648,7 +650,7 @@ test("with no suggested order the list follows the suite's spec order", async ()
   expect(screen.queryByRole("option", { name: "My order" })).not.toBeInTheDocument();
 });
 
-test("an unreadable run-order file says why and offers no Suggested option", async () => {
+test("an unreadable run-order file says why and greys out Suggested", async () => {
   mockOrder({ points: ABC, runOrder: { state: "unreadable", reason: "the run-order file is damaged" } });
   renderPanel();
   expect(
@@ -658,7 +660,37 @@ test("an unreadable run-order file says why and offers no Suggested option", asy
   ).toBeInTheDocument();
   expect(orderPicker()).toHaveTextContent("Spec order");
   fireEvent.click(orderPicker());
-  expect(screen.queryByRole("option", { name: "Suggested run order" })).not.toBeInTheDocument();
+  const suggested = screen.getByRole("option", { name: "Suggested run order" });
+  expect(suggested).toBeDisabled();
+  fireEvent.click(suggested);
+  expect(orderPicker()).toHaveTextContent("Spec order");
+});
+
+test("a reason that already points at the logs is not told to go there twice", async () => {
+  mockOrder({
+    points: ABC,
+    runOrder: { state: "unreadable", reason: "the file is damaged; Settings → Logs has the details." },
+  });
+  renderPanel();
+  expect(
+    await screen.findByText(
+      "The suggested run order could not be read: the file is damaged; Settings → Logs has the details.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/See Settings/)).not.toBeInTheDocument();
+});
+
+test("a failed read of the run order shows the note and greys out Suggested", async () => {
+  mockOrder({ points: ABC, runOrderError: { kind: "Forbidden" } });
+  renderPanel();
+  expect(
+    await screen.findByText(
+      "The suggested run order could not be read: You don't have permission for this resource. See Settings → Logs.",
+    ),
+  ).toBeInTheDocument();
+  expect(orderPicker()).toHaveTextContent("Spec order");
+  fireEvent.click(orderPicker());
+  expect(screen.getByRole("option", { name: "Suggested run order" })).toBeDisabled();
 });
 
 test("moving a row copies the order into My order on this machine and never writes a shared order", async () => {
@@ -758,4 +790,111 @@ test("the runner opens with the selection in the order on screen", async () => {
 
   const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
   expect(session.caseIds).toEqual([303, 301]);
+});
+
+const rowOf = (title: string) => screen.getByText(title).closest("tr")!;
+const MY_KEY = "tcm-v2-run-order:acme/9/91";
+
+test("grouped, a drag into another group is not applied; within a group it is", async () => {
+  mockOrder({
+    points: ABC,
+    runOrder: RUN_ORDER_FILE([
+      { id: 301, group: "Web\\Sign in" },
+      { id: 302, group: "Web\\Checkout" },
+      { id: 303, group: "Web\\Sign in" },
+    ]),
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(orderPicker()).toHaveTextContent("Suggested run order"));
+  fireEvent.click(screen.getByText("Group by title"));
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
+
+  // Alpha (Sign in) dropped on Bravo (Checkout): nothing happens at all.
+  fireEvent.dragStart(rowOf("Alpha check"));
+  fireEvent.dragOver(rowOf("Bravo check"));
+  fireEvent.drop(rowOf("Bravo check"));
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
+  expect(localStorage.getItem(MY_KEY)).toBeNull();
+  expect(orderPicker()).toHaveTextContent("Suggested run order");
+  expect(toast.info).not.toHaveBeenCalled();
+
+  // Charlie dropped on Alpha, both in Sign in: applied, into My order.
+  fireEvent.dragStart(rowOf("Charlie check"));
+  fireEvent.dragOver(rowOf("Alpha check"));
+  fireEvent.drop(rowOf("Alpha check"));
+  expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]);
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 301, 302]);
+  expect(orderPicker()).toHaveTextContent("My order");
+});
+
+test("with storage unavailable a move says so and stays on the order it was on", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("QuotaExceededError");
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Move Bravo check down" }));
+  } finally {
+    setItem.mockRestore();
+  }
+
+  expect(toast.error).toHaveBeenCalledWith("Your own order could not be saved on this machine.");
+  expect(toast.info).not.toHaveBeenCalled();
+  expect(orderPicker()).toHaveTextContent("Suggested run order");
+  expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]);
+});
+
+test("the list follows My order saved by the runner for this suite, and ignores another suite's", async () => {
+  localStorage.setItem(MY_KEY, JSON.stringify([301, 302, 303]));
+  localStorage.setItem("tcm-v2-run-order-view:acme/9/91", "mine");
+  mockOrder({ points: ABC });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  expect(orderPicker()).toHaveTextContent("My order");
+
+  // The runner writes a new My order; the event names another suite first.
+  localStorage.setItem(MY_KEY, JSON.stringify([303, 302, 301]));
+  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 92 });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]);
+
+  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]));
+});
+
+test("the chosen order is remembered for the suite across a remount", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  const first = renderPanel();
+  await vi.waitFor(() => expect(orderPicker()).toHaveTextContent("Suggested run order"));
+  fireEvent.click(orderPicker());
+  fireEvent.click(screen.getByRole("option", { name: "Spec order" }));
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  first.unmount();
+
+  renderPanel();
+  await screen.findByText("Alpha check");
+  expect(orderPicker()).toHaveTextContent("Spec order");
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+});
+
+test("a move under a text filter moves within the full order, hidden rows included", async () => {
+  mockOrder({ points: ABC });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+
+  // "ha" matches Alpha and Charlie; Bravo is hidden between them.
+  fireEvent.change(screen.getByLabelText("Filter points"), { target: { value: "ha" } });
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check"]);
+
+  // One step up in the FULL order puts Charlie above the hidden Bravo,
+  // still below Alpha - so the filtered view looks the same.
+  fireEvent.click(screen.getByRole("button", { name: "Move Charlie check up" }));
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check"]);
+  expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([301, 303, 302]);
+
+  fireEvent.change(screen.getByLabelText("Filter points"), { target: { value: "" } });
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
 });

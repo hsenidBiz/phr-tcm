@@ -23,7 +23,6 @@ import {
   TOUR_POINTS,
   TOUR_PROJECTS,
   TOUR_PR_OVERVIEW,
-  TOUR_RUN_ORDER,
   TOUR_SUITE,
   TOUR_SUITE_ENTRIES,
   TOUR_TOOLS,
@@ -75,10 +74,9 @@ function standIns(): Partial<Commands> {
     // got through must find the real call and refuse.
     canCreateTestSuites: () => ok(true),
     // Run order: the sample PBI has no suggested order, so Run Tests opens
-    // in spec order. Saving one answers with a sample file rather than
-    // falling through to the real call, which needs a real organisation.
+    // in spec order. Saving one is a write and, like creating a suite, is
+    // deliberately not stood in for.
     getRunOrder: () => ok({ state: "none" as const }),
-    saveRunOrder: () => ok(TOUR_RUN_ORDER),
 
     // Work Manager.
     fetchBoard: () => ok(TOUR_BOARD),
