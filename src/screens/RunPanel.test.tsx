@@ -1,13 +1,19 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
 import { writeSuiteSeed } from "../lib/suiteSeed";
 import RunPanel from "./RunPanel";
 
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  vi.clearAllMocks();
 });
 
 function renderPanel() {
@@ -549,4 +555,207 @@ test("grouped mode hides the Select all button and Ctrl+A skips text fields", as
   const filter = screen.getByPlaceholderText(/Filter/i);
   fireEvent.keyDown(filter, { key: "a", ctrlKey: true });
   expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+});
+
+// ---- Run order (design doc §5.1) ----
+
+type OrderMock = {
+  points: Array<{ point_id: number; test_case_id: number; name: string; config?: string }>;
+  entries?: number[];
+  runOrder?: unknown;
+  calls?: string[];
+};
+
+const RUN_ORDER_FILE = (cases: Array<{ id: number; group?: string }>) => ({
+  state: "found",
+  file: {
+    format: "tcm-run-order",
+    version: 1,
+    saved_by: "lead@example.com",
+    saved_at: "2026-09-23T10:15:00Z",
+    cases,
+  },
+});
+
+function mockOrder({ points, entries, runOrder, calls }: OrderMock) {
+  mockIPC((cmd) => {
+    calls?.push(cmd);
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+      case "plugin:event|emit":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return points.map((p) => ({
+          point_id: p.point_id,
+          test_case_id: p.test_case_id,
+          test_case_name: p.name,
+          config_name: p.config ?? "Windows 10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        }));
+      case "list_suite_entries":
+        return (entries ?? points.map((p) => p.test_case_id)).map((id, i) => ({
+          id,
+          sequence_number: i + 1,
+          entry_type: "testCase",
+        }));
+      case "get_run_order":
+        return runOrder ?? { state: "none" };
+    }
+  });
+}
+
+const ABC = [
+  { point_id: 1, test_case_id: 301, name: "Alpha check" },
+  { point_id: 2, test_case_id: 302, name: "Bravo check" },
+  { point_id: 3, test_case_id: 303, name: "Charlie check" },
+];
+
+/** The rows' titles top to bottom, read off each row's Move up button. */
+const rowNames = () =>
+  screen
+    .getAllByRole("button", { name: /^Move .* up$/ })
+    .map((b) => b.getAttribute("aria-label")!)
+    .filter((l) => !l.startsWith("Move group "))
+    .map((l) => l.replace(/^Move /, "").replace(/ up$/, ""));
+
+const orderPicker = () => screen.getByRole("combobox", { name: "Order" });
+
+test("opens in the suggested run order when the PBI has one, not the points' order", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await screen.findByText("Alpha check");
+  await vi.waitFor(() => expect(orderPicker()).toHaveTextContent("Suggested run order"));
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+});
+
+test("with no suggested order the list follows the suite's spec order", async () => {
+  mockOrder({ points: ABC, entries: [303, 301, 302] });
+  renderPanel();
+  await screen.findByText("Alpha check");
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
+  expect(orderPicker()).toHaveTextContent("Spec order");
+  fireEvent.click(orderPicker());
+  expect(screen.queryByRole("option", { name: "Suggested run order" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "My order" })).not.toBeInTheDocument();
+});
+
+test("an unreadable run-order file says why and offers no Suggested option", async () => {
+  mockOrder({ points: ABC, runOrder: { state: "unreadable", reason: "the run-order file is damaged" } });
+  renderPanel();
+  expect(
+    await screen.findByText(
+      "The suggested run order could not be read: the run-order file is damaged. See Settings → Logs.",
+    ),
+  ).toBeInTheDocument();
+  expect(orderPicker()).toHaveTextContent("Spec order");
+  fireEvent.click(orderPicker());
+  expect(screen.queryByRole("option", { name: "Suggested run order" })).not.toBeInTheDocument();
+});
+
+test("moving a row copies the order into My order on this machine and never writes a shared order", async () => {
+  const calls: string[] = [];
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]), calls });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+
+  fireEvent.click(screen.getByRole("button", { name: "Move Bravo check down" }));
+
+  expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]);
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([303, 302, 301]);
+  expect(orderPicker()).toHaveTextContent("My order");
+  expect(toast.info).toHaveBeenCalledWith("Now using your own order, on this machine.");
+  expect(toast.info).toHaveBeenCalledTimes(1);
+
+  // A second move while already in My order is not another switch.
+  fireEvent.click(screen.getByRole("button", { name: "Move Alpha check up" }));
+  expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]);
+  expect(toast.info).toHaveBeenCalledTimes(1);
+
+  expect(calls).not.toContain("reorder_suite_cases");
+  expect(calls).not.toContain("save_run_order");
+});
+
+test("Reset returns to the suggested order and forgets My order", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+  fireEvent.click(screen.getByRole("button", { name: "Move Bravo check down" }));
+  expect(orderPicker()).toHaveTextContent("My order");
+
+  fireEvent.click(screen.getByRole("button", { name: /Reset to suggested order/ }));
+
+  expect(orderPicker()).toHaveTextContent("Suggested run order");
+  expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]);
+  expect(localStorage.getItem("tcm-v2-run-order:acme/9/91")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Reset to/ })).not.toBeInTheDocument();
+});
+
+test("with no suggested order, Reset is to spec order", async () => {
+  mockOrder({ points: ABC });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
+  fireEvent.click(screen.getByRole("button", { name: "Move Alpha check down" }));
+  fireEvent.click(screen.getByRole("button", { name: /Reset to spec order/ }));
+  expect(orderPicker()).toHaveTextContent("Spec order");
+  expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]);
+});
+
+test("grouping follows the suggested file's groups, and a group moves as one block", async () => {
+  mockOrder({
+    points: ABC,
+    runOrder: RUN_ORDER_FILE([
+      { id: 301, group: "Web\\Sign in" },
+      { id: 302, group: "Web\\Checkout" },
+      { id: 303, group: "Web\\Sign in" },
+    ]),
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(orderPicker()).toHaveTextContent("Suggested run order"));
+  fireEvent.click(screen.getByText("Group by title"));
+
+  expect(screen.getByText("Web\\Sign in (2)")).toBeInTheDocument();
+  expect(screen.getByText("Web\\Checkout (1)")).toBeInTheDocument();
+  expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Move group Web\\Sign in down" }));
+
+  expect(rowNames()).toEqual(["Bravo check", "Alpha check", "Charlie check"]);
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([302, 301, 303]);
+  expect(orderPicker()).toHaveTextContent("My order");
+  expect(toast.info).toHaveBeenCalledWith("Now using your own order, on this machine.");
+});
+
+test("a case run on two configurations keeps both rows together", async () => {
+  mockOrder({
+    points: [
+      { point_id: 1, test_case_id: 301, name: "Alpha check", config: "Windows" },
+      { point_id: 2, test_case_id: 302, name: "Bravo check" },
+      { point_id: 3, test_case_id: 301, name: "Alpha check", config: "Mac" },
+    ],
+    entries: [302, 301],
+  });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Alpha check", "Alpha check"]));
+});
+
+test("the runner opens with the selection in the order on screen", async () => {
+  mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 303 }, { id: 301 }, { id: 302 }]) });
+  renderPanel();
+  await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
+
+  fireEvent.click(screen.getByText("Alpha check"));
+  fireEvent.click(screen.getByText("Charlie check"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 2 in runner/ }));
+
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([303, 301]);
 });

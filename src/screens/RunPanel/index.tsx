@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -22,12 +22,20 @@ import {
   stickyLeftPx,
   subscribeSidebar,
 } from "../../lib/sidebarState";
-import { groupIndices } from "../../lib/grouping";
 import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
-import { IconCollapseAll, IconReport, IconRun } from "../../lib/actionIcons";
+import {
+  IconCollapseAll,
+  IconMoveDown,
+  IconMoveUp,
+  IconReport,
+  IconRun,
+  IconUndo,
+} from "../../lib/actionIcons";
+import type { OrderView } from "../../lib/runOrder";
+import { ORDER_LABELS, useRunOrder } from "./useRunOrder";
 
 
 export { outcomeLabel };
@@ -60,6 +68,19 @@ function RunCols() {
       <col className="w-40" />
     </colgroup>
   );
+}
+
+const NO_POINTS: TestPoint[] = [];
+
+/** Whether a point passes the outcome and text filters. */
+function pointMatches(p: TestPoint, filterOutcome: string, filterText: string): boolean {
+  if (filterOutcome === "none" && p.last_outcome) return false;
+  if (filterOutcome && filterOutcome !== "none" && p.last_outcome.toLowerCase() !== filterOutcome) return false;
+  if (filterText) {
+    const t = filterText.toLowerCase();
+    if (!p.test_case_name.toLowerCase().includes(t) && !String(p.test_case_id ?? "").includes(t)) return false;
+  }
+  return true;
 }
 
 export default function RunPanel({
@@ -228,37 +249,34 @@ export default function RunPanel({
   // outcome filter + a group-header click selects the failed set in two
   // clicks, and one path into a selective run is easier to trust than two.
 
+  // The chosen order (suggested / spec / mine) and its sections. Ordering
+  // and grouping happen over every point; filters only hide rows after
+  // that, so a filter never reorders anything (design doc §5.1).
+  const order = useRunOrder({
+    org,
+    project,
+    pbiId,
+    suite: suite.data ?? undefined,
+    points: points.data ?? NO_POINTS,
+    grouped,
+  });
+
   const filtered = useMemo(
-    () =>
-      (points.data ?? []).filter((p) => {
-        if (filterOutcome === "none" && p.last_outcome) return false;
-        if (
-          filterOutcome &&
-          filterOutcome !== "none" &&
-          p.last_outcome.toLowerCase() !== filterOutcome
-        )
-          return false;
-        if (filterText) {
-          const t = filterText.toLowerCase();
-          if (
-            !p.test_case_name.toLowerCase().includes(t) &&
-            !String(p.test_case_id ?? "").includes(t)
-          )
-            return false;
-        }
-        return true;
-      }),
-    [points.data, filterOutcome, filterText],
+    () => order.ordered.filter((p) => pointMatches(p, filterOutcome, filterText)),
+    [order.ordered, filterOutcome, filterText],
   );
 
-  // v1 smart grouping over the visible rows (shared title-prefix folders).
   const sections = useMemo(() => {
     if (!grouped) return [{ name: "", pts: filtered }];
-    return groupIndices(filtered.map((p) => p.test_case_name)).map(({ name, indices }) => ({
-      name: name || "Ungrouped",
-      pts: indices.map((i) => filtered[i]),
-    }));
-  }, [filtered, grouped]);
+    return order.sections
+      .map(({ name, pts }) => ({ name, pts: pts.filter((p) => pointMatches(p, filterOutcome, filterText)) }))
+      .filter((s) => s.pts.length > 0);
+  }, [order.sections, filtered, grouped, filterOutcome, filterText]);
+
+  // Drag a row onto another to put its case there (a copy into My order,
+  // same as the arrows). Native drag events, as Suite Management's list.
+  const [dragCase, setDragCase] = useState<number | null>(null);
+  const [overPoint, setOverPoint] = useState<number | null>(null);
 
   /** The list's order as the eye reads it - filtered, grouped, flattened.
    * The runner's own fetch (the PBI's Tested-By links) orders differently,
@@ -434,6 +452,34 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted">Order</span>
+            <Select
+              aria-label="Order"
+              className="w-56"
+              triggerClassName="px-2 py-1.5"
+              value={order.view}
+              onChange={(e) => order.changeView(e.target.value as OrderView)}
+            >
+              {order.options.map((v) => (
+                <option key={v} value={v}>
+                  {ORDER_LABELS[v]}
+                </option>
+              ))}
+            </Select>
+            {order.view === "mine" && (
+              <Button variant="outline" size="sm" onClick={order.reset}>
+                <IconUndo aria-hidden />
+                {order.resetLabel}
+              </Button>
+            )}
+          </div>
+          {order.note && <p className="text-xs text-warning">{order.note}</p>}
+        </div>
+      )}
+
+      {points.data && points.data.length > 0 && (
         <div className="flex gap-2">
           <Input
             aria-label="Filter points"
@@ -548,6 +594,29 @@ export default function RunPanel({
                           </span>
                         </button>
                         <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+                        {/* The whole group past its neighbour, into My order. */}
+                        <span className="flex shrink-0 items-center gap-0.5">
+                          <button
+                            type="button"
+                            aria-label={`Move group ${name} up`}
+                            title="Move group up"
+                            disabled={!order.canMoveGroup(name, "up")}
+                            className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
+                            onClick={() => order.moveGroup(name, "up")}
+                          >
+                            <IconMoveUp aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move group ${name} down`}
+                            title="Move group down"
+                            disabled={!order.canMoveGroup(name, "down")}
+                            className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
+                            onClick={() => order.moveGroup(name, "down")}
+                          >
+                            <IconMoveDown aria-hidden />
+                          </button>
+                        </span>
                       </div>
                 )}
                 {/* The fold animates the list away only when nothing in it
@@ -565,26 +634,80 @@ export default function RunPanel({
                     ? "bg-accent-soft"
                     : (outcomeRowTint[p.last_outcome.toLowerCase()] ?? ""),
                   "hover:bg-surface-2",
+                  dragCase != null && dragCase === p.test_case_id && "opacity-50",
+                  overPoint === p.point_id && dragCase !== p.test_case_id && "border-t-2 border-t-accent",
                 )}
                 onClick={(e) => handleRowClick(p, e)}
+                draggable={p.test_case_id != null}
+                onDragStart={() => setDragCase(p.test_case_id)}
+                onDragEnd={() => {
+                  setDragCase(null);
+                  setOverPoint(null);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (overPoint !== p.point_id) setOverPoint(p.point_id);
+                }}
+                onDragLeave={() => setOverPoint((o) => (o === p.point_id ? null : o))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragCase != null && p.test_case_id != null) order.dropCase(dragCase, p.test_case_id);
+                  setDragCase(null);
+                  setOverPoint(null);
+                }}
               >
                 <td className="px-2 py-1 text-text">
-                  <button
-                    aria-label={expanded.has(p.point_id) ? "Collapse test case" : "Expand test case"}
-                    title={expanded.has(p.point_id) ? "Hide steps" : "Show steps & last result"}
-                    className="mr-1 align-middle text-muted hover:text-accent"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleExpanded(p.point_id);
-                    }}
-                  >
-                    {expanded.has(p.point_id) ? (
-                      <ChevronDown size={14} />
-                    ) : (
-                      <ChevronRight size={14} />
+                  <div className="flex items-center gap-1">
+                    <GripVertical size={14} className="shrink-0 cursor-grab text-faint" aria-hidden />
+                    <button
+                      aria-label={expanded.has(p.point_id) ? "Collapse test case" : "Expand test case"}
+                      title={expanded.has(p.point_id) ? "Hide steps" : "Show steps & last result"}
+                      className="shrink-0 text-muted hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleExpanded(p.point_id);
+                      }}
+                    >
+                      {expanded.has(p.point_id) ? (
+                        <ChevronDown size={14} />
+                      ) : (
+                        <ChevronRight size={14} />
+                      )}
+                    </button>
+                    <span className="min-w-0 flex-1">
+                      <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}
+                    </span>
+                    {p.test_case_id != null && (
+                      <span className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          aria-label={`Move ${p.test_case_name} up`}
+                          title="Move up"
+                          disabled={!order.canMove(p.test_case_id, "up")}
+                          className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            order.moveCase(p.test_case_id!, "up");
+                          }}
+                        >
+                          <IconMoveUp aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${p.test_case_name} down`}
+                          title="Move down"
+                          disabled={!order.canMove(p.test_case_id, "down")}
+                          className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            order.moveCase(p.test_case_id!, "down");
+                          }}
+                        >
+                          <IconMoveDown aria-hidden />
+                        </button>
+                      </span>
                     )}
-                  </button>
-                  <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}
+                  </div>
                 </td>
                 <td
                   className={cn(

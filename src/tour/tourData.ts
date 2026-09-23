@@ -16,6 +16,7 @@ import type {
   PlanWithSuites,
   PrOverview,
   Project,
+  RunOrderFile_Serialize,
   Step,
   SuiteEntry,
   TestCase,
@@ -179,6 +180,16 @@ export const TOUR_SUITE_ENTRIES: SuiteEntry[] = TOUR_CASES.map((c, i) => ({
   sequence_number: i + 1,
   entry_type: "testCase",
 }));
+
+/** What saving a suggested run order hands back: the sample cases in
+ * suite order, saved by the sample tester. */
+export const TOUR_RUN_ORDER: RunOrderFile_Serialize = {
+  format: "tcm-run-order",
+  version: 1,
+  saved_by: "sam.taylor@example.invalid",
+  saved_at: "2026-09-23T10:15:00Z",
+  cases: TOUR_CASES.map((c) => ({ id: c.id, group: null })),
+};
 
 export const TOUR_PLANS: PlanWithSuites[] = [
   {
