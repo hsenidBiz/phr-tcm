@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "./CommandPalette";
 import { SHORTCUT_ORDER, VISIBLE_CASE_ITEMS, sectionShortcut } from "./Sidebar";
@@ -69,8 +69,44 @@ test("every Go-to hint is the section's 1-based slot in the shortcut order", asy
     expect(sectionShortcut(item.id)).toBe(`mod+${slot}`);
     // The Kbd badge sits beside the label inside the same row, and the
     // digit is the last thing in it.
-    const row = screen.getByText(item.label).closest("[cmdk-item]");
+    const row = screen.getByText(item.label).closest('[data-slot="command-item"]');
     expect(row?.textContent?.trim().endsWith(String(slot))).toBe(true);
   }
   expect(sectionShortcut("settings")).toBeUndefined();
+});
+
+test("typing narrows the list; a query nothing matches says so, and Enter then runs nothing", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  const { onNavigate, onToggleWork } = renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+
+  fireEvent.change(input, { target: { value: "sett" } });
+  expect(await screen.findByText("Settings")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Toggle Work Manager")).not.toBeInTheDocument());
+
+  fireEvent.change(input, { target: { value: "zzzz" } });
+  expect(await screen.findByText("No results.")).toBeInTheDocument();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onNavigate).not.toHaveBeenCalled();
+  expect(onToggleWork).not.toHaveBeenCalled();
+});
+
+test("Enter runs the highlighted row - the first, as the palette opens - and closes it", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  const { onNavigate } = renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const input = await screen.findByPlaceholderText(/Type a command/);
+  const first = VISIBLE_CASE_ITEMS[0];
+  await waitFor(() =>
+    expect(screen.getByText(first.label).closest('[data-slot="command-item"]')).toHaveAttribute("data-highlighted"),
+  );
+
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onNavigate).toHaveBeenCalledWith(first.id);
+  await waitFor(() => expect(screen.queryByPlaceholderText(/Type a command/)).not.toBeInTheDocument());
 });

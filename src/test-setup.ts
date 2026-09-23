@@ -17,7 +17,7 @@ afterEach(() => {
   for (const ghost of document.querySelectorAll("[data-exit-ghost]")) ghost.remove();
 });
 
-// jsdom gaps that cmdk relies on.
+// jsdom gaps that Base UI (the command palette's list and its scroll area) relies on.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class {
     observe() {}
@@ -27,6 +27,12 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 }
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
+}
+// jsdom has no Element.getAnimations - Base UI's ScrollArea viewport calls it
+// (with `{ subtree: true }`) to wait out any transform animation before it
+// recomputes thumb geometry; an empty list makes it skip straight past that.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
 }
 
 // jsdom has no IntersectionObserver; motion's useInView (CountUp) needs one.
