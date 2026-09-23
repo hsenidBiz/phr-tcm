@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type RunOrderCase } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -8,7 +8,7 @@ import { Select } from "../../components/ui/select";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrap } from "../../lib/ipc";
-import { loadMyOrder, reconcile, type OrderKey } from "../../lib/runOrder";
+import { loadMyOrder, onMyOrderChanged, reconcile, type OrderKey } from "../../lib/runOrder";
 import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import { noteFor, runOrderQueryOptions } from "../RunPanel/useRunOrder";
 import CaseOrderList from "./CaseOrderList";
@@ -60,7 +60,23 @@ export default function SuggestedOrder({
     ids.map((id) => byId.get(id) ?? { id, title: `Test case ${id}` });
 
   const orderKey: OrderKey = { org, planId, suiteId };
-  const myOrder = loadMyOrder(orderKey);
+  // Read at every render, so the runner or Run Tests saving a My order
+  // while this editor is open reaches "My order on this machine" too -
+  // the same cross-window save Run Tests and the runner already follow
+  // each other through (design doc §5.2/§5.3).
+  const [myOrderRev, bumpMyOrder] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const un = onMyOrderChanged((k) => {
+      if (k.org === org && k.planId === planId && k.suiteId === suiteId) bumpMyOrder();
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [org, planId, suiteId]);
+  const myOrder = useMemo(
+    () => loadMyOrder(orderKey),
+    [org, planId, suiteId, myOrderRev],
+  );
 
   const idsFor = (from: StartFrom): number[] => {
     if (from === "saved" && file) return reconcile(file.cases.map((c) => c.id), specIds);

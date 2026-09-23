@@ -1,9 +1,11 @@
+import { emit } from "@tauri-apps/api/event";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
 import { cacheKeys, cacheWrite } from "../../lib/cache";
+import { MY_ORDER_EVENT } from "../../lib/runOrder";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import SuggestedOrder from "./SuggestedOrder";
 
@@ -111,6 +113,40 @@ test("with no saved order the default is Azure DevOps order", async () => {
   fireEvent.click(startFromPicker());
   expect(screen.queryByRole("option", { name: "Saved suggested order" })).not.toBeInTheDocument();
   expect(screen.queryByRole("option", { name: "My order on this machine" })).not.toBeInTheDocument();
+});
+
+/// `myOrder` was read once at render, so a My order the runner (or Run
+/// Tests) saves WHILE this editor is open never showed up until something
+/// else re-rendered the screen. Suite Management must follow the same
+/// cross-window save Run Tests and the runner already follow each other
+/// through (design doc §5.2/§5.3).
+test("a My order saved while the editor is open makes the option appear", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "get_run_order") return { state: "none" };
+    },
+    { shouldMockEvents: true },
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(tree(CASES, qc));
+  await orderList();
+  // Let the run-order read settle FIRST - its own isLoading -> false
+  // transition is one more render, and doing the write before that
+  // happens would let this test pass for the wrong reason (an unrelated
+  // re-render incidentally picking up the fresh localStorage value,
+  // rather than the subscription this test exists to pin).
+  await screen.findByText("No suggested run order yet.");
+  fireEvent.click(startFromPicker());
+  expect(screen.queryByRole("option", { name: "My order on this machine" })).not.toBeInTheDocument();
+
+  localStorage.setItem("tcm-v2-run-order:acme/9/91", JSON.stringify([203, 201, 202]));
+  await emit(MY_ORDER_EVENT, { org: "acme", planId: 9, suiteId: 91 });
+
+  // The picker is left open - the option list is recomputed from props on
+  // every render, so it shows up here without closing and reopening.
+  await vi.waitFor(() =>
+    expect(screen.getByRole("option", { name: "My order on this machine" })).toBeInTheDocument(),
+  );
 });
 
 test("Start from My order uses the local list, reconciled against the suite's cases", async () => {
