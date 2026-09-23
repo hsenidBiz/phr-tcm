@@ -2,8 +2,10 @@ import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
+import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
+import { SAVE_FAILED, useExtrasSequence } from "./settingsExtras";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
@@ -36,6 +38,7 @@ import {
   IconCopy,
   IconRefresh,
   IconTour,
+  IconUndo,
 } from "../lib/actionIcons";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
@@ -58,6 +61,20 @@ const ACCENT_TITLE: Record<Accent, string> = {
 
 export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
+  // The optional extras (settingsExtras.ts): the listener lives only
+  // while this screen is mounted, and shakes this panel.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useExtrasSequence(panelRef);
+  const extrasUnlocked = useExtrasUnlocked();
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => {
+    void hydrateExtras();
+  }, []);
+  const resetExtras = () => {
+    setExtrasUnlocked(false)
+      .then(() => setConfirmReset(false))
+      .catch(() => toast.error(SAVE_FAILED));
+  };
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
   const [rate, setRate] = useState<RateLevel>(getRateLevel());
@@ -182,7 +199,10 @@ export default function Settings({ org, project }: { org: string; project: strin
     // than margin. The 24rem floor on the right track matters at the lg
     // boundary: without it the fixed left track would claim its full 28rem
     // first and squeeze the panel narrower than the old even split.
-    <div className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,28rem)_minmax(24rem,1fr)] lg:items-start">
+    <div
+      ref={panelRef}
+      className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,28rem)_minmax(24rem,1fr)] lg:items-start"
+    >
       <div className="space-y-8">
       {/* The tour walks the user here and rings this block so the theme is
           picked on the real screen, not on a copy in a card. */}
@@ -344,6 +364,38 @@ export default function Settings({ org, project }: { org: string; project: strin
           Offer the PHR X database server on the AI Bridge tab
         </label>
       </section>
+
+      {/* Only on a machine where the optional extras are unlocked (a key
+          sequence typed on this screen - see settingsExtras.ts). The
+          heading stays neutral on purpose. */}
+      {extrasUnlocked && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-text">Extras</h2>
+          <p className="text-sm text-muted">
+            Optional extras on this machine. While they are on, Auto Run shows in the
+            sidebar and its tools are offered on the AI Bridge tab.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
+              <IconUndo aria-hidden />
+              Reset to default
+            </Button>
+          </div>
+          {confirmReset && (
+            <Modal onClose={() => setConfirmReset(false)} className="w-full max-w-sm space-y-4 p-5">
+              <h3 className="text-sm font-semibold text-text">Hide these extras again?</h3>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => setConfirmReset(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={resetExtras}>
+                  Reset
+                </Button>
+              </div>
+            </Modal>
+          )}
+        </section>
+      )}
 
       {/* The Module / Preconditions field mapping is auto-detected
           (useFieldRefs ranked match) and deliberately NOT user-editable -
