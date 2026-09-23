@@ -912,6 +912,30 @@ test("choosing Run next reconciles a stored My order that is missing the chosen 
   ]);
 });
 
+test("choosing Run next keeps stored ids from outside this run, in their own relative order", async () => {
+  // 301 and 302 are not among this run's cases at all (the runner only
+  // ever holds the cases selected for THIS run) - a Run next choice must
+  // not cut them from the tester's suite-wide My order.
+  localStorage.setItem(
+    "tcm-v2-run-order:acme/9/91",
+    JSON.stringify([301, 302, 204, 203, 202, 201]),
+  );
+  mockRunnerCases(RUN4);
+  renderRunner();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Run next" }));
+  fireEvent.click(screen.getByRole("option", { name: "Charlie check" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Charlie check");
+  // 301 and 302 survive, still in their original relative order; Charlie
+  // (203, the chosen case) now sits directly after Alpha (201, current).
+  expect(JSON.parse(localStorage.getItem("tcm-v2-run-order:acme/9/91") as string)).toEqual([
+    301, 302, 204, 202, 201, 203,
+  ]);
+});
+
 test("a late backfill never swaps the case on screen once the tester has touched it", async () => {
   localStorage.setItem(
     "tcm-v2-runner-session",

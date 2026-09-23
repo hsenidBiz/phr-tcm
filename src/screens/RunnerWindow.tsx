@@ -22,7 +22,6 @@ import {
   loadMyOrder,
   moveAfter,
   onMyOrderChanged,
-  reconcile,
   resortUpcoming,
   saveMyOrder,
   type OrderKey,
@@ -256,6 +255,11 @@ export default function RunnerWindow() {
       result.splice(before < 0 ? result.length : before, 0, id);
     }
     setOrder(result);
+    // setOrder only takes effect on the NEXT render - a My-order event
+    // (or another render-triggering update) landing before then must see
+    // this insertion, not the stale order from before it, the same reason
+    // "Run next..." keeps this ref in step with setOrder below.
+    orderRef.current = result;
 
     // A late arrival (or a case dropping out of the fetch) must not swap
     // the case on screen out from under the tester once they have moved
@@ -321,9 +325,17 @@ export default function RunnerWindow() {
     // window (Run Tests may be showing a suggested/spec view while this
     // machine already has a My order from an earlier session), or simply
     // missing the case just chosen or the one on screen entirely (a bare
-    // moveAfter would then be a no-op) - reconcile it against this
-    // window's own ids first, so the save always carries the choice.
-    const mine = reconcile(loadMyOrder(orderKey) ?? baseOrder, baseOrder);
+    // moveAfter would then be a no-op). It can also hold ids this window
+    // has never heard of: the runner only ever carries the cases selected
+    // for THIS run (RunPanel filters before opening it), while My order is
+    // the tester's order for the whole suite - reconcile() against this
+    // window's own ids would silently drop every one of those on a single
+    // Run next choice. So every stored id is kept as-is, and only this
+    // window's own ids still missing from it (never saved before, or
+    // newly arrived) are appended, in this window's order.
+    const stored = loadMyOrder(orderKey) ?? [];
+    const have = new Set(stored);
+    const mine = [...new Set(stored), ...baseOrder.filter((id) => !have.has(id))];
     const saved = moveAfter(mine, chosen, current.id);
     ownSaveRef.current = JSON.stringify(saved);
     saveMyOrder(orderKey, saved);
@@ -856,6 +868,10 @@ export default function RunnerWindow() {
   const goTo = (next: number) => {
     if (current) syncCase(current);
     setIdx(next);
+    // setIdx only takes effect on the NEXT render - a My-order event
+    // landing before then must resort against the case just navigated TO,
+    // not the one being left, or it treats the old case as still current.
+    idxRef.current = next;
   };
 
   const finish = useMutation({
