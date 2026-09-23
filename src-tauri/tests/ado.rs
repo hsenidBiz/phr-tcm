@@ -591,6 +591,7 @@ fn client_source_has_no_delete_calls() {
         include_str!("../src/work_board/board.rs"),
         include_str!("../src/work_board/detail.rs"),
         include_str!("../src/work_board/layout.rs"),
+        include_str!("../src/run_order.rs"),
     ];
     for src in sources {
         assert!(
