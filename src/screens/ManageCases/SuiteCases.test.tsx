@@ -25,7 +25,15 @@ const point = (id: number, name: string, config = "Windows 10") => ({
   tester: "", last_outcome: "none", last_run_id: null, last_result_id: null,
 });
 
-function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) => void }) {
+function Harness({
+  onToggle,
+  pbiId,
+}: {
+  onToggle?: (cases: SuiteCase[], on: boolean) => void;
+  /** Passed straight through to SuiteCases - a real caller (PlanTable) only
+   * sets this for a requirement suite. */
+  pbiId?: number;
+}) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   return (
     <SuiteCases
@@ -34,6 +42,7 @@ function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) =>
       planId={9}
       suiteId={91}
       suiteName="Regression"
+      pbiId={pbiId}
       selected={selected}
       onToggle={(cases, on) => {
         onToggle?.(cases, on);
@@ -77,18 +86,21 @@ function mount(
   extra: (cmd: string, args: unknown) => unknown = () => undefined,
   onToggle?: (c: SuiteCase[], on: boolean) => void,
   points = DEFAULT_POINTS,
+  pbiId?: number,
 ) {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
     if (cmd === "list_suite_entries") return entriesFor(points);
     if (cmd === "list_test_points") return points;
-    return extra(cmd, args);
+    const answered = extra(cmd, args);
+    if (answered !== undefined) return answered;
+    if (cmd === "get_run_order") return { state: "none" };
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { unmount } = render(
     <QueryClientProvider client={qc}>
-      <Harness onToggle={onToggle} />
+      <Harness onToggle={onToggle} pbiId={pbiId} />
     </QueryClientProvider>,
   );
   return { calls, unmount };
@@ -564,4 +576,25 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
   } finally {
     scroll.restore();
   }
+});
+
+// ---- Suggested run order (design doc §5.3) ----
+
+test("shows the Suggested run order editor below a requirement suite's own order", async () => {
+  mount((cmd) => {
+    if (cmd === "get_run_order") return { state: "none" };
+  }, undefined, DEFAULT_POINTS, 42);
+  await list();
+  expect(await screen.findByRole("heading", { name: "Suggested run order" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Order in Azure DevOps" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("list", { name: "Suggested run order for Regression" }),
+  ).toBeInTheDocument();
+});
+
+test("a static suite (no PBI) shows only the Azure DevOps order", async () => {
+  mount();
+  await list();
+  expect(screen.getByRole("heading", { name: "Order in Azure DevOps" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Suggested run order" })).not.toBeInTheDocument();
 });

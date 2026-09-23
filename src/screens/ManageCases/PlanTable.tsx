@@ -199,6 +199,11 @@ export default function PlanTable({
                     planId={plan.id}
                     suiteId={suite.id}
                     suiteName={suite.name}
+                    pbiId={
+                      suite.suite_type === "requirementTestSuite" && suite.requirement_id != null
+                        ? suite.requirement_id
+                        : undefined
+                    }
                     selected={selectedIds}
                     onToggle={(cases, on) => onToggle(plan.id, cases, on)}
                   />

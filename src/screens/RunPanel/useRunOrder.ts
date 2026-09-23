@@ -113,6 +113,24 @@ function noteFor(reason: string): string {
   return /Settings\s*(→|,)\s*Logs/.test(reason) ? head : `${head} See Settings → Logs.`;
 }
 
+/** The run-order query exactly as this hook builds it: queryKey and
+ * persistentQuery options together, so a second reader (Suite Management's
+ * `SuggestedOrder`) shares this cache entry instead of quietly duplicating
+ * the options object. */
+export function runOrderQueryOptions(org: string, project: string, pbiId: number) {
+  return {
+    queryKey: ["run-order", org, project, pbiId] as const,
+    ...persistentQuery({
+      key: cacheKeys.runOrder(org, project, pbiId),
+      fetcher: () => unwrap(commands.getRunOrder(org, project, pbiId)),
+      ...CACHE.structure,
+      staleMs: 5 * 60_000,
+    }),
+    enabled: pbiId > 0,
+    retry: false,
+  };
+}
+
 export function useRunOrder({
   org,
   project,
@@ -135,17 +153,7 @@ export function useRunOrder({
   // move here, a reset, or the runner saving a new My order.
   const [rev, bump] = useReducer((n: number) => n + 1, 0);
 
-  const runOrder = useQuery({
-    queryKey: ["run-order", org, project, pbiId],
-    ...persistentQuery({
-      key: cacheKeys.runOrder(org, project, pbiId),
-      fetcher: () => unwrap(commands.getRunOrder(org, project, pbiId)),
-      ...CACHE.structure,
-      staleMs: 5 * 60_000,
-    }),
-    enabled: pbiId > 0,
-    retry: false,
-  });
+  const runOrder = useQuery(runOrderQueryOptions(org, project, pbiId));
 
   // The same key and loader as Suite Management, so both screens share one
   // cache entry. While it loads (or if it fails) spec order is the points'
