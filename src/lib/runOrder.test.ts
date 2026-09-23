@@ -1,7 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
-  clearMyOrder,
   emitMyOrderChanged,
   loadMyOrder,
   loadOrderView,
@@ -100,12 +99,6 @@ test("My order round-trips under the exact key", () => {
   expect(loadMyOrder(key)).toEqual([3, 1, 2]);
 });
 
-test("clearMyOrder removes the stored order", () => {
-  saveMyOrder(key, [1, 2]);
-  clearMyOrder(key);
-  expect(loadMyOrder(key)).toBeNull();
-});
-
 test("the order view round-trips under the exact key", () => {
   expect(loadOrderView(key)).toBeNull();
   saveOrderView(key, "mine");
@@ -138,15 +131,6 @@ test("saving My order emits the change event with the key", async () => {
   const cb = vi.fn();
   const unlisten = await onMyOrderChanged(cb);
   saveMyOrder(key, [1, 2]);
-  await vi.waitFor(() => expect(cb).toHaveBeenCalledWith(key));
-  unlisten();
-});
-
-test("clearing My order emits the change event with the key", async () => {
-  mockIPC(() => null, { shouldMockEvents: true });
-  const cb = vi.fn();
-  const unlisten = await onMyOrderChanged(cb);
-  clearMyOrder(key);
   await vi.waitFor(() => expect(cb).toHaveBeenCalledWith(key));
   unlisten();
 });

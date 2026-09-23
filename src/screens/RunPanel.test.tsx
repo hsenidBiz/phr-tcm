@@ -334,15 +334,11 @@ test("the header checkbox carries the selection state through a collapse", async
   const box = () => screen.getByRole("checkbox", { name: /Select all in/ });
   expect(box()).toHaveAttribute("aria-checked", "mixed");
 
-  // The toolbar's own "Spec order" status is unrelated to selection; a dot
-  // marker collapsing would add a SECOND one, so the count is the check.
-  const statusCount = screen.queryAllByRole("status").length;
-
   // Collapse the group: rows and highlight vanish, the checkbox stays
   // mixed - and no dot marker appears.
   fireEvent.click(screen.getByLabelText(/Collapse group/));
   expect(box()).toHaveAttribute("aria-checked", "mixed");
-  expect(screen.queryAllByRole("status")).toHaveLength(statusCount);
+  expect(screen.queryByRole("status", { name: /selected in/ })).not.toBeInTheDocument();
 
   // Complete the selection: the dash becomes a tick, still collapsed.
   fireEvent.click(box());
@@ -637,8 +633,13 @@ const rowNames = () =>
     .filter((el) => !el.closest("[data-exit-ghost]"))
     .map((el) => (el.parentElement?.textContent ?? "").replace(/^#\d+\s*/, ""));
 
-/** The muted line beside Set execution order that names the list's order. */
-const activeOrder = () => screen.getByRole("status");
+/** The muted line beside Set execution order that names the list's order.
+ * Scoped to that button's own row, so it cannot throw if another
+ * role="status" ever appears elsewhere on the page. */
+const activeOrder = () =>
+  within(screen.getByRole("button", { name: "Set execution order" }).parentElement as HTMLElement).getByRole(
+    "status",
+  );
 const openOrderModal = () => fireEvent.click(screen.getByRole("button", { name: "Set execution order" }));
 const startFrom = () => screen.getByRole("combobox", { name: "Start from" });
 const modalList = () => screen.getByRole("list", { name: "Execution order" });

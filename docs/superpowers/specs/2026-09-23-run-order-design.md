@@ -48,6 +48,13 @@ What the code showed before designing:
 4. Shared orders (spec order and suggested run order) are changed only in
    Suite Management. Run Tests and the runner only ever change My order.
 
+   > Superseded on 2026-09-23 by `2026-09-23-execution-order-modal-design.md`
+   > §3: spec order still changes only in Suite Management and at upload,
+   > but the suggested run order is saved only through Run Tests' Execution
+   > order modal (Save for everyone) and at upload. My order changes only
+   > through the modal's Use this order. The "Written by" column of §4 is
+   > read the same way.
+
 ## 4. The three orders
 
 | Order | Stored in | Written by | Read by |
@@ -122,6 +129,11 @@ never hides a case. This is one pure function shared by every reader.
 
 ### 5.1 Run Tests
 
+> Superseded on 2026-09-23 by `2026-09-23-execution-order-modal-design.md`
+> §4-§5: the Order picker, row drag, row and group moves and Reset are gone.
+> Run Tests has one **Set execution order** button that opens a modal, and
+> the list only shows the chosen order.
+
 - An **Order** picker above the list: *Suggested run order* (default when the
   PBI has one), *Spec order*, *My order* (listed once this tester has one).
 - Rows get a drag handle and Move up / Move down. Reordering while on
@@ -147,6 +159,11 @@ never hides a case. This is one pure function shared by every reader.
   the cases after the current one.
 
 ### 5.3 Suite Management
+
+> Superseded on 2026-09-23 by `2026-09-23-execution-order-modal-design.md`
+> §6: the Suggested run order section is removed and Suite Management shows
+> only the Azure DevOps order editor. The suggested run order is saved from
+> the Run Tests modal.
 
 For a PBI's suite it shows two orders, each with the existing order editor:
 

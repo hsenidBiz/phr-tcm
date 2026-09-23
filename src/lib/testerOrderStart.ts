@@ -1,7 +1,7 @@
 import { fileName, type WatchedFile } from "./fileSync";
 
 /** One watched draft file's tester order, offered as a "Start from" choice
- * in Suite Management's suggested run order editor. */
+ * in Run Tests' Execution order modal. */
 export type TesterOrderSource = {
   path: string;
   label: string;

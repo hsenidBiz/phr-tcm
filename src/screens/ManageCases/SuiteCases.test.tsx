@@ -25,15 +25,7 @@ const point = (id: number, name: string, config = "Windows 10") => ({
   tester: "", last_outcome: "none", last_run_id: null, last_result_id: null,
 });
 
-function Harness({
-  onToggle,
-  pbiId,
-}: {
-  onToggle?: (cases: SuiteCase[], on: boolean) => void;
-  /** Passed straight through to SuiteCases - a real caller (PlanTable) only
-   * sets this for a requirement suite. */
-  pbiId?: number;
-}) {
+function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) => void }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   return (
     <SuiteCases
@@ -42,7 +34,6 @@ function Harness({
       planId={9}
       suiteId={91}
       suiteName="Regression"
-      pbiId={pbiId}
       selected={selected}
       onToggle={(cases, on) => {
         onToggle?.(cases, on);
@@ -86,7 +77,6 @@ function mount(
   extra: (cmd: string, args: unknown) => unknown = () => undefined,
   onToggle?: (c: SuiteCase[], on: boolean) => void,
   points = DEFAULT_POINTS,
-  pbiId?: number,
 ) {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
@@ -95,12 +85,11 @@ function mount(
     if (cmd === "list_test_points") return points;
     const answered = extra(cmd, args);
     if (answered !== undefined) return answered;
-    if (cmd === "get_run_order") return { state: "none" };
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { unmount } = render(
     <QueryClientProvider client={qc}>
-      <Harness onToggle={onToggle} pbiId={pbiId} />
+      <Harness onToggle={onToggle} />
     </QueryClientProvider>,
   );
   return { calls, unmount };
@@ -578,23 +567,13 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
   }
 });
 
-// ---- Suggested run order (design doc §5.3) ----
+// ---- Run order (execution-order-modal design §6) ----
 
-test("shows the Suggested run order editor below a requirement suite's own order", async () => {
-  mount((cmd) => {
-    if (cmd === "get_run_order") return { state: "none" };
-  }, undefined, DEFAULT_POINTS, 42);
+test("Suite Management shows only the Azure DevOps order editor and never reads the run order", async () => {
+  const { calls } = mount();
   await list();
-  expect(await screen.findByRole("heading", { name: "Suggested run order" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Order in Azure DevOps" })).toBeInTheDocument();
-  expect(
-    await screen.findByRole("list", { name: "Suggested run order for Regression" }),
-  ).toBeInTheDocument();
-});
-
-test("a static suite (no PBI) shows only the Azure DevOps order", async () => {
-  mount();
-  await list();
-  expect(screen.getByRole("heading", { name: "Order in Azure DevOps" })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Suggested run order" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Order in Azure DevOps" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: /^Suggested run order/ })).not.toBeInTheDocument();
+  expect(calls.some((c) => c.cmd === "get_run_order")).toBe(false);
 });

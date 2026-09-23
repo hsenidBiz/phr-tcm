@@ -1,5 +1,5 @@
 // Run order: pure reordering helpers shared by Run Tests, the runner and
-// Suite Management, plus a tester's own order for one suite on this
+// the Execution order modal, plus a tester's own order for one suite on this
 // machine (never written to Azure DevOps - see design doc §4.3/§4.4) and
 // the cross-window event that keeps Run Tests and the runner in step when
 // the runner saves a new My order (design doc §5.2).
@@ -115,15 +115,6 @@ export function saveMyOrder(k: OrderKey, ids: readonly number[]): void {
     localStorage.setItem(orderKey(k), JSON.stringify(ids));
   } catch {
     // storage unavailable - My order is simply not offered next load
-  }
-  emitMyOrderChanged(k);
-}
-
-export function clearMyOrder(k: OrderKey): void {
-  try {
-    localStorage.removeItem(orderKey(k));
-  } catch {
-    // storage unavailable - nothing to remove
   }
   emitMyOrderChanged(k);
 }

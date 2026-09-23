@@ -17,7 +17,6 @@ import CaseOrderList, { sectionLabel } from "./CaseOrderList";
 import FileOrderDialog, { type OrderFile } from "./FileOrderDialog";
 import { markSuiteFloating, useFloatRank } from "./floatingSuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
-import SuggestedOrder from "./SuggestedOrder";
 
 /** One expanded suite: its cases in Azure DevOps' order, re-orderable and
  * selectable. Order lives here (Apply saves it, Reset drops it); which
@@ -29,7 +28,6 @@ export default function SuiteCases({
   planId,
   suiteId,
   suiteName,
-  pbiId,
   selected,
   onToggle,
 }: {
@@ -39,11 +37,6 @@ export default function SuiteCases({
   suiteId: number;
   /** For the case list's accessible name: several lists can be open at once. */
   suiteName: string;
-  /** The PBI this suite belongs to, from the suite's `requirement_id` - only
-   * a requirement suite has one. Renders the Suggested run order editor
-   * below this one when set (design doc §5.3); a static suite has no PBI
-   * and so no suggested order. */
-  pbiId?: number;
   /** Ids of this suite's cases the screen holds selected. */
   selected: Set<number>;
   /** Cases the user just checked (on) or unchecked (off). */
@@ -169,7 +162,6 @@ export default function SuiteCases({
 
   return (
     <div className="my-2 space-y-2">
-      <h3 className="text-sm font-semibold text-text">Order in Azure DevOps</h3>
       <div ref={toolbarRef} className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={!dirty || busy} onClick={() => apply.mutate()}>
           <IconConfirm aria-hidden />
@@ -273,17 +265,6 @@ export default function SuiteCases({
               `Placed ${placedTotal} of ${order.length} test cases from ${orderFiles.length === 1 ? "1 file" : `${orderFiles.length} files`}. Apply order to save.`,
             );
           }}
-        />
-      )}
-      {pbiId != null && (
-        <SuggestedOrder
-          org={org}
-          project={project}
-          planId={planId}
-          suiteId={suiteId}
-          pbiId={pbiId}
-          suiteName={suiteName}
-          cases={cases.data}
         />
       )}
     </div>
