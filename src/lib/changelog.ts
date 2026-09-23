@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.21",
+    date: "2026-09-23",
+    items: [
+      "Test cases you uploaded before can now get their tester order too. In Suite Management, the Suggested run order section's Start from list offers \"Tester order from\" followed by the file name, for each optimized file the Import tab is following for that PBI. Pick it, adjust the order if you like, and save it as the order every tester starts from. Each case is grouped by its area from the file.",
+    ],
+  },
+  {
     version: "1.25.20",
     date: "2026-09-23",
     items: [
