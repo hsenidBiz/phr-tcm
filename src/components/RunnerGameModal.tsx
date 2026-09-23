@@ -11,19 +11,33 @@ export const RUNNER_SRC = "/vendor/runner/index.html";
 /**
  * The game in the shared Modal, in an iframe of the bundled page.
  *
- * A key pressed inside a frame never reaches this window, so the Modal's
- * own Escape handler cannot hear it while the game has focus. The page is
- * served from the app's own origin, so a keydown listener goes straight
- * onto the frame's window instead - once per document the frame loads.
+ * The frame is sandboxed (`sandbox="allow-scripts"`, no
+ * `allow-same-origin`): on Windows, WebView2 injects Tauri's IPC scripts
+ * into every subframe regardless of origin, so a same-origin frame would
+ * carry the app's whole command surface. Sandboxing gives the frame an
+ * opaque origin instead - Tauri's IPC then sees `Origin: null` and rejects
+ * it, and the frame cannot reach `parent` except through `postMessage`. A
+ * key pressed inside a frame never reaches this window either way, so
+ * `escape.js` (bundled alongside the game, ours - see SOURCE.txt) relays
+ * Escape out as a message, which is what closes this modal.
  */
 export default function RunnerGameModal({ onClose }: { onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const close = useRef(onClose);
-  const wired = useRef<Document | null>(null);
 
   useEffect(() => {
     close.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.source === frame.current?.contentWindow && (e.data as { type?: unknown } | null)?.type === "runner-escape") {
+        close.current();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   // Runs before the Modal's own cleanup (a parent's layout cleanup runs
   // before its children's), which copies the dialog for its close fade: the
@@ -35,32 +49,20 @@ export default function RunnerGameModal({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  const onLoad = () => {
-    const win = frame.current?.contentWindow;
-    if (!win) return;
-    try {
-      if (wired.current === win.document) return;
-      wired.current = win.document;
-      win.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") close.current();
-      });
-      win.focus();
-    } catch {
-      // Not the app's own origin after all: the Close button still works.
-    }
-  };
-
   return (
     <Modal onClose={onClose} className="flex w-full max-w-2xl flex-col gap-3 p-5">
       <h2 className="text-sm font-semibold text-text">Dino game</h2>
       <p className="text-xs text-muted">Space or Up to jump, Down to duck. Esc closes the game.</p>
-      {/* tabIndex makes it the Modal's first stop, so focus lands in the game. */}
+      {/* tabIndex makes it the Modal's first stop, so focus lands in the
+          game. Tab/Shift+Tab pressed inside the frame is invisible to the
+          focus trap for the same sandboxing reason Esc needs escape.js;
+          the next parent-side Tab pulls focus back in either direction. */}
       <iframe
         ref={frame}
         title="Dino game"
         src={RUNNER_SRC}
+        sandbox="allow-scripts"
         tabIndex={0}
-        onLoad={onLoad}
         referrerPolicy="no-referrer"
         className="h-80 w-full rounded-md border border-border bg-surface"
       />

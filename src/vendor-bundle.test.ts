@@ -34,6 +34,7 @@ test("the runner bundle is exactly the files that were vetted", () => {
       "runner/assets/default_100_percent/100-offline-sprite.png",
       "runner/assets/default_200_percent/200-error-offline.png",
       "runner/assets/default_200_percent/200-offline-sprite.png",
+      "runner/escape.js",
       "runner/index.css",
       "runner/index.html",
       "runner/index.js",
@@ -73,6 +74,20 @@ test("the game's script uses nothing that reaches the network, storage or the ap
     /serviceWorker/,
   ];
   expect(forbidden.filter((re) => re.test(js)).map(String)).toEqual([]);
+});
+
+// postMessage is how the sandboxed frame (no allow-same-origin, so no
+// direct parent access) asks to be closed - see RunnerGameModal.tsx and
+// escape.js's own header comment. Only that one first-party file may use
+// it; the vendored game must stay exactly as vetted, which is fetch/XHR/etc
+// free (the test above) AND postMessage free.
+test("postMessage is used only by our own escape.js, never by the vendored game", () => {
+  const ESCAPE = join(RUNNER, "escape.js");
+  for (const f of files(RUNNER).filter((p) => p.endsWith(".js"))) {
+    const text = readFileSync(f, "utf8");
+    if (f === ESCAPE) expect(text).toMatch(/\bparent\.postMessage\s*\(/);
+    else expect(text).not.toMatch(/postMessage/);
+  }
 });
 
 test("the page runs under the app's CSP: no inline script, no inline handler, no other stylesheet", () => {

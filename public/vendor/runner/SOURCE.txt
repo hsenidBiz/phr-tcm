@@ -16,6 +16,12 @@ Files and changes:
   and the three sounds as base64 inside an inert template) is copied from
   upstream unchanged; upstream's Google Fonts link, "Press Space" banner,
   inline script and inline click handler are left out.
+- escape.js: ours, not vendored - not from upstream at all. The frame runs
+  sandboxed (sandbox="allow-scripts", no allow-same-origin), so the app
+  cannot read its document or attach a listener inside it from outside; this
+  script listens for Escape from inside the frame and relays it to the
+  parent window as a message, so the modal can still close. It does nothing
+  else and is loaded the same way as index.js, by an external <script src>.
 - Not bundled: the demo GIFs, README, the unused root-level sprites and the
   disabled-state icons.
 
@@ -23,3 +29,11 @@ Vetted 2026-09-23: no network requests (no fetch, XMLHttpRequest,
 WebSocket, sendBeacon, remote font or image), no storage, no access to the
 window around it; sounds are decoded from the page's own base64 with Web
 Audio. src/vendor-bundle.test.ts re-checks these rules on every test run.
+
+Sandboxed 2026-09-24 (review round 1): the frame is same-origin, and on
+Windows WebView2 injects Tauri's IPC scripts into every subframe regardless
+of the app's own "main frame only" setting, so an unsandboxed same-origin
+frame would carry the app's whole command surface. sandbox="allow-scripts"
+(RunnerGameModal.tsx) gives the frame an opaque origin instead: Tauri's IPC
+then sees Origin: null and rejects it, and the frame cannot reach parent
+except through postMessage, which is exactly what escape.js is for.
