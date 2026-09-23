@@ -194,3 +194,13 @@ test("Reset to default asks first, then hides the section and touches nothing el
   expect(saves).toEqual([false]);
   expect(localStorage.getItem("tcm-v2-theme")).toBe("dark");
 });
+
+test("Play the dino game opens the bundled game, and Close shuts it", async () => {
+  ipc(true);
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: "Play the dino game" }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.getByTitle("Dino game").getAttribute("src")).toBe("/vendor/runner/index.html");
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

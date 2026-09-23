@@ -1,0 +1,25 @@
+Runner game, bundled for an optional extra in Settings.
+
+Source:  github.com/wayou/t-rex-runner
+Commit:  5455bfa408ec6b707c7300ff194b7390733a766d (2022-06-08)
+License: BSD-3-Clause (LICENSE). The game itself is extracted from
+         Chromium, BSD-style (LICENSE.chromium).
+
+Files and changes:
+- index.js, index.css: upstream, unchanged except one line in index.js -
+  a doc comment's article link (html5rocks, "High DPI Canvas") is reworded
+  without its URL, so the bundle names no network address at all.
+- assets/default_100_percent/100-offline-sprite.png, 100-error-offline.png,
+  assets/default_200_percent/200-offline-sprite.png, 200-error-offline.png:
+  upstream, unchanged.
+- index.html: our own minimal page. Its resource block (the sprite images,
+  and the three sounds as base64 inside an inert template) is copied from
+  upstream unchanged; upstream's Google Fonts link, "Press Space" banner,
+  inline script and inline click handler are left out.
+- Not bundled: the demo GIFs, README, the unused root-level sprites and the
+  disabled-state icons.
+
+Vetted 2026-09-23: no network requests (no fetch, XMLHttpRequest,
+WebSocket, sendBeacon, remote font or image), no storage, no access to the
+window around it; sounds are decoded from the page's own base64 with Web
+Audio. src/vendor-bundle.test.ts re-checks these rules on every test run.

@@ -36,10 +36,12 @@ import {
   IconBug,
   IconCancel,
   IconCopy,
+  IconPlayGame,
   IconRefresh,
   IconTour,
   IconUndo,
 } from "../lib/actionIcons";
+import RunnerGameModal from "../components/RunnerGameModal";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
   default: "var(--color-accent)", // live preview of the theme's own accent
@@ -67,6 +69,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
+  const [gameOpen, setGameOpen] = useState(false);
   useEffect(() => {
     void hydrateExtras();
   }, []);
@@ -376,6 +379,10 @@ export default function Settings({ org, project }: { org: string; project: strin
             sidebar and its tools are offered on the AI Bridge tab.
           </p>
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
+              <IconPlayGame aria-hidden />
+              Play the dino game
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
               <IconUndo aria-hidden />
               Reset to default
@@ -394,6 +401,7 @@ export default function Settings({ org, project }: { org: string; project: strin
               </div>
             </Modal>
           )}
+          {gameOpen && <RunnerGameModal onClose={() => setGameOpen(false)} />}
         </section>
       )}
 
