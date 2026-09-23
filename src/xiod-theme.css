@@ -5,10 +5,10 @@
    --color-accent, --color-success and --color-warning - names this app
    already owns, and in two cases uses differently (the app's
    `text-muted` is grey TEXT, XiodUI's `bg-muted` a faint WASH) - and its
-   base layer restyles every element's border and outline. What it would have provided is rebuilt
-   here from the app's tokens, so every theme and accent preset in
-   index.css reaches the XiodUI parts with no second palette to keep in
-   step.
+   base layer restyles every element's border and outline. What it would
+   have provided is rebuilt here from the app's tokens, so every theme and
+   accent preset in index.css reaches the XiodUI parts with no second
+   palette to keep in step.
 
    A new XiodUI part means a new @source line below and an entry in
    VETTED_PARTS (src/xiod.test.ts), which fails until every colour the part
