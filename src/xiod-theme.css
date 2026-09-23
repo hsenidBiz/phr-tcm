@@ -1,0 +1,101 @@
+/* XiodUI (xiod-ui, pinned 1.0.3) drawn in the app's own colours.
+
+   XiodUI's own stylesheet (its `styles` export) is deliberately NOT
+   imported. Its
+   @theme block redefines --color-border, --color-muted, --color-accent,
+   --color-success and --color-warning - names this app already owns, and
+   in two cases uses differently (the app's `text-muted` is grey TEXT,
+   XiodUI's `bg-muted` a faint WASH) - and its base layer restyles every
+   element's border and outline. What it would have provided is rebuilt
+   here from the app's tokens, so every theme and accent preset in
+   index.css reaches the XiodUI parts with no second palette to keep in
+   step.
+
+   A new XiodUI part means a new @source line below and an entry in
+   VETTED_PARTS (src/xiod.test.ts), which fails until every colour the part
+   uses is mapped here. */
+
+/* 1. Tailwind generates the utilities used inside the XiodUI parts the app
+      renders - these files only, not all 89 components'. */
+@source "../node_modules/xiod-ui/dist/components/checkbox.js";
+@source "../node_modules/xiod-ui/dist/components/kbd.js";
+@source "../node_modules/xiod-ui/dist/components/textarea.js";
+@source "../node_modules/xiod-ui/dist/components/toast.js";
+@source "../node_modules/xiod-ui/dist/components/button.js";
+@source "../node_modules/xiod-ui/dist/components/command.js";
+@source "../node_modules/xiod-ui/dist/components/autocomplete.js";
+@source "../node_modules/xiod-ui/dist/components/input.js";
+@source "../node_modules/xiod-ui/dist/components/scroll-area.js";
+@source "../node_modules/xiod-ui/dist/components/scroll-bar.js";
+@source "../node_modules/xiod-ui/dist/components/calendar.js";
+
+/* 2. `dark:` follows the app's .dark class (lib/theme.ts), not the OS.
+      Nothing in src/ uses `dark:` itself; this is for XiodUI's classes. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 3. Captured once on <html>, where every theme and accent preset lands.
+      Custom properties inherit their RESOLVED value, so the overrides in 5.
+      cannot feed back into these. */
+:root {
+  --xiod-accent: var(--color-accent);
+  --xiod-muted-ink: var(--color-muted);
+  /* Raw names XiodUI reads inside arbitrary values (shadows, insets). */
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --primary-foreground: var(--color-on-accent);
+}
+
+/* 4. XiodUI's semantic colour names, as app tokens. The five the app
+      already owns (border, accent, muted, success, warning) are not
+      redefined here; 5. handles the two whose meaning differs. */
+@theme inline {
+  --color-background: var(--color-surface);
+  --color-foreground: var(--color-text);
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-text);
+  --color-popover: var(--color-surface);
+  --color-popover-foreground: var(--color-text);
+  --color-primary: var(--xiod-accent);
+  --color-primary-foreground: var(--color-on-accent);
+  --color-secondary: var(--color-surface-2);
+  --color-secondary-foreground: var(--color-text);
+  --color-muted-foreground: var(--xiod-muted-ink);
+  --color-accent-foreground: var(--xiod-accent);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: var(--color-danger);
+  --color-info: var(--xiod-accent);
+  --color-info-foreground: var(--xiod-accent);
+  --color-success-foreground: var(--color-success);
+  --color-warning-foreground: var(--color-warning);
+  --color-input: var(--color-border);
+  --color-ring: var(--xiod-accent);
+}
+
+/* 5. Inside XiodUI's own panels, "accent" is its quiet highlight (a hovered
+      day, the highlighted command) and "muted" a faint wash: the app's
+      accent-soft and surface-2. The brand accent and grey text stay
+      reachable there as primary, accent-foreground and muted-foreground. */
+[data-slot="calendar"],
+[data-slot="command-dialog-popup"],
+[data-slot="toast-viewport"] {
+  --color-accent: var(--color-accent-soft);
+  --color-muted: var(--color-surface-2);
+}
+
+/* 6. XiodUI animates in plain CSS transitions. The app's rule (index.css,
+      "Motion") is that none of it plays when the OS asks for less. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot^="checkbox"],
+  [data-slot^="checkbox"] *,
+  [data-slot^="textarea"],
+  [data-slot^="textarea"] *,
+  [data-slot^="toast"],
+  [data-slot^="toast"] *,
+  [data-slot^="command"],
+  [data-slot^="command"] *,
+  [data-slot="calendar"],
+  [data-slot="calendar"] * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
