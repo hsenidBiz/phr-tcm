@@ -184,6 +184,8 @@ test("cache keys are the strings earlier versions stored", () => {
   // seeds are deliberately abandoned, since App rebuilds a seed from
   // `plans-suites` without a request of its own.
   expect(cacheKeys.suiteSeed("acme", 42)).toBe("suite-seed:acme/42");
+  // NEW key: the suggested run order read from a PBI's run-order file.
+  expect(cacheKeys.runOrder("acme", "Web", 42)).toBe("run-order:acme/Web/42");
 });
 
 test("cacheRemove deletes an entry that was written", () => {

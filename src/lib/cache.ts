@@ -71,6 +71,7 @@ export const cacheKeys = {
   prPipeline: (org: string, project: string, prId: number, mergeCommit: string) =>
     `pipe:${org}/${project}:${prId}:${mergeCommit}`,
   suiteSeed: (org: string, pbiId: number) => `suite-seed:${org}/${pbiId}`,
+  runOrder: (org: string, project: string, pbiId: number) => `run-order:${org}/${project}/${pbiId}`,
 };
 
 /** Non-reversible tag for an account, so the identity check never needs the
