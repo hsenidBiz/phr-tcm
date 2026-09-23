@@ -104,11 +104,12 @@ const caseIdsOf = (pts: readonly TestPoint[]): number[] => {
 
 /** A reason sentence ends in a full stop before the pointer to the logs;
  * the reasons from the backend are fragments without one. */
-const sentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
+export const sentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
 
 /** The one line under the picker. A reason that already sends the reader
- * to the logs is not told to go there twice. */
-function noteFor(reason: string): string {
+ * to the logs is not told to go there twice. Exported so Suite Management's
+ * `SuggestedOrder` words an unreadable file's note exactly the same way. */
+export function noteFor(reason: string): string {
   const head = `The suggested run order could not be read: ${sentence(reason)}`;
   return /Settings\s*(→|,)\s*Logs/.test(reason) ? head : `${head} See Settings → Logs.`;
 }

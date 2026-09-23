@@ -10,7 +10,7 @@ import { cn } from "../../lib/cn";
 import { unwrap } from "../../lib/ipc";
 import { loadMyOrder, reconcile, type OrderKey } from "../../lib/runOrder";
 import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
-import { runOrderQueryOptions } from "../RunPanel/useRunOrder";
+import { noteFor, runOrderQueryOptions } from "../RunPanel/useRunOrder";
 import CaseOrderList from "./CaseOrderList";
 
 type StartFrom = "saved" | "azure" | "mine";
@@ -73,19 +73,30 @@ export default function SuggestedOrder({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
 
-  // The default (saved, else Azure DevOps order) applies once, the first
-  // time the read settles - never again, or a background refetch (or this
-  // component's own save, which updates the same cache entry) would silently
-  // throw away whatever the tester has since dragged into place.
-  const settled = useRef(false);
+  // `touched` is set ONLY by a hand edit or an explicit Start from pick -
+  // never by the read settling on its own. While untouched, the list always
+  // mirrors the live default (saved file if found, else Azure DevOps order),
+  // recomputed whenever the read OR the suite's cases change: a colleague's
+  // newer save must reach the screen, and so must a case added or removed
+  // from the suite, right up until the tester actually does something.
+  const touched = useRef(false);
   useEffect(() => {
-    if (runOrder.isLoading || settled.current) return;
-    settled.current = true;
+    if (runOrder.isLoading || touched.current) return;
     const from: StartFrom = file ? "saved" : "azure";
     setStartFrom(from);
     setOrder(toCases(idsFor(from)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runOrder.isLoading, file]);
+  }, [runOrder.isLoading, file, cases]);
+
+  // Once touched, the read no longer drives the list at all - but the
+  // suite's cases still can. A case added since lands at the end (in spec
+  // order); one removed drops out. The tester's own order among the rest is
+  // left exactly as they made it.
+  useEffect(() => {
+    if (!touched.current) return;
+    setOrder((cur) => toCases(reconcile(cur.map((c) => c.id), specIds)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cases]);
 
   const startOptions: { value: StartFrom; label: string }[] = [
     ...(file ? [{ value: "saved" as const, label: "Saved suggested order" }] : []),
@@ -94,15 +105,15 @@ export default function SuggestedOrder({
   ];
 
   const changeStartFrom = (from: StartFrom) => {
-    settled.current = true; // a deliberate pick beats the read's own default, whenever it lands
+    touched.current = true; // a deliberate pick beats the read's own default, whenever it lands
     setStartFrom(from);
     setOrder(toCases(idsFor(from)));
   };
 
-  // Any hand edit (drag, arrow) counts as settled too - otherwise a read
+  // Any hand edit (drag, arrow) counts as touched too - otherwise a read
   // that resolves right after the first click would silently throw it away.
   const commitOrder = (next: SuiteCase[]) => {
-    settled.current = true;
+    touched.current = true;
     setOrder(next);
   };
 
@@ -126,14 +137,19 @@ export default function SuggestedOrder({
       setConfirming(false);
       toast.success("Suggested run order saved.");
       // So Run Tests (and this editor) see the new file without waiting on
-      // a refetch.
+      // a refetch...
       qc.setQueryData(query.queryKey, { state: "found" as const, file: newFile });
+      // ...and so the disk copy is rewritten too (the same pairing
+      // SuiteCases.tsx uses for Apply order), or Run Tests would paint the
+      // old order from disk on its next launch, before it ever asks Azure
+      // DevOps again.
+      qc.invalidateQueries({ queryKey: query.queryKey });
     },
     onError: (e) => toast.error(`Could not save the suggested run order: ${e.message}`),
   });
 
   const note = unreadable
-    ? `The suggested run order could not be read: ${reason}`
+    ? noteFor(reason ?? "")
     : file
       ? `Saved by ${file.saved_by} on ${new Date(file.saved_at).toLocaleDateString()}`
       : runOrder.isLoading
