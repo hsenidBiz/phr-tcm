@@ -10,6 +10,12 @@ import type { RunOrderCase } from "../bindings";
 export type OrderView = "suggested" | "spec" | "mine";
 export type OrderKey = { org: string; planId: number; suiteId: number };
 
+/** How Run Tests groups its rows: not at all, by title (the old checkbox's
+ * behaviour, and the default), or by the suggested run order file's areas.
+ * Global to this machine, like the checkbox it replaces - not per suite,
+ * chosen in the Execution order modal (execution-order-modal design). */
+export type GroupMode = "none" | "title" | "area";
+
 /** `order` kept where its ids are still in `spec`, duplicates dropped, then
  * every id of `spec` missing from it, in spec order. A stale order never
  * blocks a run and never hides a case (design doc §4.4). */
@@ -122,6 +128,34 @@ export function saveOrderView(k: OrderKey, v: OrderView): void {
     localStorage.setItem(viewKey(k), v);
   } catch {
     // storage unavailable - the view simply isn't remembered next load
+  }
+}
+
+const GROUP_MODE_KEY = "tcm-v2-group-mode";
+/** The checkbox's old key: "on" / "off". Read only for migration - a
+ * machine that has never set the new key still gets its prior choice. */
+const OLD_GROUP_KEY = "tcm-v2-group-points";
+
+/** The grouping mode on this machine (global, not per suite). Falls back to
+ * migrating the old `Group by title` checkbox's key when the new one has
+ * never been written: "on" becomes `title`, anything else (off, missing,
+ * unparseable) becomes `none`. A storage failure reads as `none`, same as
+ * the checkbox it replaces defaulted to unchecked. */
+export function loadGroupMode(): GroupMode {
+  try {
+    const raw = localStorage.getItem(GROUP_MODE_KEY);
+    if (raw === "none" || raw === "title" || raw === "area") return raw;
+    return localStorage.getItem(OLD_GROUP_KEY) === "on" ? "title" : "none";
+  } catch {
+    return "none";
+  }
+}
+
+export function saveGroupMode(mode: GroupMode): void {
+  try {
+    localStorage.setItem(GROUP_MODE_KEY, mode);
+  } catch {
+    // storage unavailable - the mode simply isn't remembered next load
   }
 }
 

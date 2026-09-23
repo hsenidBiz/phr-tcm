@@ -22,6 +22,7 @@ import {
   reconcile,
   saveMyOrder,
   saveOrderView,
+  type GroupMode,
   type OrderKey,
   type OrderView,
 } from "../../lib/runOrder";
@@ -151,14 +152,14 @@ export function useRunOrder({
   pbiId,
   suite,
   points,
-  grouped,
+  groupMode,
 }: {
   org: string;
   project: string;
   pbiId: number;
   suite: { plan_id: number; suite_id: number } | undefined;
   points: readonly TestPoint[];
-  grouped: boolean;
+  groupMode: GroupMode;
 }) {
   const planId = suite?.plan_id ?? 0;
   const suiteId = suite?.suite_id ?? 0;
@@ -223,11 +224,15 @@ export function useRunOrder({
     if (!file.cases.some((c) => c.group && onScreen.has(c.id))) return null;
     return new Map(file.cases.map((c) => [c.id, c.group ?? ""]));
   }, [file, specIds]);
+  const hasAreas = groupOf != null;
 
-  const sections = useMemo(
-    () => (grouped ? sectionsFor(ordered, groupOf) : [{ name: "", pts: ordered }]),
-    [grouped, ordered, groupOf],
-  );
+  // none -> one flat section; title -> sectionsFor's own title grouping
+  // (groupOf null); area -> the file's areas, falling back to title
+  // grouping when this suite's cases on screen carry none.
+  const sections = useMemo(() => {
+    if (groupMode === "none") return [{ name: "", pts: ordered }];
+    return sectionsFor(ordered, groupMode === "area" ? groupOf : null);
+  }, [groupMode, ordered, groupOf]);
 
   /** `ids` as My order on this machine, and My order as the list's order:
    * the Execution order modal's Use this order on a list of the tester's
@@ -238,8 +243,11 @@ export function useRunOrder({
     // Grouping regroups the flat list the modal hands back (`sections`
     // above does the same); store what Run Tests will actually display, or
     // the runner - which ranks upcoming cases by this very order - would
-    // follow a sequence the tester never saw.
-    const toStore = grouped ? displayOrder(ids, points, groupOf) : [...ids];
+    // follow a sequence the tester never saw. Same grouping the list will
+    // show: null for title, the file's areas for area, no regrouping at
+    // all (a flat list) for none.
+    const toStore =
+      groupMode === "none" ? [...ids] : displayOrder(ids, points, groupMode === "area" ? groupOf : null);
     saveMyOrder(key, toStore);
     // Read it back: with storage unavailable the save is silently dropped.
     const saved = loadMyOrder(key);
@@ -270,5 +278,6 @@ export function useRunOrder({
     specCases,
     ordered,
     sections,
+    hasAreas,
   };
 }

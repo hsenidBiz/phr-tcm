@@ -9,7 +9,7 @@ import { IconCancel, IconConfirm, IconShare } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { loadWatches } from "../../lib/fileSync";
 import { unwrap } from "../../lib/ipc";
-import { reconcile, runOrderPayload, type OrderView } from "../../lib/runOrder";
+import { reconcile, runOrderPayload, type GroupMode, type OrderView } from "../../lib/runOrder";
 import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import { testerOrderSources } from "../../lib/testerOrderStart";
 import CaseOrderList from "../ManageCases/CaseOrderList";
@@ -35,10 +35,19 @@ export type ExecutionOrderModalProps = {
   /** The run-order read has not settled yet. */
   loading: boolean;
   myOrder: readonly number[] | null;
+  /** The grouping mode Run Tests is currently showing; the modal's own
+   * choice starts here. */
+  groupMode: GroupMode;
+  /** Whether the cases on screen carry an area from the suggested run
+   * order file - By area is offered only then. */
+  hasAreas: boolean;
   /** Use this order on a stored order left exactly as it is: switch the view only. */
   onUseView: (v: OrderView) => void;
   /** Use this order on a list of the tester's own: store it as My order. False when it could not be saved. */
   onUseMine: (ids: number[]) => boolean;
+  /** The chosen grouping, applied on Use this order and after a successful
+   * Save for everyone; Cancel/close discards it (execution-order-modal design). */
+  onGroupMode: (mode: GroupMode) => void;
   onClose: () => void;
 };
 
@@ -62,8 +71,11 @@ export default function ExecutionOrderModal({
   unreadableNote,
   loading,
   myOrder,
+  groupMode,
+  hasAreas,
   onUseView,
   onUseMine,
+  onGroupMode,
   onClose,
 }: ExecutionOrderModalProps) {
   const qc = useQueryClient();
@@ -93,6 +105,17 @@ export default function ExecutionOrderModal({
   const [order, setOrder] = useState<SuiteCase[]>(() => toCases(idsFor(view)));
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  // The current mode, unless it is Area with nothing to group by on screen
+  // - then the picker starts at By title rather than a choice it cannot offer.
+  const [chosenGroupMode, setChosenGroupMode] = useState<GroupMode>(() =>
+    groupMode === "area" && !hasAreas ? "title" : groupMode,
+  );
+
+  const groupOptions: { value: GroupMode; label: string }[] = [
+    { value: "none", label: "Don't group" },
+    { value: "title", label: "By title" },
+    ...(hasAreas ? [{ value: "area" as const, label: "By area" }] : []),
+  ];
 
   // An unreadable file still lists Suggested, greyed out: the tester sees
   // there is one, and the note says why it cannot be used.
@@ -123,6 +146,7 @@ export default function ExecutionOrderModal({
   // shows, so a stored My order survives a switch to Suggested or Spec.
   // Anything else is the tester's own list.
   const applyOrder = () => {
+    onGroupMode(chosenGroupMode);
     if (isStored(startFrom) && sameOrder(order, toCases(idsFor(startFrom)))) {
       onUseView(startFrom);
       onClose();
@@ -153,6 +177,7 @@ export default function ExecutionOrderModal({
       // ...and the disk copy is rewritten too, or the next launch would
       // paint the old order from disk before asking Azure DevOps again.
       qc.invalidateQueries({ queryKey: runOrderKey });
+      onGroupMode(chosenGroupMode);
       onUseView("suggested");
       onClose();
     },
@@ -190,6 +215,23 @@ export default function ExecutionOrderModal({
         >
           {startOptions.map((o) => (
             <option key={o.value} value={o.value} disabled={o.disabled}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted">Group cases</span>
+        <Select
+          aria-label="Group cases"
+          className="w-56"
+          triggerClassName="px-2 py-1.5"
+          value={chosenGroupMode}
+          disabled={save.isPending}
+          onChange={(e) => setChosenGroupMode(e.target.value as GroupMode)}
+        >
+          {groupOptions.map((o) => (
+            <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}

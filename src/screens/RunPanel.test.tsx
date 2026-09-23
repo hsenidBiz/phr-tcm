@@ -324,10 +324,10 @@ test("the runner opens only from a selection", async () => {
  * collapsed. The pulsing dot that used to ride beside collapsed headings
  * is gone: it repeated what the checkbox already shows. */
 test("the header checkbox carries the selection state through a collapse", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
-  fireEvent.click(screen.getByLabelText(/Group by title/i) ?? screen.getByText("Group by title"));
 
   // Select one case: partial reads as the checkbox's mixed state.
   fireEvent.click(screen.getByText("Valid login"));
@@ -353,10 +353,10 @@ test("the header checkbox carries the selection state through a collapse", async
  * survives its group being collapsed, and the sticky Collapse all clears
  * the lot. */
 test("open previews survive a group collapse until Collapse all", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
-  fireEvent.click(screen.getByText("Group by title"));
 
   // Grouping alone gives the sticky its first fold target: the one open
   // group, before any preview is expanded.
@@ -545,11 +545,11 @@ test("Select all button (ungrouped) and Ctrl+A both select every case", async ()
 });
 
 test("grouped mode hides the Select all button and Ctrl+A skips text fields", async () => {
+  localStorage.setItem("tcm-v2-group-mode", "title");
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
 
-  fireEvent.click(screen.getByText("Group by title"));
   expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
 
   const filter = screen.getByPlaceholderText(/Filter/i);
@@ -626,22 +626,16 @@ const ABC = [
 ];
 
 /** The rows' titles top to bottom, as the table shows them. A fold's
- * closing copy (lib/exitGhost, e.g. after Group by title regroups the
- * list) is a picture, not rows, so it is skipped. */
+ * closing copy (lib/exitGhost, e.g. after the modal's grouping regroups
+ * the list) is a picture, not rows, so it is skipped. */
 const rowNames = () =>
   Array.from(document.querySelectorAll("tbody tr .id-mono"))
     .filter((el) => !el.closest("[data-exit-ghost]"))
     .map((el) => (el.parentElement?.textContent ?? "").replace(/^#\d+\s*/, ""));
 
-/** The muted line beside Set execution order that names the list's order.
- * Scoped to that button's own row, so it cannot throw if another
- * role="status" ever appears elsewhere on the page. */
-const activeOrder = () =>
-  within(screen.getByRole("button", { name: "Set execution order" }).parentElement as HTMLElement).getByRole(
-    "status",
-  );
 const openOrderModal = () => fireEvent.click(screen.getByRole("button", { name: "Set execution order" }));
 const startFrom = () => screen.getByRole("combobox", { name: "Start from" });
+const groupCases = () => screen.getByRole("combobox", { name: "Group cases" });
 const modalList = () => screen.getByRole("list", { name: "Execution order" });
 const rowOf = (title: string) => screen.getByText(title).closest("tr")!;
 const MY_KEY = "tcm-v2-run-order:acme/9/91";
@@ -668,8 +662,9 @@ test("opens in the suggested run order when the PBI has one, not the points' ord
   mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
   renderPanel();
   await screen.findByText("Alpha check");
-  await vi.waitFor(() => expect(activeOrder()).toHaveTextContent("Suggested run order"));
   await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
+  openOrderModal();
+  expect(startFrom()).toHaveTextContent("Suggested run order");
 });
 
 test("the Set execution order button explains itself while the run order is still loading", async () => {
@@ -704,9 +699,9 @@ test("with no suggested order the list follows spec order and the modal offers o
   renderPanel();
   await screen.findByText("Alpha check");
   await vi.waitFor(() => expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]));
-  expect(activeOrder()).toHaveTextContent("Spec order");
 
   openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
   expect(await within(screen.getByRole("dialog")).findByText("No suggested run order yet.")).toBeInTheDocument();
   fireEvent.click(startFrom());
   expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Spec order"]);
@@ -741,9 +736,9 @@ test("an unreadable run-order file says why, and the modal greys out Suggested",
   renderPanel();
   const note = "The suggested run order could not be read: the run-order file is damaged. See Settings → Logs.";
   expect(await screen.findByText(note)).toBeInTheDocument();
-  expect(activeOrder()).toHaveTextContent("Spec order");
 
   openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
   expect(within(screen.getByRole("dialog")).getByText(note)).toBeInTheDocument();
   fireEvent.click(startFrom());
   const suggested = screen.getByRole("option", { name: "Suggested run order" });
@@ -774,8 +769,8 @@ test("a failed read of the run order shows the note, and the modal greys out Sug
       "The suggested run order could not be read: You don't have permission for this resource. See Settings → Logs.",
     ),
   ).toBeInTheDocument();
-  expect(activeOrder()).toHaveTextContent("Spec order");
   openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
   fireEvent.click(startFrom());
   expect(screen.getByRole("option", { name: "Suggested run order" })).toBeDisabled();
 });
@@ -804,15 +799,14 @@ test("Use this order on an unchanged Suggested run order sets the view only; My 
   mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
   renderPanel();
   await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
-  expect(activeOrder()).toHaveTextContent("Spec order");
 
   openOrderModal();
+  expect(startFrom()).toHaveTextContent("Spec order");
   fireEvent.click(startFrom());
   fireEvent.click(screen.getByRole("option", { name: "Suggested run order" }));
   fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(activeOrder()).toHaveTextContent("Suggested run order");
   expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]);
   expect(localStorage.getItem(VIEW_KEY)).toBe("suggested");
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 301, 302]);
@@ -828,7 +822,6 @@ test("a reorder in the modal becomes My order on this machine and never writes a
   fireEvent.click(within(modalList()).getByRole("button", { name: "Move #302 down" }));
   fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
 
-  expect(activeOrder()).toHaveTextContent("My order");
   expect(rowNames()).toEqual(["Charlie check", "Bravo check", "Alpha check"]);
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
   expect(localStorage.getItem(VIEW_KEY)).toBe("mine");
@@ -851,7 +844,7 @@ test("Use this order on a tester-order start saves it as My order", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
 
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 301, 302]);
-  expect(activeOrder()).toHaveTextContent("My order");
+  expect(localStorage.getItem(VIEW_KEY)).toBe("mine");
   expect(rowNames()).toEqual(["Charlie check", "Alpha check", "Bravo check"]);
 });
 
@@ -887,7 +880,6 @@ test("Save for everyone sends the list with the saved groups, toasts, and switch
   });
   renderPanel();
   await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
-  expect(activeOrder()).toHaveTextContent("Spec order");
 
   openOrderModal();
   expect(startFrom()).toHaveTextContent("Spec order");
@@ -905,7 +897,7 @@ test("Save for everyone sends the list with the saved groups, toasts, and switch
     },
   ]);
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(activeOrder()).toHaveTextContent("Suggested run order");
+  expect(localStorage.getItem(VIEW_KEY)).toBe("suggested");
   expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
 });
 
@@ -925,10 +917,10 @@ test("a failed Save for everyone keeps the modal open and says why", async () =>
     expect(toast.error).toHaveBeenCalledWith("Could not save the suggested run order: Could not reach Azure DevOps."),
   );
   expect(screen.getByRole("dialog")).toBeInTheDocument();
-  expect(activeOrder()).toHaveTextContent("Spec order");
+  expect(startFrom()).toHaveTextContent("Spec order");
 });
 
-test("grouping follows the suggested file's groups, and groups have no move buttons", async () => {
+test("choosing By area in the modal groups the list by the suggested file's areas, and groups have no move buttons", async () => {
   mockOrder({
     points: ABC,
     runOrder: RUN_ORDER_FILE([
@@ -938,13 +930,51 @@ test("grouping follows the suggested file's groups, and groups have no move butt
     ]),
   });
   renderPanel();
-  await vi.waitFor(() => expect(activeOrder()).toHaveTextContent("Suggested run order"));
-  fireEvent.click(screen.getByText("Group by title"));
+  await screen.findByText("Alpha check");
+
+  openOrderModal();
+  fireEvent.click(groupCases());
+  fireEvent.click(screen.getByRole("option", { name: "By area" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
 
   expect(screen.getByText("Web\\Sign in (2)")).toBeInTheDocument();
   expect(screen.getByText("Web\\Checkout (1)")).toBeInTheDocument();
   expect(rowNames()).toEqual(["Alpha check", "Charlie check", "Bravo check"]);
   expect(screen.queryByRole("button", { name: /^Move group / })).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-group-mode")).toBe("area");
+});
+
+test("choosing By title in the modal groups the list by title and remembers the choice", async () => {
+  mockOrder({
+    points: [
+      { point_id: 1, test_case_id: 301, name: "Auth - Login" },
+      { point_id: 2, test_case_id: 302, name: "Billing - Invoice" },
+      { point_id: 3, test_case_id: 303, name: "Auth - Logout" },
+    ],
+  });
+  renderPanel();
+  await screen.findByText("Auth - Login");
+
+  openOrderModal();
+  fireEvent.click(groupCases());
+  fireEvent.click(screen.getByRole("option", { name: "By title" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+
+  expect(screen.getByText("Auth (2)")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-group-mode")).toBe("title");
+});
+
+test("no Group by title checkbox and no active-order status text beside Set execution order", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  expect(screen.queryByText("Group by title")).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("button", { name: "Set execution order" }).parentElement as HTMLElement).queryByRole(
+      "status",
+    ),
+  ).not.toBeInTheDocument();
 });
 
 test("a case run on two configurations keeps both rows together", async () => {
@@ -977,7 +1007,6 @@ test("the chosen order is remembered for the suite across a remount, and My orde
   localStorage.setItem(MY_KEY, JSON.stringify([303, 302, 301]));
   mockOrder({ points: ABC, runOrder: RUN_ORDER_FILE([{ id: 302 }, { id: 303 }, { id: 301 }]) });
   const first = renderPanel();
-  await vi.waitFor(() => expect(activeOrder()).toHaveTextContent("Suggested run order"));
   await vi.waitFor(() => expect(rowNames()).toEqual(["Bravo check", "Charlie check", "Alpha check"]));
 
   openOrderModal();
@@ -991,6 +1020,6 @@ test("the chosen order is remembered for the suite across a remount, and My orde
   // shows the same titles for a moment. rowNames reads the table only.
   renderPanel();
   await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
-  expect(activeOrder()).toHaveTextContent("Spec order");
+  expect(localStorage.getItem(VIEW_KEY)).toBe("spec");
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
 });

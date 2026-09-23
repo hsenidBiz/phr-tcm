@@ -28,8 +28,9 @@ import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
 import { IconCollapseAll, IconReport, IconRun, IconSetOrder } from "../../lib/actionIcons";
 import ExecutionOrderModal from "./ExecutionOrderModal";
-import { ORDER_LABELS, runOrderQueryOptions, useRunOrder } from "./useRunOrder";
+import { runOrderQueryOptions, useRunOrder } from "./useRunOrder";
 import { suiteCasesKey } from "../ManageCases/suiteCasesQuery";
+import { loadGroupMode, saveGroupMode, type GroupMode } from "../../lib/runOrder";
 
 
 export { outcomeLabel };
@@ -93,9 +94,11 @@ export default function RunPanel({
   const [filterOutcome, setFilterOutcome] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
-  const [grouped, setGrouped] = useState(
-    () => localStorage.getItem("tcm-v2-group-points") === "on",
-  );
+  const [groupMode, setGroupModeState] = useState<GroupMode>(() => loadGroupMode());
+  const setGroupMode = (mode: GroupMode) => {
+    setGroupModeState(mode);
+    saveGroupMode(mode);
+  };
   const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
   // Open previews, PLURAL (point ids) - same model as View Test Cases:
   // several can be open for comparison, an open one survives its group
@@ -261,7 +264,7 @@ export default function RunPanel({
     pbiId,
     suite: suite.data ?? undefined,
     points: points.data ?? NO_POINTS,
-    grouped,
+    groupMode,
   });
 
   const filtered = useMemo(
@@ -270,11 +273,11 @@ export default function RunPanel({
   );
 
   const sections = useMemo(() => {
-    if (!grouped) return [{ name: "", pts: filtered }];
+    if (groupMode === "none") return [{ name: "", pts: filtered }];
     return order.sections
       .map(({ name, pts }) => ({ name, pts: pts.filter((p) => pointMatches(p, filterOutcome, filterText)) }))
       .filter((s) => s.pts.length > 0);
-  }, [order.sections, filtered, grouped, filterOutcome, filterText]);
+  }, [order.sections, filtered, groupMode, filterOutcome, filterText]);
 
   // The order is chosen only in the Execution order modal: the list shows
   // it and never edits it (execution-order-modal design §2).
@@ -466,10 +469,6 @@ export default function RunPanel({
               <IconSetOrder aria-hidden />
               Set execution order
             </Button>
-            {/* A status, so the new order is announced when the modal closes. */}
-            <span role="status" className="text-xs text-muted">
-              {ORDER_LABELS[order.view]}
-            </span>
           </div>
           {order.note && <p className="text-xs text-warning">{order.note}</p>}
         </div>
@@ -490,8 +489,11 @@ export default function RunPanel({
           unreadableNote={order.note}
           loading={order.loading}
           myOrder={order.myOrder}
+          groupMode={groupMode}
+          hasAreas={order.hasAreas}
           onUseView={order.changeView}
           onUseMine={order.saveMine}
+          onGroupMode={setGroupMode}
           onClose={() => setOrderOpen(false)}
         />
       )}
@@ -519,21 +521,7 @@ export default function RunPanel({
             <option value="notapplicable">Not Applicable</option>
             <option value="none">Never run</option>
           </Select>
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            <Checkbox
-              checked={grouped}
-              onCheckedChange={(v) => {
-                setGrouped(v);
-                try {
-                  localStorage.setItem("tcm-v2-group-points", v ? "on" : "off");
-                } catch {
-                  // session-only
-                }
-              }}
-            />
-            Group by title
-          </label>
-          {!grouped && (
+          {groupMode === "none" && (
             <Button
               variant="outline"
               size="sm"

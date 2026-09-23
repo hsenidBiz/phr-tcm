@@ -49,6 +49,7 @@ function mount(props: Partial<Props> = {}, backend: (cmd: string, args: unknown)
   const handlers = {
     onUseView: vi.fn(),
     onUseMine: vi.fn((_ids: number[]) => true),
+    onGroupMode: vi.fn(),
     onClose: vi.fn(),
   };
   render(
@@ -63,6 +64,8 @@ function mount(props: Partial<Props> = {}, backend: (cmd: string, args: unknown)
         unreadableNote={null}
         loading={false}
         myOrder={null}
+        groupMode="none"
+        hasAreas={false}
         {...handlers}
         {...props}
       />
@@ -72,6 +75,11 @@ function mount(props: Partial<Props> = {}, backend: (cmd: string, args: unknown)
 }
 
 const startFrom = () => screen.getByRole("combobox", { name: "Start from" });
+const groupCases = () => screen.getByRole("combobox", { name: "Group cases" });
+const pickGroup = (name: string) => {
+  fireEvent.click(groupCases());
+  fireEvent.click(screen.getByRole("option", { name }));
+};
 const orderList = () => screen.getByRole("list", { name: "Execution order" });
 /** The list's case ids top to bottom. */
 const idsOnScreen = () =>
@@ -333,4 +341,54 @@ test("without a PBI there is no Save for everyone", () => {
   mount({ pbiId: 0 });
   expect(screen.queryByRole("button", { name: "Save for everyone" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Use this order" })).toBeInTheDocument();
+});
+
+// ---- Group cases (execution-order-modal design) ----
+
+test("Group cases offers Don't group and By title when the cases carry no area", () => {
+  mount({ hasAreas: false });
+  fireEvent.click(groupCases());
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Don't group", "By title"]);
+});
+
+test("Group cases also offers By area when the cases on screen have one", () => {
+  mount({ hasAreas: true });
+  fireEvent.click(groupCases());
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Don't group", "By title", "By area"]);
+});
+
+test("Group cases starts at the current mode", () => {
+  mount({ groupMode: "title", hasAreas: true });
+  expect(groupCases()).toHaveTextContent("By title");
+});
+
+test("Group cases falls back to By title when the current mode is area but there are no areas", () => {
+  mount({ groupMode: "area", hasAreas: false });
+  expect(groupCases()).toHaveTextContent("By title");
+});
+
+test("Use this order applies the chosen grouping", () => {
+  const { onGroupMode } = mount({ groupMode: "none", hasAreas: true });
+  pickGroup("By area");
+  fireEvent.click(screen.getByRole("button", { name: "Use this order" }));
+  expect(onGroupMode).toHaveBeenCalledWith("area");
+});
+
+test("Cancel does not apply the chosen grouping", () => {
+  const { onGroupMode } = mount({ groupMode: "none", hasAreas: true });
+  pickGroup("By area");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onGroupMode).not.toHaveBeenCalled();
+});
+
+test("a successful Save for everyone applies the chosen grouping", async () => {
+  const { onGroupMode } = mount(
+    { groupMode: "none", hasAreas: true },
+    (cmd) => (cmd === "save_run_order" ? FILE([{ id: 201 }, { id: 202 }, { id: 203 }]) : undefined),
+  );
+  pickGroup("By area");
+  fireEvent.click(screen.getByRole("button", { name: "Save for everyone" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() => expect(toast.success).toHaveBeenCalledWith("Suggested run order saved."));
+  expect(onGroupMode).toHaveBeenCalledWith("area");
 });

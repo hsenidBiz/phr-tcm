@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   emitMyOrderChanged,
+  loadGroupMode,
   loadMyOrder,
   loadOrderView,
   MY_ORDER_EVENT,
@@ -9,6 +10,7 @@ import {
   reconcile,
   resortUpcoming,
   runOrderPayload,
+  saveGroupMode,
   saveMyOrder,
   saveOrderView,
   type OrderKey,
@@ -121,6 +123,45 @@ test("emitMyOrderChanged never throws outside Tauri", () => {
 
 test("the event name is the one every window agrees on", () => {
   expect(MY_ORDER_EVENT).toBe("run-order:changed");
+});
+
+// --- group mode (execution-order-modal design) ------------------------
+
+test("loadGroupMode migrates the old checkbox key: on -> title", () => {
+  localStorage.setItem("tcm-v2-group-points", "on");
+  expect(loadGroupMode()).toBe("title");
+});
+
+test("loadGroupMode migrates the old checkbox key: off -> none", () => {
+  localStorage.setItem("tcm-v2-group-points", "off");
+  expect(loadGroupMode()).toBe("none");
+});
+
+test("loadGroupMode with neither key ever set defaults to none", () => {
+  expect(loadGroupMode()).toBe("none");
+});
+
+test("saveGroupMode/loadGroupMode round-trips and takes priority over the old key", () => {
+  localStorage.setItem("tcm-v2-group-points", "on");
+  saveGroupMode("area");
+  expect(localStorage.getItem("tcm-v2-group-mode")).toBe("area");
+  expect(loadGroupMode()).toBe("area");
+});
+
+test("a storage failure on loadGroupMode never throws - it reads as none", () => {
+  const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("storage disabled");
+  });
+  expect(loadGroupMode()).toBe("none");
+  spy.mockRestore();
+});
+
+test("a storage failure on saveGroupMode never throws", () => {
+  const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota exceeded");
+  });
+  expect(() => saveGroupMode("title")).not.toThrow();
+  spy.mockRestore();
 });
 
 // --- runOrderPayload -------------------------------------------------------

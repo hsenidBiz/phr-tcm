@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
 import type { TestPoint } from "../../bindings";
+import type { GroupMode } from "../../lib/runOrder";
 import { useRunOrder } from "./useRunOrder";
 
 vi.mock("sonner", () => ({
@@ -37,7 +38,8 @@ const VIEW_KEY = "tcm-v2-run-order-view:acme/9/91";
 function mountHook(
   runOrder: unknown = { state: "none" },
   entries: number[] = [303, 301, 302],
-  grouped = false,
+  groupMode: GroupMode = "none",
+  points: TestPoint[] = POINTS,
 ) {
   mockIPC((cmd) => {
     switch (cmd) {
@@ -56,7 +58,7 @@ function mountHook(
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
   return renderHook(
-    () => useRunOrder({ org: "acme", project: "Web", pbiId: 42, suite: SUITE, points: POINTS, grouped }),
+    () => useRunOrder({ org: "acme", project: "Web", pbiId: 42, suite: SUITE, points, groupMode }),
     { wrapper },
   );
 }
@@ -105,23 +107,54 @@ test("saveMine stores the list as My order on this machine and makes it the list
   expect(toast.info).not.toHaveBeenCalled();
 });
 
-test("saveMine on a grouped list stores the order Run Tests displays, not the raw flat list", async () => {
+const AREA_FILE = {
+  format: "tcm-run-order",
+  version: 1,
+  saved_by: "lead@example.com",
+  saved_at: "2026-09-23T10:15:00Z",
+  cases: [
+    { id: 301, group: "Auth" },
+    { id: 302, group: "Auth" },
+    { id: 303, group: "Billing" },
+  ],
+};
+
+test("groupMode area sections by the suggested file's areas", async () => {
+  const { result } = mountHook({ state: "found", file: AREA_FILE }, [303, 301, 302], "area");
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  expect(result.current.hasAreas).toBe(true);
+  expect(result.current.sections.map((s) => s.name)).toEqual(["Auth", "Billing"]);
+  expect(result.current.sections[0].pts.map((p) => p.test_case_id)).toEqual([301, 302]);
+  expect(result.current.sections[1].pts.map((p) => p.test_case_id)).toEqual([303]);
+});
+
+test("groupMode title groups by title even when the file has areas", async () => {
+  // Titles Alpha/Bravo/Charlie share no common prefix, so title grouping
+  // gathers them into one Ungrouped section - unlike area mode, which
+  // would split them into Auth/Billing (see the sibling test above).
+  const { result } = mountHook({ state: "found", file: AREA_FILE }, [303, 301, 302], "title");
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  expect(result.current.hasAreas).toBe(true);
+  expect(result.current.sections.map((s) => s.name)).toEqual(["Ungrouped"]);
+  expect(result.current.sections[0].pts.map((p) => p.test_case_id)).toEqual([301, 302, 303]);
+});
+
+test("groupMode area falls back to title grouping when the file has no areas", async () => {
+  const { result } = mountHook({ state: "none" }, [303, 301, 302], "area");
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  expect(result.current.hasAreas).toBe(false);
+  expect(result.current.sections.map((s) => s.name)).toEqual(["Ungrouped"]);
+});
+
+test("saveMine in groupMode area stores the order Run Tests displays, not the raw flat list", async () => {
   // 301 and 302 are grouped "Auth", 303 is grouped "Billing". The modal
   // hands back a flat order that interleaves the two groups (301, 303,
   // 302); Run Tests would show them gathered by group instead (301, 302
   // together, then 303) - My order must match what is actually on screen.
-  const FILE = {
-    format: "tcm-run-order",
-    version: 1,
-    saved_by: "lead@example.com",
-    saved_at: "2026-09-23T10:15:00Z",
-    cases: [
-      { id: 301, group: "Auth" },
-      { id: 302, group: "Auth" },
-      { id: 303, group: "Billing" },
-    ],
-  };
-  const { result } = mountHook({ state: "found", file: FILE }, [303, 301, 302], true);
+  const { result } = mountHook({ state: "found", file: AREA_FILE }, [303, 301, 302], "area");
   await waitFor(() => expect(result.current.loading).toBe(false));
 
   let ok = false;
@@ -134,6 +167,28 @@ test("saveMine on a grouped list stores the order Run Tests displays, not the ra
   expect(stored).toEqual([301, 302, 303]);
   expect(result.current.myOrder).toEqual([301, 302, 303]);
   expect(result.current.ordered.map((p) => p.test_case_id)).toEqual([301, 302, 303]);
+});
+
+test("saveMine in groupMode title stores the order Run Tests displays", async () => {
+  const TITLED: TestPoint[] = [
+    point(1, 301, "Auth - Login"),
+    point(2, 302, "Billing - Invoice"),
+    point(3, 303, "Auth - Logout"),
+  ];
+  const { result } = mountHook({ state: "none" }, [301, 302, 303], "title", TITLED);
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  let ok = false;
+  act(() => {
+    // A flat order that interleaves the two Auth cases with Billing; title
+    // grouping gathers "Auth - Login"/"Auth - Logout" together first.
+    ok = result.current.saveMine([301, 302, 303]);
+  });
+
+  expect(ok).toBe(true);
+  const stored = JSON.parse(localStorage.getItem(MY_KEY) as string);
+  expect(stored).toEqual([301, 303, 302]);
+  expect(result.current.sections.map((s) => s.name)).toEqual(["Auth", "Ungrouped"]);
 });
 
 test("saveMine with storage unavailable says so and changes nothing", async () => {
