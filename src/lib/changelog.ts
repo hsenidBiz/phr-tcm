@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.24",
+    date: "2026-09-24",
+    items: [
+      "A fresh look for check boxes, text boxes, the date picker, the command palette (Ctrl+K), keyboard shortcut hints and notifications, all drawn in your theme and accent colours.",
+      "Run Tests: how cases are grouped is now chosen in the Set execution order window: Don't group, By title, or By area when the run order carries areas. If you had Group by title on, cases are grouped by title again rather than by area, and the note beside the button is gone.",
+      "In a work item, pressing Escape in the date picker now closes only the calendar, not the whole panel with your unsaved changes.",
+      "The updater has been brought up to date.",
+    ],
+  },
+  {
     version: "1.25.23",
     date: "2026-09-23",
     items: [
