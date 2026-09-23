@@ -45,6 +45,11 @@ export const commands = {
 	 *  patched in place. A failed item never aborts the rest.
 	 */
 	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null, orderHint: OrderHint[]) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath, orderHint })),
+	/**
+	 *  Check what an interrupted upload created: the rows the queue holds as
+	 *  "outcome unknown" (C2). Read only.
+	 */
+	reconcileUpload: (organization: string, project: string, pbiId: number, since: string, titles: string[], excludeIds: number[]) => typedError<ReconcileAnswer, string>(__TAURI_INVOKE("reconcile_upload", { organization, project, pbiId, since, titles, excludeIds })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -1697,6 +1702,28 @@ export type RecipeStep_Deserialize = Action_Deserialize | WhenVisible_Deserializ
 export type RecipeStep_Serialize = Action_Serialize | WhenVisible_Serialize;
 
 /**
+ *  The answer to a Check. `found` is an unambiguous match, treated exactly
+ *  like a created case. `ambiguous` lists checked titles that had more
+ *  unclaimed matches in Azure DevOps than rows being checked - which one is
+ *  genuinely this upload's cannot be told apart (see `reconcile_pairs`), so
+ *  that row is neither cleared nor claimed: it stays held. Any title in
+ *  neither list was not found at all, and its hold is lifted.
+ */
+export type ReconcileAnswer = {
+	found: ReconciledCase[],
+	ambiguous: string[],
+};
+
+/**
+ *  One create the reconcile lookup found: the title it was queued under and
+ *  the work item it became.
+ */
+export type ReconciledCase = {
+	title: string,
+	id: number,
+};
+
+/**
  *  One test case's fate after a relink attempt - same shape as
  *  `deletion::DeleteOutcome` but named for what actually happened: a
  *  successful MOVE reported as `deleted: true` would be a lie in the one
@@ -2095,7 +2122,12 @@ export type Step_Serialize = {
 export type SubmitItemResult = {
 	index: number,
 	title: string,
-	/**  "created" | "updated" | "failed" */
+	/**
+	 *  "created" | "updated" | "failed" | "unknown". "unknown": the batch
+	 *  failed and Azure DevOps could not be asked whether this create
+	 *  landed, or it had not finished yet. It may exist - check
+	 *  (`reconcile_upload`) before uploading it again.
+	 */
 	action: string,
 	id: number | null,
 	error: string | null,
