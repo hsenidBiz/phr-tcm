@@ -498,6 +498,7 @@ export default function AutoRun({
               caseId={c.id}
               title={c.title}
               steps={c.steps}
+              org={org}
               onClose={() => setEditing(null)}
             />
           );

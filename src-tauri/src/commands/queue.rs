@@ -1420,7 +1420,7 @@ pub async fn reconcile_with(
     let found: Vec<(i32, String)> = client
         .find_created_test_cases(organization, project, pbi_id, since, titles)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.user_text())?
         .into_iter()
         .filter(|(id, _)| !exclude_ids.contains(id))
         .collect();

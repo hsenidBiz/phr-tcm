@@ -16,7 +16,7 @@ function mountWith(
   script: unknown,
   accounts: unknown[],
   saved: unknown[],
-  steps: { action: string; expected: string }[] = [],
+  steps: { action: string; expected: string; shared?: number | null }[] = [],
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_script") return script;
@@ -116,4 +116,13 @@ test("the Checks line shows checked, explained and NOT CHECKED", async () => {
   expect(screen.getByText("Step 4: NOT CHECKED")).toBeTruthy();
   // Step 3 has no expected result, so it never becomes part of the floor.
   expect(screen.queryByText(/Step 3:/)).toBeNull();
+});
+
+test("a Shared Steps entry among the case's steps shows its reference, not a blank item", async () => {
+  const caseSteps = [
+    { action: "Open the dashboard", expected: "The dashboard is shown" },
+    { action: "", expected: "", shared: 812 },
+  ];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, [], caseSteps);
+  expect(await screen.findByText("Shared steps #812")).toBeInTheDocument();
 });

@@ -12,6 +12,7 @@ import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
@@ -33,11 +34,13 @@ export default function ScriptEditor({
   caseId,
   title,
   steps,
+  org,
   onClose,
 }: {
   caseId: number;
   title: string;
-  steps: { action: string; expected: string }[];
+  steps: { action: string; expected: string; shared?: number | null }[];
+  org?: string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -131,9 +134,12 @@ export default function ScriptEditor({
             {steps.map((s, i) => (
               <li key={i} className="rounded border border-border/60 px-2 py-1">
                 <span className="text-text">
-                  {i + 1}. {s.action}
+                  {i + 1}.{" "}
+                  {s.shared != null ? <SharedStepLabel id={s.shared} org={org} /> : s.action}
                 </span>
-                {s.expected && <div className="text-faint">→ {s.expected}</div>}
+                {s.shared == null && s.expected && (
+                  <div className="text-faint">→ {s.expected}</div>
+                )}
               </li>
             ))}
           </ol>

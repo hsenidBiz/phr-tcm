@@ -57,7 +57,9 @@ list of `actions`, run in order: `{ "step_number": 1, "actions": [ ... ], "unche
 step IN THE TEST CASE - 1 for the first step, 2 for the second, and so
 on - because per-step results are matched back to the case's own steps by
 that position. A script numbered 10, 20, 30 records no per-step results
-at all.
+at all. A Shared Steps entry in the case (a step with no text of its own,
+only a reference) keeps the step number it already has in the case: write
+no script step for it, and do not renumber the steps that come after it.
 
 - `{ "kind": "navigate", "url": "https://..." }` - waits for the page to load
 - `{ "kind": "click", "selector": ... }`

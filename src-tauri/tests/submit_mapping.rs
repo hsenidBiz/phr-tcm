@@ -390,6 +390,28 @@ async fn check_later_refuses_a_bad_start_time_without_asking() {
     assert!(server.received_requests().await.unwrap().is_empty());
 }
 
+/// A refused lookup used to surface as this app's own bare "http 400" - the
+/// endpoint's status code and nothing a person could act on. It must show
+/// Azure DevOps' own sentence instead, the way `resolve_failed_batch`
+/// already does for a refused batch (`user_text`, not `to_string`).
+#[tokio::test]
+async fn check_later_shows_azure_devops_own_sentence_for_a_refused_lookup() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/acme/Web/_apis/wit/wiql"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string("TF51005: The query references a field that does not exist."),
+        )
+        .mount(&server)
+        .await;
+    let err = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &["A".to_string()], &[])
+        .await
+        .unwrap_err();
+    assert_eq!(err, "TF51005: The query references a field that does not exist.");
+    assert!(!err.contains("http 400"), "{err}");
+}
+
 /// An id the Check is told to exclude - one this upload already reported,
 /// or one linked to the PBI before the upload began - is never claimed,
 /// however well its title matches.
