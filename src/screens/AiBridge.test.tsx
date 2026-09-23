@@ -1029,3 +1029,47 @@ test("forgetting the database settings switches writes off too", async () => {
   expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
   expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 });
+
+/// The "Your own database" pick belongs to the form that held it -
+/// forgetting the form must not leave the picker claiming a choice over an
+/// empty, never-configured connection.
+test("forgetting the database settings also forgets a Your own database pick", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_server_presets") return PRESETS;
+    if (cmd === "db_server_defaults") return null;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("Your own database"));
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
+  expect(screen.getByLabelText("Default connections")).toHaveTextContent("Your own database");
+
+  fireEvent.click(screen.getByText("Forget them"));
+  expect(screen.getByLabelText("Default connections")).not.toHaveTextContent("Your own database");
+});
+
+/// Switching away from "Your own database" to a shipped preset must still
+/// work exactly as picking a preset always has.
+test("picking a preset after Your own database replaces the connection", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_server_presets") return PRESETS;
+    if (cmd === "db_server_defaults") return null;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("Your own database"));
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
+
+  fireEvent.click(screen.getByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("QA — read only"));
+
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
+  expect(stored.connection_string).toBe("Server=qa;Database=b;User Id=ro;");
+  expect(screen.getByLabelText("Default connections")).toHaveTextContent("QA — read only");
+});

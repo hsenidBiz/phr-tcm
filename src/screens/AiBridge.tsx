@@ -976,6 +976,11 @@ export default function AiBridge() {
             onClick={() => {
               forgetDbConfig();
               setDb(loadDbConfig());
+              // The picker's "Your own database" pick belongs to the form
+              // that held it - forgetting the form without clearing this
+              // would leave the picker claiming a choice over an empty,
+              // never-configured connection.
+              setOwnPicked(false);
               // Writing goes with them. Forgetting the connection and
               // leaving permission to write on it standing would mean the
               // next connection chosen here inherits a decision nobody
