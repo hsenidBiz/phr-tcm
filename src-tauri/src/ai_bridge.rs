@@ -196,11 +196,13 @@ pub async fn route(
     version: &str,
 ) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
-    // Every Auto Run route is development-build only, and the check runs
-    // ONCE here, by path, before the router's match - so a route added
-    // later is covered by the shape of its name rather than by somebody
-    // remembering to repeat the guard on its own arm.
-    if let Some(refused) = autorun_guard_for(path, crate::ai_tools::dev_build()) {
+    // Every Auto Run route is offered only where the Auto Run tools are -
+    // a development build, or a release build whose optional extras are
+    // unlocked - and the check runs ONCE here, by path, before the
+    // router's match, so a route added later is covered by the shape of
+    // its name rather than by somebody remembering to repeat the guard on
+    // its own arm.
+    if let Some(refused) = autorun_guard_for(path, crate::ai_tools::autorun_offered()) {
         return refused;
     }
     match (method, path) {
@@ -257,10 +259,16 @@ pub async fn route(
         ("POST", "/db-lookup") => db_lookup(ctx, body).await,
         ("POST", "/db-query") => db_query(ctx, body).await,
         // The proxy asks for this before listing tools, so a toggle in the
-        // app takes effect on the assistant's next tools/list.
+        // app takes effect on the assistant's next tools/list. `autorun`
+        // says whether the Auto Run tools are offered at all: the proxy is
+        // a separate process and cannot read the optional-extras switch.
         ("GET", "/tools") => (
             200,
-            serde_json::json!({ "disabled": ctx.disabled_tools }).to_string(),
+            serde_json::json!({
+                "disabled": ctx.disabled_tools,
+                "autorun": crate::ai_tools::autorun_offered(),
+            })
+            .to_string(),
         ),
         ("GET", "/run-failures") => match client {
             Some(c) => run_failures(ctx, c, target).await,
@@ -303,13 +311,14 @@ fn smells_like_a_write(method: &str, target: &str) -> bool {
         .any(|w| path.contains(w))
 }
 
-/// The guard both autorun routes run before doing anything else: outside
-/// a development build there is no switch that can turn them back on, so
-/// they refuse unconditionally rather than falling through to whatever
-/// `ctx.disabled_tools` says. `dev` is explicit so both branches are
+/// The guard every autorun route runs before doing anything else: where the
+/// Auto Run tools are not offered (a release build whose optional extras
+/// are locked) there is no switch that can turn them back on, so they
+/// refuse unconditionally rather than falling through to whatever
+/// `ctx.disabled_tools` says. `offered` is explicit so both branches are
 /// testable without a release build.
-pub fn autorun_route_guard(dev: bool) -> Option<(u16, String)> {
-    if dev {
+pub fn autorun_route_guard(offered: bool) -> Option<(u16, String)> {
+    if offered {
         None
     } else {
         Some((404, "not available in this build".to_string()))
@@ -319,11 +328,11 @@ pub fn autorun_route_guard(dev: bool) -> Option<(u16, String)> {
 /// The same guard, applied by PATH rather than by arm. `route` calls this
 /// once, before its match, so every `/autorun-` route is covered by the
 /// shape of its name - a route added later cannot be left ungated by
-/// forgetting to repeat the check. `dev` is explicit for the same reason
-/// `autorun_route_guard`'s is: both branches stay testable.
-pub fn autorun_guard_for(path: &str, dev: bool) -> Option<(u16, String)> {
+/// forgetting to repeat the check. `offered` is explicit for the same
+/// reason `autorun_route_guard`'s is: both branches stay testable.
+pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
     if path.starts_with("/autorun-") {
-        autorun_route_guard(dev)
+        autorun_route_guard(offered)
     } else {
         None
     }

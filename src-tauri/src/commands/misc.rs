@@ -228,6 +228,24 @@ pub fn prepare_bug_report(
     })
 }
 
+/// Whether this machine's optional extras are on (see `crate::extras`).
+#[tauri::command]
+#[specta::specta]
+pub fn get_extras_unlocked() -> bool {
+    crate::extras::unlocked()
+}
+
+/// Turn this machine's optional extras on or off. The raw reason goes to
+/// the log; the person gets a sentence they can act on.
+#[tauri::command]
+#[specta::specta]
+pub fn set_extras_unlocked(unlocked: bool) -> Result<(), String> {
+    crate::extras::set_unlocked(unlocked).map_err(|e| {
+        crate::applog::warn(format!("could not save the extras setting: {e}"));
+        "Could not save this setting. The app log in Settings has the details.".to_string()
+    })
+}
+
 /// Whether the Boards route probe may run, and the refusal when it may
 /// not. Takes `dev` rather than reading `cfg!(debug_assertions)` itself,
 /// the way `ai_tools` does: the one reader of that flag is

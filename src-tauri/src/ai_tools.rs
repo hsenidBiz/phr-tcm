@@ -185,11 +185,13 @@ pub const CORE_TOOLS: &[&str] = &[
     "merge_case_files",
 ];
 
-/// Tools offered in a development build only: listed, switchable and
-/// callable there like any other tool, but never present at all in a
-/// release build - not listed, no switch, no skill file, and a direct
-/// call is refused. The in-app Auto Run screen is unaffected; only the
-/// assistant's path to it is closed outside development.
+/// The Auto Run tools. Offered only where Auto Run itself is: in a
+/// development build, and in a release build whose optional extras are
+/// unlocked (`autorun_offered`). Where they are offered they are listed,
+/// switchable and callable like any other tool; where they are not, they
+/// are not present at all - not listed, no switch, no skill file, and a
+/// direct call is refused. (The name predates the unlock; the TS mirror
+/// and its sync test read it, so it stays.)
 pub const DEV_ONLY_TOOLS: &[&str] = &[
     "get_autorun_guide",
     "save_autorun_script",
@@ -209,14 +211,29 @@ pub fn dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
-/// The disabled set as it is actually applied: in a release build the
-/// dev-only tools first, always; in a development build they are added
-/// only when `disabled` names them. Then whatever the frontend sent,
+/// Whether the Auto Run tools are offered: always in a development build,
+/// and in a release build once this machine's optional extras are
+/// unlocked. Both inputs explicit, so every combination is testable from
+/// this (development) test binary.
+pub fn autorun_offered_for(dev: bool, unlocked: bool) -> bool {
+    dev || unlocked
+}
+
+/// `autorun_offered_for` for this process: its own build kind and the
+/// unlock as the app last loaded or set it. Only meaningful in the app
+/// process - the `--mcp` proxy learns the app's answer from `/tools`.
+pub fn autorun_offered() -> bool {
+    autorun_offered_for(dev_build(), crate::extras::unlocked())
+}
+
+/// The disabled set as it is actually applied: where the Auto Run tools
+/// are not offered, they come first, always; where they are, they are
+/// added only when `disabled` names them. Then whatever the frontend sent,
 /// minus the core tools and duplicates, either way. One function, used by
 /// tools/list, the call-time refusal and the skill writer, so no path can
 /// disagree with another about what is off.
-pub fn effective_disabled_for(disabled: &[String], dev: bool) -> Vec<String> {
-    let mut out: Vec<String> = if dev {
+pub fn effective_disabled_for(disabled: &[String], offered: bool) -> Vec<String> {
+    let mut out: Vec<String> = if offered {
         Vec::new()
     } else {
         DEV_ONLY_TOOLS.iter().map(|s| s.to_string()).collect()
@@ -229,9 +246,9 @@ pub fn effective_disabled_for(disabled: &[String], dev: bool) -> Vec<String> {
     out
 }
 
-/// `effective_disabled_for` at this process's own build kind.
+/// `effective_disabled_for` for this process (`autorun_offered`).
 pub fn effective_disabled(disabled: &[String]) -> Vec<String> {
-    effective_disabled_for(disabled, dev_build())
+    effective_disabled_for(disabled, autorun_offered())
 }
 
 /// One command per thing a person reaches for by name; every other tool

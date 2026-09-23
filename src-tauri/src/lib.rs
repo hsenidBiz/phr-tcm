@@ -23,6 +23,7 @@ pub mod cache;
 pub mod capture;
 pub mod commands;
 pub mod events;
+pub mod extras;
 pub mod filewatch;
 pub mod import_parser;
 pub mod intake;
@@ -218,7 +219,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             workspace::ensure_cases_dir,
             workspace::copy_into_cases,
             run_order::get_run_order,
-            run_order::save_run_order
+            run_order::save_run_order,
+            misc::get_extras_unlocked,
+            misc::set_extras_unlocked
         ])
 }
 
@@ -345,6 +348,9 @@ pub fn run() {
             // the AI bridge - see cache/mod.rs.
             if let Ok(dir) = app.path().app_data_dir() {
                 cache::init(dir.clone());
+                // This machine's optional extras switch (see extras.rs):
+                // read once here, so the AI bridge can answer from memory.
+                extras::init(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands

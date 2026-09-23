@@ -679,6 +679,13 @@ export const commands = {
 	 *  second read.
 	 */
 	saveRunOrder: (organization: string, project: string, pbiId: number, cases: RunOrderCase_Deserialize[]) => typedError<RunOrderFile_Serialize, AdoError>(__TAURI_INVOKE("save_run_order", { organization, project, pbiId, cases })),
+	/**  Whether this machine's optional extras are on (see `crate::extras`). */
+	getExtrasUnlocked: () => __TAURI_INVOKE<boolean>("get_extras_unlocked"),
+	/**
+	 *  Turn this machine's optional extras on or off. The raw reason goes to
+	 *  the log; the person gets a sentence they can act on.
+	 */
+	setExtrasUnlocked: (unlocked: boolean) => typedError<null, string>(__TAURI_INVOKE("set_extras_unlocked", { unlocked })),
 };
 
 /** Events */

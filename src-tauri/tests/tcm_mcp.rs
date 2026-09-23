@@ -608,3 +608,50 @@ fn an_ordinary_tool_gets_the_switched_off_sentence_regardless_of_dev() {
         assert!(text.contains("switched off"), "dev={dev}: {text}");
     }
 }
+
+use v2_lib::ai_tools::DEV_ONLY_TOOLS;
+use v2_lib::mcp::tool_policy_from;
+
+/// The proxy is its own process and cannot read the app's optional-extras
+/// switch; the bridge's /tools answer carries it as `autorun`. An unlocked
+/// release app offers the Auto Run tools through the proxy like any other
+/// switchable tool.
+#[test]
+fn an_unlocked_release_app_offers_the_auto_run_tools_through_the_proxy() {
+    let (off, offered) = tool_policy_from(
+        Ok((200, r#"{"disabled":["search_wiki"],"autorun":true}"#.into())),
+        false,
+    );
+    assert!(offered);
+    assert_eq!(off, vec!["search_wiki"]);
+}
+
+/// Everything short of an explicit `autorun: true` means "not offered"
+/// outside a development build: a locked app, an app too old to send the
+/// field, a non-200 answer, garbage, or no app at all. The proxy never
+/// widens a release build's tool list on a guess.
+#[test]
+fn a_locked_older_absent_or_confused_app_offers_them_nowhere_outside_a_dev_build() {
+    let dev_only: Vec<String> = DEV_ONLY_TOOLS.iter().map(|s| s.to_string()).collect();
+    let replies: Vec<Result<(u16, String), String>> = vec![
+        Ok((200, r#"{"disabled":[],"autorun":false}"#.to_string())),
+        Ok((200, r#"{"disabled":[]}"#.to_string())),
+        Ok((503, String::new())),
+        Ok((200, "not json".to_string())),
+        Err("connection refused".to_string()),
+    ];
+    for reply in replies {
+        let shown = format!("{reply:?}");
+        let (off, offered) = tool_policy_from(reply, false);
+        assert!(!offered, "{shown}");
+        assert_eq!(off, dev_only, "{shown}");
+    }
+}
+
+/// A development build offers them whatever the app says.
+#[test]
+fn a_development_build_offers_them_whatever_the_app_says() {
+    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), true);
+    assert!(offered);
+    assert!(off.is_empty());
+}

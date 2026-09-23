@@ -23,7 +23,7 @@ import {
   saveDbConfig,
   saveDbWrites,
 } from "../lib/dbServer";
-import { DEV_BUILD, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
+import { autoRunToolsOffered, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import {
   addRepository,
@@ -1063,7 +1063,7 @@ export default function AiBridge() {
             beside that connection. Off, the assistant's database tools are
             switched off.
           </li>
-          {DEV_BUILD && (
+          {autoRunToolsOffered() && (
             <li>
               <span className="font-medium text-text">Auto Run scripts</span>: everything an assistant needs to write one
               browser script and keep it working. It reads the script guide, looks
@@ -1071,9 +1071,7 @@ export default function AiBridge() {
               action there, reads what failed in a run, saves the scripts back one
               call for a whole PBI&apos;s cases, and notes what it learned about your
               application. It never signs in, never removes a check you had, and
-              a script it has repaired three times comes back to you. Development
-              builds only, so this row and all seven tools are missing entirely
-              from a release build, not just switched off. Off, Auto Run stays
+              a script it has repaired three times comes back to you. Off, Auto Run stays
               something you drive by hand.
             </li>
           )}

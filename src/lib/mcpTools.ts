@@ -4,6 +4,8 @@
 // later release is then available by default rather than silently missing
 // because it wasn't in someone's saved list.
 
+import { extrasUnlockedSnapshot, subscribeExtras } from "./extras";
+
 const KEY = "tcm-v2-mcp-disabled";
 
 export type McpToolInfo = { name: string; label: string; summary: string };
@@ -89,9 +91,9 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   // is a set nobody can ship.
   "validate_cases", "optimize_cases", "merge_case_files"] as const;
 
-/** Offered in a development build only: switchable there like any other
- * tool, absent entirely (not listed, no switch, no skill file) from a
- * release build. Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
+/** The Auto Run tools: offered only where Auto Run is (autoRunToolsOffered)
+ * - absent entirely (not listed, no switch, no skill file) elsewhere.
+ * Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
 export const DEV_ONLY_TOOLS = [
   "get_autorun_guide",
   "save_autorun_script",
@@ -106,6 +108,14 @@ export const DEV_ONLY_TOOLS = [
  * compile-time constant, read once at module load. Mirrors
  * `Sidebar.tsx`'s `AUTO_RUN_ENABLED` and `ai_tools.rs`'s `dev_build()`. */
 export const DEV_BUILD: boolean = import.meta.env.DEV;
+
+/** Whether the Auto Run tools are offered right now: always in a
+ * development build, and in a release build once this machine's optional
+ * extras are unlocked (lib/extras). Read live, not at module load. Mirrors
+ * `ai_tools.rs`'s `autorun_offered()`. */
+export function autoRunToolsOffered(): boolean {
+  return DEV_BUILD || extrasUnlockedSnapshot();
+}
 
 export function isCoreTool(name: string): boolean {
   return (CORE_TOOLS as readonly string[]).includes(name);
@@ -130,7 +140,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // its steps: read the format, look at the page, try a locator or an
   // action, read what a run did, save the result and record what you
   // learned. Half of them switched on is half a job, so they move
-  // together. Development builds only; see DEV_ONLY_TOOLS.
+  // together. Offered only where Auto Run is; see autoRunToolsOffered.
   [
     "get_autorun_guide",
     "save_autorun_script",
@@ -158,7 +168,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   get_autorun_guide: {
     label: "Auto Run scripts",
     summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts. Development builds only.",
+      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts.",
   },
   db_lookup: {
     label: "Company database (read)",
@@ -213,16 +223,16 @@ export function toggleRow(disabled: string[], names: string[]): string[] {
  *
  * The always-on tools never appear - a row carrying no switch was a
  * control that did nothing, and they are enforced in `ai_tools.rs`
- * whatever this list shows. Nor do the development-build-only tools,
- * unless this IS a development build - a switch for a tool a release
- * build will never offer would toggle nothing. What is left is exactly
- * the set of choices this screen can honour, for this build.
+ * whatever this list shows. Nor do the Auto Run tools, unless they are
+ * offered - a switch for a tool that is not offered would toggle
+ * nothing. What is left is exactly the set of choices this screen can
+ * honour, right now.
  */
 export function visibleTools(): McpToolInfo[] {
   return MCP_TOOLS.filter(
     (t) =>
       !isCoreTool(t.name) &&
-      (DEV_BUILD || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
+      (autoRunToolsOffered() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
   );
 }
 
@@ -236,10 +246,11 @@ export function loadDisabledTools(): string[] {
       (t) =>
         typeof t === "string" &&
         !isCoreTool(t) &&
-        // A list saved in a development build can name a dev-only tool.
-        // Dropped outside a development build, where it would be
-        // meaningless - there is no request it could ever be attached to.
-        (DEV_BUILD || !(DEV_ONLY_TOOLS as readonly string[]).includes(t)),
+        // A list saved while the Auto Run tools were offered can name one
+        // of them. Dropped where the Auto Run tools are not offered,
+        // where it would be meaningless - there is no request it could
+        // ever be attached to.
+        (autoRunToolsOffered() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t)),
     );
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would
@@ -268,16 +279,26 @@ export function saveDisabledTools(names: string[]): void {
 }
 
 /** Subscription so App can re-push the bridge context the moment a tool is
- * toggled, instead of the change waiting for the next org/project change. */
+ * toggled, instead of the change waiting for the next org/project change.
+ * Also fires when the optional extras are unlocked or relocked: that
+ * changes which saved names count. */
 export function subscribeDisabledTools(cb: () => void): () => void {
   listeners.add(cb);
+  const offExtras = subscribeExtras(cb);
   return () => {
     listeners.delete(cb);
+    offExtras();
   };
 }
 
+/** Keyed on the stored list AND whether the Auto Run tools are offered:
+ * the same stored list loads differently either side of an unlock. */
+function snapshotKeyFor(raw: string): string {
+  return `${autoRunToolsOffered() ? 1 : 0}:${raw}`;
+}
+
 let snapshot: string[] = loadDisabledTools();
-let snapshotRaw = JSON.stringify(snapshot);
+let snapshotKey = snapshotKeyFor(JSON.stringify(snapshot));
 
 /** A STABLE array reference between changes - useSyncExternalStore
  * re-renders forever if the snapshot is a fresh object every call. */
@@ -288,8 +309,9 @@ export function disabledToolsSnapshot(): string[] {
   } catch {
     // fall through to the cached value
   }
-  if (raw !== snapshotRaw) {
-    snapshotRaw = raw;
+  const key = snapshotKeyFor(raw);
+  if (key !== snapshotKey) {
+    snapshotKey = key;
     snapshot = loadDisabledTools();
   }
   return snapshot;

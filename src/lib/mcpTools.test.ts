@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { expect, test, vi } from "vitest";
 import { CORE_TOOLS, DEV_BUILD, DEV_ONLY_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
 
@@ -244,4 +245,37 @@ test("every row label is human, with no identifier in it", () => {
     expect(row.label, `${row.key} label`).not.toMatch(/_/);
     expect(row.label[0]).toMatch(/[A-Z]/);
   }
+});
+
+/// A release build whose optional extras are unlocked offers the Auto Run
+/// row like a development build does, and a saved list naming its tools is
+/// kept while unlocked and stripped again once relocked. App re-pushes the
+/// bridge context off `subscribeDisabledTools`, so it must fire on either.
+test("with DEV stubbed false, unlocking this machine's extras brings the Auto Run row back", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const mod = await import("./mcpTools");
+  const extras = await import("./extras");
+  mockIPC(() => null);
+
+  expect(mod.autoRunToolsOffered()).toBe(false);
+  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+
+  const fired = vi.fn();
+  const off = mod.subscribeDisabledTools(fired);
+  await extras.setExtrasUnlocked(true);
+  expect(fired).toHaveBeenCalled();
+  expect(mod.autoRunToolsOffered()).toBe(true);
+  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
+
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...mod.DEV_ONLY_TOOLS]));
+  expect([...mod.disabledToolsSnapshot()].sort()).toEqual([...mod.DEV_ONLY_TOOLS].sort());
+  await extras.setExtrasUnlocked(false);
+  expect(mod.disabledToolsSnapshot()).toEqual([]);
+
+  off();
+  localStorage.clear();
+  clearMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });

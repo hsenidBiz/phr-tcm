@@ -41,7 +41,7 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "tcm-testcases", "version": version },
         }),
-        "tools/list" => tools_list(disabled(call)),
+        "tools/list" => tools_list(tool_policy(call).0),
         "tools/call" => tools_call(&v["params"], call),
         _ => {
             return Some(
@@ -76,20 +76,28 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": props, "required": required })
 }
 
-/// Tools the user has switched off in the app. Asked fresh on every
-/// `tools/list`, so a toggle takes effect without restarting the editor.
-/// A bridge that can't be reached disables nothing - losing the whole
-/// toolset because the app is closed would be worse than showing tools
-/// that then say "sign in first".
-fn disabled(call: BridgeCall) -> Vec<String> {
-    let Ok((status, body)) = call("GET", "/tools", "") else {
-        return crate::ai_tools::effective_disabled(&[]);
+/// What the app says about its tools right now: the disabled set as it is
+/// applied, and whether the Auto Run tools are offered at all. Asked fresh
+/// on every `tools/list` and `tools/call`, so a toggle takes effect without
+/// restarting the editor.
+///
+/// A bridge that can't be reached disables nothing extra - losing the
+/// whole toolset because the app is closed would be worse than showing
+/// tools that then say "sign in first". But it never WIDENS anything: the
+/// proxy is its own process and cannot read the app's optional-extras
+/// switch, so outside a development build the Auto Run tools are offered
+/// only on an explicit `"autorun": true` - a locked app, an app too old to
+/// send the field, a non-200 answer or no app at all all mean "not
+/// offered". `dev` is explicit so the release branch is testable from this
+/// development test binary.
+pub fn tool_policy_from(reply: Result<(u16, String), String>, dev: bool) -> (Vec<String>, bool) {
+    let answer = match reply {
+        Ok((200, body)) => serde_json::from_str::<serde_json::Value>(&body).ok(),
+        _ => None,
     };
-    if status != 200 {
-        return crate::ai_tools::effective_disabled(&[]);
-    }
-    let list: Vec<String> = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
+    let offered = dev || answer.as_ref().and_then(|v| v["autorun"].as_bool()).unwrap_or(false);
+    let list: Vec<String> = answer
+        .as_ref()
         .and_then(|v| v["disabled"].as_array().cloned())
         .map(|a| {
             a.iter()
@@ -97,7 +105,11 @@ fn disabled(call: BridgeCall) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
-    crate::ai_tools::effective_disabled(&list)
+    (crate::ai_tools::effective_disabled_for(&list, offered), offered)
+}
+
+fn tool_policy(call: BridgeCall) -> (Vec<String>, bool) {
+    tool_policy_from(call("GET", "/tools", ""), crate::ai_tools::dev_build())
 }
 
 fn tools_list(disabled: Vec<String>) -> serde_json::Value {
@@ -372,14 +384,14 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
     serde_json::json!({ "tools": tools })
 }
 
-/// The call-time refusal text for a switched-off tool. A dev-only tool
-/// outside a development build has no switch to turn back on - it is
-/// simply not available; every other switched-off tool (including a
-/// dev-only one that IS off only because the person switched it off in a
-/// development build) gets the ordinary AI Bridge sentence. `dev` is
-/// explicit so both branches are testable without a release build.
-pub fn refusal_text(name: &str, dev: bool) -> String {
-    if !dev && crate::ai_tools::DEV_ONLY_TOOLS.contains(&name) {
+/// The call-time refusal text for a switched-off tool. An Auto Run tool
+/// where the Auto Run tools are not offered at all has no switch to turn
+/// back on - it is simply not available; every other switched-off tool
+/// (including an Auto Run one that IS offered and was switched off by the
+/// person) gets the ordinary AI Bridge sentence. `offered` is explicit so
+/// both branches are testable without a release build.
+pub fn refusal_text(name: &str, offered: bool) -> String {
+    if !offered && crate::ai_tools::DEV_ONLY_TOOLS.contains(&name) {
         format!("The `{name}` tool is not available.")
     } else {
         format!(
@@ -394,8 +406,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     let args = &params["arguments"];
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    if disabled(call).iter().any(|d| d == name) {
-        let text = refusal_text(name, crate::ai_tools::dev_build());
+    let (off, offered) = tool_policy(call);
+    if off.iter().any(|d| d == name) {
+        let text = refusal_text(name, offered);
         return serde_json::json!({
             "content": [{
                 "type": "text",

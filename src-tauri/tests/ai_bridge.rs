@@ -1030,6 +1030,17 @@ async fn no_configuration_disables_nothing() {
     assert!(v["disabled"].as_array().unwrap().is_empty());
 }
 
+/// The bridge tells the proxy whether the Auto Run tools are offered - the
+/// proxy is a separate process and cannot read the switch itself. This
+/// test binary is a development build, so they always are here.
+#[tokio::test]
+async fn the_bridge_says_whether_auto_run_tools_are_offered() {
+    let (status, body) = route(&ctx(), None, "GET", "/tools", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["autorun"], true);
+}
+
 // ---- round 7 §§1-5: optimize_cases takes a path, like every other tool --
 
 struct TempDir(std::path::PathBuf);

@@ -600,6 +600,28 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
 
 use v2_lib::ai_tools::{effective_disabled_for, CORE_TOOLS, DEV_ONLY_TOOLS};
 
+use v2_lib::ai_tools::autorun_offered_for;
+
+/// The Auto Run tools are offered in a development build, and in a release
+/// build once this machine's optional extras are unlocked - and the
+/// disabled set follows that answer: offered, they are ordinary switchable
+/// tools; not offered, they are disabled first, always.
+#[test]
+fn auto_run_tools_are_offered_in_a_dev_build_or_once_unlocked() {
+    assert!(autorun_offered_for(true, false));
+    assert!(autorun_offered_for(true, true));
+    assert!(autorun_offered_for(false, true), "an unlocked release build offers them");
+    assert!(!autorun_offered_for(false, false), "a locked release build does not");
+
+    assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, true)), Vec::<String>::new());
+    assert_eq!(
+        effective_disabled_for(&["save_autorun_script".into()], autorun_offered_for(false, true)),
+        vec!["save_autorun_script"],
+        "on an unlocked machine the person's own switch still turns them off"
+    );
+    assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, false)), DEV_ONLY_TOOLS.to_vec());
+}
+
 /// The policy: the seven Auto Run tools are development-build only, and
 /// the core set can never be switched off - whatever the frontend's list
 /// says, in either build kind.
