@@ -69,6 +69,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::CaseNoteSaved,
             events::PlanCreated,
             events::SuiteNotCreated,
+            events::RunOrderNotSaved,
             events::WatchedFileChanged,
             events::DraftCommentSaved,
             events::DraftGeneralCommentSaved,

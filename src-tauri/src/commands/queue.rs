@@ -659,6 +659,10 @@ pub async fn submit_queue(
     // A suite refusal that is worth a second route, held until the batch
     // has run. See where it is read, after the loop.
     let mut suite_pending: Option<String> = None;
+    // The PBI's requirement suite, once either route has it. Kept so the
+    // upload can set the suite to spec order afterwards (design §4.1);
+    // no suite means nothing is ordered.
+    let mut resolved_suite: Option<crate::ado_testplan::EnsuredSuite> = None;
     // The Steps field as Azure DevOps currently holds it, for every row that
     // is an UPDATE. See `steps_patch`: without it, a case exported to JSON,
     // retitled and re-imported writes its steps back from the plain-text
@@ -730,6 +734,7 @@ pub async fn submit_queue(
                 match ensured {
                     Ok(ensured) => {
                         crate::ado_testplan::remember_suite(&client.base_url, &organization, &project, pbi_id, &ensured);
+                        resolved_suite = Some(ensured.clone());
                         if ensured.created_plan {
                             let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
                         }
@@ -952,13 +957,10 @@ pub async fn submit_queue(
                 // FOUND says nothing today either, and `PlanCreated` is the
                 // documented create's own event - the plan this route made
                 // is the team's sprint plan, which the log names.
-                Ok((base_url, out)) => crate::ado_testplan::remember_suite(
-                    &base_url,
-                    &organization,
-                    &project,
-                    pbi_id,
-                    &out.suite,
-                ),
+                Ok((base_url, out)) => {
+                    crate::ado_testplan::remember_suite(&base_url, &organization, &project, pbi_id, &out.suite);
+                    resolved_suite = Some(out.suite);
+                }
                 // Tried once and never again: a fallback that retries is a
                 // fallback nobody can diagnose. The first sentence stands
                 // word for word - it is still the true reason - with one
@@ -974,6 +976,53 @@ pub async fn submit_queue(
                     }
                     .emit(&app);
                 }
+            }
+        }
+    }
+    // Spec order in the suite and the suggested run order on the PBI, when
+    // this upload created cases into a suite it knows. Best-effort by
+    // design (§6): `results` is already final and nothing below changes it
+    // or turns the upload into a failure - a miss is one toast each.
+    if let Some(suite) = &resolved_suite {
+        if results.iter().any(|r| r.action == "created") {
+            let landed: Vec<crate::run_order::Landed> = results
+                .iter()
+                .filter(|r| r.action != "failed")
+                .filter_map(|r| {
+                    r.id.map(|id| crate::run_order::Landed {
+                        index: r.index as usize,
+                        id,
+                        created: r.action == "created",
+                    })
+                })
+                .collect();
+            let notes = match get_fresh_token(&app).await {
+                Ok(token) => {
+                    let client = ado::AdoClient::new(token);
+                    let saved_by = crate::commands::run_order::saved_by(&app);
+                    crate::run_order::order_after_upload(
+                        &client,
+                        &organization,
+                        &project,
+                        pbi_id,
+                        suite.suite_id,
+                        &landed,
+                        &queue,
+                        &saved_by,
+                        crate::run_order::SETTLE_DELAY,
+                    )
+                    .await
+                }
+                Err(e) => {
+                    crate::applog::warn(format!(
+                        "suite {} for #{pbi_id} not ordered: the access token could not be refreshed ({e})",
+                        suite.suite_id
+                    ));
+                    vec![format!("The spec order could not be set in Azure DevOps: {}", e.user_text())]
+                }
+            };
+            for reason in notes {
+                let _ = crate::events::RunOrderNotSaved { reason }.emit(&app);
             }
         }
     }

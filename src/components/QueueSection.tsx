@@ -595,6 +595,12 @@ export default function QueueSection({
           duration: 30000,
         });
       });
+      // The upload went through, but the suite's spec order or the
+      // suggested run order was not saved. The reason says which, and
+      // that Suite Management can set it.
+      const unRunOrder = await events.runOrderNotSaved.listen((e) => {
+        toast.warning(e.payload.reason);
+      });
       try {
         const r = await commands.submitQueue(
           org,
@@ -623,6 +629,7 @@ export default function QueueSection({
         detach(unProgress);
         detach(unPlan);
         detach(unSuite);
+        detach(unRunOrder);
         submitFinished();
       }
     },

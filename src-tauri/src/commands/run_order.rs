@@ -8,6 +8,19 @@ use tauri::Manager;
 use crate::state::get_fresh_token;
 use crate::{ado, run_order};
 
+/// Who a saved run order is "saved by": the signed-in account from
+/// `AuthState`, as the context bar shows it, or "unknown" when somehow
+/// absent. Shared by the save command and the upload so both name the
+/// saver the same way.
+pub(crate) fn saved_by(app: &tauri::AppHandle) -> String {
+    let state = app.state::<std::sync::Mutex<crate::auth::AuthState>>();
+    let s = state.lock().unwrap();
+    s.tokens
+        .as_ref()
+        .and_then(|t| t.account.clone())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// The PBI's suggested run order, or why it could not be read. Never
 /// fails for "no file" or "damaged file" - see `RunOrderRead`.
 #[tauri::command]
@@ -39,21 +52,7 @@ pub async fn save_run_order(
     cases: Vec<run_order::RunOrderCase>,
 ) -> Result<run_order::RunOrderFile, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    let saved_by = {
-        let state = app.state::<std::sync::Mutex<crate::auth::AuthState>>();
-        let s = state.lock().unwrap();
-        s.tokens
-            .as_ref()
-            .and_then(|t| t.account.clone())
-            .unwrap_or_else(|| "unknown".to_string())
-    };
-    let file = run_order::RunOrderFile {
-        format: run_order::RUN_ORDER_FORMAT.to_string(),
-        version: run_order::RUN_ORDER_VERSION,
-        saved_by,
-        saved_at: run_order::now_rfc3339(),
-        cases,
-    };
+    let file = run_order::new_file(saved_by(&app), cases);
     crate::applog::warn(format!(
         "saving suggested run order for {project} PBI #{pbi_id}: {} case(s)",
         file.cases.len()

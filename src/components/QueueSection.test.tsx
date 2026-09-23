@@ -1,7 +1,9 @@
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
@@ -648,6 +650,42 @@ test("a duplicate that appears after review still stops the write", async () => 
   fireEvent.click(go);
   expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
   expect(submits).toBe(0);
+});
+
+/// The upload succeeded but an order did not save: the backend says which
+/// in one sentence, and the screen shows it as it came.
+test("an order that could not be saved at upload is a warning toast", async () => {
+  const reason = "The spec order could not be set in Azure DevOps: TF400000: You cannot reorder this suite.";
+  const warn = vi.spyOn(toast, "warning");
+  try {
+    // `shouldMockEvents` connects the mock's `emit` to the screen's
+    // `listen`, so the event travels the real path; the listen/unlisten
+    // commands are left to the mock for the same reason.
+    mockIPC(
+      async (cmd) => {
+        if (cmd === "list_test_case_fields") return [];
+        if (cmd === "list_project_tags") return [];
+        if (cmd === "test_case_field_values") return [];
+        if (cmd === "pbi_test_cases") return [];
+        if (cmd === "submit_queue") {
+          await emit("run-order-not-saved", { reason });
+          return [{ index: 0, title: "Login works", action: "created", id: 900, error: null }];
+        }
+        return undefined;
+      },
+      { shouldMockEvents: true },
+    );
+    renderQueue([makeCase()]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+    const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+    await waitFor(() => expect(go).toBeEnabled());
+    fireEvent.click(go);
+
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(reason));
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 /// Unfolding steps (or diffs, or the editor) earns a sticky Collapse all

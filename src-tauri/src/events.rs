@@ -30,6 +30,14 @@ pub struct SuiteNotCreated {
     pub reason: String,
 }
 
+/// Emitted after an upload when the suite's spec order or the suggested
+/// run order could not be saved. The upload itself still succeeded; the
+/// reason says which order is missing and that Suite Management can set it.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct RunOrderNotSaved {
+    pub reason: String,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton.

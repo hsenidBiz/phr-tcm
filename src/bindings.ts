@@ -682,6 +682,7 @@ export const events = {
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
+	runOrderNotSaved: makeEvent<RunOrderNotSaved>("run-order-not-saved"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteNotCreated: makeEvent<SuiteNotCreated>("suite-not-created"),
@@ -1772,6 +1773,15 @@ export type RunOrderFile_Serialize = {
 	/**  RFC 3339, UTC, e.g. "2026-09-23T10:15:00Z". */
 	saved_at: string,
 	cases: RunOrderCase_Serialize[],
+};
+
+/**
+ *  Emitted after an upload when the suite's spec order or the suggested
+ *  run order could not be saved. The upload itself still succeeded; the
+ *  reason says which order is missing and that Suite Management can set it.
+ */
+export type RunOrderNotSaved = {
+	reason: string,
 };
 
 /**
