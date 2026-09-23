@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.23",
+    date: "2026-09-23",
+    items: [
+      "Security: the Work Manager now sends your Azure DevOps sign-in only to Azure DevOps itself, and only over https. A specially made image link in a work item could previously point it somewhere else.",
+      "A dropped connection, such as a VPN drop, no longer freezes an upload or sign-in until you restart the app. Every request now has a time limit, and large attachments such as screen recordings get more time. A sign-in you abandon in the browser now times out instead of leaving the Sign in button stuck.",
+      "If an upload batch fails part way, the app now asks Azure DevOps which cases it actually created before calling them failed, so trying again no longer makes duplicates. Cases it cannot confirm are held, and Upload waits until you use Check, or Release when Azure DevOps has more than one case with that title.",
+      "Shared Steps are kept. Editing a test case that uses them no longer removes them in Azure DevOps. They show as a locked row you can move or remove, and saving a case keeps the other steps' formatting and ids, so past step results stay attached.",
+      "Text you type in a step, such as <cycleId>, now shows in Azure DevOps exactly as you typed it.",
+      "Case files: a file saved with a byte order mark (as PowerShell saves it) keeps its specs and comments; a crash while saving can no longer cut a file short; AI transforms and bulk edits change only what they need to, so unfinished cases and your own field names survive; removing one of two cases with the same title removes the right one; and comments save on cases whose id is written as text.",
+      "Queue: edits to a file the app is following are never skipped; a case you typed by hand is never mixed up with a file's case of the same title; removing a single row now updates its file; a comment you clear stays cleared; and a comment written in the browser page reaches only its own row.",
+      "An open View in Browser page now updates when the queue or the file changes, keeps the sections you opened or closed, and never replaces a comment you are still saving.",
+      "Smaller fixes: an upload can no longer be started twice from a reopened screen, deletes and uploads slow down when Azure DevOps asks them to, the delete check uses the PBI's own area, the browser page fits narrow windows, and saved wiki pages no longer pile up on disk.",
+    ],
+  },
+  {
     version: "1.25.22",
     date: "2026-09-23",
     items: [
