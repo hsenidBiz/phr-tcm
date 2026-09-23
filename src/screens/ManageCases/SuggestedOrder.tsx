@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
-import { commands, type RunOrderCase } from "../../bindings";
+import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
@@ -9,7 +9,7 @@ import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { loadWatches } from "../../lib/fileSync";
 import { unwrap } from "../../lib/ipc";
-import { loadMyOrder, onMyOrderChanged, reconcile, type OrderKey } from "../../lib/runOrder";
+import { loadMyOrder, onMyOrderChanged, reconcile, runOrderPayload, type OrderKey } from "../../lib/runOrder";
 import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import { testerOrderSources } from "../../lib/testerOrderStart";
 import { noteFor, runOrderQueryOptions } from "../RunPanel/useRunOrder";
@@ -155,19 +155,19 @@ export default function SuggestedOrder({
   const dirty = savedCases == null || !sameOrder(order, savedCases);
 
   const save = useMutation({
-    mutationFn: () => {
-      // Each case keeps the group it had in the saved file; a case with no
-      // prior group (or no saved file at all) gets none. Started from a
-      // draft's tester order, the draft's areas come first - the groups an
-      // upload of that file would have written.
-      const groupOf = new Map(file?.cases.map((c) => [c.id, c.group]) ?? []);
-      const fileGroups = testerSourceFor(startFrom)?.groups;
-      const payload: RunOrderCase[] = order.map((c) => {
-        const group = fileGroups?.get(c.id) ?? groupOf.get(c.id);
-        return group ? { id: c.id, group } : { id: c.id };
-      });
-      return unwrap(commands.saveRunOrder(org, project, pbiId, payload));
-    },
+    mutationFn: () =>
+      unwrap(
+        commands.saveRunOrder(
+          org,
+          project,
+          pbiId,
+          runOrderPayload(
+            order.map((c) => c.id),
+            file?.cases ?? null,
+            testerSourceFor(startFrom)?.groups,
+          ),
+        ),
+      ),
     onSuccess: (newFile) => {
       setConfirming(false);
       toast.success("Suggested run order saved.");

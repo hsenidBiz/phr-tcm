@@ -5,6 +5,7 @@
 // the runner saves a new My order (design doc §5.2).
 
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { RunOrderCase } from "../bindings";
 
 export type OrderView = "suggested" | "spec" | "mine";
 export type OrderKey = { org: string; planId: number; suiteId: number };
@@ -73,6 +74,22 @@ export function resortUpcoming(
     result[pos] = sorted[i];
   });
   return result;
+}
+
+/** The cases a suggested run order is saved with, in `ids` order. A case's
+ * group is the started-from draft's area when the start was a tester-order
+ * file (`fileGroups`), else the group it had in the saved file (`saved`),
+ * else none - an empty group is never written (design doc §4.2). */
+export function runOrderPayload(
+  ids: readonly number[],
+  saved: readonly { id: number; group?: string | null }[] | null,
+  fileGroups?: ReadonlyMap<number, string>,
+): RunOrderCase[] {
+  const savedGroup = new Map(saved?.map((c) => [c.id, c.group]) ?? []);
+  return ids.map((id) => {
+    const group = fileGroups?.get(id) ?? savedGroup.get(id);
+    return group ? { id, group } : { id };
+  });
 }
 
 const orderKey = (k: OrderKey) => `tcm-v2-run-order:${k.org}/${k.planId}/${k.suiteId}`;

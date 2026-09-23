@@ -194,6 +194,15 @@ export function useRunOrder({
     () => specOrderOf(points, suiteCases.data?.map((c) => c.id)),
     [points, suiteCases.data],
   );
+  // The same cases with their titles, for the Execution order modal's list:
+  // a case is titled by its first point's name.
+  const specCases = useMemo<SuiteCase[]>(() => {
+    const titles = new Map<number, string>();
+    for (const p of points) {
+      if (p.test_case_id != null && !titles.has(p.test_case_id)) titles.set(p.test_case_id, p.test_case_name);
+    }
+    return specIds.map((id) => ({ id, title: titles.get(id) ?? `Test case ${id}` }));
+  }, [points, specIds]);
   const order = useMemo(() => {
     const chosen =
       view === "suggested" && file ? file.cases.map((c) => c.id) : view === "mine" && myOrder ? myOrder : specIds;
@@ -217,22 +226,26 @@ export function useRunOrder({
   // and what gets copied into My order.
   const displayOrder = useMemo(() => caseIdsOf(sections.flatMap((s) => s.pts)), [sections]);
 
-  const commit = (next: SuiteCase[]) => {
-    if (!key) return;
-    const ids = next.map((c) => c.id);
+  /** `ids` as My order on this machine, and My order as the list's order:
+   * the Execution order modal's Use this order on a list of the tester's
+   * own. False (after saying so) when storage dropped the save - switching
+   * to a My order that is not there would mislead. */
+  const saveMine = (ids: readonly number[]): boolean => {
+    if (!key) return false;
     saveMyOrder(key, ids);
-    // Read it back: with storage unavailable the save is silently dropped,
-    // and switching to a My order that is not there would mislead.
+    // Read it back: with storage unavailable the save is silently dropped.
     const saved = loadMyOrder(key);
     if (!saved || saved.length !== ids.length || saved.some((id, i) => id !== ids[i])) {
       toast.error("Your own order could not be saved on this machine.");
-      return;
+      return false;
     }
-    if (view !== "mine") {
-      saveOrderView(key, "mine");
-      toast.info("Now using your own order, on this machine.");
-    }
+    saveOrderView(key, "mine");
     bump();
+    return true;
+  };
+  const commit = (next: SuiteCase[]) => {
+    const wasMine = view === "mine";
+    if (saveMine(next.map((c) => c.id)) && !wasMine) toast.info("Now using your own order, on this machine.");
   };
   const asCases = (): SuiteCase[] => displayOrder.map((id) => ({ id, title: "" }));
 
@@ -294,7 +307,12 @@ export function useRunOrder({
     view,
     options,
     changeView,
+    saveMine,
     note,
+    file,
+    loading: runOrder.isLoading,
+    myOrder,
+    specCases,
     ordered,
     sections,
     displayOrder,

@@ -10,6 +10,7 @@ import {
   onMyOrderChanged,
   reconcile,
   resortUpcoming,
+  runOrderPayload,
   saveMyOrder,
   saveOrderView,
   type OrderKey,
@@ -156,4 +157,29 @@ test("emitMyOrderChanged never throws outside Tauri", () => {
 
 test("the event name is the one every window agrees on", () => {
   expect(MY_ORDER_EVENT).toBe("run-order:changed");
+});
+
+// --- runOrderPayload -------------------------------------------------------
+
+test("runOrderPayload: list order; a tester-order file's area first, then the saved file's group, else none", () => {
+  expect(
+    runOrderPayload(
+      [203, 201, 202, 204],
+      [{ id: 201, group: "Auth" }, { id: 202, group: "Old" }, { id: 203 }],
+      new Map([[203, "Auth / Lockout"]]),
+    ),
+  ).toEqual([
+    { id: 203, group: "Auth / Lockout" },
+    { id: 201, group: "Auth" },
+    { id: 202, group: "Old" },
+    { id: 204 },
+  ]);
+});
+
+test("runOrderPayload: no saved file and no tester-order file means no groups", () => {
+  expect(runOrderPayload([2, 1], null)).toEqual([{ id: 2 }, { id: 1 }]);
+});
+
+test("runOrderPayload: an empty or null group is not written", () => {
+  expect(runOrderPayload([1, 2], [{ id: 1, group: "" }, { id: 2, group: null }])).toEqual([{ id: 1 }, { id: 2 }]);
 });
