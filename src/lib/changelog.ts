@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.22",
+    date: "2026-09-23",
+    items: [
+      "The runner no longer has Run next. Next already moves past a case, and reordering the list in Run Tests sets the order you run in; the runner still follows that order as you change it.",
+    ],
+  },
+  {
     version: "1.25.21",
     date: "2026-09-23",
     items: [
