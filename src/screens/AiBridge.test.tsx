@@ -327,6 +327,55 @@ test("picking a preset fills and persists the connection", async () => {
   expect(stored.schema_filter).toBe("PeoplesHR");
 });
 
+const PRESETS = [
+  { label: "Dev — read only", connection_string: "Server=dev;Database=a;User Id=ro;" },
+  { label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" },
+];
+
+/// A server the app did not ship a preset for still needs a way in: picking
+/// "Your own database" clears the connection for typing, and once something
+/// is typed the picker keeps showing that choice rather than snapping back
+/// to blank.
+test("Your own database clears the connection for typing and stays selected for a hand-entered one", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_server_presets") return PRESETS;
+    if (cmd === "db_server_defaults") return null;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("Your own database"));
+  expect(screen.getByLabelText("Database host")).toHaveValue("");
+  expect(screen.getByLabelText("Database name")).toHaveValue("");
+  expect(screen.getByLabelText("Database host")).toHaveFocus();
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
+  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "Payroll" } });
+  fireEvent.change(screen.getByLabelText("Database user"), { target: { value: "reader" } });
+  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "s3cret" } });
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!);
+  expect(stored.connection_string).toContain("sql.example.local");
+  expect(stored.connection_string).toContain("Payroll");
+  expect(screen.getByLabelText("Default connections")).toHaveTextContent("Your own database");
+  expect(screen.getByText(/Not listed\? Choose "Your own database"/)).toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("a stored connection that matches no preset shows as Your own database", async () => {
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
+    exe_path: "", db_type: "mssql", schema_filter: "",
+    connection_string: "Server=sql.example.local;Database=Payroll;User Id=reader;Password=p;",
+  }));
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_server_presets") return PRESETS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByLabelText("Default connections")).toHaveTextContent("Your own database");
+  localStorage.clear();
+});
+
 /// Shipped defaults fill a NEVER-CONFIGURED form only: a fresh machine
 /// sees them, a machine with its own saved config keeps it, and nothing
 /// registers or persists from the prefill alone.

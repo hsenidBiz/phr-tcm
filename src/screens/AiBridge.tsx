@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
@@ -50,6 +50,10 @@ import {
  * state for each server this app can register. */
 const TCM_SERVER = "tcm-testcases";
 const DB_SERVER = "phr-db-mcp";
+
+/** The Combobox option for a server that is not one of the shipped
+ * presets - picked explicitly, it clears the connection for typing. */
+const OWN_DATABASE = "Your own database";
 
 /** Clipboard copies are fire-and-forget from the UI's perspective, but the
  * promise must always be handled - a bare `.then()` leaves rejected copies
@@ -200,6 +204,15 @@ export default function AiBridge() {
   const editConn = (patch: Partial<ConnFields>) =>
     editDb({ connection_string: buildConnString({ ...conn, ...patch }) });
   const [rawConn, setRawConn] = useState(() => !isRepresentable(db.connection_string));
+  // Picking "Your own database" clears the connection - the string is then
+  // empty, so nothing would otherwise tell the picker apart from its blank,
+  // never-configured state. This flag holds that pick until either a preset
+  // is chosen or a hand-entered string makes the value stick on its own.
+  const [ownPicked, setOwnPicked] = useState(false);
+  const hostInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ownPicked) hostInputRef.current?.focus();
+  }, [ownPicked]);
 
   // A warning back means the registration worked but the connection string
   // is somewhere git can carry it away (the file is already tracked, or the
@@ -643,37 +656,52 @@ export default function AiBridge() {
               like any edit. The trigger shows which preset the current
               string IS, or stays blank for a hand-rolled one. */}
           {(dbPresets.data?.length ?? 0) > 0 && (
-            <label className="block text-xs text-muted">
-              Default connections
-              <Combobox
-                ariaLabel="Default connections"
-                className="mt-1 w-full"
-                placeholder="Pick an environment…"
-                value={
-                  dbPresets.data!.find((p) => p.connection_string === db.connection_string)
-                    ?.label ?? ""
-                }
-                options={dbPresets.data!.map((p) => p.label)}
-                onChange={(label) => {
-                  const preset = dbPresets.data!.find((p) => p.label === label);
-                  if (preset) {
-                    const patch = {
-                      connection_string: preset.connection_string,
-                      db_type: "mssql",
-                      schema_filter: "PeoplesHR",
-                    };
-                    editDb(patch);
-                    setRawConn(!isRepresentable(preset.connection_string));
-                    // Push the new string into every config that carries
-                    // the server, so the file agrees with the form.
-                    const ids = installed
-                      .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
-                      .map((t) => t.id);
-                    if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
+            <>
+              <label className="block text-xs text-muted">
+                Default connections
+                <Combobox
+                  ariaLabel="Default connections"
+                  className="mt-1 w-full"
+                  placeholder="Pick an environment…"
+                  value={
+                    dbPresets.data!.find((p) => p.connection_string === db.connection_string)
+                      ?.label ??
+                    (ownPicked || db.connection_string.trim() ? OWN_DATABASE : "")
                   }
-                }}
-              />
-            </label>
+                  options={[...dbPresets.data!.map((p) => p.label), OWN_DATABASE]}
+                  onChange={(label) => {
+                    if (label === OWN_DATABASE) {
+                      setOwnPicked(true);
+                      editDb({ connection_string: "" });
+                      setRawConn(false);
+                      return;
+                    }
+                    const preset = dbPresets.data!.find((p) => p.label === label);
+                    if (preset) {
+                      setOwnPicked(false);
+                      const patch = {
+                        connection_string: preset.connection_string,
+                        db_type: "mssql",
+                        schema_filter: "PeoplesHR",
+                      };
+                      editDb(patch);
+                      setRawConn(!isRepresentable(preset.connection_string));
+                      // Push the new string into every config that carries
+                      // the server, so the file agrees with the form.
+                      const ids = installed
+                        .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
+                        .map((t) => t.id);
+                      if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
+                    }
+                  }}
+                />
+              </label>
+              <p className="text-xs text-faint">
+                Not listed? Choose &quot;Your own database&quot; and enter its server, database,
+                user and password below. Connections you enter yourself are read only unless the
+                user is a dev login.
+              </p>
+            </>
           )}
 
           <div className="space-y-2 rounded-md border border-border/60 p-2">
@@ -705,6 +733,7 @@ export default function AiBridge() {
                   <label className="min-w-0 flex-1 text-xs text-muted">
                     Server host
                     <Input
+                      ref={hostInputRef}
                       aria-label="Database host"
                       className="mt-1 w-full py-1.5 text-xs"
                       placeholder="phrx-db.internal"
