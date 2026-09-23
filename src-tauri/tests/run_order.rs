@@ -7,9 +7,10 @@ use v2_lib::ado::AdoClient;
 use v2_lib::model::TestCase;
 use v2_lib::run_order::{
     newest, order_after_upload, parse_run_order, spec_order_ids, tester_order_cases, with_rest, Landed,
-    RunOrderCase, RunOrderFile, RunOrderRead, RUN_ORDER_COMMENT, RUN_ORDER_FILE_NAME, RUN_ORDER_FORMAT,
-    RUN_ORDER_VERSION,
+    OrderHint, RunOrderCase, RunOrderFile, RunOrderRead, NOTE_SUITE_BEHIND, RUN_ORDER_COMMENT,
+    RUN_ORDER_FILE_NAME, RUN_ORDER_FORMAT, RUN_ORDER_VERSION,
 };
+use v2_lib::ado_testplan::{cached_suite, remember_suite, EnsuredSuite};
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -382,14 +383,14 @@ fn landed(index: usize, id: i32, created: bool) -> Landed {
 #[test]
 fn spec_order_ids_sorts_by_spec_order_when_every_landed_case_has_one() {
     let queue = vec![case_at(Some(3), None, ""), case_at(Some(1), None, ""), case_at(Some(2), None, "")];
-    let got = spec_order_ids(&[landed(0, 101, true), landed(1, 102, true), landed(2, 103, false)], &queue);
+    let got = spec_order_ids(&[landed(0, 101, true), landed(1, 102, true), landed(2, 103, false)], &queue, &[]);
     assert_eq!(got, vec![102, 103, 101]);
 }
 
 #[test]
 fn spec_order_ids_falls_back_to_file_order_when_one_is_missing() {
     let queue = vec![case_at(Some(3), None, ""), case_at(None, None, ""), case_at(Some(1), None, "")];
-    let got = spec_order_ids(&[landed(0, 101, true), landed(1, 102, true), landed(2, 103, true)], &queue);
+    let got = spec_order_ids(&[landed(0, 101, true), landed(1, 102, true), landed(2, 103, true)], &queue, &[]);
     assert_eq!(got, vec![101, 102, 103]);
 }
 
@@ -398,14 +399,14 @@ fn spec_order_ids_only_looks_at_the_cases_that_landed() {
     // Row 1 failed and has no spec_order; it is not in `landed`, so it
     // must not push the rest back to file order.
     let queue = vec![case_at(Some(2), None, ""), case_at(None, None, ""), case_at(Some(1), None, "")];
-    let got = spec_order_ids(&[landed(0, 101, true), landed(2, 103, true)], &queue);
+    let got = spec_order_ids(&[landed(0, 101, true), landed(2, 103, true)], &queue, &[]);
     assert_eq!(got, vec![103, 101]);
 }
 
 #[test]
 fn tester_order_cases_is_none_when_any_landed_case_lacks_one() {
     let queue = vec![case_at(None, Some(1), ""), case_at(None, None, "")];
-    assert!(tester_order_cases(&[landed(0, 101, true), landed(1, 102, true)], &queue).is_none());
+    assert!(tester_order_cases(&[landed(0, 101, true), landed(1, 102, true)], &queue, &[]).is_none());
 }
 
 #[test]
@@ -415,7 +416,7 @@ fn tester_order_cases_sorts_and_takes_groups_from_the_area() {
         case_at(None, Some(1), ""),
         case_at(None, Some(3), "Events / Delete"),
     ];
-    let got = tester_order_cases(&[landed(0, 101, true), landed(1, 102, false), landed(2, 103, true)], &queue).unwrap();
+    let got = tester_order_cases(&[landed(0, 101, true), landed(1, 102, false), landed(2, 103, true)], &queue, &[]).unwrap();
     assert_eq!(
         got,
         vec![
@@ -571,7 +572,7 @@ async fn an_upload_that_created_cases_puts_them_in_spec_order_then_the_rest() {
     let notes = order_after_upload(
         &client, "acme", "Web", 42, 77,
         &[landed(0, 101, true), landed(1, 102, true), landed(2, 103, false)],
-        &queue, "me@example.com", Duration::ZERO,
+        &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert!(notes.is_empty(), "{notes:?}");
@@ -592,7 +593,7 @@ async fn an_update_only_upload_sends_nothing() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let queue = vec![case_at(Some(1), Some(1), "")];
     let notes = order_after_upload(
-        &client, "acme", "Web", 42, 77, &[landed(0, 101, false)], &queue, "me@example.com", Duration::ZERO,
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, false)], &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert!(notes.is_empty(), "{notes:?}");
@@ -609,7 +610,7 @@ async fn tester_order_saves_the_suggested_run_order_after_the_suite_order() {
     let notes = order_after_upload(
         &client, "acme", "Web", 42, 77,
         &[landed(0, 101, true), landed(1, 102, true)],
-        &queue, "me@example.com", Duration::ZERO,
+        &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert!(notes.is_empty(), "{notes:?}");
@@ -655,7 +656,7 @@ async fn a_refused_reorder_is_a_note_and_no_run_order_file() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let queue = vec![case_at(Some(1), Some(1), "")];
     let notes = order_after_upload(
-        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &queue, "me@example.com", Duration::ZERO,
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert_eq!(notes.len(), 1, "{notes:?}");
@@ -677,7 +678,7 @@ async fn a_refused_run_order_save_is_a_note_after_the_suite_was_ordered() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let queue = vec![case_at(Some(1), Some(1), "")];
     let notes = order_after_upload(
-        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &queue, "me@example.com", Duration::ZERO,
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert_eq!(notes.len(), 1, "{notes:?}");
@@ -695,7 +696,7 @@ async fn a_suite_that_never_caught_up_is_ordered_for_what_it_has_and_says_so() {
     let notes = order_after_upload(
         &client, "acme", "Web", 42, 77,
         &[landed(0, 101, true), landed(1, 102, true)],
-        &queue, "me@example.com", Duration::ZERO,
+        &queue, &[], "me@example.com", Duration::ZERO,
     )
     .await;
     assert_eq!(
@@ -704,4 +705,186 @@ async fn a_suite_that_never_caught_up_is_ordered_for_what_it_has_and_says_so() {
     );
     let patch = body_of(&server, wiremock::http::Method::PATCH, SUITE_PATH).await.expect("a reorder PATCH");
     assert_eq!(patched_ids(&patch), vec![101, 50]);
+}
+
+// ── unchanged rows keep their place (fix round 1) ────────────────────────
+
+fn hint(index: u32, id: i32, spec: Option<u32>, tester: Option<u32>, area: &str) -> OrderHint {
+    OrderHint { index, id, spec_order: spec, tester_order: tester, area: area.into() }
+}
+
+#[test]
+fn hints_merge_into_file_order_by_their_place_in_the_queue() {
+    // On screen: [unchanged 10, new 101, unchanged 12]. Only the new case
+    // was sent, so the sent queue is just it, at sent index 0.
+    let sent = vec![case_at(Some(2), None, "")];
+    let hints = [hint(0, 10, Some(3), None, ""), hint(2, 12, Some(1), None, "")];
+    assert_eq!(spec_order_ids(&[landed(0, 101, true)], &sent, &hints), vec![12, 101, 10]);
+
+    // One spec_order missing anywhere - here on a hint - means file order
+    // across the sent AND the hinted rows.
+    let hints = [hint(0, 10, Some(3), None, ""), hint(2, 12, None, None, "")];
+    assert_eq!(spec_order_ids(&[landed(0, 101, true)], &sent, &hints), vec![10, 101, 12]);
+}
+
+#[test]
+fn a_hint_without_a_tester_order_means_no_suggested_order() {
+    let sent = vec![case_at(None, Some(1), "")];
+    let hints = [hint(1, 12, None, None, "")];
+    assert!(tester_order_cases(&[landed(0, 101, true)], &sent, &hints).is_none());
+}
+
+#[test]
+fn a_hint_carries_its_group_into_the_suggested_order() {
+    let sent = vec![case_at(None, Some(1), "")];
+    let hints = [hint(1, 12, None, Some(2), "Events")];
+    assert_eq!(
+        tester_order_cases(&[landed(0, 101, true)], &sent, &hints).unwrap(),
+        vec![RunOrderCase { id: 101, group: None }, RunOrderCase { id: 12, group: Some("Events".into()) }]
+    );
+}
+
+#[test]
+fn with_rest_drops_repeats_within_first() {
+    let first = vec![
+        RunOrderCase { id: 101, group: Some("A".into()) },
+        RunOrderCase { id: 102, group: None },
+        RunOrderCase { id: 101, group: Some("B".into()) },
+    ];
+    assert_eq!(
+        with_rest(first, &[102, 50]),
+        vec![
+            RunOrderCase { id: 101, group: Some("A".into()) },
+            RunOrderCase { id: 102, group: None },
+            RunOrderCase { id: 50, group: None },
+        ]
+    );
+}
+
+async fn uploaded_file(server: &MockServer) -> RunOrderFile {
+    let upload = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method == wiremock::http::Method::POST && r.url.path() == "/acme/Web/_apis/wit/attachments")
+        .expect("the run-order file was uploaded");
+    serde_json::from_slice(&upload.body).unwrap()
+}
+
+#[tokio::test]
+async fn a_new_case_between_unchanged_ones_is_ordered_between_them() {
+    let server = unshared_server().await;
+    // The new case arrived at the end of the suite, as Azure DevOps adds it.
+    mount_suite(&server, &[10, 12, 50, 101], &[10, 101, 12, 50]).await;
+    mount_run_order_save(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let sent = vec![case_at(Some(2), Some(2), "")];
+    let hints = [hint(0, 10, Some(1), Some(1), "A"), hint(2, 12, Some(3), Some(3), "")];
+    let notes = order_after_upload(
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &sent, &hints, "me@example.com", Duration::ZERO,
+    )
+    .await;
+    assert!(notes.is_empty(), "{notes:?}");
+
+    let patch = body_of(&server, wiremock::http::Method::PATCH, SUITE_PATH).await.expect("a reorder PATCH");
+    assert_eq!(patched_ids(&patch), vec![10, 101, 12, 50], "not at the top: between its neighbours");
+    assert_eq!(
+        uploaded_file(&server).await.cases,
+        vec![
+            RunOrderCase { id: 10, group: Some("A".into()) },
+            RunOrderCase { id: 101, group: None },
+            RunOrderCase { id: 12, group: None },
+            RunOrderCase { id: 50, group: None },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn hints_alone_never_start_an_ordering() {
+    let server = unshared_server().await;
+    mount_suite(&server, &[10, 101], &[10, 101]).await;
+    mount_run_order_save(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let sent = vec![case_at(Some(2), Some(2), "")];
+    let hints = [hint(0, 10, Some(1), Some(1), "")];
+    let notes = order_after_upload(
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, false)], &sent, &hints, "me@example.com", Duration::ZERO,
+    )
+    .await;
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!(server.received_requests().await.unwrap().is_empty(), "no created case: nothing is sent");
+}
+
+#[tokio::test]
+async fn the_file_lists_only_the_suites_cases_and_this_uploads_new_ones() {
+    let server = unshared_server().await;
+    // 900 (updated) and 901 (unchanged) live in some other suite; 101 was
+    // created here but the suite has not caught up with it yet.
+    mount_suite(&server, &[50], &[50]).await;
+    mount_run_order_save(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let sent = vec![case_at(None, Some(1), ""), case_at(None, Some(2), "")];
+    let hints = [hint(2, 901, None, Some(3), "")];
+    let notes = order_after_upload(
+        &client, "acme", "Web", 42, 77,
+        &[landed(0, 900, false), landed(1, 101, true)],
+        &sent, &hints, "me@example.com", Duration::ZERO,
+    )
+    .await;
+    assert_eq!(notes, vec![NOTE_SUITE_BEHIND.to_string()]);
+    assert_eq!(
+        uploaded_file(&server).await.cases,
+        vec![RunOrderCase { id: 101, group: None }, RunOrderCase { id: 50, group: None }]
+    );
+}
+
+fn cached(server: &MockServer) -> EnsuredSuite {
+    let s = EnsuredSuite { plan_id: 9, plan_name: "Web - Test Plan".into(), suite_id: 77, created_plan: false };
+    remember_suite(&server.uri(), "acme", "Web", 42, &s);
+    s
+}
+
+#[tokio::test]
+async fn a_failed_suite_read_is_one_note_and_nothing_written() {
+    let server = unshared_server().await;
+    let suite = cached(&server);
+    Mock::given(method("GET"))
+        .and(path(SUITE_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("TF246017: The server is busy."))
+        .mount(&server)
+        .await;
+    mount_run_order_save(&server).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let notes = order_after_upload(
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &[case_at(Some(1), Some(1), "")], &[],
+        "me@example.com", Duration::ZERO,
+    )
+    .await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("The spec order could not be set in Azure DevOps: "), "{}", notes[0]);
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests.iter().all(|r| r.method == wiremock::http::Method::GET), "no PATCH, no POST");
+    // A server error says nothing about the suite existing: keep it.
+    assert_eq!(cached_suite(&server.uri(), "acme", "Web", 42), Some(suite));
+}
+
+#[tokio::test]
+async fn a_deleted_suite_is_forgotten_so_the_next_upload_resolves_it_again() {
+    let server = unshared_server().await;
+    cached(&server);
+    Mock::given(method("GET"))
+        .and(path(SUITE_PATH))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let notes = order_after_upload(
+        &client, "acme", "Web", 42, 77, &[landed(0, 101, true)], &[case_at(Some(1), None, "")], &[],
+        "me@example.com", Duration::ZERO,
+    )
+    .await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("The spec order could not be set in Azure DevOps: "), "{}", notes[0]);
+    assert!(cached_suite(&server.uri(), "acme", "Web", 42).is_none());
 }

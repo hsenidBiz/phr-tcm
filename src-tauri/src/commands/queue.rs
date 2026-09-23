@@ -637,6 +637,9 @@ pub async fn submit_queue(
     preconditions_ref: Option<String>,
     area_path: Option<String>,
     iteration_path: Option<String>,
+    // The rows the screen left out as unchanged, with where each sat, so
+    // the order set after the upload still counts them. Ordering only.
+    order_hint: Vec<crate::run_order::OrderHint>,
 ) -> Result<Vec<SubmitItemResult>, String> {
     // One submit at a time. A second call would run a second loop over the
     // same queue, and two loops create every case twice; this tool only
@@ -1008,6 +1011,7 @@ pub async fn submit_queue(
                         suite.suite_id,
                         &landed,
                         &queue,
+                        &order_hint,
                         &saved_by,
                         crate::run_order::SETTLE_DELAY,
                     )

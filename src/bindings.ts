@@ -44,7 +44,7 @@ export const commands = {
 	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
 	 *  patched in place. A failed item never aborts the rest.
 	 */
-	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath })),
+	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null, orderHint: OrderHint[]) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath, orderHint })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -1371,6 +1371,28 @@ export type NewWorkItem = {
 	priority: number | null,
 	description: string | null,
 	parent_id: number | null,
+};
+
+/**
+ *  A queue row the screen left out of the upload because it had nothing
+ *  to write, but which is an existing case and still holds its place in
+ *  the file. Without it, re-uploading a whole file with one new case sends
+ *  only that case, and the new case is ordered as if it were the only one
+ *  - to the top of the suite, whatever its spec_order. Used for ordering
+ *  only: a hint never becomes a result and never starts an ordering on its
+ *  own.
+ */
+export type OrderHint = {
+	/**
+	 *  Where the row sat in the queue on screen, BEFORE the unchanged rows
+	 *  were taken out. The rows that were sent fill the other positions,
+	 *  in their sent order.
+	 */
+	index: number,
+	id: number,
+	spec_order: number | null,
+	tester_order: number | null,
+	area: string,
 };
 
 export type Org = {

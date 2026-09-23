@@ -652,6 +652,61 @@ test("a duplicate that appears after review still stops the write", async () => 
   expect(submits).toBe(0);
 });
 
+/// Unchanged rows are not sent, but they still hold their place in the
+/// file: the order set after the upload needs them, or one new case in a
+/// re-uploaded file lands at the top of the suite. Each goes as a hint
+/// with its place on screen before the filter.
+test("unchanged rows go to the upload as order hints, with their place in the queue", async () => {
+  let call: { queue: TestCase[]; orderHint: unknown } | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") {
+      // What Azure DevOps holds for both updates: identical to the queue.
+      const base = {
+        title: "Login works",
+        tags: "smoke",
+        automation_status: "Not Automated",
+        steps: [{ action: "Open page", expected: "Page shown" }],
+        step_ids: ["2"],
+        module_value: "",
+        preconditions: "",
+      };
+      return [
+        { id: 201, ...base },
+        { id: 202, ...base },
+      ];
+    }
+    if (cmd === "submit_queue") {
+      call = args as { queue: TestCase[]; orderHint: unknown };
+      return [{ index: 0, title: "Brand new", action: "created", id: 900, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([
+    makeCase({ update_id: 201, spec_order: 1, tester_order: 2, area: "Login" }),
+    makeCase({ title: "Brand new", spec_order: 2, tester_order: 1 }),
+    makeCase({ update_id: 202, spec_order: 3, tester_order: 3 }),
+  ]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 3 test cases/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(call).not.toBeNull());
+  const sent = call as unknown as { queue: TestCase[]; orderHint: unknown };
+  expect(sent.queue.map((c) => c.title)).toEqual(["Brand new"]);
+  expect(sent.orderHint).toEqual([
+    { index: 0, id: 201, spec_order: 1, tester_order: 2, area: "Login" },
+    { index: 2, id: 202, spec_order: 3, tester_order: 3, area: "" },
+  ]);
+});
+
 /// The upload succeeded but an order did not save: the backend says which
 /// in one sentence, and the screen shows it as it came.
 test("an order that could not be saved at upload is a warning toast", async () => {

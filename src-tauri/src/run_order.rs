@@ -116,7 +116,8 @@ pub const SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(8
 pub const NOTE_SUITE_BEHIND: &str = "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.";
 
 /// The queue indexes and work item ids that landed (created or updated) in
-/// this upload, in queue order. Built by submit_queue from its results.
+/// this upload, in queue order. Built by submit_queue from its results, so
+/// `index` points into the SENT queue.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Landed {
     pub index: usize,
@@ -124,49 +125,121 @@ pub struct Landed {
     pub created: bool,
 }
 
-/// Spec order for the landed cases: by spec_order when EVERY landed case has
-/// one, else queue (file) order. All or nothing because a partial order has
-/// no right place for the cases without one - file order at least is the
-/// order someone chose.
-pub fn spec_order_ids(landed: &[Landed], queue: &[crate::model::TestCase]) -> Vec<i32> {
-    let mut rows: Vec<&Landed> = landed.iter().collect();
-    rows.sort_by_key(|l| l.index);
-    let keys: Option<Vec<u32>> = rows.iter().map(|l| queue.get(l.index).and_then(|tc| tc.spec_order)).collect();
-    if let Some(keys) = keys {
-        let mut keyed: Vec<(u32, &Landed)> = keys.into_iter().zip(rows).collect();
-        // Stable: two cases sharing a spec_order keep their file order.
-        keyed.sort_by_key(|(k, _)| *k);
-        return keyed.into_iter().map(|(_, l)| l.id).collect();
-    }
-    rows.into_iter().map(|l| l.id).collect()
+/// A queue row the screen left out of the upload because it had nothing
+/// to write, but which is an existing case and still holds its place in
+/// the file. Without it, re-uploading a whole file with one new case sends
+/// only that case, and the new case is ordered as if it were the only one
+/// - to the top of the suite, whatever its spec_order. Used for ordering
+/// only: a hint never becomes a result and never starts an ordering on its
+/// own.
+#[derive(Debug, Clone, PartialEq, Deserialize, specta::Type)]
+pub struct OrderHint {
+    /// Where the row sat in the queue on screen, BEFORE the unchanged rows
+    /// were taken out. The rows that were sent fill the other positions,
+    /// in their sent order.
+    pub index: u32,
+    pub id: i32,
+    pub spec_order: Option<u32>,
+    pub tester_order: Option<u32>,
+    pub area: String,
 }
 
-/// The suggested order's first part: the landed cases by tester_order, each
-/// with group = its area when non-empty. None unless EVERY landed case has a
-/// tester_order - a file without one means "no suggestion", and Run Tests
-/// then uses spec order (design §4.2).
-pub fn tester_order_cases(landed: &[Landed], queue: &[crate::model::TestCase]) -> Option<Vec<RunOrderCase>> {
-    let mut rows: Vec<(u32, &Landed, &crate::model::TestCase)> = landed
-        .iter()
-        .map(|l| {
-            let tc = queue.get(l.index)?;
-            Some((tc.tester_order?, l, tc))
-        })
-        .collect::<Option<_>>()?;
-    rows.sort_by_key(|(order, l, _)| (*order, l.index));
+/// One uploaded-or-unchanged case in file order, with what ordering needs.
+struct OrderRow {
+    id: i32,
+    spec_order: Option<u32>,
+    tester_order: Option<u32>,
+    area: String,
+}
+
+/// The landed cases and the hinted ones together, in the file's order.
+/// The sent queue and the hints are two halves of one queue: a hint takes
+/// the position it names and the sent rows fill the gaps in order, so the
+/// merge needs no index into the original queue for the sent rows. A sent
+/// row that did not land (failed) still takes its position, it just has
+/// nothing to order. A hint whose position is past the end goes last.
+fn order_rows(landed: &[Landed], queue: &[crate::model::TestCase], hints: &[OrderHint]) -> Vec<OrderRow> {
+    let mut hs: Vec<&OrderHint> = hints.iter().collect();
+    hs.sort_by_key(|h| h.index);
+    let by_sent: std::collections::HashMap<usize, &Landed> = landed.iter().map(|l| (l.index, l)).collect();
+    let (mut h, mut sent, mut pos) = (0usize, 0usize, 0usize);
+    let mut rows = Vec::with_capacity(landed.len() + hints.len());
+    loop {
+        if h < hs.len() && (hs[h].index as usize <= pos || sent >= queue.len()) {
+            let hint = hs[h];
+            rows.push(OrderRow {
+                id: hint.id,
+                spec_order: hint.spec_order,
+                tester_order: hint.tester_order,
+                area: hint.area.clone(),
+            });
+            h += 1;
+        } else if sent < queue.len() {
+            if let Some(l) = by_sent.get(&sent) {
+                let tc = &queue[sent];
+                rows.push(OrderRow {
+                    id: l.id,
+                    spec_order: tc.spec_order,
+                    tester_order: tc.tester_order,
+                    area: tc.area.clone(),
+                });
+            }
+            sent += 1;
+        } else {
+            break;
+        }
+        pos += 1;
+    }
+    rows
+}
+
+/// Spec order for the landed and hinted cases: by spec_order when EVERY one
+/// of them has one, else file order. All or nothing because a partial order
+/// has no right place for the cases without one - file order at least is
+/// the order someone chose.
+pub fn spec_order_ids(landed: &[Landed], queue: &[crate::model::TestCase], hints: &[OrderHint]) -> Vec<i32> {
+    let mut rows = order_rows(landed, queue, hints);
+    if rows.iter().all(|r| r.spec_order.is_some()) {
+        // Stable: two cases sharing a spec_order keep their file order.
+        rows.sort_by_key(|r| r.spec_order);
+    }
+    rows.into_iter().map(|r| r.id).collect()
+}
+
+/// The suggested order's first part: the landed and hinted cases by
+/// tester_order, each with group = its area when non-empty. None unless
+/// EVERY one of them has a tester_order - a file without one means "no
+/// suggestion", and Run Tests then uses spec order (design §4.2).
+pub fn tester_order_cases(
+    landed: &[Landed],
+    queue: &[crate::model::TestCase],
+    hints: &[OrderHint],
+) -> Option<Vec<RunOrderCase>> {
+    let mut rows = order_rows(landed, queue, hints);
+    if !rows.iter().all(|r| r.tester_order.is_some()) {
+        return None;
+    }
+    // Stable, so a shared tester_order keeps file order.
+    rows.sort_by_key(|r| r.tester_order);
     Some(
         rows.into_iter()
-            .map(|(_, l, tc)| RunOrderCase {
-                id: l.id,
-                group: (!tc.area.trim().is_empty()).then(|| tc.area.clone()),
+            .map(|r| RunOrderCase {
+                id: r.id,
+                group: (!r.area.trim().is_empty()).then_some(r.area),
             })
             .collect(),
     )
 }
 
-/// `first`, then every id of `suite_order` not already in it, in suite order.
+/// `first` without repeats (the first place an id appears wins), then every
+/// id of `suite_order` not already in it, in suite order.
 pub fn with_rest(first: Vec<RunOrderCase>, suite_order: &[i32]) -> Vec<RunOrderCase> {
-    let mut out = first;
+    let mut out: Vec<RunOrderCase> = Vec::with_capacity(first.len() + suite_order.len());
+    for c in first {
+        if !out.iter().any(|o| o.id == c.id) {
+            out.push(c);
+        }
+    }
     for id in suite_order {
         if !out.iter().any(|c| c.id == *id) {
             out.push(RunOrderCase { id: *id, group: None });
@@ -191,6 +264,7 @@ pub async fn order_after_upload(
     suite_id: i32,
     landed: &[Landed],
     queue: &[crate::model::TestCase],
+    hints: &[OrderHint],
     saved_by: &str,
     settle_delay: std::time::Duration,
 ) -> Vec<String> {
@@ -199,11 +273,12 @@ pub async fn order_after_upload(
     if created.is_empty() {
         return notes;
     }
-    let ids = spec_order_ids(landed, queue);
+    let ids = spec_order_ids(landed, queue, hints);
     crate::applog::info(format!(
-        "ordering suite {suite_id} for #{pbi_id}: {} uploaded case(s), {} created, spec order {ids:?}",
-        ids.len(),
-        created.len()
+        "ordering suite {suite_id} for #{pbi_id}: {} uploaded case(s), {} created, {} unchanged, spec order {ids:?}",
+        landed.len(),
+        created.len(),
+        hints.len()
     ));
 
     // The requirement suite fills itself from the Tested-By links, on
@@ -216,6 +291,13 @@ pub async fn order_after_upload(
         Ok(ids) => ids,
         Err(e) => {
             crate::applog::warn(format!("could not read suite {suite_id} to order it: {e}"));
+            // A 404 is a suite deleted in Azure DevOps since it was
+            // cached. Forget it, so the next upload resolves the PBI's
+            // suite again instead of ordering a suite that is gone.
+            if matches!(e, AdoError::NotFound) {
+                crate::applog::warn(format!("suite {suite_id} for #{pbi_id} is gone - forgetting the cached suite"));
+                crate::ado_testplan::forget_suite(&client.base_url, org, project, pbi_id);
+            }
             notes.push(format!("The spec order could not be set in Azure DevOps: {}", e.user_text()));
             return notes;
         }
@@ -242,10 +324,22 @@ pub async fn order_after_upload(
         notes.push(NOTE_SUITE_BEHIND.to_string());
     }
 
-    let Some(first) = tester_order_cases(landed, queue) else {
+    let Some(mut first) = tester_order_cases(landed, queue, hints) else {
         crate::applog::info(format!("no tester order in the upload for #{pbi_id} - no suggested run order saved"));
         return notes;
     };
+    // The file lists the suite's cases. An updated or unchanged case the
+    // file names may live in another PBI's suite; it has no place in this
+    // one's run order. A case created here stays even if the suite has not
+    // caught up with it yet - it will be there.
+    let before = first.len();
+    first.retain(|c| created.contains(&c.id) || settled.contains(&c.id) || suite_order.contains(&c.id));
+    if first.len() < before {
+        crate::applog::info(format!(
+            "{} case(s) in the upload are not in suite {suite_id} - left out of the run order",
+            before - first.len()
+        ));
+    }
     let file = new_file(saved_by.to_string(), with_rest(first, &suite_order));
     match client.save_run_order(org, project, pbi_id, &file).await {
         Ok(()) => crate::applog::info(format!(

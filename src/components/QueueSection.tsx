@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
-import { commands, events, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
+import { commands, events, type OrderHint, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useOnScreen } from "../hooks/useOnScreen";
 import { diffCase, type CaseDiff } from "../lib/caseDiff";
@@ -561,6 +561,23 @@ export default function QueueSection({
       // stamping key off it.
       const toSend = queue.filter((tc) => !noopNow(tc));
       const skipped = queue.filter((tc) => noopNow(tc)).length;
+      // The rows left out still hold their place in the file. The order
+      // set after the upload needs them, or one new case in a re-uploaded
+      // file is ordered as if it were the only one - to the top of the
+      // suite. `index` is the row's place on screen before the filter.
+      const orderHint: OrderHint[] = queue.flatMap((tc, index) =>
+        tc.update_id != null && noopNow(tc)
+          ? [
+              {
+                index,
+                id: tc.update_id,
+                spec_order: tc.spec_order ?? null,
+                tester_order: tc.tester_order ?? null,
+                area: tc.area ?? "",
+              },
+            ]
+          : [],
+      );
       if (toSend.length === 0) {
         return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
       }
@@ -614,6 +631,7 @@ export default function QueueSection({
           // was never wanted, so null (= inherit) is now the only value.
           null,
           null,
+          orderHint,
         );
         if (r.status === "error") throw new Error(r.error);
         // The outcome is applied HERE, inside the promise, not in
