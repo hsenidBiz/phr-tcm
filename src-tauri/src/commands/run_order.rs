@@ -1,6 +1,6 @@
 //! Reading and saving a PBI's suggested run order (`tcm-run-order.json`).
-//! Shared/suggested orders are written only from Suite Management (task 4)
-//! and at upload (task 2/3); these two commands are the low-level read and
+//! Shared/suggested orders are written only from Suite Management (task 6)
+//! and at upload (task 2); these two commands are the low-level read and
 //! write both of those, and Run Tests' fallback read, sit on.
 
 use tauri::Manager;

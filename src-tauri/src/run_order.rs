@@ -420,6 +420,15 @@ impl AdoClient {
     /// the PBI changed since the read just above, so a concurrent save
     /// can never remove the wrong relation - same guard `revoke_share`
     /// uses for the same reason.
+    ///
+    /// Design doc §6 describes two simultaneous saves as "the later one
+    /// wins" - in practice, the second save's `/rev` guard fails against
+    /// the PBI the first save's PATCH already changed, so it surfaces
+    /// Azure DevOps' own error (a stale-rev conflict) instead of quietly
+    /// overwriting. Both leave "saved by / when" pointing at whichever
+    /// save actually landed, so the visible outcome the design doc cares
+    /// about still holds - the second saver just sees a failure and
+    /// retries, rather than winning silently.
     pub async fn save_run_order(&self, org: &str, project: &str, pbi_id: i32, file: &RunOrderFile) -> Result<(), AdoError> {
         let body = serde_json::to_string(file)
             .map_err(|e| AdoError::Network(format!("could not encode the run-order file: {e}")))?;
