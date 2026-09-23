@@ -1,4 +1,3 @@
-import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
