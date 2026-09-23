@@ -13,6 +13,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.17",
+    date: "2026-09-23",
+    items: [
+      "Faster start: the window now appears the moment you launch the app, showing the loading screen, instead of staying invisible until everything had loaded. The app also loads about half as much at startup; each tab loads the first time you open it.",
+      "Clicking a notification now opens it inside the app: a work item opens on the Board with its details showing, and a pull request opens on Pull Requests with its row expanded and highlighted. If it belongs to another project, the app switches project first. The small link button beside it still opens Azure DevOps.",
+      "Search Suites: a requirement suite's More menu has Use as current PBI, which makes its PBI the one you are working on without leaving the tab.",
+      "View in Browser: bookmark the test case where your review stopped, and Go to bookmark takes you back to it, even after a reload. The bookmark stays in that browser only. The page's buttons are now under one Options menu.",
+      "View in Browser: the search can be narrowed to one field (title, ID, prerequisites, steps, tags or module).",
+      "View in Browser: following a Spec link in a reviewer note now scrolls only the spec pane, so the test cases and the page title stay where they were.",
+      "AI Bridge: an assistant can look up tables and run queries on the chosen company database. Reading has its own switch, and creating, updating or deleting has a separate switch that is off by default and only available on the dev login connection. Every statement is checked before it runs, and each one is recorded in Settings → Logs without the password.",
+      "The writing guide asks assistants for edge cases a tester can actually run (for example, opening a page without signing in) and to put the names of buttons, pages and fields in quotation marks.",
+      "The tour now shows Suite Management and the review-and-upload part of the queue, and asks you to open Settings to pick a theme, then shows you around there.",
+      "Fixed: the PBI kept glowing after an upload that mixed new and updated test cases.",
+    ],
+  },
+  {
     version: "1.25.16",
     date: "2026-09-22",
     items: [
