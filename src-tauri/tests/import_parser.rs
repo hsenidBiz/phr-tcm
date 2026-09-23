@@ -1077,7 +1077,7 @@ fn the_review_page_folds_its_controls_into_one_menu() {
     use v2_lib::spec_pane::SpecDoc;
     let queue = vec![TestCase {
         title: "Login".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         area: "Reports".into(),
         reviewer_notes: "Spec: Rules.md 1.1".into(),
         findings: vec![CaseFinding {
@@ -1147,6 +1147,8 @@ fn the_review_page_folds_its_controls_into_one_menu() {
         port: 4711,
         token: "secret".into(),
         owners: vec![String::new()],
+        keys: vec![],
+        pbi_id: 42,
         files: vec![],
     };
     let path2 = tmp_path("options-menu-draft.html");
@@ -1182,7 +1184,7 @@ fn pbi_scope_hashes_a_subtitle_that_is_not_a_pbi_number() {
     use v2_lib::import_parser::{export_queue_page, CommentCtx, NoteCtx};
     let queue = vec![TestCase {
         title: "Login".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         update_id: Some(1),
         ..Default::default()
     }];
@@ -1243,7 +1245,7 @@ fn draft_scope_from_files_is_stable_and_distinct() {
     use v2_lib::import_parser::{export_queue_page, CommentCtx, DraftFile, DraftNoteCtx};
     let queue = vec![TestCase {
         title: "Login".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         ..Default::default()
     }];
     let file = |path: &str, comment: &str| DraftFile {
@@ -1257,6 +1259,8 @@ fn draft_scope_from_files_is_stable_and_distinct() {
         port: 4711,
         token: "secret".into(),
         owners: vec![String::new()],
+        keys: vec![],
+        pbi_id: 42,
         files: vec![file("C:/work/cases-1.json", "")],
     };
     let path_a = tmp_path("scope-draft-files-a.html");
@@ -1279,6 +1283,8 @@ fn draft_scope_from_files_is_stable_and_distinct() {
         port: 4711,
         token: "secret".into(),
         owners: vec![String::new()],
+        keys: vec![],
+        pbi_id: 42,
         files: vec![file("C:/work/cases-1.json", "a comment added after the fact")],
     };
     let path_b = tmp_path("scope-draft-files-b.html");
@@ -1299,6 +1305,8 @@ fn draft_scope_from_files_is_stable_and_distinct() {
         port: 4711,
         token: "secret".into(),
         owners: vec![String::new()],
+        keys: vec![],
+        pbi_id: 42,
         files: vec![file("C:/work/cases-2.json", "")],
     };
     let path_c = tmp_path("scope-draft-files-c.html");
@@ -1331,12 +1339,12 @@ fn every_case_carries_its_key() {
     let queue = vec![
         TestCase {
             title: "Draft, no id yet".into(),
-            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
             ..Default::default()
         },
         TestCase {
             title: "An existing work item".into(),
-            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
             update_id: Some(157_957),
             ..Default::default()
         },
@@ -1345,6 +1353,8 @@ fn every_case_carries_its_key() {
         port: 4711,
         token: "secret".into(),
         owners: vec![String::new(), String::new()],
+        keys: vec![],
+        pbi_id: 42,
         files: vec![],
     };
     let path = tmp_path("case-keys.html");
@@ -1373,12 +1383,12 @@ fn each_case_has_a_bookmark_button_and_the_bar_a_go_to() {
     let queue = vec![
         TestCase {
             title: "One".into(),
-            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
             ..Default::default()
         },
         TestCase {
             title: "Two".into(),
-            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
             ..Default::default()
         },
     ];

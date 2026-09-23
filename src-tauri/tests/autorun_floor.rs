@@ -174,9 +174,9 @@ fn output_is_sorted_by_step_number_with_no_duplicates() {
 #[test]
 fn expected_of_trims_and_keeps_position_including_empty_ones() {
     let steps = vec![
-        Step { action: "Open the page".to_string(), expected: "  A toast says Saved  ".to_string() },
-        Step { action: "Click save".to_string(), expected: "".to_string() },
-        Step { action: "Reload".to_string(), expected: "\tThe row is gone\n".to_string() },
+        Step { action: "Open the page".to_string(), expected: "  A toast says Saved  ".to_string(), shared: None },
+        Step { action: "Click save".to_string(), expected: "".to_string(), shared: None },
+        Step { action: "Reload".to_string(), expected: "\tThe row is gone\n".to_string(), shared: None },
     ];
     let out = expected_of(&steps);
     assert_eq!(out.len(), 3);
