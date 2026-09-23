@@ -339,10 +339,18 @@ src/                        React and TypeScript frontend
 - Tailwind v4 with CSS-variable design tokens. Themes are token sets keyed
   off data-theme and data-accent on the html element. A consistency test
   fails the build on a hardcoded colour.
+- Six controls come from XiodUI (`xiod-ui`, pinned to exactly 1.0.3): the
+  checkbox, text area, the date picker's calendar, the command palette
+  list, keyboard-key hints and toasts. Each sits behind the app's own
+  wrapper in `src/components/ui/` (toasts through `src/lib/toast.ts`), and
+  its colours are the app's tokens, mapped in `src/xiod-theme.css`.
+  `src/xiod.test.ts` holds the pin, the vetted versions, the import
+  allowlist and the licence notices (`public/THIRD-PARTY-NOTICES.txt`).
 - A render crash shows a fallback with a Reload button and writes the
   stack to the app log.
 
 ## Tech stack
 
 Tauri 2, Rust (tokio, reqwest, quick-xml), tauri-specta, React 19, Vite,
-TypeScript, Tailwind v4, TanStack Query, Vitest, Velopack.
+TypeScript, Tailwind v4, XiodUI (on Base UI), TanStack Query, Vitest,
+Velopack.
