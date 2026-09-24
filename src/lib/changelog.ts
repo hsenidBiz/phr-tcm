@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.26",
+    date: "2026-09-24",
+    items: [
+      "Security: the AI Bridge's database tools no longer let a statement carry the database tool's own commands or variables, on any connection.",
+      "The AI Bridge's database query tool can now run a stored procedure on the Dev - dev login connection when writes are switched on, and look-up procedures such as sp_help and sp_columns on any connection.",
+      "An AI assistant connected through the AI Bridge is now told when its connection comes from a different version of the app, which can hide newer tools, and Settings, Logs records it too.",
+    ],
+  },
+  {
     version: "1.25.25",
     date: "2026-09-24",
     items: [
