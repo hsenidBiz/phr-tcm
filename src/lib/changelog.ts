@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.25",
+    date: "2026-09-24",
+    items: [
+      "The loading screen now shows in full while the app starts, with the flask, the name and the progress bar, and stays until the app is ready.",
+      "If you are already signed in, the sign-in screen no longer flashes past when the app opens.",
+    ],
+  },
+  {
     version: "1.25.24",
     date: "2026-09-24",
     items: [
