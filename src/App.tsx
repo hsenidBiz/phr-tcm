@@ -68,6 +68,7 @@ import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from 
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
+import { hideSplash } from "./lib/splash";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
 // The sign-in screen is the first thing every launch shows (tokens live in
@@ -464,6 +465,17 @@ export default function App() {
     queryKey: ["auth"],
     queryFn: () => commands.authStatus(),
   });
+
+  // The loading screen (index.html) stays until this answers: before it,
+  // `signedIn` reads false, so a signed-in person would see the sign-in
+  // screen flash past on every launch. An error answers too - the sign-in
+  // screen is the right thing to show then.
+  const authKnown = !status.isPending;
+  useEffect(() => {
+    if (!authKnown) return;
+    hideSplash();
+    logUi(`startup: ready ${Math.round(performance.now())} ms after the page began loading`);
+  }, [authKnown]);
 
   // Checked on launch and then quietly once an hour, because this app is
   // left open for days at a time - a launch-only check means a release

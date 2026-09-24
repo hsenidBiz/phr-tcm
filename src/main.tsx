@@ -8,6 +8,7 @@ import { initUiClickLog, logUi } from "./lib/uiLog";
 import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
 import ErrorBoundary, { installGlobalErrorLog } from "./components/ErrorBoundary";
+import { hideSplash } from "./lib/splash";
 
 // refetchOnWindowFocus off: a desktop app loses/regains focus constantly
 // (alt-tab to the browser and back), and the default would refire every
@@ -71,16 +72,16 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-// React has mounted: fade the splash out. The window itself has been on
-// screen since launch, painted the splash colour (tauri.conf.json), so the
-// splash covers the load instead of an invisible window hiding it.
+// The window itself has been on screen since launch, painted the splash
+// colour (tauri.conf.json), so the splash covers the load instead of an
+// invisible window hiding it. The main window keeps it until App knows who
+// is signed in; the runner window has nothing to wait for.
+if (Root !== App) requestAnimationFrame(hideSplash);
+// Whatever happens - a command that never answers, a crash the boundary
+// shows - the loading screen never outstays this.
+setTimeout(hideSplash, 10_000);
+
 requestAnimationFrame(() => {
-  const splash = document.getElementById("splash");
-  if (splash) {
-    splash.style.transition = "opacity 250ms ease-out";
-    splash.style.opacity = "0";
-    setTimeout(() => splash.remove(), 300);
-  }
   // Pairs with the Rust side's "set up" and "page loaded" lines: together
   // they say where a slow launch spent its time. performance.now() counts
   // from when this page started loading.

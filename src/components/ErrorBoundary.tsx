@@ -14,6 +14,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { commands } from "../bindings";
+import { hideSplash } from "../lib/splash";
 
 /** Best-effort: the log is a diagnostic, never a reason to fail twice. */
 function record(kind: string, message: string, detail?: string): void {
@@ -55,6 +56,9 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    // A crash before the app was ready would otherwise sit under the
+    // loading screen until its time limit.
+    hideSplash();
     record("render crash", error.message, `${error.stack ?? ""}\ncomponent stack:${info.componentStack ?? ""}`);
   }
 

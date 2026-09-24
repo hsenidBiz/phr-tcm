@@ -11,6 +11,7 @@ import { commands } from "./bindings";
 import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
+import { resetSplashForTests } from "./lib/splash";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -99,6 +100,33 @@ test("the app asks for this machine's optional extras switch at startup", async 
   renderApp();
   await waitFor(() => expect(extrasUnlockedSnapshot()).toBe(true));
   expect(calls.filter((c) => c === "get_extras_unlocked")).toHaveLength(1);
+});
+
+// The loading screen (index.html's #splash) covers the launch until the app
+// knows whether someone is signed in. Taken away any earlier, a signed-in
+// person first sees the sign-in screen flash past, then the app.
+test("the loading screen stays until the app knows whether you are signed in", async () => {
+  const splash = document.createElement("div");
+  splash.id = "splash";
+  document.body.appendChild(splash);
+  let answer!: (v: unknown) => void;
+  const auth = new Promise((r) => {
+    answer = r;
+  });
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return auth;
+    if (cmd === "check_update") return null;
+  });
+  try {
+    renderApp();
+    await act(() => new Promise((r) => setTimeout(r, 150)));
+    expect(document.getElementById("splash")).not.toBeNull();
+    answer({ signed_in: false, account: null });
+    await waitFor(() => expect(document.getElementById("splash")).toBeNull());
+  } finally {
+    splash.remove();
+    resetSplashForTests();
+  }
 });
 
 test("sidebar shows the v1 tabs and switches screens", async () => {
