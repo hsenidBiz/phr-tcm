@@ -149,41 +149,39 @@ export default function NotificationBell({
                         {KIND_LABEL[n.kind]}
                       </span>
                       <span className="text-[11px] text-faint">{ago(n.at)}</span>
+                      {/* The title goes to the thing itself, in the app;
+                          this small button beside the time is the way out
+                          to the browser for anyone who wants Azure DevOps'
+                          own page. It lives on this line rather than the
+                          title's, where it read as part of the title. */}
+                      {n.target?.project && onOpen && n.href && (
+                        <button
+                          aria-label={`Open in Azure DevOps: ${n.title}`}
+                          title="Open in Azure DevOps"
+                          className="-my-1 shrink-0 rounded p-1 text-faint hover:text-accent"
+                          onClick={() =>
+                            openUrl(n.href!).catch(() => toast.error("Could not open the browser."))
+                          }
+                        >
+                          <IconOpenInBrowser aria-hidden className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
-                    {/* The title goes to the thing itself, in the app; the
-                        small button beside it is the way out to the browser
-                        for anyone who wants Azure DevOps' own page. */}
                     {/* A target with no project is one saved by a build
                         between the field's addition and this guard - not
                         the pre-target fallback case, which has no target
                         at all - and must not navigate anywhere blind. */}
                     {n.target?.project && onOpen ? (
-                      <div className="mt-0.5 flex min-w-0 items-center gap-1">
-                        <button
-                          className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
-                          title="Open in the app"
-                          onClick={() => {
-                            setOpen(false);
-                            onOpen(n.target!);
-                          }}
-                        >
-                          {n.title}
-                        </button>
-                        {n.href && (
-                          <button
-                            aria-label={`Open in Azure DevOps: ${n.title}`}
-                            title="Open in Azure DevOps"
-                            className="shrink-0 rounded p-1 text-faint hover:text-accent"
-                            onClick={() =>
-                              openUrl(n.href!).catch(() =>
-                                toast.error("Could not open the browser."),
-                              )
-                            }
-                          >
-                            <IconOpenInBrowser aria-hidden className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
+                      <button
+                        className="mt-0.5 block max-w-full truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
+                        title="Open in the app"
+                        onClick={() => {
+                          setOpen(false);
+                          onOpen(n.target!);
+                        }}
+                      >
+                        {n.title}
+                      </button>
                     ) : n.href ? (
                       <button
                         className="mt-0.5 block max-w-full truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"

@@ -91,9 +91,12 @@ test("a notification with a target opens in the app and closes the panel; the br
   expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open in Azure DevOps: Task #501 assigned to you" }),
-  );
+  const toBrowser = screen.getByRole("button", { name: "Open in Azure DevOps: Task #501 assigned to you" });
+  // It sits in the kind-and-time line, beside the time - not on the title's
+  // line, where it read as part of the title.
+  expect(toBrowser.parentElement).toHaveTextContent("Assigned");
+  expect(toBrowser.parentElement).not.toHaveTextContent("Task #501 assigned to you");
+  fireEvent.click(toBrowser);
   expect(openUrl).toHaveBeenCalledWith("https://x/501");
 });
 
