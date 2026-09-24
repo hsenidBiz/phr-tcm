@@ -425,9 +425,18 @@ export const commands = {
 	/**
 	 *  Close the recording browser and save nothing. While Start is still
 	 *  signing in there is no recording yet: the Cancel is kept, and Start ends
-	 *  with `recorder::CANCELLED` instead of opening one.
+	 *  with `recorder::CANCELLED` instead of opening one. The same kept Cancel
+	 *  ends a check after Stop, or a Try, through `unless_cancelled`.
 	 */
 	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
+	/**
+	 *  Whether the recorder is held: by a recording, or by a Start, a check or
+	 *  a Try still going. The Module paths dialog asks when it opens - one it
+	 *  replaced may have left any of these behind (the Auto Run section was
+	 *  left mid-recording), and Cancel ends each of them. A recording whose
+	 *  browser was closed has already let go, and Start tidies it away.
+	 */
+	autoRunRecordingIsOpen: () => __TAURI_INVOKE<boolean>("auto_run_recording_is_open"),
 	/**  The same check a recording must pass, on a saved path. */
 	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),

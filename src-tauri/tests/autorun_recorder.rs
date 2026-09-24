@@ -18,8 +18,9 @@ use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::launch::Browser;
 use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::commands::autorun_record::{
-    auto_run_record_cancel, listen, open_the_recording, prepare_to_record, recording_is_going, recording_is_open,
-    refuse_to_record_now, refuse_while_recording, RecorderClaim, RecordingFor, ALREADY_RECORDING, RECORDING_BUSY,
+    auto_run_record_cancel, auto_run_recording_is_open, listen, open_the_recording, prepare_to_record,
+    recording_is_going, recording_is_open, refuse_to_record_now, refuse_while_recording, unless_cancelled,
+    RecorderClaim, RecordingFor, ALREADY_RECORDING, RECORDING_BUSY,
 };
 use v2_lib::commands::autorun_replay::OneAtATime;
 use v2_lib::events::RecordingEvent;
@@ -385,6 +386,35 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     assert!(closed.load(Ordering::SeqCst));
     assert!(!recording_is_going());
     assert!(!recording_is_open().await);
+
+    // Review M3: a Cancel during the check after Stop (or during a Try)
+    // finds no recording to end. It is kept, and the check gives up at its
+    // next look: what it was doing is dropped, which closes its browser.
+    let rec = RecorderClaim::claim().expect("free again");
+    let closed = Arc::new(AtomicBool::new(false));
+    let browser = ClosesOnDrop(closed.clone());
+    let check = tokio::spawn(unless_cancelled(async move {
+        let _browser = browser;
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        Ok::<String, String>("/hr/leave".into())
+    }));
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    auto_run_record_cancel().await.unwrap();
+    let out = tokio::time::timeout(Duration::from_secs(5), check).await.expect("a cancelled check ends at once").unwrap();
+    assert_eq!(out, Err(CANCELLED.to_string()));
+    assert!(closed.load(Ordering::SeqCst), "the check's browser is closed");
+    // The Cancel is used up: the next check runs to its end.
+    assert_eq!(unless_cancelled(async { Ok::<_, String>("/hr/leave") }).await, Ok("/hr/leave"));
+    drop(rec);
+    assert!(!recording_is_going());
+
+    // Review M5: a dialog opened afresh can ask whether something still
+    // holds the recorder, and Cancel it.
+    assert!(!auto_run_recording_is_open().await);
+    let rec = RecorderClaim::claim().expect("free again");
+    assert!(auto_run_recording_is_open().await, "a Start, a recording, a check or a Try holds it");
+    drop(rec);
+    assert!(!auto_run_recording_is_open().await);
 }
 
 fn about() -> RecordingFor {

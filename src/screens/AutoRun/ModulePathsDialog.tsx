@@ -40,12 +40,6 @@ function chosenBrowser(): string {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** What `auto_run_record_start` rejects with when Cancel is pressed while
- * it is still signing in - the backend's pending-cancel flag (Task 6's
- * `e010914` fix) makes the already-in-flight call settle with this instead
- * of ever opening the recording. */
-const START_CANCELLED = "the recording was cancelled - nothing was saved";
-
 export default function ModulePathsDialog({
   org,
   project,
@@ -76,6 +70,15 @@ export default function ModulePathsDialog({
   const [trying, setTrying] = useState<string | null>(null);
   const [tried, setTried] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [problem, setProblem] = useState("");
+  /** Something from before this dialog opened still holds the recorder. */
+  const [leftOpen, setLeftOpen] = useState(false);
+
+  /** Whether this dialog asked to cancel the Start, check or Try it is
+   * waiting on. That call's answer is then read as a cancel whatever it
+   * says - by what was asked, never by matching the backend's words - and
+   * a Start that won the race anyway is cancelled after all. Reset as each
+   * of those begins. */
+  const cancelAsked = useRef(false);
 
   const keys = (accounts.data ?? []).map((a) => a.key);
   const who = keys.includes(picked) ? picked : (keys[0] ?? "");
@@ -115,22 +118,55 @@ export default function ModulePathsDialog({
     };
   }, []);
 
+  // A dialog that was closed with the Auto Run section (a section switch
+  // unmounts it) can leave a recording, a Start, a check or a Try behind,
+  // holding the recorder. Nothing else would ever end it, so say so and
+  // offer Cancel. Only while this dialog has started nothing of its own.
+  useEffect(() => {
+    let live = true;
+    commands
+      .autoRunRecordingIsOpen()
+      .then((open) => {
+        if (live && open && phaseRef.current.kind === "list") setLeftOpen(true);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const cancelled = () => {
+    toast.info("The recording was cancelled. Nothing was saved.");
+    setPhase({ kind: "list" });
+  };
+
   const record = async (module: string) => {
     setProblem("");
+    cancelAsked.current = false;
     setPhase({ kind: "starting", module });
     try {
       const r = await commands.autoRunRecordStart(org, project, module, who, chosenBrowser());
       if (r.status === "error") {
-        if (r.error === START_CANCELLED) {
-          toast.info("The recording was cancelled. Nothing was saved.");
-          setPhase({ kind: "list" });
+        if (cancelAsked.current) {
+          cancelled();
           return;
         }
         setPhase({ kind: "failed", module, why: r.error });
         return;
       }
+      if (cancelAsked.current) {
+        // The Cancel crossed Start's success: the recording opened after
+        // all. End it now rather than show one nobody wants.
+        await commands.autoRunRecordCancel().catch(() => {});
+        cancelled();
+        return;
+      }
       setPhase({ kind: "recording", module, clicks: [], notes: [] });
     } catch (e) {
+      if (cancelAsked.current) {
+        cancelled();
+        return;
+      }
       setPhase({ kind: "failed", module, why: message(e) });
     }
   };
@@ -138,21 +174,26 @@ export default function ModulePathsDialog({
   const stop = async () => {
     if (phase.kind !== "recording") return;
     const { module } = phase;
+    cancelAsked.current = false;
     setPhase({ kind: "checking", module });
     try {
       const r = await commands.autoRunRecordStop();
-      if (r.status === "error") {
-        setPhase({ kind: "failed", module, why: r.error });
-        return;
-      }
-      if (!r.data.saved) {
-        setPhase({ kind: "failed", module, why: r.data.failure });
+      if (r.status === "error" || !r.data.saved) {
+        if (cancelAsked.current) {
+          cancelled();
+          return;
+        }
+        setPhase({ kind: "failed", module, why: r.status === "error" ? r.error : r.data.failure });
         return;
       }
       toast.success(`Path saved for ${r.data.module}.`);
       await qc.invalidateQueries({ queryKey: navKey });
       setPhase({ kind: "list" });
     } catch (e) {
+      if (cancelAsked.current) {
+        cancelled();
+        return;
+      }
       setPhase({ kind: "failed", module, why: message(e) });
     }
   };
@@ -162,21 +203,43 @@ export default function ModulePathsDialog({
     setPhase({ kind: "list" });
   };
 
-  /** Cancel while Start is still pending. It only asks the backend to stop
-   * signing in - the still-open `autoRunRecordStart` call above settles
-   * with `START_CANCELLED` once that takes effect, and `record` returns to
-   * the list then. Setting the phase here too would race a later Start. */
-  const cancelStarting = () => {
+  /** Cancel while Start, the check after Stop, or a Try is still pending.
+   * It only asks the backend to stop - the still-open call settles once
+   * that takes effect, and whoever is waiting on it moves on then. Setting
+   * the phase here too would race a later Start. */
+  const askToCancel = () => {
+    cancelAsked.current = true;
     void commands.autoRunRecordCancel().catch(() => {});
   };
 
+  const cancelLeftOpen = async () => {
+    await commands.autoRunRecordCancel().catch(() => {});
+    setLeftOpen(false);
+    toast.info("The recording was cancelled. Nothing was saved.");
+  };
+
   const tryPath = async (module: string) => {
+    cancelAsked.current = false;
     setTrying(module);
+    const show = (result: { ok: boolean; detail: string }) => {
+      if (cancelAsked.current && !result.ok) {
+        // A cancelled Try says nothing about the path: drop any old answer
+        // rather than show the cancel as the path failing.
+        setTried((t) => {
+          const next = { ...t };
+          delete next[module];
+          return next;
+        });
+        toast.info(`Stopped trying ${module}.`);
+        return;
+      }
+      setTried((t) => ({ ...t, [module]: result }));
+    };
     try {
       const r = await commands.autoRunTryModulePath(org, project, module, who, chosenBrowser());
-      setTried((t) => ({ ...t, [module]: r.status === "ok" ? r.data : { ok: false, detail: r.error } }));
+      show(r.status === "ok" ? r.data : { ok: false, detail: r.error });
     } catch (e) {
-      setTried((t) => ({ ...t, [module]: { ok: false, detail: message(e) } }));
+      show({ ok: false, detail: message(e) });
     } finally {
       setTrying(null);
     }
@@ -197,14 +260,14 @@ export default function ModulePathsDialog({
     onError: (e) => setProblem(message(e)),
   });
 
-  /** Escape and the backdrop do nothing while a recording or a check is
-   * running: only Stop or Cancel ends those. While Start is still pending
-   * there is no visible Stop yet and nothing else can end it, so both act
-   * as Cancel instead of leaving the dialog stuck until sign-in settles on
-   * its own. */
+  /** Escape and the backdrop do nothing while a recording, a check or a
+   * Try is running: only Stop or Cancel ends those. While Start is still
+   * pending there is no visible Stop yet and nothing else can end it, so
+   * both act as Cancel instead of leaving the dialog stuck until sign-in
+   * settles on its own. */
   const closeIfIdle = () => {
     if (phase.kind === "starting") {
-      cancelStarting();
+      askToCancel();
       return;
     }
     if (busy) return;
@@ -224,6 +287,17 @@ export default function ModulePathsDialog({
       </div>
       {nav.isError && <p className="text-xs text-danger">{nav.error.message}</p>}
       {problem && <p className="text-xs text-danger">{problem}</p>}
+      {leftOpen && (
+        <div className="flex items-center gap-2 rounded-md border border-border p-2 text-xs">
+          <span className="min-w-0 flex-1 text-warning">
+            A module path from before is still being recorded or checked.
+          </span>
+          <Button size="sm" variant="outline" onClick={cancelLeftOpen}>
+            <IconCancel aria-hidden />
+            Cancel that recording
+          </Button>
+        </div>
+      )}
 
       <label className="flex items-center gap-2 text-xs text-muted">
         <Switch
@@ -315,6 +389,17 @@ export default function ModulePathsDialog({
                       <IconRun aria-hidden />
                       {trying === m.module ? "Trying" : "Try"}
                     </Button>
+                    {trying === m.module && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Cancel trying ${m.module}`}
+                        onClick={askToCancel}
+                      >
+                        <IconCancel aria-hidden />
+                        Cancel
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -380,7 +465,7 @@ export default function ModulePathsDialog({
         <div className="space-y-2">
           <p className="text-xs text-muted">Opening the browser and signing in as {who}…</p>
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={cancelStarting}>
+            <Button size="sm" variant="ghost" onClick={askToCancel}>
               <IconCancel aria-hidden />
               Cancel
             </Button>
@@ -418,7 +503,15 @@ export default function ModulePathsDialog({
       )}
 
       {phase.kind === "checking" && (
-        <p className="text-xs text-muted">Checking the path for {phase.module} in a fresh browser…</p>
+        <div className="space-y-2">
+          <p className="text-xs text-muted">Checking the path for {phase.module} in a fresh browser…</p>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={askToCancel}>
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+          </div>
+        </div>
       )}
 
       {phase.kind === "failed" && (

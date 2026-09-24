@@ -174,6 +174,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_record::auto_run_record_start,
             autorun_record::auto_run_record_stop,
             autorun_record::auto_run_record_cancel,
+            autorun_record::auto_run_recording_is_open,
             autorun_record::auto_run_try_module_path,
             autorun_publish::auto_run_publish,
             queue::export_queue_html,

@@ -266,7 +266,38 @@ pub async fn listen<D: Driver>(
     (captured, Some(claim))
 }
 
-/// Sign in fresh in a background browser and walk the path.
+/// How often a check looks for a Cancel. A Cancel during a check finds no
+/// recording to end, so it is left in `CANCEL_PENDING` and picked up here.
+const CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Run `work` (a check, which holds the recorder's claim) until it ends or
+/// a Cancel arrives, whichever is first. On a Cancel `work` is dropped where
+/// it stands, and with it anything it borrowed a browser through - every
+/// step of a check is bounded, but together they can take minutes, and the
+/// person asked to stop now. The Cancel is used up, so it cannot also end
+/// the next recording.
+pub async fn unless_cancelled<T>(work: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+    let cancel_asked = async {
+        loop {
+            if CANCEL_PENDING.swap(false, Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(CANCEL_POLL).await;
+        }
+    };
+    tokio::select! {
+        out = work => out,
+        () = cancel_asked => {
+            crate::applog::info("Auto-run module path check cancelled");
+            Err(recorder::CANCELLED.to_string())
+        }
+    }
+}
+
+/// Sign in fresh in a background browser and walk the path. The browser is
+/// opened outside the race with Cancel: `open_real` holds it without a
+/// guard until it answers, so dropping that mid-way would leave it running.
+/// A Cancel pressed during the launch is still honoured, at the first look.
 async fn check_in_fresh_browser(
     root: &Path,
     organization: &str,
@@ -277,8 +308,17 @@ async fn check_in_fresh_browser(
 ) -> Result<String, String> {
     let (recipe, who) = signin::prepare(root, organization, project, account)?;
     let (mut cdp, browser) = open_browser(which, false).await?;
-    let out = nav::check_path(&mut cdp, root, &recipe, &who, path, &super::autorun_replay::replay_timing(false)).await;
+    let out = unless_cancelled(nav::check_path(
+        &mut cdp,
+        root,
+        &recipe,
+        &who,
+        path,
+        &super::autorun_replay::replay_timing(false),
+    ))
+    .await;
     drop(cdp);
+    // `Owned`: the check's browser is killed here whichever way it ended.
     drop(browser);
     out
 }
@@ -367,7 +407,8 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
 
 /// Close the recording browser and save nothing. While Start is still
 /// signing in there is no recording yet: the Cancel is kept, and Start ends
-/// with `recorder::CANCELLED` instead of opening one.
+/// with `recorder::CANCELLED` instead of opening one. The same kept Cancel
+/// ends a check after Stop, or a Try, through `unless_cancelled`.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_record_cancel() -> Result<(), String> {
@@ -386,6 +427,17 @@ pub async fn auto_run_record_cancel() -> Result<(), String> {
         let _ = rec.task.await;
     }
     Ok(())
+}
+
+/// Whether the recorder is held: by a recording, or by a Start, a check or
+/// a Try still going. The Module paths dialog asks when it opens - one it
+/// replaced may have left any of these behind (the Auto Run section was
+/// left mid-recording), and Cancel ends each of them. A recording whose
+/// browser was closed has already let go, and Start tidies it away.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_recording_is_open() -> bool {
+    recording_is_going()
 }
 
 /// The same check a recording must pass, on a saved path.
