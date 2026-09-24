@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.27",
+    date: "2026-09-24",
+    items: [
+      "Notifications: the Open in Azure DevOps button now sits beside the time, instead of at the end of the title.",
+      "In dark themes, notifications at the bottom right, the command palette (Ctrl+K) and the date picker no longer have a white outline.",
+    ],
+  },
+  {
     version: "1.25.26",
     date: "2026-09-24",
     items: [
