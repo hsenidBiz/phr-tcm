@@ -86,6 +86,10 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
     let mut slot = SESSION.lock().await;
+    // Looked at with the session lock held: a recording claims its slot and
+    // then waits on this lock to look for a session, so the two can never
+    // both miss each other.
+    crate::commands::autorun_record::refuse_while_recording()?;
     if let Some(old) = slot.take() {
         close_session(old);
     }

@@ -411,6 +411,21 @@ export const commands = {
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
+	/**
+	 *  Open a visible browser, sign in as `account`, go home, and start
+	 *  listening. Each captured click arrives as a `RecordingEvent`.
+	 */
+	autoRunRecordStart: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_start", { organization, project, module, account, browserName })),
+	/**
+	 *  Stop, close the recording browser, replay the path in a fresh signed-in
+	 *  browser, and save it only if every click found its one element and the
+	 *  page ended where the recording did.
+	 */
+	autoRunRecordStop: () => typedError<ModuleRecordResult, string>(__TAURI_INVOKE("auto_run_record_stop")),
+	/**  Close the recording browser and save nothing. */
+	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
+	/**  The same check a recording must pass, on a saved path. */
+	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
@@ -707,6 +722,7 @@ export const events = {
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
+	recordingEvent: makeEvent<RecordingEvent>("recording-event"),
 	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
 	runOrderNotSaved: makeEvent<RunOrderNotSaved>("run-order-not-saved"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
@@ -1419,6 +1435,18 @@ export type Member = {
 	unique_name: string,
 };
 
+export type ModuleRecordResult = {
+	saved: boolean,
+	module: string,
+	/**  Why nothing was saved; empty when `saved`. */
+	failure: string,
+};
+
+export type ModuleTryResult = {
+	ok: boolean,
+	detail: string,
+};
+
 /**
  *  A recorded module as the Module paths dialog shows it. Every click is
  *  already in words (`link "Leave"`), so the webview never keeps a second
@@ -1756,6 +1784,22 @@ export type ReconcileAnswer = {
 export type ReconciledCase = {
 	title: string,
 	id: number,
+};
+
+/**
+ *  Emitted while a module path is being recorded: one per captured click,
+ *  one per click that could not be named, and one if the recording
+ *  browser went away. Carries locator words only, never a login.
+ */
+export type RecordingEvent = {
+	/**  "click", "unreadable" or "closed" */
+	kind: string,
+	/**  1-based position of a captured click; 0 otherwise. */
+	index: number,
+	/**  The click in words (`link "Leave"`), for "click". */
+	readable: string,
+	/**  Why, for "unreadable" and "closed". */
+	detail: string,
 };
 
 /**

@@ -7,6 +7,7 @@ pub mod ai_tools;
 pub mod auth;
 pub mod autorun;
 pub mod autorun_publish;
+pub mod autorun_record;
 pub mod autorun_replay;
 pub mod board;
 pub mod bugs;

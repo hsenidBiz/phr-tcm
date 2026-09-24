@@ -69,6 +69,29 @@ pub struct ReplayCase {
     pub module: Option<String>,
 }
 
+/// Start a browser and wait until its DevTools port answers. Shared by the
+/// unattended run (one per case) and the module recorder.
+pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, LaunchedBrowser), String> {
+    let extra = background_args();
+    let browser = launch_with(which, if visible { &[] } else { &extra })?;
+    // The debugging port answers when the browser is ready, which varies
+    // with what else the machine is doing. Asking until it does beats a
+    // fixed sleep that is either slow or flaky.
+    let mut last = String::new();
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        match Cdp::connect(browser.port).await {
+            Ok(cdp) => return Ok((cdp, browser)),
+            Err(e) => last = e,
+        }
+    }
+    super::autorun::close_browser(browser);
+    // The connection error names the local DevTools address, which is
+    // nothing a person can act on: it goes to the log instead.
+    crate::applog::warn(format!("Auto-run browser never answered: {last}"));
+    Err("it started but never answered - try again, and see Settings, Logs if it keeps happening".to_string())
+}
+
 /// The `Browsers` the command hands to `replay::run_selection`: a fresh
 /// real browser per case, headless unless the person asked to watch.
 struct RealBrowsers {
@@ -81,24 +104,9 @@ impl Browsers for RealBrowsers {
     type D = Cdp;
 
     async fn open(&mut self) -> Result<Cdp, String> {
-        let extra = background_args();
-        let browser = launch_with(self.which, if self.watch { &[] } else { &extra })?;
-        // The debugging port answers when the browser is ready, which varies
-        // with what else the machine is doing. Asking until it does beats a
-        // fixed sleep that is either slow or flaky.
-        let mut last = String::new();
-        for _ in 0..60 {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            match Cdp::connect(browser.port).await {
-                Ok(cdp) => {
-                    self.current = Some(browser);
-                    return Ok(cdp);
-                }
-                Err(e) => last = e,
-            }
-        }
-        super::autorun::close_browser(browser);
-        Err(format!("it started but never answered: {last}"))
+        let (cdp, browser) = open_real(self.which, self.watch).await?;
+        self.current = Some(browser);
+        Ok(cdp)
     }
 
     async fn close(&mut self, d: Cdp) {
@@ -143,6 +151,7 @@ pub async fn auto_run_replay(
     if super::autorun::supervised_session_is_open().await {
         return Err("close the supervised browser first".to_string());
     }
+    super::autorun_record::refuse_while_recording()?;
     CANCEL.store(false, Ordering::SeqCst);
 
     let root = super::autorun::root(&app)?;

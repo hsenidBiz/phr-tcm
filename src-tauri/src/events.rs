@@ -165,3 +165,18 @@ pub struct ReplayProgress {
     pub proposed: String,
 }
 
+/// Emitted while a module path is being recorded: one per captured click,
+/// one per click that could not be named, and one if the recording
+/// browser went away. Carries locator words only, never a login.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct RecordingEvent {
+    /// "click", "unreadable" or "closed"
+    pub kind: String,
+    /// 1-based position of a captured click; 0 otherwise.
+    pub index: u32,
+    /// The click in words (`link "Leave"`), for "click".
+    pub readable: String,
+    /// Why, for "unreadable" and "closed".
+    pub detail: String,
+}
+

@@ -7,13 +7,19 @@ mod common;
 use common::ScriptedDriver;
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
-use v2_lib::autorun::nav::{check_path, ModulePath};
+use v2_lib::autorun::nav::{check_path, ModulePath, SIGN_IN_BROWSER_SILENT, SIGN_IN_FAILED};
 use v2_lib::autorun::recorder::{
     arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, next_click, AxLink, Captured,
     ClickHints, ClickPayload, Ended, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS, UNREADABLE,
 };
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::locator::{LocatorStep, Target};
+use v2_lib::commands::autorun_record::{
+    listen, prepare_to_record, recording_is_going, refuse_to_record_now, refuse_while_recording, RecorderClaim, ALREADY_RECORDING,
+    RECORDING_BUSY,
+};
+use v2_lib::commands::autorun_replay::OneAtATime;
+use v2_lib::events::RecordingEvent;
 
 fn exact_role(role: &str, name: &str) -> Target {
     Target::One(LocatorStep { role: Some(role.into()), name: Some(name.into()), exact: true, ..LocatorStep::default() })
@@ -285,4 +291,87 @@ async fn a_browser_that_stops_answering_during_the_sign_in_is_told_apart() {
         .unwrap_err();
     assert!(!err.contains("://"), "{err}");
     assert_eq!(err, "the sign-in did not work: the browser did not respond - try again, and see Settings, Logs if it keeps happening");
+}
+
+/// One recording at a time; a recording and a run never together. Every
+/// claim in this binary is taken in this one test, so parallel tests can
+/// never see each other's.
+#[tokio::test]
+async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
+    assert!(refuse_to_record_now().await.is_ok());
+    let run = OneAtATime::claim().expect("nothing is running");
+    assert_eq!(refuse_to_record_now().await.unwrap_err(), "an unattended run is going - wait for it, or stop it first");
+    drop(run);
+
+    let rec = RecorderClaim::claim().expect("nothing is recording");
+    assert!(recording_is_going());
+    assert!(RecorderClaim::claim().is_none(), "one recording at a time");
+    assert_eq!(refuse_to_record_now().await.unwrap_err(), ALREADY_RECORDING);
+    assert_eq!(refuse_while_recording().unwrap_err(), RECORDING_BUSY);
+    drop(rec);
+    assert!(!recording_is_going());
+    assert!(refuse_while_recording().is_ok());
+
+    // Review focus 1: closing the recording browser ends the recording and
+    // frees the slot by itself - nobody has to press Stop or Cancel first.
+    let rec = RecorderClaim::claim().expect("free again");
+    let mut d = page_with(vec![false], "https://hr.example.internal/hr/leave");
+    d.closed_when_drained = true;
+    d.events.push_back(clicked(0, "Leave"));
+    let mut heard: Vec<RecordingEvent> = vec![];
+    let (captured, kept) =
+        listen(&mut d, rec, &AtomicBool::new(false), &AtomicBool::new(false), &mut |e| heard.push(e)).await;
+    assert_eq!(captured.ended, Ended::Closed);
+    assert!(kept.is_none(), "a closed recording keeps no claim");
+    assert!(!recording_is_going());
+    assert!(refuse_while_recording().is_ok());
+    assert_eq!(heard.len(), 2, "{heard:?}");
+    assert_eq!((heard[0].kind.as_str(), heard[0].index), ("click", 1));
+    assert!(heard[0].readable.contains("Leave"), "{heard:?}");
+    assert_eq!((heard[1].kind.as_str(), heard[1].detail.as_str()), ("closed", BROWSER_CLOSED));
+    for e in &heard {
+        assert!(!format!("{e:?}").contains("://"), "an event names no address: {e:?}");
+    }
+
+    // Stop keeps the claim: the check in a fresh browser still has to run.
+    let rec = RecorderClaim::claim().expect("free again");
+    let mut d = page_with(vec![false], "https://hr.example.internal/hr/leave");
+    d.events.push_back(clicked(0, "Leave"));
+    let (captured, kept) = listen(&mut d, rec, &AtomicBool::new(true), &AtomicBool::new(false), &mut |_| {}).await;
+    assert!(matches!(captured.ended, Ended::Stopped { .. }), "{captured:?}");
+    assert!(kept.is_some() && recording_is_going(), "the claim outlives Stop until the check is done");
+    drop(kept);
+    assert!(!recording_is_going());
+
+    // A recording that panics still frees the slot as it unwinds.
+    let rec = RecorderClaim::claim().expect("free again");
+    let died = tokio::spawn(async move {
+        let _held = rec;
+        panic!("the recorder fell over");
+    })
+    .await;
+    assert!(died.is_err());
+    assert!(!recording_is_going());
+}
+
+/// Getting the recording browser ready names no address, just as the
+/// check does: a sign-in's own words can.
+#[tokio::test]
+async fn a_recording_whose_sign_in_fails_says_so_without_an_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|method, _| {
+        Ok(match method {
+            "Page.navigate" => json!({ "errorText": "net::ERR_NAME_NOT_RESOLVED" }),
+            _ => json!({}),
+        })
+    });
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+        .await
+        .unwrap_err();
+    assert_eq!(err, SIGN_IN_FAILED);
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+        .await
+        .unwrap_err();
+    assert_eq!(err, SIGN_IN_BROWSER_SILENT);
 }

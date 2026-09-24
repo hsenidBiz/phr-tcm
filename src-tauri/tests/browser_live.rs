@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::autorun::accounts::{save_accounts, Account};
+use v2_lib::autorun::nav::{check_path, load_nav, put_path};
+use v2_lib::autorun::recorder;
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::replay::{run_selection, Browsers, SIGN_IN_STEP};
 use v2_lib::autorun::runner::run_step;
@@ -735,7 +737,7 @@ impl App {
                         Some(u) => respond(
                             &mut stream,
                             "",
-                            &format!("<!doctype html><title>Home</title><h1 id=\"home\">Home</h1><p id=\"who\"></p><script>document.getElementById('who').textContent = '{u} / ' + localStorage.getItem('token');</script>"),
+                            &format!("<!doctype html><title>Home</title><nav><a href=\"/leave\">Leave</a></nav><h1 id=\"home\">Home</h1><p id=\"who\"></p><script>document.getElementById('who').textContent = '{u} / ' + localStorage.getItem('token');</script>"),
                         ),
                         None => respond(&mut stream, "", LOGIN_PAGE),
                     }
@@ -1224,4 +1226,40 @@ async fn a_background_browser_really_is_a_desktop_sized_window() {
     // the reported inner width.
     assert!(width >= 1300.0, "width was {width}, expected close to 1366");
     assert!(height >= 700.0, "height was {height}, expected close to 900");
+}
+
+#[tokio::test]
+#[ignore = "starts real headless Edge processes"]
+async fn a_recorded_menu_path_is_saved_only_after_it_replays_in_a_fresh_browser() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+    let recipe = recipe_for(&app);
+
+    // Record: sign in, listen, and click the menu entry with the real mouse.
+    let mut live = open().await;
+    assert!(sign_in(&mut live.cdp, root.path(), &recipe, &kim(), &timing()).await.ok);
+    recorder::arm(&mut live.cdp).await.expect("the recorder could not listen");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "link", "name": "Leave" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "role": "heading", "name": "Leave" } })).await);
+    let (stop, cancel) = (AtomicBool::new(true), AtomicBool::new(false));
+    let captured = recorder::capture(&mut live.cdp, &stop, &cancel, &mut |_| {}).await;
+    assert_eq!(captured.clicks.len(), 1, "{captured:?}");
+    assert!(captured.clicks[0].describe().contains("Leave"), "{captured:?}");
+    let path = recorder::finish("Leave", captured, "2026-09-24T10:00:00Z").unwrap();
+    assert_eq!(path.arrived, "/leave");
+    drop(live);
+
+    // Check in a fresh browser, then save; a wrong ending is refused.
+    let mut second = open().await;
+    assert_eq!(check_path(&mut second.cdp, root.path(), &recipe, &kim(), &path, &timing()).await, Ok("/leave".to_string()));
+    drop(second);
+    let mut wrong = path.clone();
+    wrong.arrived = "/nowhere".into();
+    let mut third = open().await;
+    let err = check_path(&mut third.cdp, root.path(), &recipe, &kim(), &wrong, &Timing { nav_ms: 2000, ..timing() }).await.unwrap_err();
+    assert!(err.contains("the page ended on /leave, not /nowhere"), "{err}");
+    put_path(root.path(), "acme", "Web", path).unwrap();
+    assert_eq!(load_nav(root.path(), "acme", "Web").unwrap().modules.len(), 1);
 }
