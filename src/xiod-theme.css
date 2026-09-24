@@ -111,6 +111,23 @@
   z-index: 70 !important;
 }
 
+/* 5d. XiodUI's own base layer (not imported, see the top) gives every
+       element a border colour. Without it, a part with a bare `border` and
+       no colour of its own - the toast, the command palette's popup, the
+       calendar - is drawn in currentColor, its light text colour: a white
+       outline in every dark theme. Put back for those parts only, in the
+       base layer, so any part that names its own border colour
+       (border-input, the tinted toasts in 5b) still wins. */
+@layer base {
+  [data-slot="toast-viewport"] *,
+  [data-slot^="command"],
+  [data-slot^="command"] *,
+  [data-slot="calendar"],
+  [data-slot="calendar"] * {
+    border-color: var(--color-border);
+  }
+}
+
 /* 6. XiodUI animates in plain CSS transitions. The app's rule (index.css,
       "Motion") is that none of it plays when the OS asks for less. */
 @media (prefers-reduced-motion: reduce) {

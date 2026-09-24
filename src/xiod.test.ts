@@ -83,6 +83,17 @@ describe("theme bridge", () => {
     expect(bridge()).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|\boklch\(/);
   });
 
+  // XiodUI's own base layer (not imported) gave every element a border
+  // colour; without it a bare `border` - the toast, the command palette,
+  // the calendar - is drawn in the text colour, a light line in dark themes.
+  test("the parts with a bare border get the app's border colour, in the base layer", () => {
+    const base = bridge().match(/@layer base\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    for (const slot of ['[data-slot="toast-viewport"]', '[data-slot^="command"]', '[data-slot="calendar"]']) {
+      expect(base, slot).toContain(slot);
+    }
+    expect(base).toContain("border-color: var(--color-border)");
+  });
+
   test("every scanned XiodUI file exists", () => {
     expect(scanned().length).toBeGreaterThan(0);
     for (const f of scanned()) {
