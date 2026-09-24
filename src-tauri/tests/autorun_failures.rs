@@ -9,6 +9,7 @@
 
 use v2_lib::autorun::failures::{describe_failures, latest_run, stop_reason};
 use v2_lib::autorun::nav::no_path;
+use v2_lib::autorun::replay::MODULE_STEP;
 use v2_lib::autorun::store::save_run;
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -431,7 +432,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let case = CaseRecord {
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
-        steps: vec![StepRecord { step_number: -1, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None }],
+        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None }],
         ..empty_case()
     };
     let expected = Some(
@@ -453,4 +454,13 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
 
     let no_path_case = CaseRecord { proposed: "Blocked".to_string(), reason: no_path("Payroll"), ..empty_case() };
     assert_eq!(stop_reason(&no_path_case), expected);
+}
+
+/// Review I1: a page failure whose words read like the runner's sentence is
+/// still the script's to look at.
+#[test]
+fn a_failed_check_that_quotes_the_unreached_sentence_is_not_a_setup_problem() {
+    let reason = "step 1: page does NOT contain Could not reach module \"Payroll\": click 2, link \"Pay\" - gone.";
+    let case = CaseRecord { proposed: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
+    assert_eq!(stop_reason(&case), None);
 }

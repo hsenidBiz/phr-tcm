@@ -302,6 +302,9 @@ impl PathFailure {
 pub async fn go_home<D: Driver>(d: &mut D, start_url: &str, origins: &[String], timing: &Timing) -> ActionOutcome {
     let href = match page::eval_value(d, "location.href").await {
         Ok(v) => v.as_str().unwrap_or("").to_string(),
+        // Right after a sign-in a redirect may still be in flight and the
+        // page refuses to say where it is: not home yet, so go there.
+        Err(e) if e.is_transient() => String::new(),
         Err(e) => return failed_by(e),
     };
     if same_page(&href, start_url) {
@@ -386,14 +389,25 @@ pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutco
     }
 }
 
-/// An outcome that means the run could not put the case where its steps
-/// begin: the case is Blocked, not Failed.
-pub fn is_route_problem(detail: &str) -> bool {
-    detail.contains(UNREACHED_PREFIX)
+/// How a mid-script `sign_in`'s one outcome joins the sign-in to the trip
+/// back to the module that follows it.
+pub const THEN: &str = "; then ";
+
+/// The failed-trip sentence inside a mid-script `sign_in`'s outcome, from
+/// `UNREACHED_PREFIX` on. Only meaningful for an outcome that belongs to a
+/// `sign_in` action: anywhere else these words are the page's or the
+/// script's (a dialog, a `check_text` value), never the runner's.
+pub fn unreached_after_sign_in(detail: &str) -> Option<&str> {
+    detail.find(&format!("{THEN}{UNREACHED_PREFIX}")).map(|i| &detail[i + THEN.len()..])
 }
 
 /// A case reason that is about the project's setup (paths, Module field,
-/// account), not about the script.
+/// account), not about the script. A prefix, never a search: a Failed
+/// case's reason begins `step N:` and may quote the page, which can say
+/// anything.
 pub fn is_setup_problem(reason: &str) -> bool {
-    reason.contains(UNREACHED_PREFIX) || reason == NO_MODULE || reason == NO_ACCOUNT || reason.starts_with(NO_PATH_START)
+    reason.starts_with(UNREACHED_PREFIX)
+        || reason == NO_MODULE
+        || reason == NO_ACCOUNT
+        || reason.starts_with(NO_PATH_START)
 }

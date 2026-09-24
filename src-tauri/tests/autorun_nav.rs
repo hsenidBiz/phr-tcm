@@ -1,12 +1,15 @@
 //! Module paths: the per-project file an unattended run reads to get from
 //! the home page to a case's module screen, and the rules around it.
 
+mod common;
+
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    find_path, load_nav, module_key, nav_path, no_path, path_of, put_path, remove_path, route_for, same_page,
+    find_path, go_home, load_nav, module_key, nav_path, no_path, path_of, put_path, remove_path, route_for, same_page,
     save_nav, set_direct_urls, view, ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
+use v2_lib::browser::cdp::{CdpError, Event};
 
 fn path(module: &str, arrived: &str) -> ModulePath {
     serde_json::from_value(json!({
@@ -181,4 +184,28 @@ fn a_failed_trip_reads_as_the_designs_sentence_in_a_run_and_its_short_form_in_th
     assert_eq!(at_home.for_run("Leave"), "Could not reach module \"Leave\": the home page did not open - the home page did not load.");
     let dotted = PathFailure { reason: "it moved.".into(), ..at_click };
     assert!(dotted.for_run("Leave").ends_with("it moved."), "one full stop, not two");
+}
+
+/// Review m2: right after a sign-in a redirect may still be in flight, and
+/// the page refuses to say where it is. That is "not home yet", not a
+/// failed trip.
+#[tokio::test]
+async fn going_home_while_the_page_is_between_documents_navigates_instead_of_giving_up() {
+    let mut first = true;
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "location.href" && first => {
+            first = false;
+            Err(CdpError::Protocol { method: method.to_string(), message: "Cannot find context with specified id".into() })
+        }
+        "Page.navigate" => Ok(json!({ "frameId": "F", "loaderId": "L" })),
+        _ => Ok(json!({})),
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    let origins = vec!["https://hr.example.internal".to_string()];
+    let out = go_home(&mut d, "https://hr.example.internal/hr/home/index", &origins, &common::quick()).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(d.calls_to("Page.navigate").len(), 1);
 }

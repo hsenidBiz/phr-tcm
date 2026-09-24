@@ -13,7 +13,7 @@ use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::{recipe, signin};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
-use crate::browser::actions::ActionOutcome;
+use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
@@ -63,12 +63,31 @@ fn was_run(o: &ActionOutcome) -> bool {
     !o.detail.starts_with("not run:")
 }
 
+/// The runner's sentence for a failed trip to the module, when this failed
+/// outcome is one the runner wrote: the "Go to X" line itself, or a
+/// `sign_in`'s trip back. Decided by where the outcome sits, never by its
+/// words alone - a page's dialog or a script's `check_text` value can say
+/// the same thing, and that is still the page failing the test.
+fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) -> Option<&'a str> {
+    if n == MODULE_STEP {
+        return Some(o.detail.as_str());
+    }
+    let action = script.steps.iter().find(|s| s.step_number == n).and_then(|s| s.actions.get(i));
+    match action {
+        Some(Action::SignIn { .. }) => nav::unreached_after_sign_in(&o.detail),
+        _ => None,
+    }
+}
+
 /// `signed_in`: None when no account applies to the case, Some(ok) otherwise.
 pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool>, stopped: bool) -> Proposal {
     let ran = || {
-        steps.iter().flat_map(|s| s.outcomes.iter().map(move |o| (s.step_number, o))).filter(|(_, o)| was_run(o))
+        steps
+            .iter()
+            .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
+            .filter(|(_, _, o)| was_run(o))
     };
-    if let Some((n, o)) = ran().find(|(_, o)| !o.ok && o.harness) {
+    if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok && o.harness) {
         let at = match n {
             SIGN_IN_STEP => "while signing in".to_string(),
             MODULE_STEP => "while going to the module".to_string(),
@@ -78,8 +97,8 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
     }
     // The run could not put the case where its steps begin: that is not
     // the application failing the test.
-    if let Some((_, o)) = ran().find(|(_, o)| !o.ok && nav::is_route_problem(&o.detail)) {
-        return Proposal { verdict: "Blocked", reason: o.detail.clone() };
+    if let Some(why) = ran().filter(|(_, _, o)| !o.ok).find_map(|(n, i, o)| unreached(script, n, i, o)) {
+        return Proposal { verdict: "Blocked", reason: why.to_string() };
     }
     if signed_in == Some(false) {
         let why = steps
@@ -90,7 +109,7 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
             .unwrap_or_default();
         return Proposal { verdict: "Blocked", reason: why };
     }
-    if let Some((n, o)) = ran().find(|(_, o)| !o.ok) {
+    if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok) {
         return Proposal { verdict: "Failed", reason: format!("step {n}: {}", o.detail) };
     }
     if stopped {
@@ -325,6 +344,8 @@ pub async fn run_cases<B: Browsers>(
     let sign_in_recipe = if nav_file.modules.is_empty() {
         None
     } else {
+        // An unreadable recipe gives no route here; the case's own sign-in
+        // (step 0, `signin::prepare`) then fails with the read error itself.
         recipe::load_recipe(root, organization, project).ok().flatten()
     };
     let total = cases.len() as u32;

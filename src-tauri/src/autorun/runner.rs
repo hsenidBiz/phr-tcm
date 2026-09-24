@@ -143,7 +143,7 @@ pub async fn run_step_routed<D: Driver>(
 /// A sign-in and the trip back to the module that follows it, as the one
 /// outcome the `sign_in` action stands for.
 fn signed_then_went(signed: &SignInOutcome, went: ActionOutcome) -> ActionOutcome {
-    let detail = format!("{}; then {}", signed.detail, went.detail);
+    let detail = format!("{}{}{}", signed.detail, nav::THEN, went.detail);
     let mut out = if went.ok { ActionOutcome::passed(detail) } else { ActionOutcome::failed(detail) };
     out.harness = went.harness;
     out

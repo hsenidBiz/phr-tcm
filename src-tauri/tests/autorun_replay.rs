@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
 use std::path::Path;
-use v2_lib::autorun::nav::{nav_path, no_path, save_nav, NavFile, NO_ACCOUNT, NO_MODULE};
+use v2_lib::autorun::nav::{nav_path, no_path, save_nav, NavFile, Route, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX};
 use v2_lib::autorun::replay::{propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, SIGN_IN_STEP};
+use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -810,4 +811,121 @@ async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens(
     assert!(err.contains("module paths file is not readable"), "{err}");
     assert_eq!(browsers.opened, 0);
     assert!(run.cases.is_empty());
+}
+
+// ---- A page's own words are never a failed trip ---------------------------
+
+/// Text a page or a script could carry that reads like the runner's own
+/// sentence for a failed trip to the module.
+const LOOKALIKE: &str = "Could not reach module \"Payroll\": click 2, link \"Pay\" - gone.";
+
+fn checks_for(account: Option<&str>, value: &str) -> CaseScript {
+    script(1, account, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": value }] }]))
+}
+
+/// Review I1.
+#[tokio::test]
+async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_a_project_without_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &checks_for(None, LOOKALIKE)).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Failed", "{}", rec.reason);
+    assert_eq!(rec.reason, format!("step 1: page does NOT contain {LOOKALIKE}"));
+}
+
+/// Review I1.
+#[tokio::test]
+async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_a_project_with_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &checks_for(Some("admin"), LOOKALIKE)).unwrap();
+    let (d, _app) = common::menu_app(MENU, "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    assert!(rec.steps.iter().find(|s| s.step_number == MODULE_STEP).unwrap().outcomes[0].ok, "{:?}", rec.steps);
+    assert_eq!(rec.proposed, "Failed", "{}", rec.reason);
+    assert_eq!(rec.reason, format!("step 1: page does NOT contain {LOOKALIKE}"));
+}
+
+/// Review I1: an application's own alert that happens to use the sentence.
+#[tokio::test]
+async fn a_page_dialog_that_reads_like_an_unreached_module_leaves_the_failure_the_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &checks_for(None, "no")).unwrap();
+    let mut d = checking_driver();
+    d.dialogs.push(format!("alert: {LOOKALIKE}"));
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let rec = &run.cases[0];
+    assert!(rec.reason.contains(LOOKALIKE), "the dialog is reported: {}", rec.reason);
+    assert_eq!(rec.proposed, "Failed", "{}", rec.reason);
+    assert!(rec.reason.starts_with("step 1: page does NOT contain no"), "{}", rec.reason);
+}
+
+/// Review I1: the same words are Blocked on a `sign_in` (its trip back to
+/// the module) and Failed on any other action.
+#[test]
+fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
+    let unreached = "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.";
+    let steps = vec![StepRecord {
+        step_number: 1,
+        outcomes: vec![
+            ActionOutcome::failed(format!("signed in as admin; then {unreached}")),
+            ActionOutcome::failed("not run: the module screen was not reached after the sign-in"),
+        ],
+        screenshot: None,
+    }];
+    let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
+    ] }]));
+    let p = propose(&signs_in, &steps, Some(true), false);
+    assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", unreached));
+
+    let checks = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "check_text", "value": "x" }, { "kind": "check_text", "value": "yes" }
+    ] }]));
+    let p = propose(&checks, &steps, Some(true), false);
+    assert_eq!(p.verdict, "Failed", "{}", p.reason);
+}
+
+/// A mid-script `sign_in` whose trip back to the module fails: the rest of
+/// the step is not run, and the case is Blocked on the runner's sentence.
+#[tokio::test]
+async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
+    ] }]));
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
+    let mut account = None;
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+        .await
+        .unwrap();
+    assert!(!outcomes[0].ok, "{outcomes:?}");
+    assert!(outcomes[0].detail.contains(&format!("; then {UNREACHED_PREFIX}Leave\": click 2, ")), "{}", outcomes[0].detail);
+    assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
+    assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None }];
+    let p = propose(&signs_in, &steps, Some(true), false);
+    assert_eq!(p.verdict, "Blocked", "{}", p.reason);
+    assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
 }
