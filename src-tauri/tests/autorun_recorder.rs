@@ -6,17 +6,20 @@ mod common;
 
 use common::ScriptedDriver;
 use serde_json::json;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use v2_lib::autorun::nav::{check_path, ModulePath, SIGN_IN_BROWSER_SILENT, SIGN_IN_FAILED};
 use v2_lib::autorun::recorder::{
     arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, next_click, AxLink, Captured,
     ClickHints, ClickPayload, Ended, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS, UNREADABLE,
 };
-use v2_lib::browser::cdp::{CdpError, Event};
+use v2_lib::browser::cdp::{CdpError, Driver, Event};
+use v2_lib::browser::launch::Browser;
 use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::commands::autorun_record::{
-    listen, prepare_to_record, recording_is_going, refuse_to_record_now, refuse_while_recording, RecorderClaim, ALREADY_RECORDING,
-    RECORDING_BUSY,
+    auto_run_record_cancel, listen, open_the_recording, prepare_to_record, recording_is_going, recording_is_open,
+    refuse_to_record_now, refuse_while_recording, RecorderClaim, RecordingFor, ALREADY_RECORDING, RECORDING_BUSY,
 };
 use v2_lib::commands::autorun_replay::OneAtATime;
 use v2_lib::events::RecordingEvent;
@@ -352,6 +355,116 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     .await;
     assert!(died.is_err());
     assert!(!recording_is_going());
+
+    // A Cancel pressed while Start is still signing in wins: nothing opens,
+    // the recording browser is closed and the slot is free.
+    let rec = RecorderClaim::claim().expect("free again");
+    auto_run_record_cancel().await.unwrap();
+    let (closed, spawned) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let err = open_the_recording(rec, about(), fake_recording(ClosesOnDrop(closed.clone()), spawned.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(err, CANCELLED);
+    assert!(!spawned.load(Ordering::SeqCst), "a cancelled recording never starts listening");
+    assert!(closed.load(Ordering::SeqCst), "its browser is closed");
+    assert!(!recording_is_going());
+    assert!(!recording_is_open().await);
+
+    // A Cancel left over from something else (a Try) does not cancel the
+    // next recording, and a Cancel once it is open ends it as before.
+    let rec = RecorderClaim::claim().expect("free again");
+    auto_run_record_cancel().await.unwrap();
+    drop(rec);
+    let rec = RecorderClaim::claim().expect("free again");
+    let (closed, spawned) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    open_the_recording(rec, about(), fake_recording(ClosesOnDrop(closed.clone()), spawned.clone()))
+        .await
+        .expect("nothing cancelled this one");
+    assert!(spawned.load(Ordering::SeqCst) && recording_is_going() && recording_is_open().await);
+    auto_run_record_cancel().await.unwrap();
+    assert!(closed.load(Ordering::SeqCst));
+    assert!(!recording_is_going());
+    assert!(!recording_is_open().await);
+}
+
+fn about() -> RecordingFor {
+    RecordingFor {
+        organization: "acme".into(),
+        project: "Web".into(),
+        module: "Leave".into(),
+        account: "admin".into(),
+        which: Browser::Edge,
+    }
+}
+
+/// Stands in for the recording browser: says when it has been closed.
+struct ClosesOnDrop(Arc<AtomicBool>);
+
+impl Drop for ClosesOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The listening task, as Start spawns it, minus the page: it owns the
+/// browser and waits for Cancel.
+fn fake_recording(
+    browser: ClosesOnDrop,
+    spawned: Arc<AtomicBool>,
+) -> impl FnOnce(RecorderClaim, Arc<AtomicBool>, Arc<AtomicBool>) -> tokio::task::JoinHandle<(Captured, Option<RecorderClaim>)>
+{
+    move |claim, _stop, cancel| {
+        spawned.store(true, Ordering::SeqCst);
+        tokio::spawn(async move {
+            while !cancel.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            drop(browser);
+            (Captured { clicks: vec![], ended: Ended::Cancelled }, Some(claim))
+        })
+    }
+}
+
+/// `menu_app` whose second navigation (the trip home after the sign-in)
+/// will not load.
+struct HomeWillNotLoad {
+    inner: ScriptedDriver,
+    navigations: usize,
+}
+
+impl Driver for HomeWillNotLoad {
+    async fn call(&mut self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, CdpError> {
+        if method == "Page.navigate" {
+            self.navigations += 1;
+            if self.navigations > 1 {
+                return Ok(json!({ "errorText": "net::ERR_CONNECTION_RESET" }));
+            }
+        }
+        self.inner.call(method, params).await
+    }
+    async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events()
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline)
+    }
+}
+
+#[tokio::test]
+async fn a_recording_whose_home_page_will_not_load_says_it_could_not_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let (inner, _app) = common::menu_app(&[], "/hr/dashboard", 0);
+    let mut d = HomeWillNotLoad { inner, navigations: 0 };
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+        .await
+        .unwrap_err();
+    assert_eq!(err, "the recording could not start: the home page did not load");
 }
 
 /// Getting the recording browser ready names no address, just as the

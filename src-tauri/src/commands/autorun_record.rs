@@ -21,13 +21,22 @@ use tauri_specta::Event;
 
 static RECORDING: AtomicBool = AtomicBool::new(false);
 
+/// A Cancel that arrived while Start was still signing in, before there was
+/// a recording to cancel. Start looks at it before it opens the recording.
+static CANCEL_PENDING: AtomicBool = AtomicBool::new(false);
+
 /// Held for as long as a recording (or a Try) is going. Dropping it is the
 /// only way to free the slot, so an error or a panic frees it too.
 pub struct RecorderClaim(());
 
 impl RecorderClaim {
     pub fn claim() -> Option<RecorderClaim> {
-        RECORDING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).ok().map(|_| RecorderClaim(()))
+        let claim =
+            RECORDING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).ok().map(|_| RecorderClaim(()))?;
+        // A Cancel meant for whatever held the slot before (a Try, say) is
+        // not meant for this one.
+        CANCEL_PENDING.store(false, Ordering::SeqCst);
+        Some(claim)
     }
 }
 
@@ -70,7 +79,9 @@ async fn refuse_other_sessions() -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a recording (or a Try) may start now.
+/// Whether a recording (or a Try) may start now. The commands themselves
+/// claim first and look second (`claim_the_recorder`); this is the same
+/// answer for a caller that only wants to ask.
 pub async fn refuse_to_record_now() -> Result<(), String> {
     refuse_other_sessions().await?;
     if recording_is_going() {
@@ -108,19 +119,57 @@ async fn open_browser(which: Browser, visible: bool) -> Result<(crate::browser::
     Ok((cdp, Owned(Some(browser))))
 }
 
+/// What a recording is for: where its path is saved, and who and which
+/// browser the check signs in as.
+pub struct RecordingFor {
+    pub organization: String,
+    pub project: String,
+    pub module: String,
+    pub account: String,
+    pub which: Browser,
+}
+
+/// The listening task: it owns the recording browser, and gives the claim
+/// back with the clicks unless the browser was closed.
+pub type Listening = tokio::task::JoinHandle<(Captured, Option<RecorderClaim>)>;
+
 struct Recording {
     stop: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
-    /// The claim comes back with the clicks unless the browser was closed.
-    task: tokio::task::JoinHandle<(Captured, Option<RecorderClaim>)>,
-    organization: String,
-    project: String,
-    module: String,
-    account: String,
-    which: Browser,
+    task: Listening,
+    about: RecordingFor,
 }
 
 static CURRENT: tokio::sync::Mutex<Option<Recording>> = tokio::sync::Mutex::const_new(None);
+
+/// Whether a recording has been opened and not yet stopped or cancelled
+/// (its browser may have been closed since).
+pub async fn recording_is_open() -> bool {
+    CURRENT.lock().await.is_some()
+}
+
+/// Start's last step, once its browser is signed in and listening: a Cancel
+/// that came in meanwhile wins, and then `start_listening` is never called -
+/// it is dropped with whatever it owns, which closes the browser - and so
+/// is the claim. Decided under the `CURRENT` lock, which Cancel takes too,
+/// so a Cancel cannot fall between the look and the recording being put
+/// there.
+pub async fn open_the_recording(
+    claim: RecorderClaim,
+    about: RecordingFor,
+    start_listening: impl FnOnce(RecorderClaim, Arc<AtomicBool>, Arc<AtomicBool>) -> Listening,
+) -> Result<(), String> {
+    let mut slot = CURRENT.lock().await;
+    if CANCEL_PENDING.swap(false, Ordering::SeqCst) {
+        crate::applog::info("Auto-run module recording cancelled while it was signing in");
+        return Err(recorder::CANCELLED.to_string());
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let task = start_listening(claim, stop.clone(), cancel.clone());
+    *slot = Some(Recording { stop, cancel, task, about });
+    Ok(())
+}
 
 /// A recording whose browser was closed has ended on its own (and already
 /// freed the slot); its leftovers must not stand in for a new one.
@@ -170,8 +219,9 @@ pub async fn prepare_to_record<D: Driver>(
     }
     let home = nav::go_home(d, &recipe.start_url, &recipe.origins(), timing).await;
     if !home.ok {
-        // `go_home` words its failures without the address.
-        return Err(format!("the home page did not open: {}", home.detail));
+        // `go_home` words its failures without the address, and already
+        // says it was the home page.
+        return Err(format!("the recording could not start: {}", home.detail));
     }
     recorder::arm(d).await.map_err(|e| {
         crate::applog::warn(format!("module recording: the listener could not be added: {e}"));
@@ -257,22 +307,27 @@ pub async fn auto_run_record_start(
     let (mut cdp, browser) = open_browser(which, true).await?;
     prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default()).await?;
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (stop_seen, cancel_seen, events_to) = (stop.clone(), cancel.clone(), app.clone());
-    let task = tokio::spawn(async move {
-        let out = listen(&mut cdp, claim, &stop_seen, &cancel_seen, &mut |ev| {
-            let _ = ev.emit(&events_to);
+    let about = RecordingFor { organization, project, module, account, which };
+    open_the_recording(claim, about, move |claim, stop, cancel| {
+        tokio::spawn(async move {
+            let out = listen(&mut cdp, claim, &stop, &cancel, &mut |ev| {
+                let _ = ev.emit(&app);
+            })
+            .await;
+            drop(cdp);
+            drop(browser);
+            out
         })
-        .await;
-        drop(cdp);
-        drop(browser);
-        out
-    });
-    *CURRENT.lock().await = Some(Recording { stop, cancel, task, organization, project, module, account, which });
+    })
+    .await?;
     crate::applog::info("Auto-run module recording started");
     Ok(())
 }
+
+/// Said by Stop while Start is still getting the recording browser ready:
+/// there are no clicks to keep yet, and Stop does not also mean Cancel.
+pub const NOT_OPEN_YET: &str =
+    "the recording browser is still opening - wait for it, or press Cancel to stop the recording";
 
 /// Stop, close the recording browser, replay the path in a fresh signed-in
 /// browser, and save it only if every click found its one element and the
@@ -280,9 +335,16 @@ pub async fn auto_run_record_start(
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordResult, String> {
-    let rec = CURRENT.lock().await.take().ok_or_else(|| "nothing is being recorded".to_string())?;
+    let rec = {
+        let mut slot = CURRENT.lock().await;
+        match slot.take() {
+            Some(rec) => rec,
+            None if recording_is_going() => return Err(NOT_OPEN_YET.to_string()),
+            None => return Err("nothing is being recorded".to_string()),
+        }
+    };
     rec.stop.store(true, Ordering::SeqCst);
-    let Recording { task, organization, project, module, account, which, .. } = rec;
+    let Recording { task, about: RecordingFor { organization, project, module, account, which }, .. } = rec;
     let (captured, _claim) = task.await.map_err(|e| {
         crate::applog::warn(format!("module recording: the recorder stopped unexpectedly: {e}"));
         RECORDER_FELL_OVER.to_string()
@@ -303,11 +365,20 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
     }
 }
 
-/// Close the recording browser and save nothing.
+/// Close the recording browser and save nothing. While Start is still
+/// signing in there is no recording yet: the Cancel is kept, and Start ends
+/// with `recorder::CANCELLED` instead of opening one.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_record_cancel() -> Result<(), String> {
-    let rec = CURRENT.lock().await.take();
+    let rec = {
+        let mut slot = CURRENT.lock().await;
+        let rec = slot.take();
+        if rec.is_none() && recording_is_going() {
+            CANCEL_PENDING.store(true, Ordering::SeqCst);
+        }
+        rec
+    };
     if let Some(rec) = rec {
         rec.cancel.store(true, Ordering::SeqCst);
         // The task closes the browser before it gives the claim back, and

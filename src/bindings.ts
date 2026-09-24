@@ -422,7 +422,11 @@ export const commands = {
 	 *  page ended where the recording did.
 	 */
 	autoRunRecordStop: () => typedError<ModuleRecordResult, string>(__TAURI_INVOKE("auto_run_record_stop")),
-	/**  Close the recording browser and save nothing. */
+	/**
+	 *  Close the recording browser and save nothing. While Start is still
+	 *  signing in there is no recording yet: the Cancel is kept, and Start ends
+	 *  with `recorder::CANCELLED` instead of opening one.
+	 */
 	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
 	/**  The same check a recording must pass, on a saved path. */
 	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
