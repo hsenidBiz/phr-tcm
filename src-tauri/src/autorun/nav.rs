@@ -9,6 +9,7 @@
 //! existed.
 
 use super::recipe::{origin_of, project_slug, SignInRecipe};
+use super::CaseScript;
 use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
 use crate::browser::locator::Target;
@@ -410,4 +411,64 @@ pub fn is_setup_problem(reason: &str) -> bool {
         || reason == NO_MODULE
         || reason == NO_ACCOUNT
         || reason.starts_with(NO_PATH_START)
+}
+
+/// Start of the sentence a saved `navigate` gets while the switch is off.
+pub const NO_ADDRESS_PREFIX: &str = "this project does not allow opening pages by address";
+
+pub fn no_address(step: i32) -> String {
+    format!(
+        "{NO_ADDRESS_PREFIX}: a run starts on the case's module screen - use clicks instead of \"navigate\" (step {step})."
+    )
+}
+
+/// While the switch is off, a script with any `navigate` (absolute or
+/// relative) cannot be saved. Names the first case and step it finds.
+pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> {
+    if nav.direct_urls {
+        return Ok(());
+    }
+    for sc in scripts {
+        for step in &sc.steps {
+            if step.actions.iter().any(|a| matches!(a, Action::Navigate { .. })) {
+                return Err(format!("case {}: {}", sc.case_id, no_address(step.step_number)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `check_no_addresses` against the project's own file: the one call every
+/// save path makes (the Script editor, a JSON import, the assistant's
+/// `save_autorun_script`).
+pub fn refuse_addresses(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
+    check_no_addresses(&load_nav(root, org, project)?, scripts)
+}
+
+/// What an assistant's guide gains while the switch is off. Empty while it
+/// is on.
+pub fn guide_section(nav: &NavFile) -> String {
+    if nav.direct_urls {
+        return String::new();
+    }
+    "## This project's runs start on the module screen\n\n\
+     - The run signs in and goes to the case's module screen before step 1, by the menu path recorded in the app.\n\
+     - The script starts there: its first action acts on the module screen.\n\
+     - Never use `navigate`. This project refuses to save a script that opens a page by address; reach every other screen with clicks.\n\
+     - A `sign_in` action lands on the home page, and the run brings the browser back to the module screen before the next action.\n"
+        .to_string()
+}
+
+/// An outcome that means the run could not put the case where its steps
+/// begin, or the script tried to open a page by address where that is not
+/// allowed: the case is Blocked, not Failed.
+///
+/// Named differently from [`is_setup_problem`] on purpose: that one reads a
+/// case's finished, formatted `reason` (which may carry a `step N:`
+/// prefix, or be one of the exact sentences `NO_MODULE`/`NO_ACCOUNT`); this
+/// one reads a single action's raw `detail` before any such prefix is
+/// added, which is what `replay::propose` has while it is still deciding
+/// the verdict.
+pub fn is_route_problem(detail: &str) -> bool {
+    detail.contains(UNREACHED_PREFIX) || detail.starts_with(NO_ADDRESS_PREFIX)
 }

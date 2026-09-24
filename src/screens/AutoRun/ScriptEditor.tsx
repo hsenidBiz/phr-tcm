@@ -35,12 +35,14 @@ export default function ScriptEditor({
   title,
   steps,
   org,
+  project,
   onClose,
 }: {
   caseId: number;
   title: string;
   steps: { action: string; expected: string; shared?: number | null }[];
   org?: string;
+  project?: string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -106,7 +108,7 @@ export default function ScriptEditor({
       return;
     }
     setProblem("");
-    const r = await commands.autoRunSaveScript({
+    const r = await commands.autoRunSaveScript(org ?? "", project ?? "", {
       case_id: caseId,
       title,
       steps: parsed,

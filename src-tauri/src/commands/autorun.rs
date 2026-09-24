@@ -187,18 +187,36 @@ pub fn auto_run_load_script(
 
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_save_script(app: tauri::AppHandle, mut script: CaseScript) -> Result<(), String> {
+pub fn auto_run_save_script(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    script: CaseScript,
+) -> Result<(), String> {
+    save_script_from_editor(&root(&app)?, &organization, &project, script)
+}
+
+/// The pure half of [`auto_run_save_script`], so a test can reach it
+/// without an `AppHandle`.
+pub fn save_script_from_editor(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    mut script: CaseScript,
+) -> Result<(), String> {
     // A person saving from the editor is a fresh start for the assistant's
     // repair count, whatever the editor happened to send - and the reason
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
+    // The project's address rule, the same one the import and the
+    // assistant's save apply.
+    crate::autorun::nav::refuse_addresses(root, organization, project, std::slice::from_ref(&script))?;
     // Through the same helper the bundle paths use, as a bundle of one:
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be
     // a rule that depends on which door you came through.
-    store::save_scripts_atomically(&root(&app)?, std::slice::from_ref(&script))
-        .map_err(|e| e.to_string())
+    store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())
 }
 
 /// Import a BUNDLE of scripts from one file - the shape an assistant
@@ -221,14 +239,19 @@ pub fn auto_run_save_script(app: tauri::AppHandle, mut script: CaseScript) -> Re
 /// just "done".
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_import_scripts(app: tauri::AppHandle, path: String) -> Result<Vec<i32>, String> {
-    import_scripts_from_path(&root(&app)?, &path)
+pub fn auto_run_import_scripts(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    path: String,
+) -> Result<Vec<i32>, String> {
+    import_scripts_from_path(&root(&app)?, &organization, &project, &path)
 }
 
 /// The pure half of [`auto_run_import_scripts`]: everything that does not
 /// need an `AppHandle`, so it can be exercised directly in tests the same
 /// way `autorun::store`'s functions are.
-pub fn import_scripts_from_path(root: &std::path::Path, path: &str) -> Result<Vec<i32>, String> {
+pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, project: &str, path: &str) -> Result<Vec<i32>, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
@@ -240,6 +263,7 @@ pub fn import_scripts_from_path(root: &std::path::Path, path: &str) -> Result<Ve
     if scripts.is_empty() {
         return Err("that file has no scripts in it".to_string());
     }
+    crate::autorun::nav::refuse_addresses(root, organization, project, &scripts)?;
     store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));

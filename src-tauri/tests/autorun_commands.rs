@@ -2,10 +2,12 @@
 //! and the failure says how to fix it rather than panicking on an
 //! absent session.
 
+use v2_lib::autorun::nav::{no_address, save_nav, NavFile};
 use v2_lib::autorun::store::{load_run, load_script, save_run, save_run_guarded};
+use v2_lib::autorun::CaseScript;
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{
-    describe_session_error, import_scripts_from_path, refuse_while_a_run_is_going, safe_run_id,
+    describe_session_error, import_scripts_from_path, refuse_while_a_run_is_going, safe_run_id, save_script_from_editor,
 };
 use v2_lib::commands::autorun_replay::{replay_is_running, replay_timing, OneAtATime};
 
@@ -166,7 +168,7 @@ fn importing_a_utf8_file_with_a_bom_keeps_non_ascii_text_intact() {
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, &bytes).unwrap();
 
-    let ids = import_scripts_from_path(&root, file.to_str().unwrap()).expect("import failed");
+    let ids = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).expect("import failed");
     assert_eq!(ids, vec![301]);
 
     let loaded = load_script(&root, 301).unwrap().unwrap();
@@ -224,4 +226,33 @@ async fn clearing_is_refused_while_an_unattended_run_is_going_with_open_browsers
     assert_eq!(err, "an unattended run is going - wait for it, or stop it first");
     drop(claim);
     assert!(refuse_while_a_run_is_going().await.is_ok(), "the claim was freed - clearing is allowed again");
+}
+
+fn with_navigate(case_id: i32) -> serde_json::Value {
+    serde_json::json!({ "case_id": case_id, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] },
+        { "step_number": 2, "actions": [{ "kind": "navigate", "url": "/hr/leave/apply" }] }
+    ] })
+}
+
+#[test]
+fn with_addresses_switched_off_the_editor_and_an_import_refuse_a_navigate_and_write_nothing() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    save_nav(&root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    let script: CaseScript = serde_json::from_value(with_navigate(7)).unwrap();
+
+    let err = save_script_from_editor(&root, "acme", "Web", script.clone()).unwrap_err();
+    assert_eq!(err, format!("case 7: {}", no_address(2)));
+    assert!(load_script(&root, 7).unwrap().is_none());
+
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, serde_json::Value::Array(vec![with_navigate(8)]).to_string()).unwrap();
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err();
+    assert_eq!(err, format!("case 8: {}", no_address(2)));
+    assert!(load_script(&root, 8).unwrap().is_none());
+
+    // Another project, whose switch was never touched, takes the same script.
+    save_script_from_editor(&root, "acme", "Other", script).unwrap();
+    assert!(load_script(&root, 7).unwrap().is_some());
 }

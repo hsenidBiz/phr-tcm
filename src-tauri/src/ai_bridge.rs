@@ -363,11 +363,11 @@ fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
     ))
 }
 
-/// The guide's own text, plus this project's recorded quirks when it has
-/// any. The constant (`autorun::guide::autorun_guide`) only says such a
-/// section exists; this reads what `record_autorun_quirk` has actually
-/// written, so the guide can never go stale on a live project's quirks
-/// the way it would if they were baked into the Markdown by hand.
+/// The guide's own text, plus this project's sections when it has any: the
+/// module-screen rule while "Scripts may open pages by address" is off,
+/// then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
+/// only says a quirks section exists; this reads what is actually on file,
+/// so the guide can never go stale on a live project.
 fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
     let base = crate::autorun::guide::autorun_guide();
     if ctx.project.trim().is_empty() {
@@ -376,14 +376,16 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
     let Some(root) = crate::autorun::store::configured_root() else {
         return base;
     };
-    let quirks =
-        crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    let section = crate::autorun::quirks::quirks_section(&quirks);
-    if section.is_empty() {
-        base
-    } else {
-        format!("{base}\n{section}")
+    let nav = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).unwrap_or_default();
+    let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+    let mut out = base;
+    for section in [crate::autorun::nav::guide_section(&nav), crate::autorun::quirks::quirks_section(&quirks)] {
+        if !section.is_empty() {
+            out.push('\n');
+            out.push_str(&section);
+        }
     }
+    out
 }
 
 /// The page in the browser the person opened, as text: Chrome's own
@@ -916,6 +918,13 @@ async fn save_autorun_scripts(
         Err(refused) => return refused,
         Ok(r) => r,
     };
+
+    // Gate 0: a project whose runs start on the module screen refuses a
+    // script that opens pages by address - before anything is read from
+    // disk or Azure DevOps.
+    if let Err(why) = crate::autorun::nav::refuse_addresses(&root, &ctx.org, &ctx.project, &scripts) {
+        return (400, why);
+    }
 
     // Gate 1: what this bundle does to the scripts already on disk.
     let mut prepared: Vec<crate::autorun::CaseScript> = Vec::with_capacity(scripts.len());

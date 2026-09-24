@@ -19,6 +19,7 @@ use std::time::Duration;
 
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in before this action failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached after the sign-in";
+const AFTER_REFUSED_ADDRESS: &str = "not run: this step opened a page by address, which this project does not allow";
 
 /// Where an authored `navigate` may go for this project: everywhere, for a
 /// project with no recipe saved yet, or only the recipe's own origins once
@@ -97,6 +98,9 @@ pub async fn run_step_routed<D: Driver>(
 ) -> Result<Vec<ActionOutcome>, String> {
     let recipe = recipe::load_recipe(root, organization, project)?;
     let policy = policy_for(recipe.as_ref());
+    // Read per step, like the recipe: a person may flip the switch between
+    // two steps of a supervised run.
+    let nav_file = nav::load_nav(root, organization, project)?;
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
     for action in &step.actions {
@@ -105,6 +109,12 @@ pub async fn run_step_routed<D: Driver>(
             continue;
         }
         let mut outcome = match action {
+            // A script saved before the switch was turned off. The runner's
+            // own trip home never comes through here.
+            Action::Navigate { .. } if !nav_file.direct_urls => {
+                blocked = Some(AFTER_REFUSED_ADDRESS);
+                ActionOutcome::failed(nav::no_address(step.step_number))
+            }
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
                     *account = None;

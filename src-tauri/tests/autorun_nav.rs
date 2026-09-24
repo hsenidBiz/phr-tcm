@@ -5,8 +5,9 @@ mod common;
 
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    find_path, go_home, load_nav, module_key, nav_path, no_path, path_of, put_path, remove_path, route_for, same_page,
-    save_nav, set_direct_urls, view, ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
+    check_no_addresses, find_path, go_home, guide_section, load_nav, module_key, nav_path, no_address, no_path, path_of,
+    put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view, ModulePath, NavFile, PathFailure, Where,
+    NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -208,4 +209,43 @@ async fn going_home_while_the_page_is_between_documents_navigates_instead_of_giv
     let out = go_home(&mut d, "https://hr.example.internal/hr/home/index", &origins, &common::quick()).await;
     assert!(out.ok, "{out:?}");
     assert_eq!(d.calls_to("Page.navigate").len(), 1);
+}
+
+fn case_with(actions: serde_json::Value) -> v2_lib::autorun::CaseScript {
+    serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] },
+        { "step_number": 2, "actions": actions }
+    ] }))
+    .unwrap()
+}
+
+#[test]
+fn the_address_sentence_is_the_designs_own_words() {
+    assert_eq!(
+        no_address(2),
+        "this project does not allow opening pages by address: a run starts on the case's module screen - use clicks instead of \"navigate\" (step 2)."
+    );
+}
+
+#[test]
+fn with_the_switch_off_any_navigate_absolute_or_relative_is_refused_and_named() {
+    let off = NavFile { direct_urls: false, modules: vec![] };
+    for url in ["https://hr.example.internal/hr/leave", "/hr/leave/apply"] {
+        let sc = case_with(json!([{ "kind": "navigate", "url": url }]));
+        assert_eq!(check_no_addresses(&off, &[sc.clone()]).unwrap_err(), format!("case 7: {}", no_address(2)));
+        assert!(check_no_addresses(&NavFile::default(), &[sc]).is_ok(), "on by default");
+    }
+    let clicks_only = case_with(json!([{ "kind": "click", "selector": { "role": "link", "name": "Leave" } }]));
+    assert!(check_no_addresses(&off, &[clicks_only]).is_ok());
+}
+
+#[test]
+fn the_guide_section_is_there_only_while_the_switch_is_off() {
+    assert_eq!(guide_section(&NavFile::default()), "");
+    let text = guide_section(&NavFile { direct_urls: false, modules: vec![] });
+    assert!(text.starts_with("## This project's runs start on the module screen"), "{text}");
+    for must in ["before step 1", "starts there", "Never use `navigate`", "`sign_in`"] {
+        assert!(text.contains(must), "missing {must:?}: {text}");
+    }
+    assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

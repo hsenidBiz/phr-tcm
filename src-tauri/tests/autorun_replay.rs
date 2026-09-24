@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
 use std::path::Path;
-use v2_lib::autorun::nav::{nav_path, no_path, save_nav, NavFile, Route, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX};
+use v2_lib::autorun::nav::{nav_path, no_address, no_path, save_nav, NavFile, Route, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX};
 use v2_lib::autorun::replay::{propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, SIGN_IN_STEP};
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
@@ -959,4 +959,28 @@ async fn the_scripts_own_account_wins_and_the_runs_account_fills_in_for_a_script
     assert_eq!(run.cases[1].account.as_deref(), Some("lee"));
     assert_eq!(run.cases[1].steps[0].step_number, SIGN_IN_STEP);
     assert!(run.cases[1].steps[0].outcomes.iter().all(|o| o.ok), "{:?}", run.cases[1].steps[0].outcomes);
+}
+
+#[tokio::test]
+async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_navigate() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    // `save_script` does not apply the rule: this is a file from before.
+    store::save_script(
+        root,
+        &script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+            { "kind": "navigate", "url": "https://app.example/leave" },
+            { "kind": "check_text", "value": "yes" }
+        ] }])),
+    )
+    .unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, no_address(1));
 }

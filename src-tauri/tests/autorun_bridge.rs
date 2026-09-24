@@ -1268,3 +1268,30 @@ fn the_guard_still_holds_for_every_new_route() {
         assert!(autorun_guard_for(path, false).is_none(), "{path} is not an Auto Run route");
     }
 }
+
+#[tokio::test]
+async fn with_addresses_switched_off_a_bundle_with_a_navigate_is_refused_before_anything_else() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    v2_lib::autorun::nav::set_direct_urls(dir.path(), "acme", "Web", false).unwrap();
+    let body = case_7("#toast", "Saved").to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, format!("case 7: {}", v2_lib::autorun::nav::no_address(1)));
+    assert!(load_script(dir.path(), 7).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_guide_says_a_run_starts_on_the_module_screen_only_while_addresses_are_off() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_, on) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(!on.contains("## This project's runs start on the module screen"), "{on}");
+    v2_lib::autorun::nav::set_direct_urls(dir.path(), "acme", "Web", false).unwrap();
+    let (status, off) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert!(off.contains("## This project's runs start on the module screen"), "{off}");
+    assert!(!off.contains('\u{2014}'));
+}

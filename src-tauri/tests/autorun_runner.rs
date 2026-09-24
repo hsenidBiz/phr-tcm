@@ -319,3 +319,27 @@ async fn a_sign_in_whose_clear_fails_gets_no_screenshot() {
         d.calls
     );
 }
+
+#[tokio::test]
+async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_sentence_and_stops_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::nav::save_nav(
+        dir.path(),
+        "Acme",
+        "Web",
+        &v2_lib::autorun::nav::NavFile { direct_urls: false, modules: vec![] },
+    )
+    .unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let step = StepScript {
+        step_number: 4,
+        actions: vec![Action::Navigate { url: "/hr/leave/apply".into() }, Action::CheckText { value: "Leave".into() }],
+        unchecked: None,
+    };
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step, &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok);
+    assert_eq!(out[0].detail, v2_lib::autorun::nav::no_address(4));
+    assert_eq!(out[1].detail, "not run: this step opened a page by address, which this project does not allow");
+    assert!(d.calls_to("Page.navigate").is_empty());
+}

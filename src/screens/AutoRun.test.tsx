@@ -120,7 +120,7 @@ test("importing scripts sends the picked file's path, and the badge updates", as
   fireEvent.click(screen.getByRole("button", { name: "Import scripts" }));
 
   await waitFor(() => expect(receivedArgs).not.toBeNull());
-  expect(receivedArgs).toEqual({ path: "C:\\scripts.json" });
+  expect(receivedArgs).toEqual({ organization: "acme", project: "Web", path: "C:\\scripts.json" });
   expect(await screen.findByText(/imported 1 script/i)).toBeInTheDocument();
 });
 

@@ -109,7 +109,7 @@ export default function AutoRun({
         filters: [{ name: "Action scripts", extensions: ["json"] }],
       });
       if (typeof path !== "string") return null;
-      const r = await commands.autoRunImportScripts(path);
+      const r = await commands.autoRunImportScripts(org, project, path);
       if (r.status === "error") throw new Error(r.error);
       return r.data;
     },
@@ -500,6 +500,7 @@ export default function AutoRun({
               title={c.title}
               steps={c.steps}
               org={org}
+              project={project}
               onClose={() => setEditing(null)}
             />
           );

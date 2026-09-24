@@ -126,3 +126,30 @@ test("a Shared Steps entry among the case's steps shows its reference, not a bla
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, [], caseSteps);
   expect(await screen.findByText("Shared steps #812")).toBeInTheDocument();
 });
+
+test("saving names the organization and project, so the project's address rule applies", async () => {
+  const sent: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return { case_id: 7, title: "t", steps: ONE_STEP };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_save_script") {
+      sent.push(args);
+      return null;
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("combobox", { name: "Runs as" });
+  // Save stays disabled until the existing script has loaded (it would
+  // otherwise write an empty `steps: []` over what is on disk) - wait for
+  // that before clicking, rather than racing the query.
+  const saveButton = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(saveButton).not.toBeDisabled());
+  fireEvent.click(saveButton);
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]).toEqual(expect.objectContaining({ organization: "acme", project: "Web" }));
+});

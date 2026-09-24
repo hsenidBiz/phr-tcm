@@ -287,7 +287,7 @@ export const commands = {
 	 */
 	last_repair?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
-	autoRunSaveScript: (script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
+	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
@@ -308,7 +308,7 @@ export const commands = {
 	 *  case ids that landed, so the screen can say what changed rather than
 	 *  just "done".
 	 */
-	autoRunImportScripts: (path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { path })),
+	autoRunImportScripts: (organization: string, project: string, path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { organization, project, path })),
 	autoRunSaveRun: (run: LocalRun_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
 	autoRunListRuns: () => __TAURI_INVOKE<LocalRun_Serialize[]>("auto_run_list_runs"),
 	/**
