@@ -142,6 +142,9 @@ export default function ModulePathsDialog({
 
   const record = async (module: string) => {
     setProblem("");
+    // From here on the recorder is this dialog's own: the offer to cancel
+    // a leftover would cancel this recording instead.
+    setLeftOpen(false);
     cancelAsked.current = false;
     setPhase({ kind: "starting", module });
     try {
@@ -212,13 +215,23 @@ export default function ModulePathsDialog({
     void commands.autoRunRecordCancel().catch(() => {});
   };
 
+  /** The offer was made when the dialog opened; the leftover may have
+   * ended by itself since (a check finishing). Ask again, so a Cancel only
+   * ever reaches something still left behind - the offer is shown only
+   * while this dialog runs nothing of its own, so whatever holds the
+   * recorder now is not this dialog's. */
   const cancelLeftOpen = async () => {
-    await commands.autoRunRecordCancel().catch(() => {});
+    const stillHeld = await commands.autoRunRecordingIsOpen().catch(() => false);
     setLeftOpen(false);
+    if (!stillHeld) return;
+    await commands.autoRunRecordCancel().catch(() => {});
     toast.info("The recording was cancelled. Nothing was saved.");
   };
 
   const tryPath = async (module: string) => {
+    // From here on the recorder is this dialog's own: the offer to cancel
+    // a leftover would cancel this Try instead.
+    setLeftOpen(false);
     cancelAsked.current = false;
     setTrying(module);
     const show = (result: { ok: boolean; detail: string }) => {
@@ -287,7 +300,7 @@ export default function ModulePathsDialog({
       </div>
       {nav.isError && <p className="text-xs text-danger">{nav.error.message}</p>}
       {problem && <p className="text-xs text-danger">{problem}</p>}
-      {leftOpen && (
+      {leftOpen && phase.kind === "list" && trying === null && (
         <div className="flex items-center gap-2 rounded-md border border-border p-2 text-xs">
           <span className="min-w-0 flex-1 text-warning">
             A module path from before is still being recorded or checked.

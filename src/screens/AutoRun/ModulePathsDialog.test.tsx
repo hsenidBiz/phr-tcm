@@ -350,6 +350,50 @@ test("a recording left open from before can be cancelled from a freshly opened d
   );
 });
 
+/// Re-review N1: once this dialog starts something of its own, the offer
+/// must go - pressing it then would cancel this dialog's own work.
+test("the leftover-recording offer is gone once Record starts", async () => {
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_recording_is_open") return true;
+    if (cmd === "auto_run_record_start") return new Promise(() => {});
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  await screen.findByRole("button", { name: "Cancel that recording" });
+  await chooseAndStart();
+  expect(await screen.findByText(/Opening the browser and signing in/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument();
+  expect(cancels).toBe(0);
+});
+
+/// Re-review N1: the offer is asked about once, on opening. By the time it
+/// is pressed the leftover may have ended by itself (a check finishing),
+/// and then there is nothing of anyone's to cancel.
+test("a stale leftover-recording offer asks again and cancels nothing once the recorder is free", async () => {
+  let open = true;
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_recording_is_open") return open;
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  const offer = await screen.findByRole("button", { name: "Cancel that recording" });
+  open = false;
+  fireEvent.click(offer);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument(),
+  );
+  expect(cancels).toBe(0);
+  expect(toast.info).not.toHaveBeenCalled();
+});
+
 test("nothing is offered to cancel when nothing was left open", async () => {
   let asked = 0;
   mount((cmd) => {
