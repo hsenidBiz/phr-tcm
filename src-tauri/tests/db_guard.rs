@@ -3,7 +3,7 @@
 
 use v2_lib::db::{
     access_for, access_for_user, allowed, classify, parse_connection, Access, Verdict,
-    MAX_SQL_CHARS,
+    MAX_SQL_CHARS, READ_ONLY_SENTENCE,
 };
 use v2_lib::db_defaults::DB_PRESETS;
 
@@ -98,8 +98,12 @@ fn ddl_procedures_and_permission_changes_are_refused_by_name() {
         ("TRUNCATE TABLE t", "TRUNCATE"),
         ("ALTER TABLE t ADD c INT", "ALTER"),
         ("CREATE TABLE t (c INT)", "CREATE"),
+        // sp_who is a real system procedure but not one of the look-up
+        // ones on the allowlist, so it is still refused - just no longer
+        // because EXEC itself is a refused word (see the EXEC tests below,
+        // where EXEC of a NAMED USER procedure is now a Write instead of a
+        // refusal - that rule replaced the old blanket one).
         ("EXEC sp_who", "EXEC"),
-        ("EXECUTE dbo.something", "EXECUTE"),
         ("GRANT SELECT ON t TO x", "GRANT"),
         ("REVOKE SELECT ON t FROM x", "REVOKE"),
         ("DENY SELECT ON t TO x", "DENY"),
@@ -263,4 +267,80 @@ fn closing_the_chain_gap_leaves_ordinary_statements_alone() {
         Verdict::Read
     );
     assert_eq!(classify("UPDATE dbo.T SET a = 1 WHERE id = 2"), Verdict::Write);
+}
+
+/// A stored procedure can change data, so calling a NAMED one gets exactly
+/// the rule INSERT/UPDATE/DELETE already have: the dev login only, and only
+/// with the writes switch on. This is the rule that replaced the old
+/// blanket "EXEC is always refused" - `EXECUTE dbo.something`, refused in
+/// 1.25.25 and earlier, is a Write now like any other named call.
+#[test]
+fn exec_of_a_named_procedure_is_a_write_gated_like_any_other_write() {
+    assert_eq!(classify("EXEC dbo.GetLeave @EmpId = 5"), Verdict::Write);
+    assert_eq!(
+        allowed("EXEC dbo.GetLeave @EmpId = 5", Access::ReadOnly).unwrap_err(),
+        READ_ONLY_SENTENCE
+    );
+    assert_eq!(allowed("EXEC dbo.GetLeave @EmpId = 5", Access::DevWrites), Ok(Verdict::Write));
+
+    assert_eq!(classify("EXECUTE [dbo].[GetLeave] 5, N'x', NULL"), Verdict::Write);
+    assert_eq!(classify("EXEC @rc = dbo.p @a = @b OUTPUT;"), Verdict::Write);
+
+    // The old test asserted this was refused because EXEC itself was a
+    // refused word. It is a named two-part procedure call now, so it goes
+    // through the same door INSERT/UPDATE/DELETE do.
+    assert_eq!(classify("EXECUTE dbo.something"), Verdict::Write);
+}
+
+/// The fixed set of look-up procedures reads schema information, never
+/// data, so the owner approved it on every connection - it is a `Read`,
+/// same as a SELECT.
+#[test]
+fn exec_of_a_lookup_system_procedure_is_a_read_everywhere() {
+    for sql in [
+        "EXEC sp_help 'dbo.Employee'",
+        "exec sys.sp_columns N'Employee'",
+        "EXEC sp_helptext 'dbo.p'",
+    ] {
+        assert_eq!(classify(sql), Verdict::Read, "{sql}");
+        assert_eq!(allowed(sql, Access::ReadOnly), Ok(Verdict::Read), "{sql}");
+    }
+}
+
+/// Everything outside the one accepted shape - dynamic SQL, a system
+/// procedure that is not on the look-up list, an over-qualified name, EXEC
+/// welded on mid-statement, or anything after the argument list besides one
+/// trailing semicolon - is refused, whatever connection is asked.
+#[test]
+fn exec_outside_the_accepted_shape_is_refused() {
+    for sql in [
+        "EXEC('SELECT 1')",
+        "EXEC (@sql)",
+        "EXEC @p",
+        "EXEC sp_executesql N'SELECT 1'",
+        "EXEC xp_cmdshell 'dir'",
+        "EXEC sp_configure",
+        "EXEC otherdb.dbo.p",
+        "EXEC srv.db.dbo.p",
+        "SELECT 1 EXEC dbo.p",
+        "EXEC dbo.p 1 DROP TABLE t",
+        "EXEC dbo.p 1 SELECT 1",
+        "EXEC dbo.p; SELECT 1",
+        "EXEC dbo.p 1 GO",
+    ] {
+        let why = refusal(sql);
+        assert!(!why.is_empty(), "{sql}");
+        // A refusal is a refusal on every connection - the dev login does
+        // not get to run any of these either.
+        assert!(allowed(sql, Access::DevWrites).is_err(), "{sql}");
+    }
+}
+
+/// Comments and string literals are stripped/blanked before anything is
+/// classified, same as everywhere else in the guard - a keyword sitting
+/// inside either one is data, not shape.
+#[test]
+fn exec_treats_comments_and_literals_in_its_arguments_as_data() {
+    assert_eq!(classify("EXEC dbo.p 'DROP TABLE t'"), Verdict::Write);
+    assert_eq!(classify("EXEC dbo.p /* xp_cmdshell */ 1"), Verdict::Write);
 }

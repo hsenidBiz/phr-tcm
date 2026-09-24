@@ -404,6 +404,64 @@ async fn the_guard_is_the_only_door_to_the_runner() {
     assert_eq!(fake.calls().len(), 1);
 }
 
+/// EXEC of a named procedure is not wrapped, rewritten, or given any
+/// treatment different from a SELECT on its way to sqlcmd - `sqlcmd_args`
+/// puts it in `-Q` exactly as written, same as every other statement, and
+/// whatever comes back is capped by `cap()` off the OUTPUT text, which does
+/// not know or care whether a SELECT or a procedure's result set produced
+/// it. This is the reason no wrapping was needed for the new rule: the row
+/// cap already applies to anything sqlcmd prints, procedure output included.
+#[tokio::test]
+async fn exec_of_a_procedure_reaches_sqlcmd_unwrapped_and_is_capped_like_a_select() {
+    let sql = "EXEC dbo.GetLeave @EmpId = 5";
+    let dev = dev_login_preset();
+
+    // It runs on the dev login and is sent to sqlcmd exactly as written -
+    // no SET prefix, no row-limiting rewrite, nothing added or removed.
+    let fake = FakeRunner::answering("EmpId\tStatus\n5\tApproved\n");
+    run_sql(&fake, Path::new("sqlcmd.exe"), &dev, sql).await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(value_after(&calls[0].1, "-Q"), sql);
+    assert_eq!(calls[0].1, sqlcmd_args(&dev, sql));
+
+    // A result set wider than the row cap is capped exactly like a SELECT's
+    // would be: `cap()` counts rows off the text sqlcmd printed, and a
+    // procedure's rows look no different from a query's.
+    let mut stdout = String::from("EmpId\tStatus\n");
+    for i in 0..250 {
+        stdout.push_str(&format!("{i}\tApproved\n"));
+    }
+    let long = FakeRunner::answering(&stdout);
+    let (text, capped) = run_sql(&long, Path::new("sqlcmd.exe"), &dev, sql).await.unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "EmpId\tStatus");
+    assert_eq!(lines.len(), 1 + ROW_CAP + 1, "header, {ROW_CAP} rows, the cap line");
+    assert_eq!(*lines.last().unwrap(), "... 50 more rows (capped)");
+    assert!(capped, "the row cap fired on a procedure's result set");
+
+    // On the read-only connection it never reaches the runner at all - same
+    // door INSERT/UPDATE/DELETE are stopped at.
+    let ro_fake = FakeRunner::answering("");
+    let why = run_sql(&ro_fake, Path::new("sqlcmd.exe"), &read_only_preset(), sql).await.unwrap_err();
+    assert!(why.contains("read only"), "{why}");
+    assert!(ro_fake.calls().is_empty(), "EXEC reached the runner on a read-only connection");
+}
+
+/// The look-up system procedures run - and get capped - on every
+/// connection, read-only included, because the owner approved them as a
+/// Read: they only ever describe schema, never a row of company data.
+#[tokio::test]
+async fn exec_of_a_lookup_procedure_runs_on_the_read_only_connection_too() {
+    let sql = "EXEC sp_columns 'dbo.Employee'";
+    let fake = FakeRunner::answering("TABLE_NAME\tCOLUMN_NAME\nEmployee\tEmpId\n");
+    let (text, capped) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), sql).await.unwrap();
+    assert_eq!(fake.calls().len(), 1);
+    assert!(!capped);
+    assert!(text.contains("EmpId"));
+}
+
 /// The env override exists so a test can say "sqlcmd is not on this
 /// machine" without uninstalling it, and so a person who keeps sqlcmd
 /// somewhere none of the candidates look can point at it. It is
