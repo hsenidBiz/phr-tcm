@@ -29,7 +29,7 @@ function mountWith(
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ScriptEditor caseId={7} title="t" steps={steps} onClose={vi.fn()} />
+      <ScriptEditor caseId={7} title="t" steps={steps} org="acme" project="Web" onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }
