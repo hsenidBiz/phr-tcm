@@ -211,12 +211,35 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!args.iter().any(|a| a == "-h" || a == "-h-1"), "{args:?}");
     // Every flag is an element of its own, exactly once: nothing was glued
     // into a command line that something downstream could re-split.
-    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-Q"] {
+    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-X1", "-x", "-Q"] {
         assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
     }
 
     let plain = Connection { trust_cert: false, ..c.clone() };
     assert!(!sqlcmd_args(&plain, "SELECT 1").contains(&"-C".to_string()));
+}
+
+/// `-X1` and `-x` are the second layer of defence around C1 in
+/// `db-exec-review.md` (fix round 1): `!!` and `$(var)` still reach sqlcmd
+/// unless it is TOLD not to obey them, and the guard alone is one future
+/// edit away from that protection being silently lost. Pinned in their own
+/// test so removing either flag fails a test by name, not just a security
+/// review.
+#[test]
+fn sqlcmd_runs_with_shell_out_and_variable_substitution_switched_off() {
+    let c = Connection {
+        server: "s".into(),
+        database: "d".into(),
+        user: "a_readonly".into(),
+        password: "p".into(),
+        trust_cert: false,
+    };
+    let args = sqlcmd_args(&c, "SELECT 1");
+    // `-X1`, not bare `-X`: bare `-X` only warns and keeps going when a
+    // disabled command is hit - `1` makes sqlcmd exit instead.
+    assert!(args.contains(&"-X1".to_string()), "{args:?}");
+    assert!(!args.contains(&"-X".to_string()), "{args:?} (bare -X only warns)");
+    assert!(args.contains(&"-x".to_string()), "{args:?}");
 }
 
 #[tokio::test]

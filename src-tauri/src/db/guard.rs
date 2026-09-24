@@ -17,6 +17,13 @@
 //! name are refused outright, on every connection - see `classify_exec`.
 //! A second statement smuggled onto the end, with or without a semicolon,
 //! is refused wherever it appears, EXEC included.
+//!
+//! None of the above is SQL at all: sqlcmd itself reads a handful of
+//! client commands - `!!`, `:r`, `:out`, `:connect`, `:setvar` - off the
+//! start of a line, and `$(name)` anywhere, before any of it ever reaches
+//! the server. `classify` refuses all of that on the ORIGINAL text, the
+//! same way it reads `GO`, and `sqlcmd::sqlcmd_args` also runs sqlcmd with
+//! `-X1`/`-x` so the two layers do not depend on each other.
 
 /// The longest statement the tools will look at. Anything bigger is far
 /// more likely to be a paste accident than a question about the database,
@@ -166,6 +173,34 @@ pub fn classify(sql: &str) -> Verdict {
     {
         return refused(
             "a GO batch separator is not allowed here: send one statement on its own".to_string(),
+        );
+    }
+    // Same reason as GO: sqlcmd reads a client command - `:r`, `:out`,
+    // `:connect`, `:setvar`, `!!` - at the START OF A LINE, on the ORIGINAL
+    // text, before a single one of these tools' own statements is ever
+    // parsed. `-X1`/`-x` (see `sqlcmd::sqlcmd_args`) turn off `!!` and
+    // `$(var)` substitution at the process level, but Microsoft's own docs
+    // say `-X` does not reach `:r`/`:out`/`:connect` at all - so this is
+    // the only door for those three, and the only one that cannot be
+    // silently lost if a flag is ever dropped from `sqlcmd_args`. A
+    // legitimate colon - a time literal, `a::b` - is never the first thing
+    // on its line, so neither is refused.
+    if sql.lines().any(|line| {
+        let after_ws = line.trim_start();
+        after_ws.starts_with(':') || after_ws.starts_with("!!")
+    }) {
+        return refused(
+            "sqlcmd commands (a line starting with \":\" or \"!!\") are not allowed here: send one SQL statement"
+                .to_string(),
+        );
+    }
+    // `$(name)` is sqlcmd's own scripting-variable substitution, active
+    // wherever it appears in the line - not just at the start - and `-x`
+    // is the belt to this braces: read on the ORIGINAL text for the same
+    // reason as the check above.
+    if sql.contains("$(") {
+        return refused(
+            "\"$(\" is not allowed here: sqlcmd would read it as a variable".to_string(),
         );
     }
 

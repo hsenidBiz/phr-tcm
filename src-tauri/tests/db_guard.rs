@@ -344,3 +344,38 @@ fn exec_treats_comments_and_literals_in_its_arguments_as_data() {
     assert_eq!(classify("EXEC dbo.p 'DROP TABLE t'"), Verdict::Write);
     assert_eq!(classify("EXEC dbo.p /* xp_cmdshell */ 1"), Verdict::Write);
 }
+
+/// sqlcmd is not just a SQL pipe: it reads its OWN client commands off the
+/// start of a line - `!!` shells out, `:r`/`:out`/`:connect`/`:setvar` read
+/// and write files and reconnect - and `$(name)` anywhere, before any of it
+/// reaches the server. None of that is screened by `REFUSED_WORDS` or the
+/// EXEC shape, and it runs on every connection, read-only included, unless
+/// the guard itself refuses it - this is the fix for the C1 finding in
+/// `db-exec-review.md` (fix round 1).
+#[test]
+fn sqlcmd_client_commands_and_variable_substitution_are_refused() {
+    for sql in [
+        "SELECT 1\n:!! whoami",
+        "SELECT 1\n  !! whoami",
+        "SELECT 1\n:r c:\\x.sql",
+        "SELECT 1\n:out c:\\x.txt",
+        "SELECT 1\n:setvar a b",
+        "SELECT 1\n:connect x",
+        "EXEC dbo.p\n:!! x",
+        "SELECT '$(PATH)'",
+    ] {
+        let why = refusal(sql);
+        assert!(!why.is_empty(), "{sql:?}");
+        assert!(allowed(sql, Access::DevWrites).is_err(), "{sql:?}");
+    }
+}
+
+/// A colon that is not the first thing on its line is ordinary SQL - a time
+/// literal, a `::` cast-like token pasted from somewhere else - and must
+/// keep reading as one.
+#[test]
+fn a_colon_that_is_not_a_line_leading_sqlcmd_command_is_ordinary_sql() {
+    assert_eq!(classify("SELECT '10:30' AS t"), Verdict::Read);
+    assert_eq!(classify("SELECT CAST(x AS time)"), Verdict::Read);
+    assert_eq!(classify("SELECT a::b"), Verdict::Read);
+}
