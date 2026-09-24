@@ -638,6 +638,38 @@ async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_r
     assert!(phases.contains(&"module".to_string()), "{phases:?}");
 }
 
+/// Fix round 1, I2: spec §6's exemptions (the sign-in recipe's `start_url`
+/// and the runner's own go-home step) hold even in a project whose switch
+/// is off - only a SCRIPT's own `navigate` is refused. Same shape as the
+/// switch-on version above, with `direct_urls: false`.
+#[tokio::test]
+async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches_its_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules }).unwrap();
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Leave", "click Apply Leave", "check yes"]
+    );
+    let rec = &run.cases[0];
+    assert_eq!(rec.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(), vec![SIGN_IN_STEP, MODULE_STEP, 1]);
+    assert!(rec.steps[0].outcomes.iter().all(|o| o.ok), "sign-in: {:?}", rec.steps[0]);
+    let module = &rec.steps[1].outcomes[0];
+    assert!(module.ok, "{module:?}");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+}
+
 #[tokio::test]
 async fn a_case_with_no_module_is_blocked_and_no_browser_opens() {
     let dir = tempfile::tempdir().unwrap();
@@ -876,6 +908,50 @@ async fn a_page_dialog_that_reads_like_an_unreached_module_leaves_the_failure_th
     assert!(rec.reason.contains(LOOKALIKE), "the dialog is reported: {}", rec.reason);
     assert_eq!(rec.proposed, "Failed", "{}", rec.reason);
     assert!(rec.reason.starts_with("step 1: page does NOT contain no"), "{}", rec.reason);
+}
+
+/// Fix round 1, I1: a failed `navigate` with a page dialog appended to its
+/// detail that happens to read like the runner's own unreached-module
+/// sentence is still Failed - the dialog is the page's words, not the
+/// runner's, and `execute_in` appends it to any outcome, including this one.
+#[test]
+fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_failed() {
+    let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/x" }] }]));
+    let detail = format!(
+        "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
+    );
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let p = propose(&sc, &steps, None, false);
+    assert_eq!(p.verdict, "Failed", "{}", p.reason);
+}
+
+/// Fix round 1, I1: same as above, but the appended dialog happens to be
+/// the address sentence itself - still the page's words, not the runner's,
+/// since the runner never appends anything to its own refusal (it never
+/// goes through `execute_in`).
+#[test]
+fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_still_failed() {
+    let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/x" }] }]));
+    let detail = format!(
+        "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
+        no_address(1)
+    );
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let p = propose(&sc, &steps, None, false);
+    assert_eq!(p.verdict, "Failed", "{}", p.reason);
+}
+
+/// Fix round 1, I1: a `check_text` whose own scripted value is the address
+/// sentence is still a script defect - the same rule Review I1 (Task 2)
+/// already pinned for the unreached-module sentence.
+#[test]
+fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
+    let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
+    let detail = format!("page does NOT contain {}", no_address(1));
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let p = propose(&sc, &steps, None, false);
+    assert_eq!(p.verdict, "Failed", "{}", p.reason);
+    assert_eq!(p.reason, format!("step 1: {detail}"));
 }
 
 /// Review I1: the same words are Blocked on a `sign_in` (its trip back to

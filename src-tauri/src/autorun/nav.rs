@@ -458,17 +458,3 @@ pub fn guide_section(nav: &NavFile) -> String {
      - A `sign_in` action lands on the home page, and the run brings the browser back to the module screen before the next action.\n"
         .to_string()
 }
-
-/// An outcome that means the run could not put the case where its steps
-/// begin, or the script tried to open a page by address where that is not
-/// allowed: the case is Blocked, not Failed.
-///
-/// Named differently from [`is_setup_problem`] on purpose: that one reads a
-/// case's finished, formatted `reason` (which may carry a `step N:`
-/// prefix, or be one of the exact sentences `NO_MODULE`/`NO_ACCOUNT`); this
-/// one reads a single action's raw `detail` before any such prefix is
-/// added, which is what `replay::propose` has while it is still deciding
-/// the verdict.
-pub fn is_route_problem(detail: &str) -> bool {
-    detail.contains(UNREACHED_PREFIX) || detail.starts_with(NO_ADDRESS_PREFIX)
-}

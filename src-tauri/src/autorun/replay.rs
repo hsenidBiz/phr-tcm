@@ -75,10 +75,11 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
     let action = script.steps.iter().find(|s| s.step_number == n).and_then(|s| s.actions.get(i));
     match action {
         Some(Action::SignIn { .. }) => nav::unreached_after_sign_in(&o.detail),
-        // A script saved before the project's "no addresses" switch was
-        // turned off: the same kind of setup problem as an unreached
-        // module, not a defect in what the script checks.
-        Some(Action::Navigate { .. }) if nav::is_route_problem(&o.detail) => Some(o.detail.as_str()),
+        // The runner's own refusal (runner.rs, the `Navigate if
+        // !direct_urls` arm) is written without going through
+        // `execute_in`, so no page dialog is ever appended to it: it is
+        // exactly this sentence, for this step.
+        Some(Action::Navigate { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
         _ => None,
     }
 }
