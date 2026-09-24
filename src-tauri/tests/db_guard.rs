@@ -350,8 +350,7 @@ fn exec_treats_comments_and_literals_in_its_arguments_as_data() {
 /// and write files and reconnect - and `$(name)` anywhere, before any of it
 /// reaches the server. None of that is screened by `REFUSED_WORDS` or the
 /// EXEC shape, and it runs on every connection, read-only included, unless
-/// the guard itself refuses it - this is the fix for the C1 finding in
-/// `db-exec-review.md` (fix round 1).
+/// the guard itself refuses it.
 #[test]
 fn sqlcmd_client_commands_and_variable_substitution_are_refused() {
     for sql in [
@@ -367,6 +366,25 @@ fn sqlcmd_client_commands_and_variable_substitution_are_refused() {
         let why = refusal(sql);
         assert!(!why.is_empty(), "{sql:?}");
         assert!(allowed(sql, Access::DevWrites).is_err(), "{sql:?}");
+    }
+}
+
+/// The sqlcmd this app runs (go-sqlcmd) ends a line only at `\n`, but a
+/// different build might also end one at a lone `\r` or a Unicode line
+/// break - so the guard treats every one of them as a line start. Refusing
+/// an odd line break costs nothing; missing one would let `:r` through.
+#[test]
+fn a_sqlcmd_command_after_any_kind_of_line_break_is_refused() {
+    for sql in [
+        "SELECT 1\r:r c:\\x.sql",
+        "SELECT 1\u{b}:out c:\\x.txt",
+        "SELECT 1\u{c}:connect x",
+        "SELECT 1\u{85}!! whoami",
+        "SELECT 1\u{2028}:setvar a b",
+        "SELECT 1\u{2029}:r x",
+        "SELECT 1\rGO",
+    ] {
+        assert!(matches!(classify(sql), Verdict::Refused(_)), "{sql:?}");
     }
 }
 

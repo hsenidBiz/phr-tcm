@@ -219,8 +219,8 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!sqlcmd_args(&plain, "SELECT 1").contains(&"-C".to_string()));
 }
 
-/// `-X1` and `-x` are the second layer of defence around C1 in
-/// `db-exec-review.md` (fix round 1): `!!` and `$(var)` still reach sqlcmd
+/// `-X1` and `-x` are the second layer of defence behind the guard's refusal
+/// of sqlcmd's client commands: `!!` and `$(var)` still reach sqlcmd
 /// unless it is TOLD not to obey them, and the guard alone is one future
 /// edit away from that protection being silently lost. Pinned in their own
 /// test so removing either flag fails a test by name, not just a security

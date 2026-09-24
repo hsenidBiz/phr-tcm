@@ -166,8 +166,7 @@ pub fn classify(sql: &str) -> Verdict {
     // on itself, so it would split one "statement" into several. Only the
     // first word of the line is compared, because sqlcmd takes a repeat
     // count (`GO 5`) and tolerates a trailing comment after it.
-    if sql
-        .lines()
+    if sqlcmd_lines(sql)
         .filter_map(|line| line.split_whitespace().next())
         .any(|word| word.eq_ignore_ascii_case("GO"))
     {
@@ -185,7 +184,7 @@ pub fn classify(sql: &str) -> Verdict {
     // silently lost if a flag is ever dropped from `sqlcmd_args`. A
     // legitimate colon - a time literal, `a::b` - is never the first thing
     // on its line, so neither is refused.
-    if sql.lines().any(|line| {
+    if sqlcmd_lines(sql).any(|line| {
         let after_ws = line.trim_start();
         after_ws.starts_with(':') || after_ws.starts_with("!!")
     }) {
@@ -311,6 +310,16 @@ pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
         },
         Verdict::Refused(why) => Err(why),
     }
+}
+
+/// The original text cut at every character any sqlcmd build could take
+/// for the end of a line. go-sqlcmd, the one this app runs, ends a line
+/// only at `\n`; cutting at a lone `\r`, a vertical tab, a form feed and
+/// the Unicode line breaks as well means a build that splits more eagerly
+/// still cannot find a line start the guard never looked at. Erring this
+/// way only ever refuses more.
+fn sqlcmd_lines(sql: &str) -> impl Iterator<Item = &str> {
+    sql.split(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}'])
 }
 
 fn refused(why: String) -> Verdict {
