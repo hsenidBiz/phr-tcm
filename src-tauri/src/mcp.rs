@@ -301,7 +301,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "db_query",
-            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT on every connection; INSERT, UPDATE and DELETE only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one; never DROP, ALTER, CREATE or EXEC. Use it to verify what a test case expects against real data, or to set up test data on the dev database.",
+            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP, ALTER or CREATE. Use it to verify what a test case expects against real data, or to set up test data on the dev database.",
             "inputSchema": schema(serde_json::json!({
                 "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon" },
             }), &["sql"]),

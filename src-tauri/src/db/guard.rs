@@ -2,9 +2,28 @@
 //!
 //! The rule the whole feature rests on: a statement is classified first and
 //! run second. Reads go everywhere; the four write verbs go only to the dev
-//! login; everything that changes a schema, hands out permissions, calls a
-//! procedure, or smuggles a second statement in is refused outright, on
-//! every connection, with a sentence that names what was found.
+//! login; everything that changes a schema or hands out permissions is
+//! refused outright, on every connection, with a sentence that names what
+//! was found.
+//!
+//! EXEC/EXECUTE is the one write-shaped exception with its own rule: a call
+//! to the fixed set of look-up system procedures (`sp_help` and its
+//! neighbours - see `LOOKUP_PROCEDURES`) is a Read, on every connection,
+//! because it only ever reads schema information. A call to any OTHER named
+//! procedure can change data, so it is a Write, gated exactly like
+//! INSERT/UPDATE/DELETE - dev login only, writes switch on. Dynamic SQL
+//! (`EXEC('...')`, `EXEC(@sql)`, `EXEC @variable`, `sp_executesql`), any
+//! other `sp_`/`xp_` procedure, and a database- or linked-server-qualified
+//! name are refused outright, on every connection - see `classify_exec`.
+//! A second statement smuggled onto the end, with or without a semicolon,
+//! is refused wherever it appears, EXEC included.
+//!
+//! None of the above is SQL at all: sqlcmd itself reads a handful of
+//! client commands - `!!`, `:r`, `:out`, `:connect`, `:setvar` - off the
+//! start of a line, and `$(name)` anywhere, before any of it ever reaches
+//! the server. `classify` refuses all of that on the ORIGINAL text, the
+//! same way it reads `GO`, and `sqlcmd::sqlcmd_args` also runs sqlcmd with
+//! `-X1`/`-x` so the two layers do not depend on each other.
 
 /// The longest statement the tools will look at. Anything bigger is far
 /// more likely to be a paste accident than a question about the database,
@@ -45,8 +64,11 @@ const REFUSED_WORDS: &[&str] = &[
     "TRUNCATE",
     "ALTER",
     "CREATE",
-    "EXECUTE",
-    "EXEC",
+    // EXEC/EXECUTE are not in this list any more - a leading EXEC/EXECUTE
+    // is classified by `classify_exec` instead, which is the one place
+    // narrow enough to tell a named procedure call from dynamic SQL. One
+    // found anywhere else in the statement is still refused - see the
+    // explicit check for that right after this loop.
     "GRANT",
     "REVOKE",
     "DENY",
@@ -144,13 +166,40 @@ pub fn classify(sql: &str) -> Verdict {
     // on itself, so it would split one "statement" into several. Only the
     // first word of the line is compared, because sqlcmd takes a repeat
     // count (`GO 5`) and tolerates a trailing comment after it.
-    if sql
-        .lines()
+    if sqlcmd_lines(sql)
         .filter_map(|line| line.split_whitespace().next())
         .any(|word| word.eq_ignore_ascii_case("GO"))
     {
         return refused(
             "a GO batch separator is not allowed here: send one statement on its own".to_string(),
+        );
+    }
+    // Same reason as GO: sqlcmd reads a client command - `:r`, `:out`,
+    // `:connect`, `:setvar`, `!!` - at the START OF A LINE, on the ORIGINAL
+    // text, before a single one of these tools' own statements is ever
+    // parsed. `-X1`/`-x` (see `sqlcmd::sqlcmd_args`) turn off `!!` and
+    // `$(var)` substitution at the process level, but Microsoft's own docs
+    // say `-X` does not reach `:r`/`:out`/`:connect` at all - so this is
+    // the only door for those three, and the only one that cannot be
+    // silently lost if a flag is ever dropped from `sqlcmd_args`. A
+    // legitimate colon - a time literal, `a::b` - is never the first thing
+    // on its line, so neither is refused.
+    if sqlcmd_lines(sql).any(|line| {
+        let after_ws = line.trim_start();
+        after_ws.starts_with(':') || after_ws.starts_with("!!")
+    }) {
+        return refused(
+            "sqlcmd commands (a line starting with \":\" or \"!!\") are not allowed here: send one SQL statement"
+                .to_string(),
+        );
+    }
+    // `$(name)` is sqlcmd's own scripting-variable substitution, active
+    // wherever it appears in the line - not just at the start - and `-x`
+    // is the belt to this braces: read on the ORIGINAL text for the same
+    // reason as the check above.
+    if sql.contains("$(") {
+        return refused(
+            "\"$(\" is not allowed here: sqlcmd would read it as a variable".to_string(),
         );
     }
 
@@ -170,12 +219,33 @@ pub fn classify(sql: &str) -> Verdict {
     }
 
     let upper = body.to_uppercase();
+    let head = leading_word(&upper);
+
+    // EXEC/EXECUTE gets its own classifier, on a copy of `sql` that keeps a
+    // bracketed or double-quoted name's real text - `body` above blanks it,
+    // which is right for a keyword scan but useless for reading a procedure
+    // NAME, the one thing this shape actually has to read.
+    if head == "EXEC" || head == "EXECUTE" {
+        let kept = strip_comments_keep_identifiers(sql);
+        let kept_body = kept.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace());
+        return classify_exec(kept_body, &head);
+    }
+
     for word in REFUSED_WORDS {
         if has_word(&upper, word) {
             return refused(format!(
                 "{word} is not allowed here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on the dev login"
             ));
         }
+    }
+    // EXEC/EXECUTE only leads a statement, never anything else - one found
+    // here is how a second statement gets welded onto the end of a SELECT
+    // or a write without a semicolon in sight.
+    if has_word(&upper, "EXEC") || has_word(&upper, "EXECUTE") {
+        return refused(
+            "EXEC/EXECUTE is only allowed as the first word of a statement: send one statement at a time"
+                .to_string(),
+        );
     }
     // USE switches database, which is a second statement - except inside a
     // query hint, where `OPTION (USE HINT (...))` and `OPTION (USE PLAN
@@ -192,7 +262,6 @@ pub fn classify(sql: &str) -> Verdict {
         ));
     }
 
-    let head = leading_word(&upper);
     match head.as_str() {
         "SELECT" | "WITH" => {
             // A CTE may lead a write: `WITH c AS (...) INSERT INTO t ...`.
@@ -241,6 +310,16 @@ pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
         },
         Verdict::Refused(why) => Err(why),
     }
+}
+
+/// The original text cut at every character any sqlcmd build could take
+/// for the end of a line. go-sqlcmd, the one this app runs, ends a line
+/// only at `\n`; cutting at a lone `\r`, a vertical tab, a form feed and
+/// the Unicode line breaks as well means a build that splits more eagerly
+/// still cannot find a line start the guard never looked at. Erring this
+/// way only ever refuses more.
+fn sqlcmd_lines(sql: &str) -> impl Iterator<Item = &str> {
+    sql.split(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}'])
 }
 
 fn refused(why: String) -> Verdict {
@@ -326,6 +405,362 @@ fn strip_comments_and_literals(sql: &str) -> String {
         }
     }
     out
+}
+
+/// Like `strip_comments_and_literals`, but a bracketed or double-quoted
+/// name keeps its real text instead of being blanked to `[]`/`""`. Classifying
+/// an EXEC statement means reading the actual procedure name - `sp_help` and
+/// `DeleteEverything` have to look different - so the one place that costs
+/// anything is here, not in the keyword scan the rest of the guard runs on
+/// `body`, which never needs to know what a name actually says.
+///
+/// A string literal is still blanked: its content is a VALUE, not a name,
+/// and `EXEC dbo.p 'DROP TABLE t'` must read the same as `EXEC dbo.p 1`.
+fn strip_comments_keep_identifiers(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '-' if chars.peek() == Some(&'-') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut depth = 1usize;
+                let mut prev = '\0';
+                for c in chars.by_ref() {
+                    if prev == '/' && c == '*' {
+                        depth += 1;
+                        prev = '\0';
+                        continue;
+                    }
+                    if prev == '*' && c == '/' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        prev = '\0';
+                        continue;
+                    }
+                    if c == '\n' {
+                        out.push('\n');
+                    }
+                    prev = c;
+                }
+                out.push(' ');
+            }
+            '\'' => {
+                out.push('\'');
+                while let Some(c) = chars.next() {
+                    if c == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                out.push('\'');
+            }
+            // Unlike `strip_comments_and_literals`, brackets and double
+            // quotes are not special here - their contents fall through to
+            // `other` below and are kept exactly as written.
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The system procedures a person only ever reads schema information with -
+/// never a row of data - so the owner approved them on every connection,
+/// read-only included. Compared case-insensitively; `classify_exec` also
+/// accepts them written as `sys.<name>` or `dbo.<name>`.
+const LOOKUP_PROCEDURES: &[&str] = &[
+    "sp_help",
+    "sp_helptext",
+    "sp_helpindex",
+    "sp_columns",
+    "sp_tables",
+    "sp_stored_procedures",
+    "sp_pkeys",
+    "sp_fkeys",
+];
+
+/// One name part of a procedure name: `name` or `[name]`/`"name"`, with
+/// whatever comes after it in the statement.
+fn parse_name_part(s: &str) -> Option<(&str, &str)> {
+    if let Some(inner) = s.strip_prefix('[') {
+        let end = inner.find(']')?;
+        return Some((&inner[..end], &inner[end + 1..]));
+    }
+    if let Some(inner) = s.strip_prefix('"') {
+        let end = inner.find('"')?;
+        return Some((&inner[..end], &inner[end + 1..]));
+    }
+    let mut end = 0usize;
+    for (i, c) in s.char_indices() {
+        let ok = if i == 0 { c.is_alphabetic() || c == '_' } else { c.is_alphanumeric() || c == '_' };
+        if !ok {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    if end == 0 { None } else { Some((&s[..end], &s[end..])) }
+}
+
+/// What `parse_proc_name` found: one part (`name`), two (`schema.name`), or
+/// more than the accepted shape allows.
+enum ProcName<'a> {
+    One(&'a str),
+    Two(&'a str, &'a str),
+    TooManyParts,
+}
+
+/// The accepted shape allows `name` or `schema.name` only - a THIRD part
+/// means the name is database- or linked-server-qualified, which the owner
+/// never approved: it reaches somewhere this app's own guard cannot see.
+fn parse_proc_name(s: &str) -> Option<(ProcName<'_>, &str)> {
+    let (part1, rest) = parse_name_part(s)?;
+    let rest_trim = rest.trim_start();
+    let Some(after_dot) = rest_trim.strip_prefix('.') else {
+        return Some((ProcName::One(part1), rest));
+    };
+    let after_dot = after_dot.trim_start();
+    let (part2, rest2) = parse_name_part(after_dot)?;
+    if rest2.trim_start().starts_with('.') {
+        return Some((ProcName::TooManyParts, rest2));
+    }
+    Some((ProcName::Two(part1, part2), rest2))
+}
+
+/// `s` with `word` stripped off the front, case-insensitively, as long as
+/// what follows is not itself part of a longer name (`NULLABLE` is not
+/// `NULL`). `None` for a length or a UTF-8 boundary that makes the
+/// comparison impossible - never a panic, whatever text a person pastes.
+fn strip_word_ci<'a>(s: &'a str, word: &str) -> Option<&'a str> {
+    if s.len() < word.len() || !s.is_char_boundary(word.len()) {
+        return None;
+    }
+    let (head, tail) = s.split_at(word.len());
+    if !head.eq_ignore_ascii_case(word) {
+        return None;
+    }
+    if tail.chars().next().is_some_and(is_name_char) {
+        return None;
+    }
+    Some(tail)
+}
+
+/// One value out of the accepted grammar: a number, a string literal
+/// (already blanked to `''`/`N''` by `strip_comments_keep_identifiers`), an
+/// `@variable`, or `NULL`/`DEFAULT`. Returns what is left after it.
+fn parse_exec_value(s: &str) -> Option<&str> {
+    let r = s.trim_start();
+    if r.is_empty() {
+        return None;
+    }
+    if let Some(rest) = strip_word_ci(r, "NULL") {
+        return Some(rest);
+    }
+    if let Some(rest) = strip_word_ci(r, "DEFAULT") {
+        return Some(rest);
+    }
+    if let Some(rest) = r.strip_prefix('@') {
+        let len: usize = rest.chars().take_while(|c| is_name_char(*c)).map(|c| c.len_utf8()).sum();
+        return if len == 0 { None } else { Some(&rest[len..]) };
+    }
+    // A blanked string literal is exactly two adjacent quote characters,
+    // optionally led by the `N` that marks a Unicode one.
+    if let Some(rest) = r.strip_prefix("N''").or_else(|| r.strip_prefix("n''")) {
+        return Some(rest);
+    }
+    if let Some(rest) = r.strip_prefix("''") {
+        return Some(rest);
+    }
+    // A number, optionally signed, optionally with a decimal part.
+    let bytes = r.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    let digits_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digits_start {
+        return None;
+    }
+    if i < bytes.len() && bytes[i] == b'.' {
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > i + 1 {
+            i = j;
+        }
+    }
+    Some(&r[i..])
+}
+
+/// One argument: `[@name =] value [OUTPUT|OUT]`. An `@name` not followed by
+/// `=` is not a named parameter - it IS the value, an `@variable` passed
+/// positionally - so it is left for `parse_exec_value` to read instead.
+fn consume_exec_arg(s: &str) -> Option<&str> {
+    let r = s.trim_start();
+    let r = if let Some(after_at) = r.strip_prefix('@') {
+        let len: usize =
+            after_at.chars().take_while(|c| is_name_char(*c)).map(|c| c.len_utf8()).sum();
+        let after_name = after_at[len..].trim_start();
+        match after_name.strip_prefix('=') {
+            Some(after_eq) => after_eq.trim_start(),
+            None => r,
+        }
+    } else {
+        r
+    };
+    let r = parse_exec_value(r)?;
+    let after_ws = r.trim_start();
+    if let Some(rest) = strip_word_ci(after_ws, "OUTPUT") {
+        return Some(rest);
+    }
+    if let Some(rest) = strip_word_ci(after_ws, "OUT") {
+        return Some(rest);
+    }
+    Some(r)
+}
+
+/// Keeps an over-long leftover from making the refusal sentence itself
+/// unreadable.
+fn shorten(s: &str) -> String {
+    const MAX: usize = 60;
+    if s.chars().count() <= MAX {
+        s.to_string()
+    } else {
+        format!("{}...", s.chars().take(MAX).collect::<String>())
+    }
+}
+
+/// Consumes as many comma-separated arguments as the accepted grammar
+/// allows, then accepts `verdict` only if nothing besides one optional
+/// trailing `;` is left. Anything else - a second statement, `DROP TABLE
+/// t`, a bare `GO` with no line of its own - is refused by the same test,
+/// because none of them can be an argument's value.
+fn finish_exec_args(rest: &str, verdict: Verdict, head: &str) -> Verdict {
+    let mut r = rest;
+    loop {
+        let t = r.trim_start();
+        if t.is_empty() {
+            r = t;
+            break;
+        }
+        match consume_exec_arg(t) {
+            Some(next) => {
+                let after_ws = next.trim_start();
+                match after_ws.strip_prefix(',') {
+                    Some(after_comma) => r = after_comma,
+                    None => {
+                        r = next;
+                        break;
+                    }
+                }
+            }
+            None => {
+                r = t;
+                break;
+            }
+        }
+    }
+    let leftover = r.trim();
+    if leftover.is_empty() || leftover == ";" {
+        return verdict;
+    }
+    refused(format!(
+        "{head} accepts a procedure name and a comma-separated argument list only: \"{}\" is not part of that shape - send one statement at a time",
+        shorten(leftover)
+    ))
+}
+
+/// Classifies a statement whose leading word is EXEC or EXECUTE against the
+/// one shape the owner approved: `EXEC[UTE] [@rc =] <procname> [args]`.
+/// `kept` is `sql` run through `strip_comments_keep_identifiers`, trimmed
+/// the same way `body` is in `classify` - comments gone, a string literal
+/// blanked to its quotes, a bracketed or quoted name kept exactly as
+/// written.
+fn classify_exec(kept: &str, head: &str) -> Verdict {
+    let after = kept[head.len()..].trim_start();
+    if after.is_empty() {
+        return refused(format!(
+            "{head} needs a stored procedure name: send EXEC <procedure> [args]"
+        ));
+    }
+    // Dynamic SQL, built as a string and run: `EXEC('...')`/`EXEC (@sql)`.
+    // There is no procedure name here at all - only a batch of SQL nobody
+    // can classify without running it.
+    if after.starts_with('(') {
+        return refused(format!(
+            "{head}(...) runs dynamic SQL and cannot be classified here: these tools call one named stored procedure, never a string of SQL built at runtime"
+        ));
+    }
+
+    // `@rc = procname` reads a return code into a variable - the `=` is
+    // what tells it apart from `EXEC @sql`, dynamic SQL run out of a
+    // variable that holds a batch of text instead of a procedure's name.
+    let after = if let Some(rest) = after.strip_prefix('@') {
+        let len: usize = rest.chars().take_while(|c| is_name_char(*c)).map(|c| c.len_utf8()).sum();
+        let past_name = rest[len..].trim_start();
+        match past_name.strip_prefix('=') {
+            Some(past_eq) => past_eq.trim_start(),
+            None => {
+                return refused(format!(
+                    "{head} of a variable runs dynamic SQL and cannot be classified here: these tools call one named stored procedure, never a string of SQL built at runtime"
+                ));
+            }
+        }
+    } else {
+        after
+    };
+
+    let Some((name_parts, rest)) = parse_proc_name(after) else {
+        return refused(format!(
+            "{head} does not name one stored procedure: send EXEC <procedure> [args]"
+        ));
+    };
+    let (schema, name) = match name_parts {
+        ProcName::TooManyParts => {
+            return refused(format!(
+                "{head} of a database- or linked-server-qualified name is not allowed here: only <procedure> or <schema>.<procedure> may run"
+            ));
+        }
+        ProcName::One(name) => (None, name),
+        ProcName::Two(schema, name) => (Some(schema), name),
+    };
+
+    let name_lower = name.to_ascii_lowercase();
+    let schema_is_lookup =
+        schema.is_none_or(|s| s.eq_ignore_ascii_case("sys") || s.eq_ignore_ascii_case("dbo"));
+    if schema_is_lookup && LOOKUP_PROCEDURES.contains(&name_lower.as_str()) {
+        return finish_exec_args(rest, Verdict::Read, head);
+    }
+    if name_lower == "sp_executesql" {
+        return refused(format!(
+            "{head} of sp_executesql is not allowed here: it runs dynamic SQL, built as a string, which cannot be classified"
+        ));
+    }
+    if name_lower.starts_with("sp_") || name_lower.starts_with("xp_") {
+        return refused(format!(
+            "{head} of {name} is not allowed here: only sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys and sp_fkeys may be called, and only to read"
+        ));
+    }
+    // A named procedure that is not a look-up one can change data, so it
+    // gets exactly the rule INSERT/UPDATE/DELETE already have - `allowed`
+    // is where that rule is actually enforced against the connection.
+    finish_exec_args(rest, Verdict::Write, head)
 }
 
 /// True when `word` appears in `upper` as a whole word. Identifier

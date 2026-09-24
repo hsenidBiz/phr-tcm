@@ -211,12 +211,35 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!args.iter().any(|a| a == "-h" || a == "-h-1"), "{args:?}");
     // Every flag is an element of its own, exactly once: nothing was glued
     // into a command line that something downstream could re-split.
-    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-Q"] {
+    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-X1", "-x", "-Q"] {
         assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
     }
 
     let plain = Connection { trust_cert: false, ..c.clone() };
     assert!(!sqlcmd_args(&plain, "SELECT 1").contains(&"-C".to_string()));
+}
+
+/// `-X1` and `-x` are the second layer of defence behind the guard's refusal
+/// of sqlcmd's client commands: `!!` and `$(var)` still reach sqlcmd
+/// unless it is TOLD not to obey them, and the guard alone is one future
+/// edit away from that protection being silently lost. Pinned in their own
+/// test so removing either flag fails a test by name, not just a security
+/// review.
+#[test]
+fn sqlcmd_runs_with_shell_out_and_variable_substitution_switched_off() {
+    let c = Connection {
+        server: "s".into(),
+        database: "d".into(),
+        user: "a_readonly".into(),
+        password: "p".into(),
+        trust_cert: false,
+    };
+    let args = sqlcmd_args(&c, "SELECT 1");
+    // `-X1`, not bare `-X`: bare `-X` only warns and keeps going when a
+    // disabled command is hit - `1` makes sqlcmd exit instead.
+    assert!(args.contains(&"-X1".to_string()), "{args:?}");
+    assert!(!args.contains(&"-X".to_string()), "{args:?} (bare -X only warns)");
+    assert!(args.contains(&"-x".to_string()), "{args:?}");
 }
 
 #[tokio::test]
@@ -402,6 +425,64 @@ async fn the_guard_is_the_only_door_to_the_runner() {
     // A read runs on either.
     run_sql(&fake, Path::new("sqlcmd.exe"), &read_only, "SELECT 1 AS n").await.unwrap();
     assert_eq!(fake.calls().len(), 1);
+}
+
+/// EXEC of a named procedure is not wrapped, rewritten, or given any
+/// treatment different from a SELECT on its way to sqlcmd - `sqlcmd_args`
+/// puts it in `-Q` exactly as written, same as every other statement, and
+/// whatever comes back is capped by `cap()` off the OUTPUT text, which does
+/// not know or care whether a SELECT or a procedure's result set produced
+/// it. This is the reason no wrapping was needed for the new rule: the row
+/// cap already applies to anything sqlcmd prints, procedure output included.
+#[tokio::test]
+async fn exec_of_a_procedure_reaches_sqlcmd_unwrapped_and_is_capped_like_a_select() {
+    let sql = "EXEC dbo.GetLeave @EmpId = 5";
+    let dev = dev_login_preset();
+
+    // It runs on the dev login and is sent to sqlcmd exactly as written -
+    // no SET prefix, no row-limiting rewrite, nothing added or removed.
+    let fake = FakeRunner::answering("EmpId\tStatus\n5\tApproved\n");
+    run_sql(&fake, Path::new("sqlcmd.exe"), &dev, sql).await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(value_after(&calls[0].1, "-Q"), sql);
+    assert_eq!(calls[0].1, sqlcmd_args(&dev, sql));
+
+    // A result set wider than the row cap is capped exactly like a SELECT's
+    // would be: `cap()` counts rows off the text sqlcmd printed, and a
+    // procedure's rows look no different from a query's.
+    let mut stdout = String::from("EmpId\tStatus\n");
+    for i in 0..250 {
+        stdout.push_str(&format!("{i}\tApproved\n"));
+    }
+    let long = FakeRunner::answering(&stdout);
+    let (text, capped) = run_sql(&long, Path::new("sqlcmd.exe"), &dev, sql).await.unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "EmpId\tStatus");
+    assert_eq!(lines.len(), 1 + ROW_CAP + 1, "header, {ROW_CAP} rows, the cap line");
+    assert_eq!(*lines.last().unwrap(), "... 50 more rows (capped)");
+    assert!(capped, "the row cap fired on a procedure's result set");
+
+    // On the read-only connection it never reaches the runner at all - same
+    // door INSERT/UPDATE/DELETE are stopped at.
+    let ro_fake = FakeRunner::answering("");
+    let why = run_sql(&ro_fake, Path::new("sqlcmd.exe"), &read_only_preset(), sql).await.unwrap_err();
+    assert!(why.contains("read only"), "{why}");
+    assert!(ro_fake.calls().is_empty(), "EXEC reached the runner on a read-only connection");
+}
+
+/// The look-up system procedures run - and get capped - on every
+/// connection, read-only included, because the owner approved them as a
+/// Read: they only ever describe schema, never a row of company data.
+#[tokio::test]
+async fn exec_of_a_lookup_procedure_runs_on_the_read_only_connection_too() {
+    let sql = "EXEC sp_columns 'dbo.Employee'";
+    let fake = FakeRunner::answering("TABLE_NAME\tCOLUMN_NAME\nEmployee\tEmpId\n");
+    let (text, capped) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), sql).await.unwrap();
+    assert_eq!(fake.calls().len(), 1);
+    assert!(!capped);
+    assert!(text.contains("EmpId"));
 }
 
 /// The env override exists so a test can say "sqlcmd is not on this

@@ -269,6 +269,23 @@ impl Runner for RealRunner {
 /// UTF-8 in and out, `-l` login timeout, `-t` query timeout, `-W` trim
 /// trailing spaces, `-s` column separator, `-Q` the statement and exit.
 ///
+/// `-X1` and `-x` are the second layer of defence against sqlcmd's OWN
+/// client commands - `!!` shells out, `$(var)` substitutes an environment
+/// variable into the query text - confirmed present on both sqlcmd builds
+/// this app runs against: `sqlcmd -?` on the go-sqlcmd 1.10.0 installed on
+/// this machine (`C:\Program Files\SqlCmd\sqlcmd.exe`, the `winget install
+/// sqlcmd` target `sqlcmd_candidates` also searches for) lists both, and
+/// Microsoft's own sqlcmd utility reference documents the same syntax for
+/// the ODBC tools' sqlcmd (15/17/18) the other candidate paths point at.
+/// `-X1` disables `!!`, `ED`, and the `SQLCMDINI` startup script, and
+/// exits with an error the moment one is attempted rather than merely
+/// warning and continuing (plain `-X` would only warn). `-x` disables
+/// `$(var)` substitution outright. Neither flag reaches `:r`, `:out` or
+/// `:connect` - Microsoft's own docs describe `-X` as covering only `ED`,
+/// `!!` and environment variables/the startup script - which is why
+/// `guard::classify` refuses a `:`-led line itself instead of relying on
+/// sqlcmd to have been told not to obey it.
+///
 /// Two things deliberately absent. `-y`/`-Y`: sqlcmd 15 refuses them
 /// together with `-W` ("The -W and the -y/-Y options are mutually
 /// exclusive") before it dials anything - 1.25.16/17 passed both, and every
@@ -291,6 +308,8 @@ pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
     }
     args.extend([
         "-b".into(),
+        "-X1".into(),
+        "-x".into(),
         "-f".into(),
         "65001".into(),
         "-l".into(),
