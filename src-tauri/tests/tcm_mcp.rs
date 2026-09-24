@@ -1,7 +1,7 @@
 //! The MCP dispatcher is pure: JSON-RPC string in, response string out,
 //! with the bridge call injected - no stdio, no sockets.
 
-use v2_lib::mcp::handle_message;
+use v2_lib::mcp::{handle_message, version_warning, PROXY_VERSION};
 
 /// Bridge stub: records the call, returns a canned body.
 fn stub(status: u16, body: &str) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + '_ {
@@ -17,7 +17,39 @@ fn initialize_echoes_protocol_and_advertises_tools() {
     assert_eq!(v["result"]["protocolVersion"], "2025-03-26");
     assert!(v["result"]["capabilities"]["tools"].is_object());
     assert_eq!(v["result"]["serverInfo"]["name"], "tcm-testcases");
-    assert_eq!(v["result"]["serverInfo"]["version"], "1.10.3", "reports the app version, not this crate's");
+    // The proxy's OWN version. Reporting the app's (read from the handshake
+    // file) is what hid a 1.22.1 proxy behind a 1.25.25 app for weeks: the
+    // version looked current while the tool list was 1.22.1's (2026-09-24).
+    assert_eq!(v["result"]["serverInfo"]["version"], PROXY_VERSION);
+}
+
+/// A proxy that is not the running app's build says so where the assistant
+/// reads it - the initialize result's `instructions` - naming both versions,
+/// the usual cause and the fix.
+#[test]
+fn initialize_warns_when_the_running_app_is_a_different_version() {
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
+    let resp = handle_message(req, "9.9.9", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let said = v["result"]["instructions"].as_str().expect("a warning in instructions");
+    assert!(said.contains("9.9.9"), "{said}");
+    assert!(said.contains(PROXY_VERSION), "{said}");
+    assert!(said.contains("LocalCache"), "names the stale copy's usual home: {said}");
+    assert!(said.contains("new session"), "says what to do: {said}");
+}
+
+/// Nothing extra when they match, or when the app is not running and its
+/// version is simply not known yet - that is not a mismatch.
+#[test]
+fn initialize_says_nothing_extra_when_versions_match_or_the_app_is_not_running() {
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+    for app in [PROXY_VERSION, "unknown", ""] {
+        let resp = handle_message(req, app, &stub(200, "")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert!(v["result"].get("instructions").is_none(), "{app:?}: {resp}");
+    }
+    assert_eq!(version_warning("1.25.25", " 1.25.25 "), None);
+    assert!(version_warning("1.22.1", "1.25.25").is_some());
 }
 
 #[test]

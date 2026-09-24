@@ -1213,7 +1213,7 @@ fn the_body_is_found_by_byte_not_by_a_lossy_copy() {
 
     // The ordinary case still works, body and all.
     let ok = b"POST /validate HTTP/1.1\r\nX-Bridge-Token: abc\r\nContent-Length: 9\r\n\r\n{\"a\":123}";
-    let Parsed::Complete { method, target, token, body } = parse_http(ok) else {
+    let Parsed::Complete { method, target, token, body, .. } = parse_http(ok) else {
         panic!("a well-formed request did not parse");
     };
     assert_eq!((method.as_str(), target.as_str()), ("POST", "/validate"));
@@ -2227,4 +2227,21 @@ fn bridge_writes_only_under_test_cases_or_to_a_watched_file() {
     assert!(bridge_may_write(&outside, None, &[outside.clone()]), "a followed file may be written");
     let sneaky = dir.0.join(".test-cases").join("..").join("b.json");
     assert!(!bridge_may_write(&sneaky.to_string_lossy(), Some(&root), &[]), "`..` is resolved first");
+}
+
+/// The proxy names its own build on every call, so the app can log a proxy
+/// that is not its own build - the one place a person looks.
+#[test]
+fn parse_http_reads_the_proxys_version() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    let raw = b"GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nX-TCM-Proxy-Version: 1.22.1\r\n\r\n";
+    match parse_http(raw) {
+        Parsed::Complete { proxy_version, .. } => assert_eq!(proxy_version.as_deref(), Some("1.22.1")),
+        _ => panic!("expected a complete request"),
+    }
+    // An older proxy sends no such header, and that is not an error.
+    match parse_http(b"GET /ping HTTP/1.1\r\nx-bridge-token: t\r\n\r\n") {
+        Parsed::Complete { proxy_version, .. } => assert_eq!(proxy_version, None),
+        _ => panic!("expected a complete request"),
+    }
 }

@@ -9,6 +9,40 @@ use std::io::{BufRead, Write};
 
 type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
+/// This proxy's own version - the build it was compiled from. The release
+/// script refuses to ship unless Cargo.toml and tauri.conf.json agree, so
+/// it is the app version this proxy's tool list belongs to.
+pub const PROXY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The header every bridge call carries `PROXY_VERSION` in, so the app can
+/// log a proxy that is not its own build.
+pub const PROXY_VERSION_HEADER: &str = "x-tcm-proxy-version";
+
+/// What to say when this proxy and the running app are different builds,
+/// or None when they match or the app's version is not known (not running
+/// yet is not a mismatch).
+///
+/// The tool list is compiled into the proxy, not asked of the app, so a
+/// stale proxy serves a stale list. That happened for weeks on 2026-09:
+/// Claude desktop is a packaged app, Windows kept a private copy of the
+/// install folder under its LocalCache from 5 September, and every session
+/// started that 1.22.1 proxy against a 1.25.25 app - reporting 1.25.25,
+/// because the version then came from the app's handshake file.
+pub fn version_warning(proxy: &str, app: &str) -> Option<String> {
+    let (proxy, app) = (proxy.trim(), app.trim());
+    if proxy.is_empty() || app.is_empty() || app == "unknown" || proxy == app {
+        return None;
+    }
+    Some(format!(
+        "The tcm-testcases MCP server is version {proxy}, but the running Test Case Manager is {app}. \
+         The tools offered here are {proxy}'s: any tool added since is missing. The usual cause is a \
+         stale copy of the app that Claude desktop, a packaged app, keeps under \
+         %LOCALAPPDATA%\\Packages\\<Claude package>\\LocalCache\\Local\\AzureDevOpsTestCaseManager.V2 - \
+         quit Claude, rename or delete that folder, and start a new session. If there is no such \
+         folder, the app was updated after this session started: start a new session."
+    ))
+}
+
 /// A JSON-RPC error object, for the cases where there is nothing else to
 /// say. `id` is null when the message could not be parsed far enough to
 /// find one - which is what the protocol prescribes, and is still an
@@ -36,11 +70,21 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
     };
 
     let result = match method {
-        "initialize" => serde_json::json!({
-            "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "tcm-testcases", "version": version },
-        }),
+        "initialize" => {
+            // `version` is the RUNNING APP's; serverInfo reports this proxy's
+            // own, so the two can be compared at all.
+            let mut result = serde_json::json!({
+                "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "tcm-testcases", "version": PROXY_VERSION },
+            });
+            // `instructions` is where an MCP client hands the server's own
+            // words to the assistant - the one reader who can act on it.
+            if let Some(warning) = version_warning(PROXY_VERSION, version) {
+                result["instructions"] = serde_json::Value::String(warning);
+            }
+            result
+        }
         "tools/list" => tools_list(tool_policy(call).0),
         "tools/call" => tools_call(&v["params"], call),
         _ => {
@@ -757,6 +801,7 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
     };
     let resp = req
         .header("x-bridge-token", token)
+        .header(PROXY_VERSION_HEADER, PROXY_VERSION)
         // 300s, not 30: get_run_failures resolves a PBI's suite by
         // scanning every test plan in the project, throttle-paced - ~60s
         // against a large org on a cold cache. At 30s the proxy gave up
@@ -770,9 +815,9 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
 }
 
 /// The running app's version from the handshake file it already writes for
-/// port/token, so `serverInfo.version` matches the real app - not this
-/// process's own (unrelated) Cargo.toml version. "unknown" when the app
-/// isn't running yet; the proxy must still answer `initialize`.
+/// port/token - compared against `PROXY_VERSION`, never reported as this
+/// proxy's own. "unknown" when the app isn't running yet; the proxy must
+/// still answer `initialize`.
 fn read_version() -> String {
     std::fs::read_to_string(crate::ai_bridge::handshake_path())
         .ok()
@@ -787,6 +832,11 @@ fn read_version() -> String {
 /// tool as: `claude mcp add tcm-testcases -- "<install dir>\v2.exe" --mcp`
 pub fn run_stdio_proxy() {
     let version = read_version();
+    // stderr is the MCP client's log: the same sentence the assistant gets
+    // in `instructions`, where a person reading the client's logs finds it.
+    if let Some(warning) = version_warning(PROXY_VERSION, &version) {
+        eprintln!("{warning}");
+    }
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
