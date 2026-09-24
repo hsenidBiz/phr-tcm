@@ -11,7 +11,8 @@
 //! script alone.
 
 use super::edits::MAX_REPAIRS;
-use super::replay::SIGN_IN_STEP;
+use super::nav;
+use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord};
 use crate::browser::actions::Action;
 use std::path::Path;
@@ -31,6 +32,12 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
     }
     if case.reason.starts_with("the browser") || case.reason.contains("did not answer") {
         return Some("the browser stopped answering - rerun before changing anything".to_string());
+    }
+    if nav::is_setup_problem(&case.reason) {
+        return Some(
+            "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script"
+                .to_string(),
+        );
     }
     if case.verdict == "Blocked" {
         return Some(
@@ -117,6 +124,14 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
         if let Some(o) = step.outcomes.last() {
             if !o.ok {
                 out.push(format!("sign-in: {}", o.detail));
+            }
+        }
+        return;
+    }
+    if step.step_number == MODULE_STEP {
+        if let Some(o) = step.outcomes.last() {
+            if !o.ok {
+                out.push(format!("module: {}", o.detail));
             }
         }
         return;

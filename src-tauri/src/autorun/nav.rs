@@ -8,10 +8,15 @@
 //! empty `modules` list, runs exactly as it did before module paths
 //! existed.
 
-use super::recipe::{origin_of, project_slug};
+use super::recipe::{origin_of, project_slug, SignInRecipe};
+use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
+use crate::browser::cdp::Driver;
 use crate::browser::locator::Target;
+use crate::browser::page;
+use crate::browser::timing::Timing;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 fn yes() -> bool {
     true
@@ -235,4 +240,160 @@ pub fn path_of(href: &str) -> String {
 /// a query or fragment does not make it another page.
 pub fn same_page(href: &str, start_url: &str) -> bool {
     origin_of(href).is_some() && origin_of(href) == origin_of(start_url) && path_of(href) == path_of(start_url)
+}
+
+/// Start of the sentence a case gets when its trip to the module fails.
+pub const UNREACHED_PREFIX: &str = "Could not reach module \"";
+
+/// Everything a run needs to take a signed-in browser to one module: where
+/// home is, where `navigate` may go, and the recorded path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Route {
+    pub start_url: String,
+    pub origins: Vec<String>,
+    pub path: ModulePath,
+}
+
+impl Route {
+    pub fn new(recipe: &SignInRecipe, path: ModulePath) -> Route {
+        Route { start_url: recipe.start_url.clone(), origins: recipe.origins(), path }
+    }
+}
+
+/// Where a trip to a module stopped.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Where {
+    Home,
+    /// `n` counts from 1; `locator` is the click in words.
+    Click { n: usize, locator: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathFailure {
+    pub at: Where,
+    pub reason: String,
+    /// The browser failed, not the page: no picture is asked for.
+    pub harness: bool,
+}
+
+impl PathFailure {
+    /// The run's sentence (design §5).
+    pub fn for_run(&self, module: &str) -> String {
+        let module = module.trim();
+        let reason = self.reason.trim_end_matches('.');
+        match &self.at {
+            Where::Home => format!("{UNREACHED_PREFIX}{module}\": the home page did not open - {reason}."),
+            Where::Click { n, locator } => format!("{UNREACHED_PREFIX}{module}\": click {n}, {locator} - {reason}."),
+        }
+    }
+
+    /// The Module paths dialog's shorter form (design §4).
+    pub fn for_dialog(&self) -> String {
+        match &self.at {
+            Where::Home => format!("the home page did not open: {}", self.reason),
+            Where::Click { n, locator } => format!("click {n}, {locator}: {}", self.reason),
+        }
+    }
+}
+
+/// Back to the recipe's home page unless the browser is already there.
+/// This is the runner's own navigation: the "no direct addresses" rule is
+/// about scripts and does not apply to it.
+pub async fn go_home<D: Driver>(d: &mut D, start_url: &str, origins: &[String], timing: &Timing) -> ActionOutcome {
+    let href = match page::eval_value(d, "location.href").await {
+        Ok(v) => v.as_str().unwrap_or("").to_string(),
+        Err(e) => return failed_by(e),
+    };
+    if same_page(&href, start_url) {
+        return ActionOutcome::passed("already on the home page");
+    }
+    let out = execute_in(d, &Action::Navigate { url: start_url.to_string() }, timing, &Policy::only(origins.to_vec())).await;
+    if out.ok {
+        return ActionOutcome::passed("went to the home page");
+    }
+    // The navigate's own words name the address; this sentence reaches the
+    // person, so it does not.
+    let mut failed = ActionOutcome::failed(if out.harness {
+        "the browser did not answer while the home page was opening"
+    } else {
+        "the home page did not load"
+    });
+    failed.harness = out.harness;
+    failed
+}
+
+/// Home, then each recorded click with the runner's own click (so each
+/// must find exactly one visible element), then wait up to `nav_ms` for
+/// the address path to equal `arrived`. Ok carries the path it reached.
+pub async fn go_to_module<D: Driver>(d: &mut D, route: &Route, timing: &Timing) -> Result<String, PathFailure> {
+    let home = go_home(d, &route.start_url, &route.origins, timing).await;
+    if !home.ok {
+        return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
+    }
+    let policy = Policy::only(route.origins.clone());
+    for (i, click) in route.path.clicks.iter().enumerate() {
+        let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+        if !out.ok {
+            return Err(PathFailure {
+                at: Where::Click { n: i + 1, locator: click.describe() },
+                reason: out.detail,
+                harness: out.harness,
+            });
+        }
+    }
+    let at = match route.path.clicks.last() {
+        Some(c) => Where::Click { n: route.path.clicks.len(), locator: c.describe() },
+        None => Where::Home,
+    };
+    let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
+    let mut last = String::new();
+    loop {
+        match page::eval_value(d, "location.href").await {
+            Ok(v) => {
+                last = path_of(v.as_str().unwrap_or(""));
+                if last == route.path.arrived {
+                    return Ok(last);
+                }
+            }
+            // Between two documents the page refuses; that is an answer.
+            Err(e) if e.is_transient() => {}
+            Err(e) => {
+                let o = failed_by(e);
+                return Err(PathFailure { at, reason: o.detail, harness: o.harness });
+            }
+        }
+        if Instant::now() >= deadline {
+            let seen = if last.is_empty() { "an address it could not read" } else { last.as_str() };
+            return Err(PathFailure {
+                at,
+                reason: format!("the page ended on {seen}, not {}", route.path.arrived),
+                harness: false,
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+    }
+}
+
+/// A trip to a module as the one outcome the run's "Go to X" line shows.
+pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutcome {
+    match result {
+        Ok(_) => ActionOutcome::passed(format!("Go to {}", module.trim())),
+        Err(f) => {
+            let mut out = ActionOutcome::failed(f.for_run(module));
+            out.harness = f.harness;
+            out
+        }
+    }
+}
+
+/// An outcome that means the run could not put the case where its steps
+/// begin: the case is Blocked, not Failed.
+pub fn is_route_problem(detail: &str) -> bool {
+    detail.contains(UNREACHED_PREFIX)
+}
+
+/// A case reason that is about the project's setup (paths, Module field,
+/// account), not about the script.
+pub fn is_setup_problem(reason: &str) -> bool {
+    reason.contains(UNREACHED_PREFIX) || reason == NO_MODULE || reason == NO_ACCOUNT || reason.starts_with(NO_PATH_START)
 }

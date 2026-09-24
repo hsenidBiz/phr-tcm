@@ -7,7 +7,9 @@ mod common;
 use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
-use v2_lib::autorun::replay::{propose, run_selection, Browsers, SIGN_IN_STEP};
+use std::path::Path;
+use v2_lib::autorun::nav::{nav_path, no_path, save_nav, NavFile, NO_ACCOUNT, NO_MODULE};
+use v2_lib::autorun::replay::{propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, SIGN_IN_STEP};
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -564,4 +566,248 @@ fn propose_blames_the_browser_before_the_page() {
     let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
+}
+
+// ---- Module paths --------------------------------------------------------
+
+const MENU: &[(&str, &str, &str)] = &[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/apply")];
+
+fn leave_nav() -> NavFile {
+    serde_json::from_value(serde_json::json!({
+        "direct_urls": true,
+        "modules": [{
+            "module": "Leave",
+            "clicks": [
+                { "role": "link", "name": "Leave", "exact": true },
+                { "role": "link", "name": "Apply Leave", "exact": true }
+            ],
+            "arrived": "/hr/leave/apply",
+            "recorded": "2026-09-24T10:00:00Z"
+        }]
+    }))
+    .unwrap()
+}
+
+/// A project with a recipe, the admin account and a path for Leave.
+fn menu_project(root: &Path) {
+    save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    save_nav(root, "Acme", "Web", &leave_nav()).unwrap();
+}
+
+fn to_run(case_id: i32, module: Option<&str>) -> CaseToRun {
+    CaseToRun { case_id, title: format!("case {case_id}"), module: module.map(str::to_string) }
+}
+
+fn one_check(account: Option<&str>) -> CaseScript {
+    script(1, account, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]))
+}
+
+fn browsers_of(drivers: Vec<common::ScriptedDriver>) -> FakeBrowsers {
+    FakeBrowsers { queue: drivers.into_iter().map(Some).collect(), opened: 0, closed: 0, returned: vec![] }
+}
+
+#[tokio::test]
+async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_runs_its_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let mut phases: Vec<String> = vec![];
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some(" leave "))], None, &quick(), &cancel, &mut |p: ReplayProgress| {
+        phases.push(p.phase);
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Leave", "click Apply Leave", "check yes"]
+    );
+    let rec = &run.cases[0];
+    assert_eq!(rec.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(), vec![SIGN_IN_STEP, MODULE_STEP, 1]);
+    let module = &rec.steps[1].outcomes[0];
+    assert!(module.ok, "{module:?}");
+    assert_eq!(module.detail, "Go to Leave");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+    assert!(phases.contains(&"module".to_string()), "{phases:?}");
+}
+
+#[tokio::test]
+async fn a_case_with_no_module_is_blocked_and_no_browser_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(browsers.opened, 0);
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(rec.reason, NO_MODULE);
+    assert!(rec.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.detail == format!("not run: {NO_MODULE}")), "{:?}", rec.steps);
+}
+
+#[tokio::test]
+async fn a_module_with_no_recorded_path_is_blocked_and_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(browsers.opened, 0);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, no_path("Payroll"));
+}
+
+#[tokio::test]
+async fn with_paths_a_case_no_account_applies_to_is_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(None)).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(browsers.opened, 0);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, NO_ACCOUNT);
+}
+
+#[tokio::test]
+async fn a_path_click_that_finds_nothing_blocks_the_case_with_a_picture_and_runs_no_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    let module = &rec.steps.iter().find(|s| s.step_number == MODULE_STEP).unwrap().outcomes[0];
+    assert!(!module.ok);
+    assert!(module.detail.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - "), "{}", module.detail);
+    assert!(module.detail.ends_with('.'), "{}", module.detail);
+    assert!(module.screenshot.is_some(), "a failed trip to the module keeps a picture");
+    let step1 = rec.steps.iter().find(|s| s.step_number == 1).unwrap();
+    assert!(step1.outcomes.iter().all(|o| o.detail == "not run: the module screen was not reached"), "{:?}", step1.outcomes);
+    assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")), "no step may run off the module screen");
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(rec.reason, module.detail);
+}
+
+#[tokio::test]
+async fn a_path_that_ends_somewhere_else_fails_its_arrival_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/other")], "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(
+        rec.reason,
+        "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - the page ended on /hr/leave/other, not /hr/leave/apply."
+    );
+}
+
+/// Review focus 5.
+#[tokio::test]
+async fn an_address_that_changes_a_moment_after_the_last_click_still_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, _app) = common::menu_app(MENU, "/hr/home/index", 3);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(run.cases[0].proposed, "Passed", "{}", run.cases[0].reason);
+}
+
+#[tokio::test]
+async fn a_sign_in_in_the_middle_of_a_script_goes_back_to_the_module_before_the_next_action() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(
+        root,
+        &script(1, Some("admin"), serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] },
+            { "step_number": 2, "actions": [{ "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }] }
+        ])),
+    )
+    .unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    // The second sign-in may come from the saved session (no form, so no
+    // `#go`) - what matters is what happens around it.
+    let log: Vec<String> = app.log.lock().unwrap().iter().filter(|l| *l != "click #go").cloned().collect();
+    assert_eq!(
+        log,
+        vec![
+            "navigate /hr/home/index", "click Leave", "click Apply Leave", "check yes",
+            "navigate /hr/home/index", "click Leave", "click Apply Leave", "check yes",
+        ]
+    );
+    let rec = &run.cases[0];
+    let step2 = rec.steps.iter().find(|s| s.step_number == 2).unwrap();
+    assert!(step2.outcomes[0].ok && step2.outcomes[0].detail.ends_with("; then Go to Leave"), "{:?}", step2.outcomes);
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+}
+
+#[tokio::test]
+async fn a_project_whose_file_has_no_paths_runs_exactly_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_nav(root, "Acme", "Web", &NavFile::default()).unwrap();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(rec.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(), vec![1]);
+    assert_eq!(rec.proposed, "Passed");
+    assert!(browsers.returned[0].calls_to("Page.navigate").is_empty(), "no trip home without paths");
+}
+
+/// Review focus 4.
+#[tokio::test]
+async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    std::fs::write(nav_path(root, "Acme", "Web"), "{ not json").unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let err = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap_err();
+    assert!(err.contains("module paths file is not readable"), "{err}");
+    assert_eq!(browsers.opened, 0);
+    assert!(run.cases.is_empty());
 }

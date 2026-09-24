@@ -4,7 +4,7 @@
 use serde_json::json;
 use v2_lib::autorun::nav::{
     find_path, load_nav, module_key, nav_path, no_path, path_of, put_path, remove_path, route_for, same_page,
-    save_nav, set_direct_urls, view, ModulePath, NavFile, NO_ACCOUNT, NO_MODULE,
+    save_nav, set_direct_urls, view, ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
 
@@ -166,4 +166,19 @@ fn the_dialog_view_reads_every_click_in_words() {
     assert_eq!(v.modules[0].module, "Leave");
     assert_eq!(v.modules[0].clicks, vec!["link \"Leave\"".to_string(), "link \"Apply Leave\"".to_string()]);
     assert_eq!(v.modules[0].arrived, "/hr/leave/apply");
+}
+
+#[test]
+fn a_failed_trip_reads_as_the_designs_sentence_in_a_run_and_its_short_form_in_the_dialog() {
+    let at_click = PathFailure {
+        at: Where::Click { n: 2, locator: "link \"Apply Leave\"".into() },
+        reason: "no visible match".into(),
+        harness: false,
+    };
+    assert_eq!(at_click.for_run(" Leave "), "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.");
+    assert_eq!(at_click.for_dialog(), "click 2, link \"Apply Leave\": no visible match");
+    let at_home = PathFailure { at: Where::Home, reason: "the home page did not load".into(), harness: false };
+    assert_eq!(at_home.for_run("Leave"), "Could not reach module \"Leave\": the home page did not open - the home page did not load.");
+    let dotted = PathFailure { reason: "it moved.".into(), ..at_click };
+    assert!(dotted.for_run("Leave").ends_with("it moved."), "one full stop, not two");
 }

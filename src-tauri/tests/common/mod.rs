@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use v2_lib::autorun::accounts::Account;
 use v2_lib::autorun::recipe::SignInRecipe;
@@ -357,4 +357,125 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
         Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
     ));
     (d, state)
+}
+
+/// The sign-in recipe `menu_app` answers to: one css click, then a marker
+/// that is always there. Its home page is the HR application's.
+pub fn menu_recipe() -> SignInRecipe {
+    serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/hr/home/index",
+        "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap()
+}
+
+/// What `menu_app` saw, in order: `navigate <path>`, `click <name or
+/// css>`, `check <value>`; and where its page is now.
+pub struct MenuApp {
+    pub log: Arc<Mutex<Vec<String>>>,
+    pub path: Arc<Mutex<String>>,
+}
+
+/// An application with a click-only menu. Each entry is (role, accessible
+/// name, the path a click on it lands on). Every css locator is found, so
+/// `menu_recipe` always signs in; its `#go` click lands on `landing`. A
+/// menu click's new path shows only after `lag` more reads of the address,
+/// the way an application that routes asynchronously behaves. `check_text`
+/// passes for the value "yes" only.
+pub fn menu_app(
+    entries: &[(&'static str, &'static str, &'static str)],
+    landing: &'static str,
+    lag: usize,
+) -> (ScriptedDriver, MenuApp) {
+    let app = MenuApp { log: Arc::new(Mutex::new(vec![])), path: Arc::new(Mutex::new("/".to_string())) };
+    let (log, path) = (app.log.clone(), app.path.clone());
+    let entries: Vec<(String, String, String)> =
+        entries.iter().map(|(r, n, p)| (r.to_string(), n.to_string(), p.to_string())).collect();
+    let mut last_css = String::new();
+    let mut last_probed = String::new();
+    let mut pending: Option<(String, usize)> = None;
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Page.navigate" => {
+                let p = v2_lib::autorun::nav::path_of(params["url"].as_str().unwrap_or(""));
+                log.lock().unwrap().push(format!("navigate {p}"));
+                *path.lock().unwrap() = p;
+                pending = None;
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                if let Some((dest, left)) = pending.take() {
+                    if left == 0 {
+                        *path.lock().unwrap() = dest;
+                    } else {
+                        pending = Some((dest, left - 1));
+                    }
+                }
+                json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
+            }
+            "Runtime.evaluate" => json!({ "result": { "value": null } }),
+            "Accessibility.queryAXTree" => {
+                let role = params["role"].as_str().unwrap_or("");
+                let nodes: Vec<Value> = entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (r, _, _))| r == role)
+                    .map(|(i, (r, n, _))| {
+                        json!({ "nodeId": format!("n{i}"), "role": { "value": r }, "name": { "value": n }, "backendDOMNodeId": 100 + i })
+                    })
+                    .collect();
+                json!({ "nodes": nodes })
+            }
+            "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                last_probed = params["objectId"].as_str().unwrap_or("").to_string();
+                json!({ "result": { "value": ready_probe() } })
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
+                let want = params["arguments"][0]["value"].as_str().unwrap_or("").to_string();
+                log.lock().unwrap().push(format!("check {want}"));
+                json!({ "result": { "value": want == "yes" } })
+            }
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                json!({ "result": [ { "name": "0", "value": { "objectId": format!("css:{last_css}") } } ] })
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                if let Some(css) = last_probed.strip_prefix("css:") {
+                    log.lock().unwrap().push(format!("click {css}"));
+                    if css == "#go" {
+                        *path.lock().unwrap() = landing.to_string();
+                    }
+                } else if let Some(id) = last_probed.strip_prefix("ax-").and_then(|s| s.parse::<usize>().ok()) {
+                    if let Some((_, name, dest)) = id.checked_sub(100).and_then(|i| entries.get(i)) {
+                        log.lock().unwrap().push(format!("click {name}"));
+                        if lag == 0 {
+                            *path.lock().unwrap() = dest.clone();
+                        } else {
+                            pending = Some((dest.clone(), lag));
+                        }
+                    }
+                }
+                json!({})
+            }
+            "Page.captureScreenshot" => json!({ "data": "/9j/4AAQ" }),
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    (d, app)
 }

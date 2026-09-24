@@ -8,6 +8,7 @@
 //! it against.
 
 use v2_lib::autorun::failures::{describe_failures, latest_run, stop_reason};
+use v2_lib::autorun::nav::no_path;
 use v2_lib::autorun::store::save_run;
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -422,4 +423,34 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
     assert_eq!(latest_run(dir.path(), Some(5)).unwrap().id, "run-1000");
     assert_eq!(latest_run(dir.path(), Some(6)).unwrap().id, "run-2000");
     assert!(latest_run(dir.path(), Some(999)).is_none());
+}
+
+#[test]
+fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
+    let unreached = "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - waited 300ms: link \"Apply Leave\" not found.";
+    let case = CaseRecord {
+        proposed: "Blocked".to_string(),
+        reason: unreached.to_string(),
+        steps: vec![StepRecord { step_number: -1, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None }],
+        ..empty_case()
+    };
+    let expected = Some(
+        "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script"
+            .to_string(),
+    );
+    assert_eq!(stop_reason(&case), expected);
+    let run = LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        cases: vec![case],
+        mode: "unattended".into(),
+        published: None,
+    };
+    let out = describe_failures(&run, &[]);
+    assert!(out.contains(&format!("module: {unreached}")), "{out}");
+    assert!(!out.contains("step -1"), "{out}");
+
+    let no_path_case = CaseRecord { proposed: "Blocked".to_string(), reason: no_path("Payroll"), ..empty_case() };
+    assert_eq!(stop_reason(&no_path_case), expected);
 }

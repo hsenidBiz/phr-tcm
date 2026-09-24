@@ -1792,9 +1792,9 @@ export type ReplayProgress = {
 	total: number,
 	case_id: number,
 	title: string,
-	/**  "opening", "signing_in", "step" or "done" */
+	/**  "opening", "signing_in", "module", "step" or "done" */
 	phase: string,
-	/**  Meaningful for "step" and "signing_in" (0). */
+	/**  Meaningful for "step", "signing_in" (0) and "module" (-1). */
 	step_number: number,
 	/**  How many steps the script has - the same on every phase of a case. */
 	steps: number,

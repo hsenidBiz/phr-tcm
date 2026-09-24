@@ -155,9 +155,9 @@ pub struct ReplayProgress {
     pub total: u32,
     pub case_id: i32,
     pub title: String,
-    /// "opening", "signing_in", "step" or "done"
+    /// "opening", "signing_in", "module", "step" or "done"
     pub phase: String,
-    /// Meaningful for "step" and "signing_in" (0).
+    /// Meaningful for "step", "signing_in" (0) and "module" (-1).
     pub step_number: i32,
     /// How many steps the script has - the same on every phase of a case.
     pub steps: u32,
