@@ -25,6 +25,7 @@ import {
   IconClearScripts,
   IconEdit,
   IconImport,
+  IconModulePaths,
   IconRecipe,
   IconUnattended,
 } from "../../lib/actionIcons";
@@ -32,6 +33,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
+import ModulePathsDialog from "./ModulePathsDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import ReplayPane from "./ReplayPane";
@@ -77,6 +79,7 @@ export default function AutoRun({
   const [editing, setEditing] = useState<number | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const [clearRunsOpen, setClearRunsOpen] = useState(false);
   /** How many runs `PastRuns` is currently showing, reported up through
@@ -156,6 +159,15 @@ export default function AutoRun({
   const groups = useMemo(
     () => (grouped ? groupIndices(rows.map((c) => c.title)) : []),
     [grouped, rows],
+  );
+  /** The Module values of the loaded cases, for the Module paths dialog's
+   * picker. A person can still type one that is not here. */
+  const caseModules = useMemo(
+    () =>
+      Array.from(new Set(rows.map((c) => c.module_value.trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [rows],
   );
   const hasScript = (i: number) => Boolean(scripts[i]?.data);
   /** Only scripted cases can be run, so only they can be ticked. */
@@ -299,6 +311,16 @@ export default function AutoRun({
           <IconRecipe aria-hidden />
           Sign-in recipe
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!org || !project}
+          title={!org || !project ? "Pick an organization and project first" : undefined}
+          onClick={() => setNavOpen(true)}
+        >
+          <IconModulePaths aria-hidden />
+          Module paths
+        </Button>
         {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
             whole tab is gated in one place (`autoRunVisible` in
             lib/extras.ts), so no further gating belongs here. Disabled
@@ -420,6 +442,14 @@ export default function AutoRun({
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
         <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
+      )}
+      {navOpen && (
+        <ModulePathsDialog
+          org={org}
+          project={project}
+          caseModules={caseModules}
+          onClose={() => setNavOpen(false)}
+        />
       )}
 
       {clearScriptsOpen && (

@@ -348,3 +348,13 @@ test("Clear results opens its confirm with the exact sentence and, once confirme
   fireEvent.click(screen.getByRole("button", { name: "Clear 1 run" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 run removed."));
 });
+
+test("the Module paths button opens its dialog", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [] } : null,
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  fireEvent.click(screen.getByRole("button", { name: "Module paths" }));
+  expect(await screen.findByRole("heading", { name: "Module paths" })).toBeInTheDocument();
+});
