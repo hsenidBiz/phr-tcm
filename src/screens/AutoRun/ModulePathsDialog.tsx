@@ -8,7 +8,7 @@
 // machine, beside the project's sign-in recipe.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, events } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import Combobox from "../../components/ui/combobox";
@@ -39,6 +39,12 @@ function chosenBrowser(): string {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** What `auto_run_record_start` rejects with when Cancel is pressed while
+ * it is still signing in - the backend's pending-cancel flag (Task 6's
+ * `e010914` fix) makes the already-in-flight call settle with this instead
+ * of ever opening the recording. */
+const START_CANCELLED = "the recording was cancelled - nothing was saved";
 
 export default function ModulePathsDialog({
   org,
@@ -76,11 +82,24 @@ export default function ModulePathsDialog({
   const busy =
     phase.kind === "starting" || phase.kind === "recording" || phase.kind === "checking" || trying !== null;
 
+  // Read inside the event listener below, whose own effect only runs once -
+  // a plain closure over `phase` there would see whatever phase was current
+  // on mount forever, so a "closed" event arriving during "starting" (where
+  // there is no recording to free) would misread it as "recording" too.
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
   useEffect(() => {
     const un = events.recordingEvent.listen((e) => {
       const p = e.payload;
-      // The recording browser went away: free the recorder at once.
-      if (p.kind === "closed") void commands.autoRunRecordCancel().catch(() => {});
+      // The recording browser went away: free the recorder at once - but
+      // only while an actual recording is running. A "closed" event has no
+      // slot to free during "starting" or once the phase has moved on.
+      if (p.kind === "closed" && phaseRef.current.kind === "recording") {
+        void commands.autoRunRecordCancel().catch(() => {});
+      }
       setPhase((cur) => {
         if (cur.kind !== "recording") return cur;
         if (p.kind === "click") return { ...cur, clicks: [...cur.clicks, p.readable] };
@@ -102,6 +121,11 @@ export default function ModulePathsDialog({
     try {
       const r = await commands.autoRunRecordStart(org, project, module, who, chosenBrowser());
       if (r.status === "error") {
+        if (r.error === START_CANCELLED) {
+          toast.info("The recording was cancelled. Nothing was saved.");
+          setPhase({ kind: "list" });
+          return;
+        }
         setPhase({ kind: "failed", module, why: r.error });
         return;
       }
@@ -138,6 +162,14 @@ export default function ModulePathsDialog({
     setPhase({ kind: "list" });
   };
 
+  /** Cancel while Start is still pending. It only asks the backend to stop
+   * signing in - the still-open `autoRunRecordStart` call above settles
+   * with `START_CANCELLED` once that takes effect, and `record` returns to
+   * the list then. Setting the phase here too would race a later Start. */
+  const cancelStarting = () => {
+    void commands.autoRunRecordCancel().catch(() => {});
+  };
+
   const tryPath = async (module: string) => {
     setTrying(module);
     try {
@@ -165,9 +197,16 @@ export default function ModulePathsDialog({
     onError: (e) => setProblem(message(e)),
   });
 
-  /** Escape and the backdrop do nothing while a browser is working: only
-   * Stop or Cancel ends a recording. */
+  /** Escape and the backdrop do nothing while a recording or a check is
+   * running: only Stop or Cancel ends those. While Start is still pending
+   * there is no visible Stop yet and nothing else can end it, so both act
+   * as Cancel instead of leaving the dialog stuck until sign-in settles on
+   * its own. */
   const closeIfIdle = () => {
+    if (phase.kind === "starting") {
+      cancelStarting();
+      return;
+    }
     if (busy) return;
     onClose();
   };
@@ -338,7 +377,15 @@ export default function ModulePathsDialog({
       )}
 
       {phase.kind === "starting" && (
-        <p className="text-xs text-muted">Opening the browser and signing in as {who}…</p>
+        <div className="space-y-2">
+          <p className="text-xs text-muted">Opening the browser and signing in as {who}…</p>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={cancelStarting}>
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+          </div>
+        </div>
       )}
 
       {phase.kind === "recording" && (

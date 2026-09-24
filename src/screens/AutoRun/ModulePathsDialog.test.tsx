@@ -56,6 +56,18 @@ async function send(payload: { kind: string; index: number; readable: string; de
   });
 }
 
+/** Choose Leave and press Start recording, without waiting for
+ * `auto_run_record_start` to settle - for the "starting" phase tests
+ * below, where that call is held open on purpose. */
+async function chooseAndStart() {
+  const record = await screen.findByRole("button", { name: "Record a module…" });
+  await waitFor(() => expect(record).toBeEnabled());
+  fireEvent.click(record);
+  fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Leave" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+}
+
 test("the list shows each module's clicks in words and where it ends", async () => {
   mount((cmd) => (cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [LEAVE] } : undefined));
   expect(await screen.findByText('link "Leave" › link "Apply Leave"')).toBeInTheDocument();
@@ -154,5 +166,70 @@ test("closing the recording browser ends the recording and frees it", async () =
   await startRecording();
   await send({ kind: "closed", index: 0, readable: "", detail: "the recording browser was closed - nothing was saved" });
   expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  await waitFor(() => expect(cancels).toBe(1));
+});
+
+/// Fix round 1: Start must always be cancellable, even while it is still
+/// signing in - there was previously no way out of the "starting" phase.
+test("Cancel is available while the recording browser is opening, not Stop", async () => {
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    // Never resolves on its own - stands in for a slow sign-in, same
+    // trick RunPane.test.tsx uses for `auto_run_sign_in`.
+    if (cmd === "auto_run_record_start") return new Promise(() => {});
+  });
+  await chooseAndStart();
+
+  expect(await screen.findByRole("button", { name: "Cancel" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+});
+
+test("Cancel while starting cancels the pending sign-in and returns to the list", async () => {
+  let rejectStart: ((reason: string) => void) | null = null;
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_record_start") {
+      return new Promise((_resolve, reject) => {
+        rejectStart = reject;
+      });
+    }
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  await chooseAndStart();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(cancels).toBe(1));
+
+  // The backend's pending-cancel flag is what actually ends the still-open
+  // `auto_run_record_start` call - simulate it settling the way Task 6's
+  // fix makes it settle.
+  await act(async () => {
+    rejectStart?.("the recording was cancelled - nothing was saved");
+  });
+
+  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved."),
+  );
+});
+
+test("Escape while starting cancels instead of being ignored", async () => {
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_record_start") return new Promise(() => {});
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  await chooseAndStart();
+  await screen.findByRole("button", { name: "Cancel" });
+
+  fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(cancels).toBe(1));
 });
