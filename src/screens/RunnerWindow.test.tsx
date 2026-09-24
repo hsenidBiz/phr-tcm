@@ -695,6 +695,13 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   });
   renderRunner();
   await screen.findByText("Valid login");
+  // The window's paste listener is attached by an effect that runs AFTER
+  // the case renders. `findByText` returns on the render, so under the full
+  // suite's load the paste used to fire before that effect had run: it
+  // reached no listener, and no wait was long enough for an image that was
+  // never going to come. Flushing React's pending effects first is what
+  // makes the paste land.
+  await act(async () => {});
 
   const file = new File([new Uint8Array([137, 80, 78, 71])], "clip.png", { type: "image/png" });
   fireEvent.paste(window, {
@@ -702,10 +709,8 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   });
 
   // The attachment lands as this case's next pasted-*.png thumbnail
-  // (the fullscreen viewer holds a second copy of the same image). The
-  // paste -> file read -> attach -> render chain is several async hops, and
-  // under the full suite's parallel load it has overrun the default 1 s
-  // wait while passing every time alone - so it gets App.test's longer one.
+  // (the fullscreen viewer holds a second copy of the same image), after a
+  // file read and a render - several async hops, so the longer wait stays.
   expect((await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 })).length).toBeGreaterThan(0);
 });
 
