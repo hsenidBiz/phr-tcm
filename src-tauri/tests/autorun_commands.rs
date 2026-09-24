@@ -8,6 +8,7 @@ use v2_lib::autorun::CaseScript;
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{
     describe_session_error, import_scripts_from_path, refuse_while_a_run_is_going, safe_run_id, save_script_from_editor,
+    NO_PROJECT,
 };
 use v2_lib::commands::autorun_replay::{replay_is_running, replay_timing, OneAtATime};
 
@@ -255,4 +256,29 @@ fn with_addresses_switched_off_the_editor_and_an_import_refuse_a_navigate_and_wr
     // Another project, whose switch was never touched, takes the same script.
     save_script_from_editor(&root, "acme", "Other", script).unwrap();
     assert!(load_script(&root, 7).unwrap().is_some());
+}
+
+/// Whether a script may open pages by address is a project's own rule, so
+/// a save or an import that names no project is refused before anything
+/// else - including a script with no navigate at all - and writes nothing.
+#[test]
+fn a_save_or_an_import_with_no_organization_or_project_is_refused_and_writes_nothing() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    let script: CaseScript = serde_json::from_value(with_navigate(7)).unwrap();
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, serde_json::Value::Array(vec![with_navigate(8)]).to_string()).unwrap();
+
+    for (org, project) in [("", "Web"), ("acme", ""), ("  ", "Web"), ("acme", " ")] {
+        let err = save_script_from_editor(&root, org, project, script.clone()).unwrap_err();
+        assert_eq!(err, NO_PROJECT, "{org:?} / {project:?}");
+        let err = import_scripts_from_path(&root, org, project, file.to_str().unwrap()).unwrap_err();
+        assert_eq!(err, NO_PROJECT, "{org:?} / {project:?}");
+    }
+    assert!(!err_names_an_address(NO_PROJECT), "{NO_PROJECT}");
+    assert!(!root.exists(), "nothing was written anywhere under the data folder");
+}
+
+fn err_names_an_address(s: &str) -> bool {
+    s.contains("://") || s.contains("dev.azure.com")
 }

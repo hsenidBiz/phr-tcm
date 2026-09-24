@@ -30,7 +30,11 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
             );
         }
     }
-    if case.reason.starts_with("the browser") || case.reason.contains("did not answer") {
+    // A prefix, never a search: every reason the runner writes for a
+    // browser that gave up begins "the browser" ("stopped answering...",
+    // "did not open..."), while a Failed case's reason begins `step N:`
+    // and quotes the page, which can say "did not answer" too.
+    if case.reason.starts_with("the browser") {
         return Some("the browser stopped answering - rerun before changing anything".to_string());
     }
     if nav::is_setup_problem(&case.reason) {

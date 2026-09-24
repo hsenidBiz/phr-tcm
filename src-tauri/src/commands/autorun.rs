@@ -200,6 +200,20 @@ pub fn auto_run_save_script(
     save_script_from_editor(&root(&app)?, &organization, &project, script)
 }
 
+/// Said by a save or an import that names no organization or project.
+pub const NO_PROJECT: &str = "choose an organization and a project first - scripts follow that project's rules";
+
+/// Whether a script may open pages by address is the project's own rule,
+/// read from a file found by organization and project. With either blank
+/// that file is one no project has, which reads as "allowed" - so a save
+/// with no project would skip the rule instead of applying it.
+fn require_project(organization: &str, project: &str) -> Result<(), String> {
+    if organization.trim().is_empty() || project.trim().is_empty() {
+        return Err(NO_PROJECT.to_string());
+    }
+    Ok(())
+}
+
 /// The pure half of [`auto_run_save_script`], so a test can reach it
 /// without an `AppHandle`.
 pub fn save_script_from_editor(
@@ -208,6 +222,7 @@ pub fn save_script_from_editor(
     project: &str,
     mut script: CaseScript,
 ) -> Result<(), String> {
+    require_project(organization, project)?;
     // A person saving from the editor is a fresh start for the assistant's
     // repair count, whatever the editor happened to send - and the reason
     // for the last one is no longer relevant once a person has looked.
@@ -256,6 +271,7 @@ pub fn auto_run_import_scripts(
 /// need an `AppHandle`, so it can be exercised directly in tests the same
 /// way `autorun::store`'s functions are.
 pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, project: &str, path: &str) -> Result<Vec<i32>, String> {
+    require_project(organization, project)?;
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);

@@ -4,6 +4,7 @@
 //! GET, POST and PATCH only - no DELETE, and no plan or suite is ever
 //! created here (that already happened, in Run Tests, before this runs).
 
+use super::replay::MODULE_STEP;
 use super::{store, CaseRecord, LocalRun, PublishedRun};
 use crate::ado::{AdoClient, AdoError};
 use crate::ado_testplan::EnsuredSuite;
@@ -159,6 +160,20 @@ pub fn pictures_for(case: &CaseRecord) -> Vec<(i32, String)> {
     out
 }
 
+/// How a picture's step reads in an attachment name and in a problem line.
+/// The trip to the module is recorded as step -1, and an attachment named
+/// `step--1` would sit in Azure DevOps for good, naming a step the case
+/// does not have - so that one is called the module step. Every other
+/// step, the sign-in's 0 included, keeps the name pictures already sent
+/// carry.
+fn picture_step(step: i32) -> (String, String) {
+    if step == MODULE_STEP {
+        ("module".to_string(), "the module step".to_string())
+    } else {
+        (format!("step-{step}"), format!("step {step}"))
+    }
+}
+
 /// The four refusals a send can give without asking Azure DevOps
 /// anything: the run's file could not be read, no run file at all,
 /// already sent, or nothing confirmed to send. `None` for a run that has
@@ -311,18 +326,19 @@ pub async fn publish_run(
         let mut attachments = Vec::new();
         let mut per_step: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
         for (step, name) in pictures_for(case) {
+            let (tag, words) = picture_step(step);
             match store::load_shot(root, &name) {
                 Ok(bytes) => {
                     let n = per_step.entry(step).or_insert(0);
                     *n += 1;
                     let file_name = if *n == 1 {
-                        format!("case-{id}-step-{step}.jpg")
+                        format!("case-{id}-{tag}.jpg")
                     } else {
-                        format!("case-{id}-step-{step}-{n}.jpg")
+                        format!("case-{id}-{tag}-{n}.jpg")
                     };
                     attachments.push(RunAttachment { file_name, b64: base64::engine::general_purpose::STANDARD.encode(bytes) });
                 }
-                Err(_) => problems.push(format!("case {id}: the picture of step {step} is no longer on this machine")),
+                Err(_) => problems.push(format!("case {id}: the picture of {words} is no longer on this machine")),
             }
         }
 

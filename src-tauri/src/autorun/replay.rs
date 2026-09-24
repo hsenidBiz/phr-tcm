@@ -345,7 +345,9 @@ pub async fn run_cases<B: Browsers>(
     cancel: &AtomicBool,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
-    let nav_file = nav::load_nav(root, organization, project)?;
+    // Each error says for itself where the run got to, so the command can
+    // pass it on as it is: this one stops the run before any case.
+    let nav_file = nav::load_nav(root, organization, project).map_err(|e| format!("the run did not start: {e}"))?;
     let sign_in_recipe = if nav_file.modules.is_empty() {
         None
     } else {
@@ -421,5 +423,6 @@ pub async fn run_cases<B: Browsers>(
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
 
-    save_error.map_or(Ok(()), Err)
+    // Every case ran by now: only the save failed, and the words say so.
+    save_error.map_or(Ok(()), |e| Err(format!("the run finished but could not be saved: {e}")))
 }

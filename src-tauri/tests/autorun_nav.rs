@@ -182,7 +182,21 @@ fn a_failed_trip_reads_as_the_designs_sentence_in_a_run_and_its_short_form_in_th
     assert_eq!(at_click.for_run(" Leave "), "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.");
     assert_eq!(at_click.for_dialog(), "click 2, link \"Apply Leave\": no visible match");
     let at_home = PathFailure { at: Where::Home, reason: "the home page did not load".into(), harness: false };
-    assert_eq!(at_home.for_run("Leave"), "Could not reach module \"Leave\": the home page did not open - the home page did not load.");
+    // The reason already says it was the home page: said once, not twice.
+    assert_eq!(at_home.for_run("Leave"), "Could not reach module \"Leave\": the home page did not load.");
+    assert_eq!(at_home.for_dialog(), "the home page did not load");
+    // A path with no clicks fails its arrival check "at home" too, and must
+    // not blame the home page for it.
+    let no_clicks = PathFailure {
+        at: Where::Home,
+        reason: "the page ended on /hr/home/index, not /hr/leave".into(),
+        harness: false,
+    };
+    assert_eq!(
+        no_clicks.for_run("Leave"),
+        "Could not reach module \"Leave\": the page ended on /hr/home/index, not /hr/leave."
+    );
+    assert_eq!(no_clicks.for_dialog(), "the page ended on /hr/home/index, not /hr/leave");
     let dotted = PathFailure { reason: "it moved.".into(), ..at_click };
     assert!(dotted.for_run("Leave").ends_with("it moved."), "one full stop, not two");
 }

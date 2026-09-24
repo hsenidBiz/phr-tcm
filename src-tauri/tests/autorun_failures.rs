@@ -98,13 +98,29 @@ fn stop_reason_is_some_when_the_browser_stopped_answering() {
         reason: "the browser did not open: connection refused".to_string(),
         ..empty_case()
     };
-    let contains_did_not_answer = CaseRecord {
-        reason: "step 3: waited 5000ms but the browser did not answer".to_string(),
+    // What `propose` writes for any action whose browser gave up.
+    let stopped_answering = CaseRecord {
+        reason: "the browser stopped answering at step 3: the browser did not answer: timed out".to_string(),
+        verdict: "Blocked".to_string(),
         ..empty_case()
     };
     let expected = Some("the browser stopped answering - rerun before changing anything".to_string());
     assert_eq!(stop_reason(&starts_with_the_browser), expected);
-    assert_eq!(stop_reason(&contains_did_not_answer), expected);
+    assert_eq!(stop_reason(&stopped_answering), expected);
+}
+
+/// A Failed case's reason begins `step N:` and then quotes the page or the
+/// script, which can say anything - including "did not answer". That is
+/// still the page failing the test, not the browser stopping.
+#[test]
+fn a_failed_step_that_quotes_did_not_answer_is_not_the_browser_stopping() {
+    for reason in [
+        "step 2: page does NOT contain did not answer",
+        "step 3: button \"Save\" not found (the page showed alert: the server did not answer and it was accepted)",
+    ] {
+        let case = CaseRecord { verdict: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
+        assert_eq!(stop_reason(&case), None, "{reason}");
+    }
 }
 
 #[test]

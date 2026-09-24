@@ -151,9 +151,14 @@ pub async fn run_step_routed<D: Driver>(
 }
 
 /// A sign-in and the trip back to the module that follows it, as the one
-/// outcome the `sign_in` action stands for.
+/// outcome the `sign_in` action stands for. A failed trip puts the runner's
+/// sentence first: `nav::unreached_after_sign_in` reads it by position.
 fn signed_then_went(signed: &SignInOutcome, went: ActionOutcome) -> ActionOutcome {
-    let detail = format!("{}{}{}", signed.detail, nav::THEN, went.detail);
+    let detail = if went.ok {
+        format!("{}{}{}", signed.detail, nav::THEN, went.detail)
+    } else {
+        format!("{}{}{})", went.detail, nav::AFTER_SIGN_IN, signed.detail)
+    };
     let mut out = if went.ok { ActionOutcome::passed(detail) } else { ActionOutcome::failed(detail) };
     out.harness = went.harness;
     out

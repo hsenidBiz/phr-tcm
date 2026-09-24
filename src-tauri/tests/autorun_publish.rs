@@ -9,6 +9,8 @@ use v2_lib::autorun::publish::{
     comment_for, pictures_for, publish_run, refuse_locally, step_marks, PublishCase, PublishResult,
     SkippedCase,
 };
+use v2_lib::autorun::nav::UNREACHED_PREFIX;
+use v2_lib::autorun::replay::MODULE_STEP;
 use v2_lib::autorun::{store, LocalRun};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -558,4 +560,61 @@ async fn a_picture_that_is_gone_is_a_problem_not_a_failure() {
     assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
     assert!(report.problems[0].contains("case 7"), "{}", report.problems[0]);
     assert!(report.problems[0].to_lowercase().contains("picture"), "{}", report.problems[0]);
+}
+
+/// A failed trip to the module is recorded as step -1. Its picture goes to
+/// Azure DevOps for good, so it must be named for the module, never
+/// `step--1`, and a missing one must say "the module step" rather than
+/// "step -1".
+#[tokio::test]
+async fn a_failed_trip_to_the_module_is_named_for_the_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let shot = store::save_shot(dir.path(), b"\xFF\xD8\xFF\xD9").unwrap();
+    let gone = store::save_shot(dir.path(), b"\xFF\xD8\xFF\xDA").unwrap();
+    std::fs::remove_file(dir.path().join("shots").join(&gone)).unwrap();
+    let reason = format!("{UNREACHED_PREFIX}Leave\": click 1, link \"Leave\" - it was not found.");
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-6", "pbi_id": 42, "started_at": "1700000000000", "mode": "unattended",
+        "cases": [
+          { "case_id": 7, "title": "Leave request", "verdict": "Blocked", "note": "", "proposed": "Blocked",
+            "reason": reason, "account": "hr.admin",
+            "steps": [
+              { "step_number": 0, "outcomes": [{ "ok": true, "detail": "signed in as HR Admin" }] },
+              { "step_number": MODULE_STEP, "outcomes": [{ "ok": false, "detail": reason, "screenshot": shot }] }
+            ] },
+          { "case_id": 8, "title": "Cancel request", "verdict": "Blocked", "note": "", "proposed": "Blocked",
+            "reason": reason, "account": "hr.admin",
+            "steps": [
+              { "step_number": 0, "outcomes": [{ "ok": true, "detail": "signed in as HR Admin" }] },
+              { "step_number": MODULE_STEP, "outcomes": [{ "ok": false, "detail": reason, "screenshot": gone }] }
+            ] }
+        ]
+    }))
+    .unwrap();
+    store::save_run(dir.path(), &run).unwrap();
+
+    let server = MockServer::start().await;
+    mount_full_run_mocks(&server).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &publish_cases())
+        .await
+        .unwrap();
+    let PublishResult::Sent(report) = result else { panic!("expected Sent") };
+    assert_eq!(report.sent, vec![7, 8]);
+    assert_eq!(
+        report.problems,
+        vec!["case 8: the picture of the module step is no longer on this machine".to_string()]
+    );
+
+    let names: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().contains("/attachments"))
+        .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+        .map(|a| a["fileName"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(names, vec!["case-7-module.jpg".to_string(), "case-7-module.jpg".to_string()]);
 }

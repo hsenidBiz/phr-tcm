@@ -20,7 +20,7 @@ use tauri_specta::Event;
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Asked to stop by `auto_run_replay_cancel`; read once per case (and once
-/// per step within a case) by `autorun::replay::run_selection`.
+/// per step within a case) by `autorun::replay::run_cases`.
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
 pub struct OneAtATime(());
@@ -92,7 +92,7 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
     Err("it started but never answered - try again, and see Settings, Logs if it keeps happening".to_string())
 }
 
-/// The `Browsers` the command hands to `replay::run_selection`: a fresh
+/// The `Browsers` the command hands to `replay::run_cases`: a fresh
 /// real browser per case, headless unless the person asked to watch.
 struct RealBrowsers {
     which: Browser,
@@ -117,7 +117,7 @@ impl Browsers for RealBrowsers {
     }
 }
 
-/// A panic or an early return out of `run_selection` must never leave a
+/// A panic or an early return out of `run_cases` must never leave a
 /// browser process behind: if `current` is still `Some` when this value
 /// drops, nothing else is ever going to close it.
 impl Drop for RealBrowsers {
@@ -201,10 +201,9 @@ pub async fn auto_run_replay(
         list.len(),
     ));
 
-    match outcome {
-        Ok(()) => Ok(run),
-        Err(e) => Err(format!("the run did not finish: {e}")),
-    }
+    // `run_cases` words its own errors: one that stopped the run before it
+    // began is not one where every case ran and only the save failed.
+    outcome.map(|()| run)
 }
 
 /// Ask the unattended run in progress to stop after the step it is on.

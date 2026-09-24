@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
 use std::path::Path;
-use v2_lib::autorun::nav::{nav_path, no_address, no_path, save_nav, NavFile, Route, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX};
+use v2_lib::autorun::nav::{
+    nav_path, no_address, no_path, save_nav, NavFile, Route, AFTER_SIGN_IN, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX,
+};
 use v2_lib::autorun::replay::{propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, SIGN_IN_STEP};
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
@@ -121,6 +123,25 @@ async fn every_case_gets_its_own_browser_and_gives_it_back() {
         run.cases
     );
     assert!(run.cases.iter().all(|c| c.duration_ms.is_some()), "a case that ran should carry its wall time: {:?}", run.cases);
+}
+
+/// Every case ran; only the save failed. The error says so rather than
+/// claiming the run did not finish.
+#[tokio::test]
+async fn a_run_that_finished_but_could_not_be_saved_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    // A file where the runs folder belongs: every save of the run fails.
+    std::fs::write(root.join("runs"), b"not a folder").unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let res = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {})
+        .await;
+    let e = res.unwrap_err();
+    assert!(e.starts_with("the run finished but could not be saved: "), "{e}");
+    assert_eq!(run.cases.len(), 1, "the case still ran");
 }
 
 #[tokio::test]
@@ -958,11 +979,13 @@ fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
 /// the module) and Failed on any other action.
 #[test]
 fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
-    let unreached = "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.";
+    let unreached = format!(
+        "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.{AFTER_SIGN_IN}signed in as admin)"
+    );
     let steps = vec![StepRecord {
         step_number: 1,
         outcomes: vec![
-            ActionOutcome::failed(format!("signed in as admin; then {unreached}")),
+            ActionOutcome::failed(unreached.clone()),
             ActionOutcome::failed("not run: the module screen was not reached after the sign-in"),
         ],
         screenshot: None,
@@ -971,13 +994,32 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
     ] }]));
     let p = propose(&signs_in, &steps, Some(true), false);
-    assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", unreached));
+    assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", unreached.as_str()));
 
     let checks = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "check_text", "value": "x" }, { "kind": "check_text", "value": "yes" }
     ] }]));
     let p = propose(&checks, &steps, Some(true), false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
+}
+
+/// A failed sign-in never went back to the module, so its words are the
+/// sign-in's own, and those can carry a page's dialog. A dialog holding
+/// the runner's joiner and sentence further in must not make the case
+/// Blocked with the page's words as the reason.
+#[test]
+fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by_it() {
+    let lookalike = format!("; then {UNREACHED_PREFIX}Leave\": click 1, link \"Leave\" - no visible match.");
+    let detail = format!(
+        "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
+    );
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "sign_in", "account": "admin" }
+    ] }]));
+    let p = propose(&signs_in, &steps, Some(true), false);
+    assert!(!p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
+    assert_eq!((p.verdict, p.reason), ("Failed", format!("step 1: {detail}")));
 }
 
 /// A mid-script `sign_in` whose trip back to the module fails: the rest of
@@ -997,7 +1039,9 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
         .await
         .unwrap();
     assert!(!outcomes[0].ok, "{outcomes:?}");
-    assert!(outcomes[0].detail.contains(&format!("; then {UNREACHED_PREFIX}Leave\": click 2, ")), "{}", outcomes[0].detail);
+    // The runner's sentence first, the sign-in after it: read by position.
+    assert!(outcomes[0].detail.starts_with(&format!("{UNREACHED_PREFIX}Leave\": click 2, ")), "{}", outcomes[0].detail);
+    assert!(outcomes[0].detail.ends_with(&format!("{AFTER_SIGN_IN}signed in as Administrator)")), "{}", outcomes[0].detail);
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
     let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None }];

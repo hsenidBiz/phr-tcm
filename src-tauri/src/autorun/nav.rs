@@ -284,7 +284,10 @@ impl PathFailure {
         let module = module.trim();
         let reason = self.reason.trim_end_matches('.');
         match &self.at {
-            Where::Home => format!("{UNREACHED_PREFIX}{module}\": the home page did not open - {reason}."),
+            // `go_home`'s sentences already name the home page, and a path
+            // with no clicks fails its arrival check here too: the reason
+            // stands alone.
+            Where::Home => format!("{UNREACHED_PREFIX}{module}\": {reason}."),
             Where::Click { n, locator } => format!("{UNREACHED_PREFIX}{module}\": click {n}, {locator} - {reason}."),
         }
     }
@@ -292,7 +295,7 @@ impl PathFailure {
     /// The Module paths dialog's shorter form (design §4).
     pub fn for_dialog(&self) -> String {
         match &self.at {
-            Where::Home => format!("the home page did not open: {}", self.reason),
+            Where::Home => self.reason.clone(),
             Where::Click { n, locator } => format!("click {n}, {locator}: {}", self.reason),
         }
     }
@@ -392,15 +395,25 @@ pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutco
 }
 
 /// How a mid-script `sign_in`'s one outcome joins the sign-in to the trip
-/// back to the module that follows it.
+/// back to the module that follows it, when the trip went well.
 pub const THEN: &str = "; then ";
 
-/// The failed-trip sentence inside a mid-script `sign_in`'s outcome, from
-/// `UNREACHED_PREFIX` on. Only meaningful for an outcome that belongs to a
-/// `sign_in` action: anywhere else these words are the page's or the
-/// script's (a dialog, a `check_text` value), never the runner's.
+/// How the same outcome reads when the trip back failed: the runner's own
+/// sentence first, then the sign-in in brackets closed by `)`. First, so
+/// that whether the trip failed is read from where the words sit and never
+/// searched for - a sign-in's words can carry a page's dialog, and a page
+/// can say anything.
+pub const AFTER_SIGN_IN: &str = " (after the sign-in: ";
+
+/// The failed-trip sentence a mid-script `sign_in`'s outcome begins with,
+/// when its trip back to the module failed. Only meaningful for an outcome
+/// that belongs to a `sign_in` action: anywhere else these words are the
+/// page's or the script's (a dialog, a `check_text` value), never the
+/// runner's. A failed sign-in's own words always begin with the runner's
+/// ("the sign-in page did not open", "sign-in stopped at step"...), so a
+/// lookalike further in never counts.
 pub fn unreached_after_sign_in(detail: &str) -> Option<&str> {
-    detail.find(&format!("{THEN}{UNREACHED_PREFIX}")).map(|i| &detail[i + THEN.len()..])
+    detail.starts_with(UNREACHED_PREFIX).then_some(detail)
 }
 
 /// A case reason that is about the project's setup (paths, Module field,
