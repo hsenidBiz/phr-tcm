@@ -350,6 +350,50 @@ pub fn auto_run_save_quirks(
     Ok(())
 }
 
+/// The project's module paths and its address switch, as the Module paths
+/// dialog shows them. A project with no file reads as no paths, switch on.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_nav(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::nav::load_nav(&root(&app)?, &organization, &project)?;
+    Ok(crate::autorun::nav::view(&nav))
+}
+
+/// "Scripts may open pages by address", saved the moment it is flipped.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_set_direct_urls(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    allowed: bool,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::nav::set_direct_urls(&root(&app)?, &organization, &project, allowed)?;
+    crate::applog::info(format!(
+        "Auto-run: scripts may open pages by address: {}",
+        if allowed { "on" } else { "off" }
+    ));
+    Ok(crate::autorun::nav::view(&nav))
+}
+
+/// Forget one module's path. The dialog asks first.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_remove_module_path(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    module: String,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &module)?;
+    crate::applog::info("Auto-run module path removed");
+    Ok(crate::autorun::nav::view(&nav))
+}
+
 /// Sign the named account in, in the open browser. Used before a case's
 /// first step, and by the `sign_in` action in the middle of one.
 #[tauri::command]

@@ -11,6 +11,7 @@ pub mod edits;
 pub mod failures;
 pub mod floor;
 pub mod guide;
+pub mod nav;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;

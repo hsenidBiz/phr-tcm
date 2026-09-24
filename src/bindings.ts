@@ -367,6 +367,15 @@ export const commands = {
 	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
 	autoRunSaveQuirks: (organization: string, project: string, quirks: Quirk[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_quirks", { organization, project, quirks })),
 	/**
+	 *  The project's module paths and its address switch, as the Module paths
+	 *  dialog shows them. A project with no file reads as no paths, switch on.
+	 */
+	autoRunLoadNav: (organization: string, project: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_load_nav", { organization, project })),
+	/**  "Scripts may open pages by address", saved the moment it is flipped. */
+	autoRunSetDirectUrls: (organization: string, project: string, allowed: boolean) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_direct_urls", { organization, project, allowed })),
+	/**  Forget one module's path. The dialog asks first. */
+	autoRunRemoveModulePath: (organization: string, project: string, module: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, module })),
+	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one.
 	 */
@@ -1406,6 +1415,23 @@ export type MaterializedDraft = {
 export type Member = {
 	display_name: string,
 	unique_name: string,
+};
+
+/**
+ *  A recorded module as the Module paths dialog shows it. Every click is
+ *  already in words (`link "Leave"`), so the webview never keeps a second
+ *  copy of how a locator reads.
+ */
+export type ModuleView = {
+	module: string,
+	clicks: string[],
+	arrived: string,
+	recorded: string,
+};
+
+export type NavView = {
+	direct_urls: boolean,
+	modules: ModuleView[],
 };
 
 /**
