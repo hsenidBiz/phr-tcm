@@ -404,9 +404,11 @@ export const commands = {
 	autoRunClearRuns: () => typedError<number, string>(__TAURI_INVOKE("auto_run_clear_runs")),
 	/**
 	 *  Run the selection unattended and return the finished run. Progress
-	 *  arrives as `ReplayProgress` events while this is pending.
+	 *  arrives as `ReplayProgress` events while this is pending. `account`
+	 *  signs in every script that names no account of its own; it must be a
+	 *  key in the Accounts list, or the run does not start.
 	 */
-	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, browserName, watch })),
+	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
@@ -1773,12 +1775,15 @@ export type RelinkOutcome = {
 };
 
 /**
- *  A case from the frontend's selection: enough to run it (`case_id`) and
- *  enough to report on it before its script has even loaded (`title`).
+ *  A case from the frontend's selection: enough to run it (`case_id`),
+ *  enough to report on it before its script has even loaded (`title`), and
+ *  its Module field for the module paths.
  */
 export type ReplayCase = {
 	case_id: number,
 	title: string,
+	/**  Absent or blank when the test case has no Module. */
+	module?: string | null,
 };
 
 /**

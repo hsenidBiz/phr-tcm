@@ -66,6 +66,9 @@ test("statusOf reads a progress event's phase", () => {
   expect(statusOf({ phase: "done", step_number: 3, steps: 3, proposed: "" })).toBe(
     "Nothing proposed",
   );
+  expect(statusOf({ phase: "module", step_number: -1, steps: 3, proposed: "" })).toBe(
+    "Going to the module",
+  );
 });
 
 test("start sends the selection, the browser and the watch choice", async () => {
@@ -94,9 +97,10 @@ test("start sends the selection, the browser and the watch choice", async () => 
     project: "Web",
     pbiId: 42,
     cases: [
-      { case_id: 1, title: "A" },
-      { case_id: 2, title: "B" },
+      { case_id: 1, title: "A", module: null },
+      { case_id: 2, title: "B", module: null },
     ],
+    account: null,
     browserName: "edge",
     watch: false,
   });
@@ -292,4 +296,71 @@ test("a run that cannot start says why and lets the person try again", async () 
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
   expect(onFinished).not.toHaveBeenCalled();
+});
+
+const ACCOUNTS = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "p" }];
+
+function mountForAccount(calls: unknown[], asked: string[] = []) {
+  mockIPC(
+    (cmd, args) => {
+      asked.push(String(cmd));
+      if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+      if (cmd === "auto_run_replay") {
+        calls.push(args);
+        return new Promise(() => {});
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  return render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[{ id: 1, title: "A", module: " Leave " }]}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+}
+
+test("the account for the run is remembered per project and sent with each case's module", async () => {
+  const calls: unknown[] = [];
+  const { unmount } = mountForAccount(calls);
+  const pick = await screen.findByRole("combobox", { name: "Sign in as" });
+  expect(pick).toHaveTextContent("Each script's own account");
+  fireEvent.click(pick);
+  fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
+  expect(localStorage.getItem("tcm-v2-autorun-run-account:acme/Web")).toBe("hr.admin");
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]).toEqual(
+    expect.objectContaining({ account: "hr.admin", cases: [{ case_id: 1, title: "A", module: "Leave" }] }),
+  );
+  unmount();
+
+  mountForAccount([]);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Sign in as" })).toHaveTextContent("HR Admin (hr.admin)"),
+  );
+});
+
+/// Review focus 3.
+test("an account removed since it was picked falls back to each script's own, silently", async () => {
+  localStorage.setItem("tcm-v2-autorun-run-account:acme/Web", "gone.user");
+  const calls: unknown[] = [];
+  const asked: string[] = [];
+  mountForAccount(calls, asked);
+  const pick = await screen.findByRole("combobox", { name: "Sign in as" });
+  // Let the accounts list arrive, so the fallback is judged against it.
+  await waitFor(() => expect(asked).toContain("auto_run_list_accounts"));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(pick).toHaveTextContent("Each script's own account");
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]).toEqual(expect.objectContaining({ account: null }));
+  expect(screen.queryByText(/not on this machine/)).not.toBeInTheDocument();
 });

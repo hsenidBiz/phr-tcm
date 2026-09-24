@@ -3,7 +3,7 @@
 //!
 //! NOTHING here calls Azure DevOps.
 
-use crate::autorun::replay::{self, Browsers};
+use crate::autorun::replay::{self, Browsers, CaseToRun};
 use crate::autorun::{sessions, store, LocalRun};
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
@@ -57,12 +57,16 @@ pub fn replay_timing(watch: bool) -> Timing {
     if watch { t } else { Timing { highlight_ms: 0, ..t } }
 }
 
-/// A case from the frontend's selection: enough to run it (`case_id`) and
-/// enough to report on it before its script has even loaded (`title`).
+/// A case from the frontend's selection: enough to run it (`case_id`),
+/// enough to report on it before its script has even loaded (`title`), and
+/// its Module field for the module paths.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct ReplayCase {
     pub case_id: i32,
     pub title: String,
+    /// Absent or blank when the test case has no Module.
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 /// The `Browsers` the command hands to `replay::run_selection`: a fresh
@@ -117,15 +121,19 @@ impl Drop for RealBrowsers {
 }
 
 /// Run the selection unattended and return the finished run. Progress
-/// arrives as `ReplayProgress` events while this is pending.
+/// arrives as `ReplayProgress` events while this is pending. `account`
+/// signs in every script that names no account of its own; it must be a
+/// key in the Accounts list, or the run does not start.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn auto_run_replay(
     app: tauri::AppHandle,
     organization: String,
     project: String,
     pbi_id: i32,
     cases: Vec<ReplayCase>,
+    account: Option<String>,
     browser_name: String,
     watch: bool,
 ) -> Result<LocalRun, String> {
@@ -138,6 +146,7 @@ pub async fn auto_run_replay(
     CANCEL.store(false, Ordering::SeqCst);
 
     let root = super::autorun::root(&app)?;
+    let run_account = crate::autorun::accounts::account_for_run(&root, account.as_deref())?;
     let mut run = LocalRun {
         id: store::new_run_id(),
         pbi_id,
@@ -147,18 +156,22 @@ pub async fn auto_run_replay(
         published: None,
     };
 
-    let pairs: Vec<(i32, String)> = cases.iter().map(|c| (c.case_id, c.title.clone())).collect();
+    let list: Vec<CaseToRun> = cases
+        .iter()
+        .map(|c| CaseToRun { case_id: c.case_id, title: c.title.clone(), module: c.module.clone() })
+        .collect();
     let timing = replay_timing(watch);
     let mut browsers =
         RealBrowsers { which: Browser::from_name(&browser_name), watch, current: None };
 
-    let outcome = replay::run_selection(
+    let outcome = replay::run_cases(
         &mut browsers,
         &root,
         &organization,
         &project,
         &mut run,
-        &pairs,
+        &list,
+        run_account.as_deref(),
         &timing,
         &CANCEL,
         &mut |p: ReplayProgress| {
@@ -176,12 +189,12 @@ pub async fn auto_run_replay(
     let blocked = run.cases.iter().filter(|c| c.proposed == "Blocked").count();
     crate::applog::info(format!(
         "Auto-run unattended: {} cases, proposed {passed} passed / {failed} failed / {blocked} blocked",
-        pairs.len(),
+        list.len(),
     ));
 
     match outcome {
         Ok(()) => Ok(run),
-        Err(e) => Err(format!("the run finished but could not be saved: {e}")),
+        Err(e) => Err(format!("the run did not finish: {e}")),
     }
 }
 

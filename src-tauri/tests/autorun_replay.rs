@@ -929,3 +929,34 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
 }
+
+fn lee() -> v2_lib::autorun::accounts::Account {
+    v2_lib::autorun::accounts::Account {
+        key: "lee".into(),
+        label: "Lee".into(),
+        username: "lee".into(),
+        password: common::PASSWORD.into(),
+    }
+}
+
+#[tokio::test]
+async fn the_scripts_own_account_wins_and_the_runs_account_fills_in_for_a_script_with_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account(), lee()]).unwrap();
+    store::save_script(root, &script(1, Some("admin"), serde_json::json!([]))).unwrap();
+    store::save_script(root, &script(2, None, serde_json::json!([]))).unwrap();
+    let (d1, _) = common::stateful_app(false, None);
+    let (d2, _) = common::stateful_app(false, None);
+    let mut browsers = browsers_of(vec![d1, d2]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], Some("lee"), &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].account.as_deref(), Some("admin"));
+    assert_eq!(run.cases[1].account.as_deref(), Some("lee"));
+    assert_eq!(run.cases[1].steps[0].step_number, SIGN_IN_STEP);
+    assert!(run.cases[1].steps[0].outcomes.iter().all(|o| o.ok), "{:?}", run.cases[1].steps[0].outcomes);
+}

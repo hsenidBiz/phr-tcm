@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Toaster } from "../../components/ui/toaster";
 import { afterEach, expect, test, vi } from "vitest";
-import RunReview from "./RunReview";
+import RunReview, { stepLabel } from "./RunReview";
 
 afterEach(() => {
   clearMocks();
@@ -538,4 +538,10 @@ test("the confirmation text reads correctly for one", async () => {
   expect(await screen.findByText(/1 confirmed result\b/)).toBeInTheDocument();
   expect(screen.queryByText(/1 confirmed results/)).not.toBeInTheDocument();
   expect(await screen.findByText(/1 unconfirmed case is left out/)).toBeInTheDocument();
+});
+
+test("the review names the sign-in, the trip to the module and each step", () => {
+  expect(stepLabel(0)).toBe("Sign in");
+  expect(stepLabel(-1)).toBe("Module");
+  expect(stepLabel(3)).toBe("Step 3");
 });

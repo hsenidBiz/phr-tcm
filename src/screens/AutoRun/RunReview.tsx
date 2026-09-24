@@ -48,6 +48,14 @@ function mismatchSentence(runPbiId: number): string {
   return `this run is for PBI #${runPbiId} - select that PBI to send it`;
 }
 
+/** What a step's line is called in the review: the sign-in, the runner's
+ * own trip to the case's module, or the case's own step. */
+export function stepLabel(stepNumber: number): string {
+  if (stepNumber === 0) return "Sign in";
+  if (stepNumber === -1) return "Module";
+  return `Step ${stepNumber}`;
+}
+
 export default function RunReview(props: {
   org: string;
   project: string;
@@ -371,7 +379,7 @@ export default function RunReview(props: {
                     <li key={s.step_number} className="rounded-md border border-border/60 p-2 text-xs">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-muted">
-                          {s.step_number === 0 ? "Sign in" : `Step ${s.step_number}`}
+                          {stepLabel(s.step_number)}
                         </span>
                         {s.screenshot && (
                           <button

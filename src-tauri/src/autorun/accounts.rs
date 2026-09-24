@@ -108,6 +108,23 @@ pub fn find_account(root: &Path, key: &str) -> Result<Option<Account>, String> {
     Ok(load_accounts(root)?.into_iter().find(|a| a.key == key))
 }
 
+/// The account picked for a whole unattended run, checked before anything
+/// starts. Blank means none: every script runs as its own account, as
+/// before. A key that is not usable, or not on this machine, refuses the
+/// run rather than signing nobody in halfway through it.
+pub fn account_for_run(root: &Path, key: Option<&str>) -> Result<Option<String>, String> {
+    let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) else {
+        return Ok(None);
+    };
+    if !valid_key(key) {
+        return Err(format!("\"{key}\" is not a usable account key"));
+    }
+    match find_account(root, key)? {
+        Some(_) => Ok(Some(key.to_string())),
+        None => Err(format!("there is no account \"{key}\" on this machine - add it in Auto Run, Accounts")),
+    }
+}
+
 /// Replace the whole list. Validated first; written to a temporary file and
 /// renamed, so a reader never sees half a list. Returns the keys whose
 /// saved session was dropped because the login behind it changed or went.

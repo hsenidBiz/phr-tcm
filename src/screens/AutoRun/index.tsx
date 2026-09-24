@@ -533,7 +533,7 @@ export default function AutoRun({
           const picked = replaying
             .map((id) => rows.find((x) => x.id === id))
             .filter((c): c is (typeof rows)[number] => Boolean(c))
-            .map((c) => ({ id: c.id, title: c.title }));
+            .map((c) => ({ id: c.id, title: c.title, module: c.module_value }));
           if (picked.length === 0) return null;
           return (
             <ReplayPane

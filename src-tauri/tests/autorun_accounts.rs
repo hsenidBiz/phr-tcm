@@ -2,7 +2,7 @@
 //! this machine, named by key from scripts.
 
 use v2_lib::autorun::accounts::{
-    find_account, load_accounts, save_accounts, session_path, valid_key, validate_accounts, Account,
+    account_for_run, find_account, load_accounts, save_accounts, session_path, valid_key, validate_accounts, Account,
 };
 
 fn account(key: &str, username: &str, password: &str) -> Account {
@@ -123,5 +123,19 @@ fn save_accounts_never_deletes_through_an_unvalidated_key_read_from_disk() {
     assert!(
         escape_target.exists(),
         "save_accounts deleted a file outside its own folder through an unvalidated key"
+    );
+}
+
+#[test]
+fn the_account_for_a_run_is_a_real_key_on_this_machine_or_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("hr.admin", "kim", "pw")]).unwrap();
+    assert_eq!(account_for_run(dir.path(), None).unwrap(), None);
+    assert_eq!(account_for_run(dir.path(), Some("  ")).unwrap(), None);
+    assert_eq!(account_for_run(dir.path(), Some("hr.admin")).unwrap(), Some("hr.admin".to_string()));
+    assert_eq!(account_for_run(dir.path(), Some("Bad Key")).unwrap_err(), "\"Bad Key\" is not a usable account key");
+    assert_eq!(
+        account_for_run(dir.path(), Some("ghost")).unwrap_err(),
+        "there is no account \"ghost\" on this machine - add it in Auto Run, Accounts"
     );
 }

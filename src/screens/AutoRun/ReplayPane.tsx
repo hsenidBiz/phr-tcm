@@ -5,7 +5,7 @@
 //
 // Nothing here is a verdict. `proposed` is the machine's best guess at what
 // a person would have picked; it becomes a real verdict only once someone
-// reviews it (Task 7), and only a reviewed run can ever reach Azure DevOps.
+// reviews it, and only a reviewed run can ever reach Azure DevOps.
 
 import { useEffect, useRef, useState } from "react";
 import { commands, events } from "../../bindings";
@@ -23,6 +23,12 @@ const BROWSERS = [
   { value: "chrome", label: "Google Chrome" },
 ];
 
+/** Where the account picked for a run is remembered: per organisation and
+ * project, on this machine only. */
+export function runAccountKey(org: string, project: string): string {
+  return `tcm-v2-autorun-run-account:${org}/${project}`;
+}
+
 /** The one line a row shows for the phase an unattended step is in - a pure
  * function so a test can drive it directly instead of through an event. */
 export function statusOf(p: {
@@ -33,6 +39,7 @@ export function statusOf(p: {
 }): string {
   if (p.phase === "opening") return "Opening the browser";
   if (p.phase === "signing_in") return "Signing in";
+  if (p.phase === "module") return "Going to the module";
   if (p.phase === "step") return `Step ${p.step_number} of ${p.steps}`;
   if (p.phase === "done") return p.proposed ? `Proposed: ${p.proposed}` : "Nothing proposed";
   return "Waiting";
@@ -50,11 +57,11 @@ export default function ReplayPane({
   project: string;
   pbiId: number;
   /** The selection, run in this order - same contract as the supervised
-   * pane's `cases` prop. */
-  cases: { id: number; title: string }[];
+   * pane's `cases` prop. `module` is the case's Module field. */
+  cases: { id: number; title: string; module?: string }[];
   onClose: () => void;
   /** Called with the finished run's id once `auto_run_replay` resolves.
-   * Task 7's review screen opens from it. */
+   * The review screen opens from it. */
   onFinished: (runId: string) => void;
 }) {
   const [phase, setPhase] = useState<"setup" | "running" | "failed">("setup");
@@ -69,6 +76,33 @@ export default function ReplayPane({
   /** Off by default: an unattended run's whole point is that nobody has to
    * sit in front of it. */
   const [watch, setWatch] = useState(() => localStorage.getItem("tcm-v2-autorun-watch") === "1");
+
+  /** The tester's accounts, key and name only: the Sign in as choices. */
+  const [accounts, setAccounts] = useState<{ key: string; label: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    commands
+      .autoRunListAccounts()
+      .then((r) => {
+        if (live && r.status === "ok") {
+          setAccounts((r.data ?? []).map((a) => ({ key: a.key, label: a.label })));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const [picked, setPicked] = useState(() => {
+    try {
+      return localStorage.getItem(runAccountKey(org, project)) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  /** An account removed since it was picked falls back to the default,
+   * silently: the run just uses each script's own account. */
+  const runAccount = accounts.some((a) => a.key === picked) ? picked : "";
 
   /** Status text per case id, filled in as `ReplayProgress` events arrive. */
   const [rows, setRows] = useState<Record<number, string>>({});
@@ -107,7 +141,8 @@ export default function ReplayPane({
         org,
         project,
         pbiId,
-        cases.map((c) => ({ case_id: c.id, title: c.title })),
+        cases.map((c) => ({ case_id: c.id, title: c.title, module: c.module?.trim() || null })),
+        runAccount || null,
         browserName,
         watch,
       );
@@ -149,6 +184,30 @@ export default function ReplayPane({
       {phase !== "running" ? (
         <div className="space-y-3">
           {error && <p className="text-xs text-danger">{error}</p>}
+          <label className="flex items-center gap-2 text-xs text-muted">
+            Sign in as
+            <Select
+              aria-label="Sign in as"
+              className="w-56"
+              value={runAccount}
+              onChange={(e) => {
+                setPicked(e.target.value);
+                try {
+                  localStorage.setItem(runAccountKey(org, project), e.target.value);
+                } catch {
+                  // storage unavailable - the choice lasts this session
+                }
+              }}
+            >
+              <option value="">Each script's own account</option>
+              {accounts.map((a) => (
+                <option key={a.key} value={a.key}>
+                  {a.label ? `${a.label} (${a.key})` : a.key}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <p className="text-xs text-faint">Used only for scripts that name no account.</p>
           <label className="flex items-center gap-2 text-xs text-muted">
             Browser
             <Select

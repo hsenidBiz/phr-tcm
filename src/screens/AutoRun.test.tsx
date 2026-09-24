@@ -562,6 +562,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_close_browser",
     "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
     "auto_run_replay", // local: drives the browser itself, writes nothing to ADO
+    "auto_run_list_accounts", // read-only: the Sign in as choices in the unattended run dialog
     "auto_run_load_run", // read-only: the review dialog loading its own run
     "plugin:event|listen", // Tauri's own event subscription - ReplayPane's progress feed
     "plugin:event|unlisten", // the same subscription's cleanup on unmount
