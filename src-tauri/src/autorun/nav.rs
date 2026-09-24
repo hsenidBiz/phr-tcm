@@ -8,6 +8,7 @@
 //! empty `modules` list, runs exactly as it did before module paths
 //! existed.
 
+use super::accounts::Account;
 use super::recipe::{origin_of, project_slug, SignInRecipe};
 use super::CaseScript;
 use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
@@ -457,4 +458,22 @@ pub fn guide_section(nav: &NavFile) -> String {
      - Never use `navigate`. This project refuses to save a script that opens a page by address; reach every other screen with clicks.\n\
      - A `sign_in` action lands on the home page, and the run brings the browser back to the module screen before the next action.\n"
         .to_string()
+}
+
+/// The check a path must pass before it is saved, and what Try runs: sign
+/// in as `account` in a fresh browser, go home, click each click, and land
+/// on `arrived`. Ok carries the path reached; Err is the dialog's sentence.
+pub async fn check_path<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    path: &ModulePath,
+    timing: &Timing,
+) -> Result<String, String> {
+    let signed = super::signin::sign_in(d, root, recipe, account, timing).await;
+    if !signed.ok {
+        return Err(format!("the sign-in did not work: {}", signed.detail));
+    }
+    go_to_module(d, &Route::new(recipe, path.clone()), timing).await.map_err(|f| f.for_dialog())
 }

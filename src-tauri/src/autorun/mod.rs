@@ -15,6 +15,7 @@ pub mod nav;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;
+pub mod recorder;
 pub mod replay;
 pub mod runner;
 pub mod sessions;

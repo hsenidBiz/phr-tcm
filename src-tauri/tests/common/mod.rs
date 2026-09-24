@@ -39,6 +39,9 @@ pub struct ScriptedDriver {
     /// leave `Some(&None)` here on every path out, or a later action
     /// inherits a budget that has already run out.
     pub deadlines: Vec<Option<Instant>>,
+    /// When no event is waiting, `wait_event` says the browser closed
+    /// instead of timing out - a window the person shut.
+    pub closed_when_drained: bool,
 }
 
 impl ScriptedDriver {
@@ -55,6 +58,7 @@ impl ScriptedDriver {
             on_every_call_events: vec![],
             dialogs: vec![],
             deadlines: vec![],
+            closed_when_drained: false,
         }
     }
 
@@ -101,6 +105,7 @@ impl Driver for ScriptedDriver {
     async fn wait_event(&mut self, method: &str, _limit: Duration) -> Result<Event, CdpError> {
         match self.events.iter().position(|e| e.method == method) {
             Some(i) => Ok(self.events.remove(i).expect("position was just found")),
+            None if self.closed_when_drained => Err(CdpError::Closed),
             None => Err(CdpError::Timeout { what: method.to_string(), ms: 0 }),
         }
     }
