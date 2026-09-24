@@ -12,7 +12,7 @@ use v2_lib::autorun::recorder::{
     arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, next_click, AxLink, Captured,
     ClickHints, ClickPayload, Ended, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS, UNREADABLE,
 };
-use v2_lib::browser::cdp::Event;
+use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::locator::{LocatorStep, Target};
 
 fn exact_role(role: &str, name: &str) -> Target {
@@ -110,6 +110,19 @@ fn hints_give_a_role_from_aria_label_or_else_the_visible_words() {
     assert_eq!(locator_from_hints(&hints("", "", "  Apply \n Leave ")), Some(exact_text("Apply Leave")));
     assert_eq!(locator_from_hints(&hints("", "", "")), None);
     assert_eq!(locator_from_hints(&hints("", "", &"x".repeat(81))), None, "a whole panel's text names nothing");
+}
+
+#[test]
+fn wrappers_the_accessibility_tree_ignores_do_not_use_up_the_climb() {
+    let mut chain: Vec<AxLink> = (0..6).map(|_| AxLink { role: "none".into(), name: String::new(), ignored: true }).collect();
+    chain.push(node("link", "Leave"));
+    assert_eq!(locator_from_ax(&chain), Some(exact_role("link", "Leave")));
+}
+
+#[test]
+fn a_role_attribute_is_read_the_way_the_browser_reads_it() {
+    assert_eq!(locator_from_hints(&hints("menuitem button", "Leave", "")), Some(exact_role("menuitem", "Leave")), "the first token");
+    assert_eq!(locator_from_hints(&hints("none", "Leave", "Leave")), Some(exact_text("Leave")), "no role at all");
 }
 
 #[test]
@@ -243,4 +256,33 @@ async fn a_path_is_checked_by_signing_in_fresh_and_walking_it_to_where_it_ended(
         .await
         .unwrap_err();
     assert!(err.starts_with("click 2, link \"Apply Leave\": "), "{err}");
+}
+
+/// The dialog shows this sentence: the sign-in's own words can name the
+/// application's address, so they go to the log and not to the person.
+#[tokio::test]
+async fn a_sign_in_page_that_will_not_load_is_reported_without_its_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|method, _| {
+        Ok(match method {
+            "Page.navigate" => json!({ "errorText": "net::ERR_NAME_NOT_RESOLVED" }),
+            _ => json!({}),
+        })
+    });
+    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick())
+        .await
+        .unwrap_err();
+    assert!(!err.contains("://"), "{err}");
+    assert_eq!(err, "the sign-in did not work: check the account and the sign-in recipe, and see Settings, Logs for the details");
+}
+
+#[tokio::test]
+async fn a_browser_that_stops_answering_during_the_sign_in_is_told_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick())
+        .await
+        .unwrap_err();
+    assert!(!err.contains("://"), "{err}");
+    assert_eq!(err, "the sign-in did not work: the browser did not respond - try again, and see Settings, Logs if it keeps happening");
 }

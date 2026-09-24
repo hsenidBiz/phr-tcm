@@ -187,10 +187,16 @@ pub fn ax_chain(tree: &Value, backend: i64) -> Vec<AxLink> {
 }
 
 /// The nearest node with a preferred role and a name; else the nearest
-/// named node whose role a person clicks by; never past a container.
+/// named node whose role a person clicks by; never past a container. Only
+/// nodes the tree does not ignore count toward the climb: deep markup
+/// (`a > div > span > svg > path`) is mostly ignored wrappers.
 pub fn locator_from_ax(chain: &[AxLink]) -> Option<Target> {
-    let near: Vec<&AxLink> =
-        chain.iter().take(MAX_CLIMB).take_while(|n| !CONTAINERS.contains(&n.role.as_str())).collect();
+    let near: Vec<&AxLink> = chain
+        .iter()
+        .take_while(|n| !CONTAINERS.contains(&n.role.as_str()))
+        .filter(|n| !n.ignored)
+        .take(MAX_CLIMB)
+        .collect();
     let usable = |n: &AxLink| !n.ignored && !collapse(&n.name).is_empty();
     if let Some(n) = near.iter().find(|n| usable(n) && PREFERRED_ROLES.contains(&n.role.as_str())) {
         return Some(exact_role(&n.role, &n.name));
@@ -201,9 +207,12 @@ pub fn locator_from_ax(chain: &[AxLink]) -> Option<Target> {
 }
 
 /// When the element is gone or has no role nearby: a role attribute with an
-/// aria-label, else the visible words (short ones only).
+/// aria-label, else the visible words (short ones only). A role attribute
+/// is read closer to how the browser reads it: its first token, the role
+/// the browser tries first, and `none` or
+/// `presentation` is no role at all.
 pub fn locator_from_hints(h: &ClickHints) -> Option<Target> {
-    let role = h.role.trim();
+    let role = h.role.split_whitespace().next().filter(|r| !["none", "presentation"].contains(r)).unwrap_or("");
     let label = collapse(&h.label);
     if !role.is_empty() && !label.is_empty() {
         return Some(exact_role(role, &label));

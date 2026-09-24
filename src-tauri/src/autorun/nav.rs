@@ -460,9 +460,21 @@ pub fn guide_section(nav: &NavFile) -> String {
         .to_string()
 }
 
+/// `check_path`'s sentence when the browser stopped answering mid sign-in.
+pub const SIGN_IN_BROWSER_SILENT: &str =
+    "the sign-in did not work: the browser did not respond - try again, and see Settings, Logs if it keeps happening";
+/// `check_path`'s sentence when the sign-in itself failed.
+pub const SIGN_IN_FAILED: &str =
+    "the sign-in did not work: check the account and the sign-in recipe, and see Settings, Logs for the details";
+
 /// The check a path must pass before it is saved, and what Try runs: sign
 /// in as `account` in a fresh browser, go home, click each click, and land
 /// on `arrived`. Ok carries the path reached; Err is the dialog's sentence.
+///
+/// A failed sign-in's own words can name the application's address (a
+/// navigate that would not load says which), and the dialog names none: the
+/// person gets one of two fixed sentences, chosen by whether the browser or
+/// the sign-in failed, and the words go to the log.
 pub async fn check_path<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -473,7 +485,14 @@ pub async fn check_path<D: Driver>(
 ) -> Result<String, String> {
     let signed = super::signin::sign_in(d, root, recipe, account, timing).await;
     if !signed.ok {
-        return Err(format!("the sign-in did not work: {}", signed.detail));
+        // `sign_in` already hides the password in its detail; hiding it
+        // again here keeps the log safe even if that ever changes.
+        crate::applog::warn(format!(
+            "module path check: signing in as {} did not work: {}",
+            account.key,
+            super::signin::redact(&signed.detail, account)
+        ));
+        return Err(if signed.harness { SIGN_IN_BROWSER_SILENT } else { SIGN_IN_FAILED }.to_string());
     }
     go_to_module(d, &Route::new(recipe, path.clone()), timing).await.map_err(|f| f.for_dialog())
 }
