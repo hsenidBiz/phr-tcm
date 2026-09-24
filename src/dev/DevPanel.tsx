@@ -37,6 +37,31 @@ function loadPos(): { x: number; y: number } | null {
   }
 }
 
+/** One of each toast the app raises: the four kinds, a plain one, one with
+ * an action (the Undo a discard offers) and one that stays until dismissed. */
+const TOAST_SAMPLES: [string, () => void][] = [
+  ["Success", () => toast.success("[dev] Saved 3 test cases.")],
+  ["Error", () => toast.error("[dev] Could not reach Azure DevOps. Check your connection and try again.")],
+  ["Info", () => toast.info("[dev] PR #21691 is one of yours. Turn on Your Pull Requests to see it.")],
+  ["Warning", () => toast.warning("[dev] 2 cases have no expected result.")],
+  ["Plain", () => toast("[dev] A plain toast with no kind.")],
+  [
+    "With action",
+    () =>
+      toast.success("[dev] Discarded the draft.", {
+        action: { label: "Undo", onClick: () => toast.info("[dev] Undo pressed.") },
+      }),
+  ],
+  [
+    "Sticky",
+    () =>
+      toast.info("[dev] This one stays until dismissed.", {
+        description: "A second line under the message.",
+        duration: Infinity,
+      }),
+  ],
+];
+
 /**
  * DEVELOPER PANEL - dev builds only. The mount site in App.tsx gates on
  * `import.meta.env.DEV`, a compile-time constant, so `tauri build`
@@ -431,6 +456,21 @@ export default function DevPanel({
               >
                 Changelog
               </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <p className="font-semibold text-text">Toasts</p>
+            <p className="text-muted">
+              Every kind the app raises, so each look can be checked in each
+              theme without finding the action that raises it.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {TOAST_SAMPLES.map(([label, raise]) => (
+                <Button key={label} size="sm" variant="outline" aria-label={`Toast: ${label}`} onClick={raise}>
+                  {label}
+                </Button>
+              ))}
             </div>
           </div>
         </div>
