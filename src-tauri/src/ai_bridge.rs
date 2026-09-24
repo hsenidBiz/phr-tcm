@@ -3100,8 +3100,8 @@ pub async fn start_listener(
                     if n == 0 { return; }
                     used += n;
                     match parse_http(&buf[..used]) {
-                        Parsed::Complete { method, target, token, body } => {
-                            break (method, target, token, body)
+                        Parsed::Complete { method, target, token, body, proxy_version } => {
+                            break (method, target, token, body, proxy_version)
                         }
                         // Answer rather than close in silence: the proxy on
                         // the other end is waiting on a response, and "the
@@ -3122,10 +3122,11 @@ pub async fn start_listener(
                         return;
                     }
                 };
-                let (method, target, tok, body) = parsed;
+                let (method, target, tok, body, proxy_version) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
+                    note_proxy_version(proxy_version.as_deref(), &state.version);
                     let ctx = state.ctx.lock().unwrap().clone();
                     let client = match &make_client {
                         Some(f) => f().await,
@@ -3153,7 +3154,15 @@ pub async fn start_listener(
 /// until the 64 KB cap - or, if the client simply stopped sending, until
 /// the end of the process, holding a task and a socket per attempt.
 pub enum Parsed {
-    Complete { method: String, target: String, token: Option<String>, body: String },
+    Complete {
+        method: String,
+        target: String,
+        token: Option<String>,
+        body: String,
+        /// The `x-tcm-proxy-version` header: the build of the MCP proxy that
+        /// sent this. None from a proxy older than the header.
+        proxy_version: Option<String>,
+    },
     Incomplete,
     Malformed,
 }
@@ -3182,6 +3191,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         return Parsed::Malformed;
     };
     let mut token = None;
+    let mut proxy_version = None;
     let mut content_len = 0usize;
     for line in lines {
         // A header we cannot read is not a reason to reject the request -
@@ -3191,6 +3201,9 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         let v = v.trim();
         if k.eq_ignore_ascii_case("x-bridge-token") {
             token = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::PROXY_VERSION_HEADER) {
+            proxy_version = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case("content-length") {
             match v.parse() {
@@ -3208,5 +3221,23 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         target: target.to_string(),
         token,
         body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
+        proxy_version,
     }
+}
+
+/// Logs - once per proxy version, not once per call - an MCP proxy that is
+/// not this app's build. The assistant hears it from the proxy itself; this
+/// is where a person hears it: Settings → Logs, which a bug report ships.
+/// A proxy older than the header says nothing and is not flagged here.
+fn note_proxy_version(proxy: Option<&str>, app: &str) {
+    // The versions already reported. A log de-duplication, not cached data.
+    static WARNED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let Some(proxy) = proxy else { return };
+    let Some(warning) = crate::mcp::version_warning(proxy, app) else { return };
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if warned.iter().any(|v| v == proxy) {
+        return;
+    }
+    warned.push(proxy.to_string());
+    crate::applog::warn(format!("AI bridge: {warning}"));
 }
