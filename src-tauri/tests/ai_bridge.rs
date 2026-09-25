@@ -1715,7 +1715,7 @@ mod db_tests {
 
     use v2_lib::ai_bridge::{route, BridgeContext};
     use v2_lib::db::credentials::{save, DbCredentialsForm, MemoryStore, SecretStore, OWN_ID};
-    use v2_lib::db::query::{run_lookup, run_query, NO_CONNECTION, WRITES_OFF};
+    use v2_lib::db::query::{run_lookup, run_query, NO_CONNECTION, NO_LOGIN_SAVED, WRITES_OFF};
     use v2_lib::db::{
         classify, parse_connection, Connection, Output, Runner, Verdict, NOT_INSTALLED,
         READ_ONLY_SENTENCE, SQLCMD_OVERRIDE,
@@ -1861,8 +1861,11 @@ mod db_tests {
         assert!(format!("{:?}", with_connection("dev-read", false)).contains("dev-read"));
     }
 
+    /// Your own database IS a choice - the person picked it - so telling
+    /// them to pick one sends them to a control they already used. What is
+    /// missing is the login, and that is what the sentence asks for.
     #[tokio::test]
-    async fn your_own_database_with_nothing_saved_is_no_connection() {
+    async fn your_own_database_with_nothing_saved_asks_for_a_login() {
         let c = with_connection(OWN_ID, false);
         for (path, body) in [
             ("/db-lookup", r#"{"query":"leave"}"#),
@@ -1870,7 +1873,8 @@ mod db_tests {
         ] {
             let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
             assert_eq!(status, 409, "{path}: {said}");
-            assert_eq!(said, NO_CONNECTION, "{path}");
+            assert_eq!(said, NO_LOGIN_SAVED, "{path}");
+            assert!(said.contains("Manage credentials"), "{said}");
         }
     }
 

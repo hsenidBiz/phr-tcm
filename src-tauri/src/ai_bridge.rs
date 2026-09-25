@@ -674,12 +674,13 @@ fn db_ready(
         .ok_or_else(nothing_chosen)?;
     let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
     // Resolved now, not when the context was pushed: a login saved since
-    // is the one this call signs in with. `own` with nothing saved is the
-    // same as nothing chosen - there is no login to use either way. A store
-    // that cannot be read keeps its own sentence: picking again won't help.
+    // is the one this call signs in with. `own` with nothing saved HAS been
+    // chosen, so it gets its own sentence - "pick one" would send the person
+    // back to a choice they already made. A store that cannot be read keeps
+    // its own sentence too: picking again won't help.
     let chosen = crate::db::credentials::resolve(store, id)
         .map_err(|why| (409, why))?
-        .ok_or_else(nothing_chosen)?;
+        .ok_or_else(|| (409, crate::db::query::NO_LOGIN_SAVED.to_string()))?;
     // The error names the missing key and nothing else - the rest of that
     // string is a credential, and this sentence is shown to a person.
     let connection = crate::db::parse_connection(&chosen)
