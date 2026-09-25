@@ -340,7 +340,7 @@ impl SecretStore for CredentialManager {
 /// code and shows a sentence, and neither ever carries the value.
 #[cfg(windows)]
 mod wincred {
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND};
     use windows_sys::Win32::Security::Credentials::{
         CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
         CRED_TYPE_GENERIC,
@@ -369,14 +369,20 @@ mod wincred {
             let code = last_error();
             return if code == ERROR_NOT_FOUND { Ok(None) } else { Err(code) };
         }
-        Ok(Some(copy_blob_and_free(cred)))
+        // SAFETY: CredReadW returned non-zero, so `cred` points at a
+        // CREDENTIALW the API allocated, and nothing has freed it yet.
+        Ok(Some(unsafe { copy_blob_and_free(cred) }))
     }
 
-    fn copy_blob_and_free(cred: *mut CREDENTIALW) -> Vec<u8> {
-        // SAFETY: `cred` came from a successful CredReadW, so it points at a
-        // CREDENTIALW the API allocated whose blob is CredentialBlobSize
-        // bytes (or null). The bytes are copied out before CredFree, and
-        // `cred` is not touched after it.
+    /// Copies the blob out, then frees the credential.
+    ///
+    /// # Safety
+    /// `cred` must come from a successful CredReadW and not have been freed;
+    /// its blob is then CredentialBlobSize readable bytes (or null). The
+    /// caller must not use `cred` afterwards.
+    unsafe fn copy_blob_and_free(cred: *mut CREDENTIALW) -> Vec<u8> {
+        // SAFETY: the contract above; the bytes are copied out before
+        // CredFree and `cred` is not touched after it.
         unsafe {
             let c = &*cred;
             let bytes = if c.CredentialBlob.is_null() || c.CredentialBlobSize == 0 {
@@ -392,9 +398,9 @@ mod wincred {
     pub(super) fn write(target: &str, blob: &[u8]) -> Result<(), u32> {
         let mut name = wide(target);
         let mut user = wide(USER_NAME);
-        // ERROR_INVALID_PARAMETER: a blob too large for a u32 is far past
-        // the API's own size limit anyway.
-        let size = u32::try_from(blob.len()).map_err(|_| 87u32)?;
+        // A blob too large for a u32 is far past the API's own size limit,
+        // so it gets the code the API would have answered with.
+        let size = u32::try_from(blob.len()).map_err(|_| ERROR_INVALID_PARAMETER)?;
         // SAFETY: CREDENTIALW is plain data; all-zero is its documented
         // "unset" value for every field set below and every one left alone.
         let mut cred: CREDENTIALW = unsafe { std::mem::zeroed() };

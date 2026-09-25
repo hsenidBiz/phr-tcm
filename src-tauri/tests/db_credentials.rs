@@ -13,12 +13,15 @@ fn form(user: &str, password: Option<&str>) -> DbCredentialsForm {
 fn a_shipped_database_resolves_to_its_shipped_string_until_overridden() {
     let s = MemoryStore::default();
     let first = DB_PRESETS[0];
-    assert_eq!(resolve(&s, first.id).unwrap().as_deref(), Some(first.connection_string));
+    // Compared with assert!, never assert_eq!: a failing assert_eq! prints
+    // both sides, and one side here is a shipped credential.
+    let is_shipped = |s: &MemoryStore| resolve(s, first.id).unwrap().as_deref() == Some(first.connection_string);
+    assert!(is_shipped(&s), "{}: resolved to something other than the shipped string", first.id);
     save(&s, first.id, &form("someone", Some("pw1"))).unwrap();
     let got = resolve(&s, first.id).unwrap().unwrap();
     assert!(got.contains("User Id=someone") && got.contains("Password=pw1"));
     reset(&s, first.id).unwrap();
-    assert_eq!(resolve(&s, first.id).unwrap().as_deref(), Some(first.connection_string));
+    assert!(is_shipped(&s), "{}: reset did not go back to the shipped string", first.id);
 }
 
 #[test]
@@ -38,7 +41,7 @@ fn a_blank_password_keeps_the_current_one_including_the_shipped_one() {
     save(&s, first.id, &form("other", None)).unwrap();
     let c = v2_lib::db::parse_connection(&resolve(&s, first.id).unwrap().unwrap()).unwrap();
     assert_eq!(c.user, "other");
-    assert_eq!(c.password, shipped_pw);
+    assert!(c.password == shipped_pw, "{}: a blank password did not keep the shipped one", first.id);
 }
 
 #[test]
@@ -71,8 +74,8 @@ fn a_shipped_form_cannot_move_the_server() {
     save(&s, first.id, &f).unwrap();
     let c = v2_lib::db::parse_connection(&resolve(&s, first.id).unwrap().unwrap()).unwrap();
     let shipped = v2_lib::db::parse_connection(first.connection_string).unwrap();
-    assert_eq!(c.server, shipped.server);
-    assert_eq!(c.database, shipped.database);
+    assert!(c.server == shipped.server, "{}: the form moved the server", first.id);
+    assert!(c.database == shipped.database, "{}: the form moved the database", first.id);
 }
 
 #[test]
