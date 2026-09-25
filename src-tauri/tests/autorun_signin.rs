@@ -192,3 +192,75 @@ fn preparing_a_sign_in_says_what_is_missing_and_where_to_add_it() {
 }
 
 fn _unused(_: Value) {}
+
+// ------------------------------------------------------------ after_sign_in
+
+fn recipe_with_after(after: Value) -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut v = serde_json::to_value(recipe()).unwrap();
+    v["after_sign_in"] = after;
+    serde_json::from_value(v).unwrap()
+}
+
+/// After the recipe's own steps and the signed-in check - and BEFORE the
+/// session is captured, so a saved session carries whatever these steps
+/// left in the page's storage (PeoplesHR keeps its menu state there).
+#[tokio::test]
+async fn after_sign_in_runs_after_a_recipe_sign_in_and_before_the_session_is_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let r = recipe_with_after(json!([{ "kind": "click", "selector": { "css": "#open-menu" } }]));
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 2, "#go, then #open-menu");
+    assert!(out.steps.last().unwrap().ok, "{:?}", out.steps);
+    let methods = d.methods();
+    let last_click = methods.iter().rposition(|m| m == "Input.dispatchMouseEvent").unwrap();
+    let captured = methods.iter().position(|m| m == "Network.getAllCookies").unwrap();
+    assert!(last_click < captured, "the session was captured before the steps ran: {methods:?}");
+    assert!(session_path(dir.path(), "admin").is_file());
+}
+
+/// A saved session skips the recipe's steps, but not these: the page was
+/// never opened in THIS browser, so whatever they set up is not there yet.
+#[tokio::test]
+async fn after_sign_in_runs_after_a_saved_session_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let (mut d, state) = stateful_app(true, None);
+    let r = recipe_with_after(json!([{ "kind": "click", "selector": { "css": "#open-menu" } }]));
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(out.ok && out.used_saved_session, "{}", out.detail);
+    assert!(d.calls_to("Input.insertText").is_empty(), "the form was not touched");
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 1, "only the after_sign_in click");
+}
+
+/// The idempotent form: nothing to do when the thing is not there.
+#[tokio::test]
+async fn an_after_sign_in_prompt_that_does_not_appear_is_carried_past() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let r = recipe_with_after(json!([
+        { "kind": "when_visible", "selector": { "css": "#other-session" }, "within_ms": 40,
+          "then": [ { "kind": "click", "selector": { "css": "#other-session" } } ] }
+    ]));
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 1, "only #go");
+    assert!(out.steps.last().unwrap().detail.contains("carried on"), "{:?}", out.steps);
+}
+
+/// Signed in, but the page is not the way scripts expect it: that is a
+/// failure the person must see, named as this step - and the session the
+/// sign-in itself earned is still kept.
+#[tokio::test]
+async fn a_failing_after_sign_in_step_fails_the_sign_in_and_names_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, Some("#open-menu"));
+    let r = recipe_with_after(json!([{ "kind": "click", "selector": { "css": "#open-menu" } }]));
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("after_sign_in step 1"), "{}", out.detail);
+    no_password_anywhere(&out);
+    assert!(session_path(dir.path(), "admin").is_file(), "the sign-in itself worked");
+}

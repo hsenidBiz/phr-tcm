@@ -353,6 +353,17 @@ export const commands = {
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
 	steps: RecipeStep_Serialize[],
+	/**
+	 *  Run after EVERY sign-in - the recipe's own, or a saved session put
+	 *  back, which skips `steps` - to leave the application the way the
+	 *  scripts expect it. The same step vocabulary, so `when_visible` makes
+	 *  a toggle safe to run twice. Written for PeoplesHR (2026-09-25): its
+	 *  menu list is drawn closed in a fresh browser and opens only from an
+	 *  unlabelled icon that toggles, so a module path recorded with the
+	 *  menu open failed its check with "is outside the visible part of the
+	 *  page". No login is filled in here: a placeholder is refused.
+	 */
+	after_sign_in?: RecipeStep_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**
@@ -2089,6 +2100,17 @@ export type SignInRecipe_Deserialize = {
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
 	steps: RecipeStep_Deserialize[],
+	/**
+	 *  Run after EVERY sign-in - the recipe's own, or a saved session put
+	 *  back, which skips `steps` - to leave the application the way the
+	 *  scripts expect it. The same step vocabulary, so `when_visible` makes
+	 *  a toggle safe to run twice. Written for PeoplesHR (2026-09-25): its
+	 *  menu list is drawn closed in a fresh browser and opens only from an
+	 *  unlabelled icon that toggles, so a module path recorded with the
+	 *  menu open failed its check with "is outside the visible part of the
+	 *  page". No login is filled in here: a placeholder is refused.
+	 */
+	after_sign_in?: RecipeStep_Deserialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Deserialize,
 	/**
@@ -2104,6 +2126,17 @@ export type SignInRecipe_Serialize = {
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
 	steps: RecipeStep_Serialize[],
+	/**
+	 *  Run after EVERY sign-in - the recipe's own, or a saved session put
+	 *  back, which skips `steps` - to leave the application the way the
+	 *  scripts expect it. The same step vocabulary, so `when_visible` makes
+	 *  a toggle safe to run twice. Written for PeoplesHR (2026-09-25): its
+	 *  menu list is drawn closed in a fresh browser and opens only from an
+	 *  unlabelled icon that toggles, so a module path recorded with the
+	 *  menu open failed its check with "is outside the visible part of the
+	 *  page". No login is filled in here: a placeholder is refused.
+	 */
+	after_sign_in?: RecipeStep_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**

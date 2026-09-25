@@ -22,6 +22,10 @@ const PLACEHOLDER = `{
       "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
   ],
   "signed_in": { "css": "#sidebar-toggle-menu" },
+  "after_sign_in": [
+    { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 1500,
+      "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
+  ],
   "allowed_origins": [],
   "session_minutes": 480
 }`;
@@ -139,7 +143,9 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           {"{{password}}"} where the account's login goes. Use {"{{password}}"} only on a real password
           field (type=password): the browser masks it there, and the run's pictures would show it
           anywhere else. "signed_in" is something only a signed-in page shows. "when_visible" handles a
-          prompt that may or may not appear.
+          prompt that may or may not appear. "after_sign_in" runs after every sign-in, a saved session
+          included, to leave the application the way scripts expect it - here, opening a menu that starts
+          closed, only when it is closed.
         </p>
       </div>
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}

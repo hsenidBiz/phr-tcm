@@ -110,6 +110,17 @@ pub async fn sign_in<D: Driver>(
                 let seen = marker.as_ref().is_some_and(|m| m.ok);
                 session::unseed(d, &ids).await;
                 if seen {
+                    // The recipe's own steps are skipped here; these are not.
+                    if let Err((n, why, harness_failure)) =
+                        run_steps(d, &mut run, &recipe.after_sign_in, timing, &policy).await
+                    {
+                        return run.done(
+                            false,
+                            format!("signed in as {who} from a saved session, but after_sign_in step {n} stopped: {why}"),
+                            true,
+                            harness_failure,
+                        );
+                    }
                     return run.done(true, format!("signed in as {who} from a saved session"), true, false);
                 }
                 // The BROWSER, not the saved session, may be what just
@@ -153,35 +164,9 @@ pub async fn sign_in<D: Driver>(
         let harness_failure = last.is_some_and(|s| s.harness);
         return run.done(false, format!("the sign-in page did not open: {why}"), false, harness_failure);
     }
-    for (i, step) in for_account(&recipe.steps, account).iter().enumerate() {
-        let n = i + 1;
-        let actions: Vec<&Action> = match step {
-            RecipeStep::Do(a) => vec![a],
-            RecipeStep::WhenVisible(w) => {
-                let shown = expect(d, &w.selector, Check::Visible, u64::from(w.within_ms), timing.poll_ms).await;
-                if shown.harness {
-                    let why = shown.detail.clone();
-                    run.keep(shown);
-                    return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, true);
-                }
-                if !shown.ok {
-                    run.keep(ActionOutcome::passed(format!(
-                        "step {n}: {} did not appear, carried on",
-                        w.selector.describe()
-                    )));
-                    continue;
-                }
-                w.then.iter().collect()
-            }
-        };
-        for action in actions {
-            if !run.keep(execute_in(d, action, timing, &policy).await) {
-                let last = run.steps.last();
-                let why = last.map(|s| s.detail.clone()).unwrap_or_default();
-                let harness_failure = last.is_some_and(|s| s.harness);
-                return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
-            }
-        }
+    let steps = for_account(&recipe.steps, account);
+    if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, timing, &policy).await {
+        return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
     let marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
@@ -199,10 +184,66 @@ pub async fn sign_in<D: Driver>(
         );
     }
 
+    let after = run_steps(d, &mut run, &recipe.after_sign_in, timing, &policy).await;
+
     // Saving is a convenience for next time. Failing to save is not a
-    // failure to sign in.
+    // failure to sign in. Captured AFTER after_sign_in, so a saved session
+    // keeps what those steps left in the page's storage - and kept even
+    // when one of them failed, since the sign-in itself worked.
     if let Ok(captured) = session::capture(d, &origins, now_ms()).await {
         let _ = save_session(root, &account.key, &captured);
     }
+    if let Err((n, why, harness_failure)) = after {
+        return run.done(
+            false,
+            format!("signed in as {who}, but after_sign_in step {n} stopped: {why}"),
+            false,
+            harness_failure,
+        );
+    }
     run.done(true, format!("signed in as {who}"), false, false)
+}
+
+/// Recipe steps in order, each outcome kept. `Err` is the step number,
+/// why it stopped, and whether the browser (not the page) was the cause.
+/// Shared by the recipe's own steps and `after_sign_in`, so a
+/// `when_visible` reads the same wherever it is written.
+async fn run_steps<D: Driver>(
+    d: &mut D,
+    run: &mut Run<'_>,
+    steps: &[RecipeStep],
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<(), (usize, String, bool)> {
+    for (i, step) in steps.iter().enumerate() {
+        let n = i + 1;
+        let actions: Vec<&Action> = match step {
+            RecipeStep::Do(a) => vec![a],
+            RecipeStep::WhenVisible(w) => {
+                let shown = expect(d, &w.selector, Check::Visible, u64::from(w.within_ms), timing.poll_ms).await;
+                if shown.harness {
+                    let why = shown.detail.clone();
+                    run.keep(shown);
+                    return Err((n, why, true));
+                }
+                if !shown.ok {
+                    run.keep(ActionOutcome::passed(format!(
+                        "step {n}: {} did not appear, carried on",
+                        w.selector.describe()
+                    )));
+                    continue;
+                }
+                w.then.iter().collect()
+            }
+        };
+        for action in actions {
+            if !run.keep(execute_in(d, action, timing, policy).await) {
+                let last = run.steps.last();
+                let why = last.map(|s| s.detail.clone()).unwrap_or_default();
+                let harness_failure = last.is_some_and(|s| s.harness);
+                return Err((n, why, harness_failure));
+            }
+        }
+    }
+    Ok(())
 }

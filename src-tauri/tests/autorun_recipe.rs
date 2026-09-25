@@ -284,3 +284,59 @@ fn a_placeholder_is_refused_anywhere_but_a_fills_value() {
     // A fill's VALUE is exactly where a placeholder belongs.
     assert!(recipe(sample()).validate().is_ok());
 }
+
+// ------------------------------------------------------------ after_sign_in
+
+fn with_after(after: serde_json::Value) -> serde_json::Value {
+    let mut v = sample();
+    v["after_sign_in"] = after;
+    v
+}
+
+/// PeoplesHR draws its menu list closed in a fresh browser and opens it
+/// only from an unlabelled icon that toggles - so what a project needs
+/// after signing in is "click it if it is closed", in the recipe's own
+/// vocabulary (2026-09-25).
+#[test]
+fn after_sign_in_takes_the_recipes_steps_and_is_optional() {
+    let menu = with_after(json!([
+        { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 1500,
+          "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
+    ]));
+    let r = recipe(menu);
+    assert_eq!(r.after_sign_in.len(), 1);
+    assert!(r.validate().is_ok(), "{:?}", r.validate());
+
+    // A recipe written before the field existed still loads, and one that
+    // does not use it saves exactly as it did.
+    let old = recipe(sample());
+    assert!(old.after_sign_in.is_empty());
+    assert!(old.validate().is_ok());
+    let saved = serde_json::to_value(&old).unwrap();
+    assert!(saved.get("after_sign_in").is_none(), "{saved}");
+}
+
+#[test]
+fn after_sign_in_is_validated_like_the_steps() {
+    let bad = |after: serde_json::Value| recipe(with_after(after)).validate().unwrap_err();
+
+    // An empty list is fine: it is optional.
+    assert!(recipe(with_after(json!([]))).validate().is_ok());
+
+    let why = bad(json!([{ "kind": "click", "selector": {} }]));
+    assert!(why.contains("after_sign_in step 1"), "{why}");
+
+    let why = bad(json!([{ "kind": "when_visible", "selector": "#x", "within_ms": 0, "then": [] }]));
+    assert!(why.contains("after_sign_in step 1") && why.contains("within_ms"), "{why}");
+
+    let why = bad(json!([{ "kind": "sign_in", "account": "hr.admin" }]));
+    assert!(why.contains("after_sign_in step 1"), "{why}");
+
+    // The login is filled in for the recipe's own steps only; here a
+    // placeholder would be typed as the literal text - so it is refused.
+    let why = bad(json!([
+        { "kind": "click", "selector": { "css": "#ok" } },
+        { "kind": "fill", "selector": { "css": "#pin" }, "value": "{{password}}" }
+    ]));
+    assert!(why.contains("after_sign_in step 2") && why.contains("{{password}}"), "{why}");
+}

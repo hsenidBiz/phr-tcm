@@ -100,6 +100,16 @@ pub struct SignInRecipe {
     /// Where a fresh browser goes first. Absolute, http or https.
     pub start_url: String,
     pub steps: Vec<RecipeStep>,
+    /// Run after EVERY sign-in - the recipe's own, or a saved session put
+    /// back, which skips `steps` - to leave the application the way the
+    /// scripts expect it. The same step vocabulary, so `when_visible` makes
+    /// a toggle safe to run twice. Written for PeoplesHR (2026-09-25): its
+    /// menu list is drawn closed in a fresh browser and opens only from an
+    /// unlabelled icon that toggles, so a module path recorded with the
+    /// menu open failed its check with "is outside the visible part of the
+    /// page". No login is filled in here: a placeholder is refused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_sign_in: Vec<RecipeStep>,
     /// Exactly one visible match of this means "signed in".
     pub signed_in: Target,
     /// Other origins `navigate` may go to. The start address's own origin
@@ -213,6 +223,37 @@ fn check(action: &Action) -> Result<(), String> {
     action.validate()
 }
 
+/// Each step in a list, named "<label> <n>" in a refusal. `fill_placeholders`
+/// is whether this list gets the account's login filled in - only the
+/// recipe's own `steps` do; anywhere else a placeholder would be typed as
+/// it stands.
+fn check_steps(steps: &[RecipeStep], label: &str, fill_placeholders: bool) -> Result<(), String> {
+    for (i, step) in steps.iter().enumerate() {
+        let n = i + 1;
+        let at = |e: String| format!("{label} {n}: {e}");
+        let actions: Vec<&Action> = match step {
+            RecipeStep::Do(a) => vec![a],
+            RecipeStep::WhenVisible(w) => {
+                if w.within_ms == 0 {
+                    return Err(at("within_ms must be more than 0".to_string()));
+                }
+                w.selector.validate().map_err(|e| at(e))?;
+                w.then.iter().collect()
+            }
+        };
+        for a in actions {
+            check(a).map_err(|e| at(e))?;
+            if !fill_placeholders && serde_json::to_value(a).is_ok_and(|v| has_placeholder_anywhere(&v)) {
+                return Err(at(
+                    "{{username}} and {{password}} are filled in for the recipe's own steps only - here they would be typed as they are"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl SignInRecipe {
     pub fn validate(&self) -> Result<(), String> {
         match origin_of(&self.start_url) {
@@ -222,21 +263,8 @@ impl SignInRecipe {
         if self.steps.is_empty() {
             return Err("the recipe has no steps".to_string());
         }
-        for (i, step) in self.steps.iter().enumerate() {
-            let n = i + 1;
-            match step {
-                RecipeStep::Do(a) => check(a).map_err(|e| format!("step {n}: {e}"))?,
-                RecipeStep::WhenVisible(w) => {
-                    if w.within_ms == 0 {
-                        return Err(format!("step {n}: within_ms must be more than 0"));
-                    }
-                    w.selector.validate().map_err(|e| format!("step {n}: {e}"))?;
-                    for a in &w.then {
-                        check(a).map_err(|e| format!("step {n}: {e}"))?;
-                    }
-                }
-            }
-        }
+        check_steps(&self.steps, "step", true)?;
+        check_steps(&self.after_sign_in, "after_sign_in step", false)?;
         self.signed_in.validate().map_err(|e| format!("signed_in: {e}"))?;
         for o in &self.allowed_origins {
             if !is_bare_origin(o) {
