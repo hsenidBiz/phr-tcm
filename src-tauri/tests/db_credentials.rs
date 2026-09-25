@@ -113,3 +113,77 @@ fn an_unknown_id_is_refused_and_own_has_nothing_to_reset_to() {
     assert!(save(&s, "prod", &form("u", Some("p"))).is_err());
     assert_eq!(reset(&s, OWN_ID).unwrap_err(), "Only a shipped database has a default to go back to.");
 }
+
+fn own(server: &str, port: Option<u16>, database: &str, user: &str, password: Option<&str>) -> DbCredentialsForm {
+    DbCredentialsForm { server: server.into(), port, database: database.into(), user: user.into(), password: password.map(Into::into), trust_cert: false }
+}
+
+fn customised(s: &MemoryStore, id: &str) -> bool {
+    databases(s).into_iter().find(|d| d.id == id).unwrap().customised
+}
+
+/// Saving what the shipped login already is must not freeze it: a stored
+/// copy would outlive the day the shipped password is rotated, and the
+/// database would show as changed when nothing was.
+#[test]
+fn saving_the_shipped_login_unchanged_keeps_no_override() {
+    let s = MemoryStore::default();
+    let p = DB_PRESETS[0];
+    let shipped = v2_lib::db::parse_connection(p.connection_string).unwrap();
+
+    // Blank password on a fresh machine: the shipped one, so the shipped string.
+    save(&s, p.id, &form(&shipped.user, None)).unwrap();
+    assert!(!customised(&s, p.id), "{}: saving the shipped login stored an override", p.id);
+    assert!(s.get(&format!("tcm-v2/db/{}", p.id)).unwrap().is_none(), "{}: an entry was written", p.id);
+
+    // Typed back by hand over an existing override: the override goes.
+    save(&s, p.id, &form("someone", Some("pw1"))).unwrap();
+    assert!(customised(&s, p.id));
+    save(&s, p.id, &form(&shipped.user, Some(&shipped.password))).unwrap();
+    assert!(!customised(&s, p.id), "{}: typing the shipped login back kept the override", p.id);
+    assert!(resolve(&s, p.id).unwrap().as_deref() == Some(p.connection_string), "{}: did not go back to the shipped string", p.id);
+}
+
+/// A blank password means "the one already saved" - for the same server.
+/// Carrying it to a different server or database would hand one server's
+/// password to another.
+#[test]
+fn own_needs_the_password_again_when_it_points_somewhere_new() {
+    let s = MemoryStore::default();
+    save(&s, OWN_ID, &own("db.local", Some(1444), "Hr", "me", Some("pw"))).unwrap();
+    for moved in [
+        own("db.other", Some(1444), "Hr", "me", None),
+        own("db.local", Some(1500), "Hr", "me", None),
+        own("db.local", None, "Hr", "me", None),
+        own("db.local", Some(1444), "Payroll", "me", None),
+    ] {
+        assert_eq!(save(&s, OWN_ID, &moved).unwrap_err(), "Enter the password for the new server or database.", "{moved:?}");
+    }
+    // Same place, another user: the saved password still applies.
+    save(&s, OWN_ID, &own("DB.local ", Some(1444), "Hr", "someone", None)).unwrap();
+    let c = v2_lib::db::parse_connection(&resolve(&s, OWN_ID).unwrap().unwrap()).unwrap();
+    assert_eq!((c.user.as_str(), c.password.as_str()), ("someone", "pw"));
+}
+
+/// Values are trimmed when a connection string is read back, so a password
+/// with a space at either end could never sign in.
+#[test]
+fn a_password_with_a_space_at_either_end_is_refused() {
+    let s = MemoryStore::default();
+    for pw in [" pw", "pw ", "\tpw"] {
+        assert_eq!(save(&s, OWN_ID, &own("h", None, "d", "u", Some(pw))).unwrap_err(), "The password can't start or end with a space.");
+        assert_eq!(save(&s, DB_PRESETS[0].id, &form("u", Some(pw))).unwrap_err(), "The password can't start or end with a space.");
+    }
+    // A space inside is a character like any other.
+    save(&s, OWN_ID, &own("h", None, "d", "u", Some("p w"))).unwrap();
+}
+
+#[test]
+fn a_port_after_the_server_name_and_in_the_port_box_is_refused() {
+    let s = MemoryStore::default();
+    let err = save(&s, OWN_ID, &own("h,1433", Some(1433), "d", "u", Some("pw"))).unwrap_err();
+    assert_eq!(err, "Put the port in the Port box, not after the server name.");
+    // Written only after the name, with the box empty, it still works.
+    save(&s, OWN_ID, &own("h,1433", None, "d", "u", Some("pw"))).unwrap();
+    assert!(resolve(&s, OWN_ID).unwrap().unwrap().starts_with("Server=h,1433;"));
+}

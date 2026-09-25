@@ -21,6 +21,9 @@ use crate::db_defaults::{DbPreset, DB_PRESETS};
 pub const OWN_ID: &str = "own";
 const OWN_LABEL: &str = "Your own database";
 const SEMICOLON: &str = "The login can't contain a semicolon.";
+const EDGE_SPACE: &str = "The password can't start or end with a space.";
+const PORT_TWICE: &str = "Put the port in the Port box, not after the server name.";
+const NEW_PLACE: &str = "Enter the password for the new server or database.";
 
 /// A place a saved login can be kept, keyed by its full target name.
 /// `get` answers `Ok(None)` for "nothing saved" - only a store that could
@@ -143,6 +146,11 @@ fn split_server(server: &str) -> (String, Option<u16>) {
 /// The one place a connection string is written. A semicolon anywhere
 /// would start a new key - a password of `x;Server=elsewhere` must not be
 /// able to move the connection - so it is refused rather than escaped.
+///
+/// A password with a space at either end is refused too: every value is
+/// trimmed when the string is read back, so it could never sign in. And a
+/// port both after the server name and in the Port box would be written
+/// twice into one `Server=` value, which nothing can connect to.
 fn build(
     server: &str,
     port: Option<u16>,
@@ -153,6 +161,12 @@ fn build(
 ) -> Result<String, String> {
     if [server, database, user, password].iter().any(|v| v.contains(';')) {
         return Err(SEMICOLON.into());
+    }
+    if password != password.trim() {
+        return Err(EDGE_SPACE.into());
+    }
+    if port.is_some() && server.contains(',') {
+        return Err(PORT_TWICE.into());
     }
     let mut s = format!("Server={}{}", server.trim(), port.map(|p| format!(",{p}")).unwrap_or_default());
     s.push_str(&format!(";Database={};User Id={};Password={}", database.trim(), user.trim(), password));
@@ -203,15 +217,45 @@ pub fn apply_form(store: &dyn SecretStore, id: &str, form: &DbCredentialsForm) -
     }
     let password = match typed {
         Some(p) => p.to_string(),
-        None => current.map(|c| c.password).ok_or_else(|| "Enter a password.".to_string())?,
+        None => {
+            let saved = current.ok_or_else(|| "Enter a password.".to_string())?;
+            // "Keep the saved password" is only safe for the place it was
+            // saved for: carried to another server it would be handed to a
+            // machine it was never meant for.
+            if !same_place(&saved, form) {
+                return Err(NEW_PLACE.into());
+            }
+            saved.password
+        }
     };
     build(&form.server, form.port, &form.database, &form.user, &password, form.trust_cert)
 }
 
+/// Whether a form still points where a saved login does: same server,
+/// port and database. Server and database names compare as SQL Server
+/// compares them by default, ignoring case; a port written after the server
+/// name counts the same as one in the Port box.
+fn same_place(saved: &crate::db::Connection, form: &DbCredentialsForm) -> bool {
+    let (saved_server, saved_port) = split_server(&saved.server);
+    let (server, port_in_name) = split_server(&form.server);
+    server.eq_ignore_ascii_case(&saved_server)
+        && form.port.or(port_in_name) == saved_port
+        && form.database.trim().eq_ignore_ascii_case(saved.database.trim())
+}
+
 /// Save a form as this database's login and answer with its new public view.
+///
+/// A form that comes out as the shipped login itself removes the override
+/// instead of storing a copy: a copy would keep today's shipped password
+/// after a release rotates it, and mark the database as changed when it is
+/// not.
 pub fn save(store: &dyn SecretStore, id: &str, form: &DbCredentialsForm) -> Result<DbDatabase, String> {
     let conn = apply_form(store, id, form)?;
-    store.put(&target(id), &conn)?;
+    if find_shipped(&conn) == Some(id) {
+        store.remove(&target(id))?;
+    } else {
+        store.put(&target(id), &conn)?;
+    }
     view(store, id)
 }
 
