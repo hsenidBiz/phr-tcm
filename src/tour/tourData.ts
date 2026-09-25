@@ -7,10 +7,12 @@ import type {
   BoardData,
   BridgeStatus,
   CaseHistory,
+  ConnectedUser,
   DbPresetOut,
   DbServerConfig,
   DetectedTool,
   EnsuredSuite,
+  Mention,
   Org,
   PbiHit,
   PlanWithSuites,
@@ -241,6 +243,11 @@ export const TOUR_BOARD: BoardData = {
 };
 
 export const TOUR_PR_OVERVIEW: PrOverview = { awaiting: [], mine: [] };
+
+// Identity for the mention scan's "is this me" check, and the mentions
+// list itself - empty, since the sample user has nothing waiting.
+export const TOUR_CONNECTED_USER: ConnectedUser = { id: "tour-user", display_name: "Sam Taylor" };
+export const TOUR_MENTIONS: Mention[] = [];
 
 export const TOUR_TOOLS: DetectedTool[] = [
   {

@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import { commands, type PullRequest } from "../bindings";
 import { isResolved } from "../lib/threadStatus";
 import { unwrap } from "../lib/ipc";
+import { announceMentions, noteMentions, prMentions, prNotification } from "../lib/mentions";
 import { notePrComments, notePrOverview } from "../lib/notifications";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
@@ -66,6 +67,33 @@ export function usePrAttention(org: string, project: string): number {
     prs.forEach((pr, i) => notePrComments(org, project, pr, unresolvedFor(i)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, org, project]);
+
+  // Who "you" are, for the mention scan: the same in-memory, once-per-org
+  // lookup the comments panel uses.
+  const me = useQuery({
+    queryKey: ["connected-user", org],
+    queryFn: async () => (await unwrap(commands.connectedUser(org))) ?? null,
+    enabled: Boolean(org),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const myId = me.data?.id ?? "";
+
+  // Mentions of you in these same threads, on every thread refresh - no
+  // request of their own. The store dedupes, so a rescan raises only
+  // what is new.
+  const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
+  useEffect(() => {
+    if (!myId) return;
+    const found = prs.flatMap((pr, i) =>
+      prMentions(pr, threads[i]?.data ?? [], myId).map((m) => ({
+        notification: prNotification(org, project, m),
+        created: m.createdDate,
+      })),
+    );
+    announceMentions(noteMentions(org, found));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadStamp, myId, org, project]);
 
   return prs.filter((pr, i) => pr.has_conflicts || unresolvedFor(i) > 0).length;
 }

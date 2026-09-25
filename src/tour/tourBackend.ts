@@ -14,9 +14,11 @@ import {
   TOUR_BRIDGE,
   TOUR_CASES,
   TOUR_CASE_SUMMARIES,
+  TOUR_CONNECTED_USER,
   TOUR_DB_DEFAULTS,
   TOUR_DB_PRESETS,
   TOUR_HISTORY,
+  TOUR_MENTIONS,
   TOUR_ORGS,
   TOUR_PBI,
   TOUR_PLANS,
@@ -82,6 +84,11 @@ function standIns(): Partial<Commands> {
     fetchBoard: () => ok(TOUR_BOARD),
     boardPrLinks: () => ok([]),
     prOverview: () => ok(TOUR_PR_OVERVIEW),
+    // The mention scan runs from the context bar the moment an org and
+    // project are picked, tour or not - the sample user has no mentions
+    // and nobody to match "is this me" against.
+    connectedUser: () => ok(TOUR_CONNECTED_USER),
+    recentMentions: () => ok(TOUR_MENTIONS),
 
     // AI Bridge.
     bridgeStatus: () => ok(TOUR_BRIDGE),
