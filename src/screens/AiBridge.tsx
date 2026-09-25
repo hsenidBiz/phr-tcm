@@ -746,7 +746,7 @@ export default function AiBridge() {
               />
             </div>
             <p className="text-[11px] text-faint">
-              Only on a dev login connection (a user ending in _devlogin), and every
+              Only on a dev login database (a user ending in _devlogin), and every
               statement is written to the log.
             </p>
           </div>
@@ -806,7 +806,7 @@ export default function AiBridge() {
                 <Input
                   aria-label="Schema filter"
                   className="mt-1 w-full py-1.5 text-xs"
-                  placeholder="dbo,hr — blank uses the server's default"
+                  placeholder="dbo,hr - blank uses the server's default"
                   value={db.schema_filter}
                   onChange={(e) => editDb({ schema_filter: e.target.value })}
                 />
@@ -892,7 +892,7 @@ export default function AiBridge() {
       </section>
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">How it works</h2>
+        <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
         <p className="text-sm text-muted">
           {/* No count in the sentence: it went stale twice - the list
               below is the inventory. */}

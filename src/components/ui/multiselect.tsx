@@ -17,6 +17,7 @@ export default function MultiSelect({
   allLabel = "All",
   ariaLabel,
   className,
+  checkedFirst = false,
 }: {
   options: string[];
   selected: string[];
@@ -24,6 +25,10 @@ export default function MultiSelect({
   allLabel?: string;
   ariaLabel?: string;
   className?: string;
+  /** Snapshot the option order (checked first, in `options` order, then
+   * the rest) the moment the panel opens, rather than live - otherwise an
+   * option a person just ticked would jump out from under the pointer. */
+  checkedFirst?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -36,6 +41,28 @@ export default function MultiSelect({
     if (open && options.length > SEARCH_FROM) inputRef.current?.focus();
     if (!open) setQuery("");
   }, [open, options.length]);
+
+  // The checked-first order is a snapshot taken when the panel OPENS, not
+  // recomputed on every render - toggling a row while open must not move
+  // it out from under the pointer. Deliberately depends on `open` alone;
+  // `options`/`selected`/`checkedFirst` are read fresh at the moment this
+  // runs, from whichever render happened to trigger it.
+  const [order, setOrder] = useState(options);
+  useEffect(() => {
+    if (!open) return;
+    setOrder(
+      checkedFirst
+        ? [...options.filter((o) => selected.includes(o)), ...options.filter((o) => !selected.includes(o))]
+        : options,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // If `options` changed shape while the snapshot was held (e.g. more repos
+  // loaded in), fall back to the live list rather than show a stale one.
+  const sameMembers =
+    order.length === options.length && order.every((o) => options.includes(o));
+  const displayOptions = open && sameMembers ? order : options;
 
   useEffect(() => {
     if (!open) return;
@@ -111,8 +138,8 @@ export default function MultiSelect({
             </div>
           )}
           <ul className="max-h-64 overflow-y-auto p-1">
-            {options.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
-            {options
+            {displayOptions.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
+            {displayOptions
               .filter((opt) => !query.trim() || opt.toLowerCase().includes(query.trim().toLowerCase()))
               .map((opt) => (
                 <li key={opt}>
@@ -122,9 +149,9 @@ export default function MultiSelect({
                   </label>
                 </li>
               ))}
-            {options.length > 0 &&
+            {displayOptions.length > 0 &&
               query.trim() &&
-              !options.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
+              !displayOptions.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
                 <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
               )}
           </ul>

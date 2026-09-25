@@ -127,8 +127,8 @@ export function isCoreTool(name: string): boolean {
  * a search hit and has no way to name a page on its own. Offered as two
  * switches, half the combinations were useless: a search whose results
  * nothing can open, or a reader that can never be handed anything. The
- * pair moves together under one human name; "How it works" on the same
- * tab describes each half.
+ * pair moves together under one human name; "AI Tools Breakdown" on the
+ * same tab describes each half.
  */
 export const TOOL_PAIRS: readonly (readonly string[])[] = [
   ["search_wiki", "get_wiki_page"],

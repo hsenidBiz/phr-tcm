@@ -1546,36 +1546,28 @@ export default function QueueSection({
   // every one of them was disabled furniture; even the old "Nothing
   // queued yet" island was a paragraph explaining an absence. So: Manual
   // Entry (no recents wiring) renders nothing below the form, and the
-  // Import tab shows Recent JSON Imports alone - its way back in. Kept
-  // whole mid-submit (progress/results/reviewing): the user can remove
-  // rows while an upload runs, and the progress bar and the results must
-  // not vanish with them.
+  // Import tab's Recent JSON Imports section is absent too until a file
+  // has actually been imported - no empty-state box explaining its own
+  // absence. Kept whole mid-submit (progress/results/reviewing): the user
+  // can remove rows while an upload runs, and the progress bar and the
+  // results must not vanish with them.
   if (queue.length === 0 && !progress && !results && !reviewing) {
-    if (!onOpenRecent) return null;
+    if (!onOpenRecent || recentImports.length === 0) return null;
     return (
       <section className="space-y-2 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Recent JSON Imports</h2>
-        {recentImports.length > 0 ? (
-          <>
-            <p className="text-xs text-faint">
-              Reopen a file to import its cases again - the file is re-read as it is now.
-            </p>
-            {recentImports.map((r) => (
-              <RecentImportRow
-                key={r.path}
-                path={r.path}
-                when={r.when}
-                onOpen={() => onOpenRecent(r.path)}
-                onForget={() => onForgetRecent?.(r.path)}
-              />
-            ))}
-          </>
-        ) : (
-          <p className="text-xs text-faint">
-            Files you import appear here for quick reopening. Import a JSON file above to
-            start a queue.
-          </p>
-        )}
+        <p className="text-xs text-faint">
+          Reopen a file to import its cases again - the file is re-read as it is now.
+        </p>
+        {recentImports.map((r) => (
+          <RecentImportRow
+            key={r.path}
+            path={r.path}
+            when={r.when}
+            onOpen={() => onOpenRecent(r.path)}
+            onForget={() => onForgetRecent?.(r.path)}
+          />
+        ))}
       </section>
     );
   }

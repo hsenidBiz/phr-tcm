@@ -113,7 +113,7 @@ test("Rescan re-runs detection and picks up a newly installed tool", async () =>
   expect(scans).toBe(2);
 });
 
-test("the how-it-works card names every MCP tool", async () => {
+test("the AI Tools Breakdown card names every MCP tool", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -121,7 +121,7 @@ test("the how-it-works card names every MCP tool", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  const card = (await screen.findByText("How it works")).closest("section")!;
+  const card = (await screen.findByText("AI Tools Breakdown")).closest("section")!;
   // The card explains what you can DECIDE. Every entry has a switch above
   // it, and the tools with no switch are not described here - a paragraph
   // about a control that does not exist is the thing this screen keeps
@@ -922,7 +922,7 @@ test("creating, updating and deleting is off, and disabled on a read-only databa
   expect(writes).toHaveAttribute("aria-checked", "false");
   expect(writes).toBeDisabled();
   // And the reason it cannot be moved is on screen, not implied.
-  expect(screen.getByText(/Only on a dev login connection/)).toBeInTheDocument();
+  expect(screen.getByText(/Only on a dev login database/)).toBeInTheDocument();
 
   fireEvent.click(writes);
   expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();

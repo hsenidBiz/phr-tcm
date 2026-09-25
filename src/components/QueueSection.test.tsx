@@ -1052,16 +1052,16 @@ test("a recent whose file is gone says so and cannot be opened", async () => {
   expect(forgotten).toEqual(["C:/work/deleted.json"]);
 });
 
-test("with no recents recorded yet, the area explains itself instead of showing a dead queue", () => {
+test("with no recents recorded yet, the section renders nothing", () => {
   mockIPC((cmd) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "list_test_case_fields") return [];
     return null;
   });
-  renderEmptyWithRecents({ recents: [] });
-  expect(screen.getByText("Recent JSON Imports")).toBeInTheDocument();
-  expect(screen.getByText(/Import a JSON file above/)).toBeInTheDocument();
+  const { container } = renderEmptyWithRecents({ recents: [] });
+  expect(screen.queryByText("Recent JSON Imports")).not.toBeInTheDocument();
   expect(screen.queryByText(/Queue for PBI/)).not.toBeInTheDocument();
+  expect(container).toBeEmptyDOMElement();
 });
 
 test("Manual Entry (no recents wiring) renders nothing at all when the queue is empty", () => {

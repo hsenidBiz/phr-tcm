@@ -905,6 +905,7 @@ export default function PrPanel({
           allLabel="Pick pull requests…"
           options={[YOURS, ...(repos.data ?? []).map((r) => r.name)]}
           selected={[...(showYours ? [YOURS] : []), ...trackedRepos.map((r) => r.name)]}
+          checkedFirst
           onChange={(names) => {
             setShowYours(names.includes(YOURS));
             setRepoIds(
