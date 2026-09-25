@@ -1063,7 +1063,7 @@ table {
   }
 }
 .t-panel-in {
-  animation: t-panel-in 220ms var(--motion-ease-smooth-out) both;
+  animation: t-panel-in var(--motion-fast) var(--motion-ease-smooth-out) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
