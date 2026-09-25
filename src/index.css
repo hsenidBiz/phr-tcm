@@ -17,6 +17,24 @@
 /* XiodUI's parts in the app's own tokens - see the file. */
 @import "./xiod-theme.css";
 
+/* The keyboard focus ring. Most controls never style their own, so the
+   browser's default showed: a dark ring that faded in from white, because
+   `transition-colors` also animates outline-color and the unfocused
+   outline colour was the text colour. Every element carries the accent as
+   its outline colour before it is focused - there is nothing to fade from -
+   and the ring itself is the accent. In the lowest layer, so any
+   component's own focus style (Astryx, XiodUI, a focus-visible: utility)
+   still wins. */
+@layer reset {
+  :where(*) {
+    outline-color: var(--color-accent);
+  }
+  :where(:focus-visible) {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
 /* Design identity (ui-ux-pro-max recommendation for a QA/dev data tool):
    slate "code dark" surfaces + run-green accent, Fira Sans body /
    Fira Code for ids and data. Dark is the primary look; light mirrors it.
