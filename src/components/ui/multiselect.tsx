@@ -49,12 +49,8 @@ export default function MultiSelect({
   // runs, from whichever render happened to trigger it.
   const [order, setOrder] = useState(options);
   useEffect(() => {
-    if (!open) return;
-    setOrder(
-      checkedFirst
-        ? [...options.filter((o) => selected.includes(o)), ...options.filter((o) => !selected.includes(o))]
-        : options,
-    );
+    if (!open || !checkedFirst) return;
+    setOrder([...options.filter((o) => selected.includes(o)), ...options.filter((o) => !selected.includes(o))]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -70,9 +66,8 @@ export default function MultiSelect({
   // this on every keystroke elsewhere on the page.
   const optionsKey = options.join("\u0001");
   useEffect(() => {
-    if (!open) return;
+    if (!open || !checkedFirst) return;
     setOrder((prev) => {
-      if (!checkedFirst) return options;
       const stillHere = prev.filter((o) => options.includes(o));
       const arrived = options.filter((o) => !prev.includes(o));
       return [
@@ -93,6 +88,11 @@ export default function MultiSelect({
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  // Only the checked-first order is a snapshot worth holding; without it
+  // the rows are simply `options`, read in the same render that brings them
+  // - a copy in state would show the old list for a commit first.
+  const shown = checkedFirst ? order : options;
 
   const summary =
     selected.length === 0
@@ -159,8 +159,8 @@ export default function MultiSelect({
             </div>
           )}
           <ul className="max-h-64 overflow-y-auto p-1">
-            {order.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
-            {order
+            {shown.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
+            {shown
               .filter((opt) => !query.trim() || opt.toLowerCase().includes(query.trim().toLowerCase()))
               .map((opt) => (
                 <li key={opt}>
@@ -170,9 +170,9 @@ export default function MultiSelect({
                   </label>
                 </li>
               ))}
-            {order.length > 0 &&
+            {shown.length > 0 &&
               query.trim() &&
-              !order.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
+              !shown.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
                 <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
               )}
           </ul>

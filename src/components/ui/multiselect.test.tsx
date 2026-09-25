@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { expect, test } from "vitest";
 import MultiSelect from "./multiselect";
 
@@ -103,4 +103,29 @@ test("a toggle after options arrive still does not reorder", () => {
 
   fireEvent.click(screen.getByText("A"));
   expect(optionLabels()).toEqual(["C", "A", "B", "D"]);
+});
+
+/// Without checkedFirst there is no order to protect, so nothing should lag
+/// behind the options: every commit - not just the last one - shows the
+/// list the caller passed. Checked at each commit through a Profiler,
+/// because the test's own act() would otherwise flush a catch-up render
+/// before anything could look.
+test("without checkedFirst an options change while open shows in the same commit", () => {
+  const seen: string[][] = [];
+  const onRender = () => {
+    seen.push(optionLabels() as string[]);
+  };
+  const host = (options: string[]) => (
+    <Profiler id="ms" onRender={onRender}>
+      <MultiSelect ariaLabel="Letters" options={options} selected={[]} onChange={() => {}} />
+    </Profiler>
+  );
+  const { rerender } = render(host(["A", "B"]));
+  fireEvent.click(screen.getByLabelText("Letters"));
+  expect(optionLabels()).toEqual(["A", "B"]);
+
+  seen.length = 0;
+  rerender(host(["A", "B", "C"]));
+  expect(seen.length).toBeGreaterThan(0);
+  for (const labels of seen) expect(labels).toEqual(["A", "B", "C"]);
 });
