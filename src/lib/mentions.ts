@@ -8,6 +8,7 @@
 // first check is recorded as seen and never shown.
 
 import type { Mention, PrThread } from "../bindings";
+import { tourRunningSnapshot } from "../tour/tourState";
 import { announce, summarizeLines } from "./assignedAlerts";
 import { markSeen, raise, type AppNotification } from "./notifications";
 
@@ -33,10 +34,32 @@ export const FIRST_RUN_WINDOW_MS = 24 * 60 * 60_000;
 const baselineKey = (org: string) => `tcm-v2-mentions-baseline:${org}`;
 const enc = encodeURIComponent;
 
-/** Whitespace collapsed, at most 140 characters, the last an ellipsis when cut. */
+/** Wipe every organisation's first-run baseline, alongside
+ * `forgetAllNotifications`, when `claimCacheFor` reports a different
+ * account just claimed the cache. A stale baseline would shorten the new
+ * account's own first-run window (or, in-memory-only, admit a month of the
+ * previous account's mentions). */
+export function forgetMentionBaselines(): void {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("tcm-v2-mentions-baseline:")) localStorage.removeItem(k);
+    }
+  } catch {
+    // storage unavailable - nothing was stored to leak
+  }
+}
+
+/** Whitespace collapsed, at most 140 characters, the last an ellipsis when
+ * cut. Cut by code points, not UTF-16 units - slicing units can land inside
+ * a surrogate pair (an emoji, most non-BMP text) and leave a lone
+ * surrogate, which renders as a replacement glyph in the toast or OS
+ * notification. */
 export function excerpt(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= EXCERPT_CHARS ? flat : `${flat.slice(0, EXCERPT_CHARS - 1).trimEnd()}…`;
+  const codePoints = Array.from(flat);
+  return codePoints.length <= EXCERPT_CHARS
+    ? flat
+    : `${codePoints.slice(0, EXCERPT_CHARS - 1).join("").trimEnd()}…`;
 }
 
 export function workItemMentionId(m: { item_id: number; comment_id: number }): string {
@@ -118,9 +141,15 @@ function baseline(org: string, now: number): number {
 
 /** Raise what is new; return what was raised. A mention written more than
  * 24 hours before this organisation's first check, or with no readable
- * date, is recorded as seen and not shown. */
+ * date, is recorded as seen and not shown.
+ *
+ * Guarded here, the module's one write chokepoint, rather than in each
+ * caller (matches fieldPrefs.ts / suiteSeed.ts): the tour's reads are all
+ * stood in, but the writes made below (the seen list, the first-run
+ * baseline) are real localStorage under the sample organisation - nothing
+ * here should persist past the tour. */
 export function noteMentions(org: string, found: FoundMention[], now = Date.now()): AppNotification[] {
-  if (!org) return [];
+  if (!org || tourRunningSnapshot()) return [];
   const cutoff = baseline(org, now) - FIRST_RUN_WINDOW_MS;
   const old: string[] = [];
   const fresh: NewNotification[] = [];

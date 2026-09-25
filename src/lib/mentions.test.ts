@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Mention, PrThread } from "../bindings";
+import { setTourRunning } from "../tour/tourState";
 import { announce } from "./assignedAlerts";
 import {
   announceMentions,
   excerpt,
+  forgetMentionBaselines,
   noteMentions,
   prMentionId,
   prMentions,
@@ -32,6 +34,9 @@ beforeEach(() => {
 afterEach(() => {
   localStorage.clear();
   resetForTests();
+  // A test that forgets to flip this back off must not leak a running
+  // tour into whatever runs next in this file.
+  setTourRunning(false);
 });
 
 const listed = (org = "acme") =>
@@ -118,6 +123,14 @@ test("an excerpt collapses whitespace and stops at 140 characters", () => {
   expect(cut.endsWith("…")).toBe(true);
 });
 
+/// A surrogate-pair character (an emoji) straddling the old UTF-16-unit cut
+/// point used to leave a lone surrogate - a broken character - in the
+/// toast or OS notification. Cutting by code points keeps it whole.
+test("an excerpt never splits an emoji at the cut", () => {
+  const text = `${"a".repeat(138)}😀${"b".repeat(10)}`;
+  expect(excerpt(text)).toBe(`${"a".repeat(138)}😀…`);
+});
+
 const NOW = Date.parse("2026-09-25T12:00:00Z");
 const found = (id: string, created: string): FoundMention => ({
   notification: { id, kind: "mention", title: id, body: "" },
@@ -159,14 +172,47 @@ test("a mention with no readable date counts as old", () => {
   expect(listed()).toEqual([]);
 });
 
-/// Fix round 1, minor #3: a corrupted stored baseline (never written by
-/// this code) must reset to "no baseline yet", never to epoch - which
-/// would admit every mention ever, the opposite of the flood guard.
+/// A corrupted stored baseline (never written by this code) must reset to
+/// "no baseline yet", never to epoch - which would admit every mention
+/// ever, the opposite of the flood guard.
 test("a corrupted baseline resets rather than admitting everything", () => {
   localStorage.setItem("tcm-v2-mentions-baseline:acme", "");
   const raised = noteMentions("acme", [found("mention:wi:9:1", "2000-01-01T00:00:00Z")], NOW);
   expect(raised).toEqual([]);
   expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBe(String(NOW));
+});
+
+/// The guard sits in noteMentions itself (the write chokepoint), matching
+/// fieldPrefs.ts / suiteSeed.ts, rather than in each hook that calls it.
+test("a running tour raises nothing and writes neither the baseline nor the seen list", () => {
+  setTourRunning(true);
+  expect(noteMentions("acme", [found("mention:wi:1:1", "2026-09-25T10:00:00Z")], NOW)).toEqual([]);
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBeNull();
+
+  setTourRunning(false);
+  // The same mention, for real, still counts fully fresh - the tour never
+  // touched this organisation's baseline or seen list.
+  expect(noteMentions("acme", [found("mention:wi:1:1", "2026-09-25T10:00:00Z")], NOW).map((n) => n.id)).toEqual([
+    "mention:wi:1:1",
+  ]);
+});
+
+test("forgetMentionBaselines clears every organisation's baseline, so the next check is a first check", () => {
+  noteMentions("acme", [], NOW);
+  noteMentions("globex", [], NOW);
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBe(String(NOW));
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:globex")).toBe(String(NOW));
+
+  forgetMentionBaselines();
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:globex")).toBeNull();
+
+  // A mention older than 24h before NOW, checked right after the wipe,
+  // is treated as this organisation's own history again - not shown, but
+  // it also re-establishes the baseline rather than reusing a stale one.
+  const later = NOW + 3_600_000;
+  expect(noteMentions("acme", [found("mention:wi:9:1", "2000-01-01T00:00:00Z")], later)).toEqual([]);
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBe(String(later));
 });
 
 const added = (n: number): AppNotification[] =>

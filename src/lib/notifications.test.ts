@@ -1,9 +1,11 @@
+import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import type { PullRequest } from "../bindings";
 import {
   LIST_CAP,
   clearAll,
   dismiss,
+  forgetAllNotifications,
   markAllRead,
   markSeen,
   noteAssigned,
@@ -12,6 +14,7 @@ import {
   raise,
   resetForTests,
   unreadCount,
+  useNotifications,
 } from "./notifications";
 
 // The store caches per org in memory; every test starts from nothing.
@@ -183,4 +186,35 @@ test("markSeen records ids without listing them, and raise skips them after", ()
   expect(raise(ORG, [{ id: "mention:wi:2:1", kind: "mention", title: "N", body: "" }]).map((n) => n.id)).toEqual([
     "mention:wi:2:1",
   ]);
+});
+
+/// Two accounts on one Windows profile (or a mid-session re-sign-in as
+/// someone else) must not see each other's mentions and PR notices, bodies
+/// included - forgetAllNotifications is what claimCacheFor's account
+/// switch reaches for. It runs from App during render, so its notify is a
+/// queued microtask rather than synchronous - useNotifications repaints on
+/// the next flush, same as any other externally-raised change.
+test("forgetAllNotifications empties every organisation's bell and un-forgets dismissed ids", async () => {
+  raise(ORG, [
+    { id: "a", kind: "assigned", title: "A", body: "" },
+    { id: "b", kind: "assigned", title: "B", body: "" },
+  ]);
+  raise("globex", [{ id: "g", kind: "assigned", title: "G", body: "" }]);
+  dismiss(ORG, "a"); // dismissed, not forgotten - known() still remembers it
+
+  const { result } = renderHook(() => useNotifications(ORG));
+  expect(result.current.map((n) => n.id)).toEqual(["b"]);
+
+  forgetAllNotifications();
+  // The notify is a queued microtask (this runs from App during render, so
+  // it cannot fire synchronously) - repaints on the next flush.
+  await waitFor(() => expect(result.current).toHaveLength(0));
+
+  expect(localStorage.getItem(`tcm-v2-notifications:${ORG}`)).toBeNull();
+  expect(localStorage.getItem(`tcm-v2-notifications-known:${ORG}`)).toBeNull();
+  expect(localStorage.getItem("tcm-v2-notifications:globex")).toBeNull();
+
+  // The dismissed id is no longer "known" - it can raise again, for the
+  // next account, exactly like a first-ever sighting.
+  expect(raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }]).map((n) => n.id)).toEqual(["a"]);
 });

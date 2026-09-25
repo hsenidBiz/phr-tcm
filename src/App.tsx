@@ -30,7 +30,8 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { noteAssigned, type NotificationTarget } from "./lib/notifications";
+import { forgetAllNotifications, noteAssigned, type NotificationTarget } from "./lib/notifications";
+import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
@@ -615,8 +616,15 @@ export default function App() {
   // already mounted and seeded their queries from the previous account's
   // cache - the wipe then landed a beat too late to stop it being read.
   // `claimCacheFor` is idempotent and guarded by its own owner key, so
-  // calling it every render costs a string compare.
-  claimCacheFor(status.data?.account ?? null);
+  // calling it every render costs a string compare. When it actually wipes
+  // (a different account just claimed the cache), the bell and the
+  // mentions first-run baseline are the previous person's too - and go
+  // with it, or the new account's bell would open showing someone else's
+  // notifications, mention bodies included.
+  if (claimCacheFor(status.data?.account ?? null)) {
+    forgetAllNotifications();
+    forgetMentionBaselines();
+  }
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version

@@ -243,3 +243,31 @@ export function notePrComments(org: string, project: string, pr: PullRequest, un
 export function resetForTests(): void {
   lists.clear();
 }
+
+/**
+ * Wipe every organisation's bell - the list and the known-set both - when
+ * `claimCacheFor` reports a different account just claimed the cache.
+ * Without this, a second account on the same Windows profile (or a
+ * mid-session re-sign-in as someone else) kept the previous person's
+ * mentions and PR notices, bodies included.
+ *
+ * Called from App during render, the same place `claimCacheFor` is - so
+ * the notify has to wait for a microtask rather than fire synchronously,
+ * or it would set state in the already-mounted bell mid-render (the
+ * re-sign-in path mounts it).
+ */
+export function forgetAllNotifications(): void {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("tcm-v2-notifications:") || k.startsWith("tcm-v2-notifications-known:")) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // storage unavailable - nothing was stored to leak
+  }
+  lists.clear();
+  queueMicrotask(() => {
+    for (const l of listeners) l();
+  });
+}
