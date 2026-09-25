@@ -31,7 +31,7 @@ import {
   workAlertsSnapshot,
 } from "./lib/workAlerts";
 import { noteAssigned, type NotificationTarget } from "./lib/notifications";
-import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
+import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
 import {
@@ -758,17 +758,7 @@ export default function App() {
       // And into the bell, where it stays until dismissed.
       noteAssigned(org, project, items);
       const { title, body } = summarize(items);
-      if (appIsInView()) {
-        toast.info(title, { description: body, duration: 10_000 });
-        return;
-      }
-      // Out of view - go to the OS, and fall back to a toast they will
-      // find on return if notifications are refused.
-      osNotify(title, body)
-        .then((sent) => {
-          if (!sent) toast.info(title, { description: body, duration: 10_000 });
-        })
-        .catch(() => {});
+      announce(title, body);
     });
     return () => {
       un.then((f) => f()).catch(() => {});

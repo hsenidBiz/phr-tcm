@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Mention, PrThread } from "../bindings";
-import { appIsInView, osNotify } from "./assignedAlerts";
+import { announce } from "./assignedAlerts";
 import {
   announceMentions,
   excerpt,
@@ -13,21 +13,21 @@ import {
   type FoundMention,
 } from "./mentions";
 import { resetForTests, type AppNotification } from "./notifications";
-import { toast } from "./toast";
 
-vi.mock("./toast", () => ({ toast: { info: vi.fn() } }));
-vi.mock("./assignedAlerts", () => ({
-  appIsInView: vi.fn(() => true),
-  osNotify: vi.fn(() => Promise.resolve(true)),
+// The toast/OS-notification rule itself is `announce`'s job and is tested
+// against the real thing in assignedAlerts.test.ts; here it is a plain
+// spy, so these tests only have to show announceMentions calls it with
+// the right title and body. `summarizeLines` is the real, already-tested
+// "3 lines then …and N more" rule - no reason to fake it too.
+vi.mock("./assignedAlerts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./assignedAlerts")>()),
+  announce: vi.fn(),
 }));
 
 beforeEach(() => {
   localStorage.clear();
   resetForTests();
-  vi.mocked(toast.info).mockClear();
-  vi.mocked(appIsInView).mockReturnValue(true);
-  vi.mocked(osNotify).mockClear();
-  vi.mocked(osNotify).mockResolvedValue(true);
+  vi.mocked(announce).mockClear();
 });
 afterEach(() => {
   localStorage.clear();
@@ -159,41 +159,39 @@ test("a mention with no readable date counts as old", () => {
   expect(listed()).toEqual([]);
 });
 
+/// Fix round 1, minor #3: a corrupted stored baseline (never written by
+/// this code) must reset to "no baseline yet", never to epoch - which
+/// would admit every mention ever, the opposite of the flood guard.
+test("a corrupted baseline resets rather than admitting everything", () => {
+  localStorage.setItem("tcm-v2-mentions-baseline:acme", "");
+  const raised = noteMentions("acme", [found("mention:wi:9:1", "2000-01-01T00:00:00Z")], NOW);
+  expect(raised).toEqual([]);
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBe(String(NOW));
+});
+
 const added = (n: number): AppNotification[] =>
   Array.from({ length: n }, (_, i) => ({
     id: `mention:wi:${i}:1`, kind: "mention" as const, title: `Sam mentioned you on Task #${i}`,
     body: `excerpt ${i}`, at: "", read: false,
   }));
 
-test("one new mention in view is a toast with its own words", () => {
+test("one new mention announces itself, in its own words", () => {
   announceMentions(added(1));
-  expect(toast.info).toHaveBeenCalledWith("Sam mentioned you on Task #0", { description: "excerpt 0", duration: 10_000 });
+  expect(announce).toHaveBeenCalledTimes(1);
+  expect(announce).toHaveBeenCalledWith("Sam mentioned you on Task #0", "excerpt 0");
 });
 
 /// Review focus 4.
-test("several new mentions make one toast, not one each", () => {
+test("several new mentions make one announcement, not one each", () => {
   announceMentions(added(5));
-  expect(toast.info).toHaveBeenCalledTimes(1);
-  expect(toast.info).toHaveBeenCalledWith("5 new mentions", {
-    description: "Sam mentioned you on Task #0\nSam mentioned you on Task #1\nSam mentioned you on Task #2\n…and 2 more",
-    duration: 10_000,
-  });
-});
-
-test("out of view it is an OS notification, and a toast only when that is refused", async () => {
-  vi.mocked(appIsInView).mockReturnValue(false);
-  announceMentions(added(1));
-  expect(osNotify).toHaveBeenCalledWith("Sam mentioned you on Task #0", "excerpt 0");
-  await Promise.resolve();
-  expect(toast.info).not.toHaveBeenCalled();
-
-  vi.mocked(osNotify).mockResolvedValue(false);
-  announceMentions(added(1));
-  await vi.waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
+  expect(announce).toHaveBeenCalledTimes(1);
+  expect(announce).toHaveBeenCalledWith(
+    "5 new mentions",
+    "Sam mentioned you on Task #0\nSam mentioned you on Task #1\nSam mentioned you on Task #2\n…and 2 more",
+  );
 });
 
 test("nothing new, nothing announced", () => {
   announceMentions([]);
-  expect(toast.info).not.toHaveBeenCalled();
-  expect(osNotify).not.toHaveBeenCalled();
+  expect(announce).not.toHaveBeenCalled();
 });

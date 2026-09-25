@@ -8,9 +8,8 @@
 // first check is recorded as seen and never shown.
 
 import type { Mention, PrThread } from "../bindings";
-import { appIsInView, osNotify } from "./assignedAlerts";
+import { announce, summarizeLines } from "./assignedAlerts";
 import { markSeen, raise, type AppNotification } from "./notifications";
-import { toast } from "./toast";
 
 export type NewNotification = Omit<AppNotification, "at" | "read">;
 
@@ -101,11 +100,15 @@ export function prMentions(pr: { repo: string; id: number }, threads: PrThread[]
   return out;
 }
 
-/** When this organisation was first checked, in ms. The first call sets it. */
+/** When this organisation was first checked, in ms. The first call sets it.
+ * A stored value that will not parse as a positive number - corruption,
+ * never written by this code - counts as no baseline yet, not as "show
+ * everything": it is reset to now rather than trusted as epoch. */
 function baseline(org: string, now: number): number {
   try {
-    const at = Number(localStorage.getItem(baselineKey(org)) ?? "");
-    if (localStorage.getItem(baselineKey(org)) !== null && Number.isFinite(at)) return at;
+    const raw = localStorage.getItem(baselineKey(org));
+    const at = raw === null ? NaN : Number(raw);
+    if (Number.isFinite(at) && at > 0) return at;
     localStorage.setItem(baselineKey(org), String(now));
   } catch {
     // session-only: every check then counts as the first
@@ -130,22 +133,13 @@ export function noteMentions(org: string, found: FoundMention[], now = Date.now(
   return raise(org, fresh);
 }
 
-/** The moment, as a new assignment has it: a toast when the app is in
- * view, an OS notification when it is not (a toast if that is refused).
- * One per check, however many arrived. */
+/** The moment: one announcement per check, however many mentions arrived,
+ * through the same toast/OS-notification rule a new assignment uses. */
 export function announceMentions(added: AppNotification[]): void {
   if (added.length === 0) return;
-  const title = added.length === 1 ? added[0].title : `${added.length} new mentions`;
-  const shown = added.slice(0, 3).map((n) => n.title);
-  const rest = added.length - shown.length;
-  const body = added.length === 1 ? added[0].body : rest > 0 ? `${shown.join("\n")}\n…and ${rest} more` : shown.join("\n");
-  if (appIsInView()) {
-    toast.info(title, { description: body, duration: 10_000 });
+  if (added.length === 1) {
+    announce(added[0].title, added[0].body);
     return;
   }
-  osNotify(title, body)
-    .then((sent) => {
-      if (!sent) toast.info(title, { description: body, duration: 10_000 });
-    })
-    .catch(() => {});
+  announce(`${added.length} new mentions`, summarizeLines(added.map((n) => n.title)));
 }

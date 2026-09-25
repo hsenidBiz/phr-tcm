@@ -1,6 +1,15 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AssignedItem } from "../bindings";
-import { appIsInView, summarize } from "./assignedAlerts";
+import { announce, appIsInView, summarize } from "./assignedAlerts";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { toast } from "./toast";
+
+vi.mock("./toast", () => ({ toast: { info: vi.fn() } }));
+vi.mock("@tauri-apps/plugin-notification", () => ({
+  isPermissionGranted: vi.fn(),
+  requestPermission: vi.fn(),
+  sendNotification: vi.fn(),
+}));
 
 const item = (id: number, title: string, type = "Task"): AssignedItem => ({
   id,
@@ -9,6 +18,12 @@ const item = (id: number, title: string, type = "Task"): AssignedItem => ({
   state: "Active",
 });
 
+beforeEach(() => {
+  vi.mocked(toast.info).mockClear();
+  vi.mocked(isPermissionGranted).mockReset().mockResolvedValue(true);
+  vi.mocked(requestPermission).mockReset().mockResolvedValue("granted");
+  vi.mocked(sendNotification).mockClear();
+});
 afterEach(() => vi.restoreAllMocks());
 
 test("a single assignment names the item", () => {
@@ -45,4 +60,35 @@ test("the app counts as in view only when focused AND not hidden", () => {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.spyOn(document, "hidden", "get").mockReturnValue(true);
   expect(appIsInView()).toBe(false);
+});
+
+/// Fix round 1, Important #1: `announce` is the one place a new
+/// assignment and a mention both reach the user through, so both are
+/// covered by testing it directly, once, here.
+test("announce is a toast when the app is in view", () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  announce("Bug #1 assigned to you", "Fix the thing");
+  expect(toast.info).toHaveBeenCalledWith("Bug #1 assigned to you", { description: "Fix the thing", duration: 10_000 });
+  expect(sendNotification).not.toHaveBeenCalled();
+});
+
+test("announce reaches the OS, not a toast, when the app is not in view", async () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  announce("Bug #1 assigned to you", "Fix the thing");
+  await vi.waitFor(() =>
+    expect(sendNotification).toHaveBeenCalledWith({ title: "Bug #1 assigned to you", body: "Fix the thing" }),
+  );
+  expect(toast.info).not.toHaveBeenCalled();
+});
+
+test("announce falls back to a toast when the OS notification is refused", async () => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  vi.mocked(isPermissionGranted).mockResolvedValue(false);
+  vi.mocked(requestPermission).mockResolvedValue("denied");
+  announce("Bug #1 assigned to you", "Fix the thing");
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith("Bug #1 assigned to you", { description: "Fix the thing", duration: 10_000 }),
+  );
+  expect(sendNotification).not.toHaveBeenCalled();
 });
