@@ -27,13 +27,17 @@ const KIND_LABEL: Record<AppNotification["kind"], string> = {
   "pr-conflict": "Conflicts",
   "pr-review": "Review",
   "pr-comments": "Comments",
+  mention: "Mention",
 };
 
+// Mention wears the one status token no other kind uses, so it reads as
+// its own thing at a glance.
 const KIND_CLASS: Record<AppNotification["kind"], string> = {
   assigned: "bg-accent/15 text-accent",
   "pr-conflict": "bg-warning/15 text-warning",
   "pr-review": "bg-success/15 text-success",
   "pr-comments": "bg-warning/15 text-warning",
+  mention: "bg-danger/15 text-danger",
 };
 
 function ago(iso: string): string {

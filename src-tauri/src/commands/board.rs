@@ -239,7 +239,8 @@ pub async fn update_comment(
         .await
 }
 
-/// Who is signed in, by identity id - so Edit shows only on one's own comments.
+/// Who is signed in, by identity id - so Edit shows only on one's own
+/// comments. Read once per organization per session, memory only.
 #[tauri::command]
 #[specta::specta]
 pub async fn connected_user(
@@ -247,7 +248,22 @@ pub async fn connected_user(
     organization: String,
 ) -> Result<work_board::ConnectedUser, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token).connected_user(&organization).await
+    ado::AdoClient::new(token).connected_user_cached(&organization).await
+}
+
+/// Work-item comments that @mention the signed-in user, for the bell.
+/// Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn recent_mentions(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<work_board::mentions::Mention>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let me = client.connected_user_cached(&organization).await?;
+    client.recent_mentions(&organization, &project, &me.id).await
 }
 
 /// Best-effort avatar fetch (None -> initials disc in the UI).

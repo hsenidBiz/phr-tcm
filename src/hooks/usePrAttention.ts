@@ -13,7 +13,9 @@ import { useEffect } from "react";
 import { commands, type PullRequest } from "../bindings";
 import { isResolved } from "../lib/threadStatus";
 import { unwrap } from "../lib/ipc";
+import { announceMentions, noteMentions, prMentions, prNotification } from "../lib/mentions";
 import { notePrComments, notePrOverview } from "../lib/notifications";
+import { logUi } from "../lib/uiLog";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
  * exactly when the user is heads-down elsewhere in the app. */
@@ -66,6 +68,53 @@ export function usePrAttention(org: string, project: string): number {
     prs.forEach((pr, i) => notePrComments(org, project, pr, unresolvedFor(i)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, org, project]);
+
+  // Who "you" are, for the mention scan: the same in-memory, once-per-org
+  // lookup the comments panel uses. `staleTime: Infinity` means it is
+  // fetched once and left alone on success - but a failure must not sit
+  // there forever, or the scan below silently stops for the rest of the
+  // session; retry it on the same interval as every other mention check
+  // until it succeeds.
+  const me = useQuery({
+    queryKey: ["connected-user", org],
+    queryFn: async () => (await unwrap(commands.connectedUser(org))) ?? null,
+    enabled: Boolean(org),
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.status === "error" ? POLL_MS : false),
+    retry: false,
+  });
+  const myId = me.data?.id ?? "";
+
+  useEffect(() => {
+    if (me.error) {
+      logUi(`mentions: PR identity check failed, trying again at the next check: ${me.error.message}`);
+    }
+  }, [me.error, me.errorUpdatedAt]);
+
+  // Mentions of you in these same threads, on every thread refresh - no
+  // request of their own. The store dedupes, so a rescan raises only
+  // what is new. The tour guard lives in noteMentions itself (the write
+  // chokepoint), not here - see mentions.ts.
+  //
+  // Skipped while the identity query is unsettled: `reSignIn` invalidates
+  // `connected-user`, `pr-overview` and `pr-threads` together, and a
+  // thread result that lands before identity does would otherwise scan
+  // with the PREVIOUS account's id. `isFetching` alone is not enough - a
+  // failed refetch keeps the old `data` and would resume scanning with the
+  // stale id on the very next thread refresh - so `isError` gates it too.
+  // The existing retry interval on `me` (above) recovers from that state.
+  const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
+  useEffect(() => {
+    if (!myId || me.isFetching || me.isError) return;
+    const found = prs.flatMap((pr, i) =>
+      prMentions(pr, threads[i]?.data ?? [], myId).map((m) => ({
+        notification: prNotification(org, project, m),
+        created: m.createdDate,
+      })),
+    );
+    announceMentions(noteMentions(org, found));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadStamp, myId, me.isFetching, me.isError, me.dataUpdatedAt, org, project]);
 
   return prs.filter((pr, i) => pr.has_conflicts || unresolvedFor(i) > 0).length;
 }

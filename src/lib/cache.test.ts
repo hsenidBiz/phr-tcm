@@ -84,6 +84,19 @@ test("signing in as someone else drops the previous account's cache", () => {
   expect(JSON.stringify(localStorage)).not.toContain("example.com");
 });
 
+/** Callers with their own per-account state (the notification bell, the
+ * mentions baseline) key off the return value to forget theirs at exactly
+ * the moment the cache is actually wiped - not merely whenever an account
+ * is given. */
+test("claimCacheFor reports true only when it actually wiped for a different account", () => {
+  expect(claimCacheFor(null)).toBe(false);
+  expect(claimCacheFor("first@example.com")).toBe(true);
+  expect(claimCacheFor("first@example.com")).toBe(false);
+  expect(claimCacheFor("first@example.com")).toBe(false);
+  expect(claimCacheFor("second@example.com")).toBe(true);
+  expect(claimCacheFor(null)).toBe(false);
+});
+
 /** Only this module's own entries are its to drop. */
 test("claiming the cache leaves everything else in storage alone", () => {
   localStorage.setItem("tcm-v2-draft", "the user's queue");

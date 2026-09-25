@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use v2_lib::ado::AdoClient;
 use v2_lib::work_board::{
-    column_for_state, state_for_column, team_area_clause, wiql_str, StateInfo,
+    column_for_state, state_for_column, team_area_clause, wiql_str, BoardParent, StateInfo,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -950,4 +950,225 @@ async fn create_work_item_skips_non_positive_related_ids() {
         .await
         .unwrap();
     assert_eq!(id, 9002);
+}
+
+// ---- swimlanes: each card's direct parent --------------------------------
+
+/// A card as the batch read returns it, optionally with a parent.
+fn card(id: i32, title: &str, parent: Option<i32>) -> serde_json::Value {
+    let mut fields = serde_json::json!({
+        "System.Title": title,
+        "System.WorkItemType": "Task",
+        "System.State": "To Do",
+        "System.ChangedDate": "2026-09-25T00:00:00Z"
+    });
+    if let Some(p) = parent {
+        fields["System.Parent"] = serde_json::json!(p);
+    }
+    serde_json::json!({ "id": id, "fields": fields })
+}
+
+/// The parent read is the batch GET that carries errorPolicy=omit; the
+/// card read never does.
+fn is_parent_read(r: &wiremock::Request) -> bool {
+    r.url.query().unwrap_or("").contains("errorPolicy=omit")
+}
+
+/// WIQL answering with the cards' ids, the card read answering with the
+/// cards, and the Task states.
+async fn mount_board(server: &MockServer, cards: Vec<serde_json::Value>) {
+    let ids: Vec<serde_json::Value> =
+        cards.iter().map(|c| serde_json::json!({ "id": c["id"] })).collect();
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/wiql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "workItems": ids })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitems"))
+        .and(|r: &wiremock::Request| !is_parent_read(r))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": cards })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Task/states"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "name": "To Do", "color": "b2b2b2", "category": "Proposed" }]
+        })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_parents(server: &MockServer, answer: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitems"))
+        .and(is_parent_read)
+        .respond_with(answer)
+        .mount(server)
+        .await;
+}
+
+/// The `ids` of every parent read, in the order they were sent.
+async fn parent_reads(server: &MockServer) -> Vec<String> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| is_parent_read(r))
+        .map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "ids")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn board_client(server: &MockServer) -> AdoClient {
+    AdoClient::with_base_urls("tok".into(), server.uri(), server.uri())
+}
+
+/// Swimlanes group by the DIRECT parent. The card read asks for
+/// System.Parent, and the parents come from one batch read of the distinct
+/// ids: two cards under #500 cost one id, not two.
+#[tokio::test]
+async fn board_cards_carry_their_direct_parent_read_once_per_id() {
+    let server = MockServer::start().await;
+    mount_board(
+        &server,
+        vec![
+            card(11, "Draft the form", Some(500)),
+            card(12, "Review the form", Some(500)),
+            card(13, "Loose task", None),
+        ],
+    )
+    .await;
+    mount_parents(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({ "count": 1, "value": [
+            { "id": 500, "fields": {
+                "System.Title": "Leave requests",
+                "System.WorkItemType": "Product Backlog Item"
+            } }
+        ] })),
+    )
+    .await;
+
+    let board = board_client(&server).fetch_board("org", "proj", None, None, false).await.unwrap();
+
+    let leave = BoardParent {
+        id: 500,
+        title: "Leave requests".into(),
+        work_item_type: "Product Backlog Item".into(),
+    };
+    assert_eq!(board.items[0].parent, Some(leave.clone()));
+    assert_eq!(board.items[1].parent, Some(leave));
+    assert_eq!(board.items[2].parent, None, "no parent, no lane header to fill");
+    assert_eq!(parent_reads(&server).await, vec!["500".to_string()], "one read, each id once");
+
+    let card_read = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method.as_str() == "GET" && !is_parent_read(r) && r.url.path() == "/org/proj/_apis/wit/workitems")
+        .expect("the card read");
+    assert!(card_read.url.query().unwrap_or("").contains("System.Parent"), "the card read asks for the parent");
+}
+
+/// Deleted, in another project, or not permitted: errorPolicy=omit sends a
+/// null in its place, and the lane falls back to `#id`.
+#[tokio::test]
+async fn an_unreadable_parent_keeps_its_id_with_an_empty_title() {
+    let server = MockServer::start().await;
+    mount_board(&server, vec![card(11, "Orphan", Some(900))]).await;
+    mount_parents(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({ "count": 1, "value": [null] })),
+    )
+    .await;
+
+    let board = board_client(&server).fetch_board("org", "proj", None, None, false).await.unwrap();
+
+    assert_eq!(
+        board.items[0].parent,
+        Some(BoardParent { id: 900, title: String::new(), work_item_type: String::new() })
+    );
+}
+
+/// The parent read is decoration: when it fails outright, the board still
+/// loads and every card keeps its parent id.
+#[tokio::test]
+async fn a_failed_parent_read_never_fails_the_board() {
+    let server = MockServer::start().await;
+    mount_board(&server, vec![card(11, "Draft the form", Some(500))]).await;
+    mount_parents(&server, ResponseTemplate::new(500).set_body_string("boom")).await;
+
+    let board = board_client(&server).fetch_board("org", "proj", None, None, false).await.unwrap();
+
+    assert_eq!(board.items.len(), 1);
+    assert_eq!(
+        board.items[0].parent,
+        Some(BoardParent { id: 500, title: String::new(), work_item_type: String::new() })
+    );
+}
+
+/// A PBI card sits in its Feature's lane while its tasks sit in the PBI's:
+/// the PBI's own title comes from the card read, and only the Feature is
+/// read as a parent.
+#[tokio::test]
+async fn a_parent_that_is_on_the_board_is_not_read_again() {
+    let server = MockServer::start().await;
+    mount_board(
+        &server,
+        vec![card(11, "Draft the form", Some(500)), card(500, "Leave requests", Some(50))],
+    )
+    .await;
+    mount_parents(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            { "id": 50, "fields": { "System.Title": "Absence", "System.WorkItemType": "Feature" } }
+        ] })),
+    )
+    .await;
+
+    let board = board_client(&server).fetch_board("org", "proj", None, None, false).await.unwrap();
+
+    assert_eq!(parent_reads(&server).await, vec!["50".to_string()]);
+    assert_eq!(
+        board.items[0].parent,
+        Some(BoardParent { id: 500, title: "Leave requests".into(), work_item_type: "Task".into() })
+    );
+    assert_eq!(
+        board.items[1].parent,
+        Some(BoardParent { id: 50, title: "Absence".into(), work_item_type: "Feature".into() })
+    );
+}
+
+/// Review focus 2: Azure DevOps caps a batch read at 200 ids, so 201
+/// distinct parents are two reads, and none of them is asked twice.
+#[tokio::test]
+async fn more_than_two_hundred_parents_are_read_in_batches_of_two_hundred() {
+    let server = MockServer::start().await;
+    let cards: Vec<serde_json::Value> =
+        (1..=201).map(|i| card(i, &format!("Card {i}"), Some(1000 + i))).collect();
+    mount_board(&server, cards).await;
+    mount_parents(
+        &server,
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })),
+    )
+    .await;
+
+    let board = board_client(&server).fetch_board("org", "proj", None, None, false).await.unwrap();
+
+    let reads = parent_reads(&server).await;
+    let sizes: Vec<usize> = reads.iter().map(|ids| ids.split(',').count()).collect();
+    assert_eq!(sizes, vec![200, 1]);
+    let mut all: Vec<&str> = reads.iter().flat_map(|ids| ids.split(',')).collect();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len(), 201, "each parent id asked for exactly once");
+    assert_eq!(board.items.len(), 201);
 }

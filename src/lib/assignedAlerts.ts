@@ -1,11 +1,21 @@
-// How a newly-assigned work item reaches the user.
+// How a newly-assigned work item, or a mention, reaches the user.
 //
 // In the app: a toast, because they are looking at it. Not in the app: a
 // Windows notification, because a toast behind another window is the same
-// as no notification at all. The choice is made here rather than in Rust
-// so there is one definition of "is the user looking at this".
+// as no notification at all. The choice is made here, once, rather than
+// in Rust or repeated per caller, so there is one definition of "is the
+// user looking at this" and one definition of "how does this reach them".
 
 import type { AssignedItem } from "../bindings";
+import { toast } from "./toast";
+
+/** The first three lines, then how many more - the shape any list
+ * collapses to once there is too much to read at a glance. */
+export function summarizeLines(lines: string[]): string {
+  const shown = lines.slice(0, 3);
+  const rest = lines.length - shown.length;
+  return rest > 0 ? `${shown.join("\n")}\n…and ${rest} more` : shown.join("\n");
+}
 
 /** One line per item, or a count once there are too many to read. */
 export function summarize(items: AssignedItem[]): { title: string; body: string } {
@@ -16,11 +26,9 @@ export function summarize(items: AssignedItem[]): { title: string; body: string 
       body: i.title,
     };
   }
-  const shown = items.slice(0, 3).map((i) => `#${i.id} ${i.title}`);
-  const rest = items.length - shown.length;
   return {
     title: `${items.length} work items assigned to you`,
-    body: rest > 0 ? `${shown.join("\n")}\n…and ${rest} more` : shown.join("\n"),
+    body: summarizeLines(items.map((i) => `#${i.id} ${i.title}`)),
   };
 }
 
@@ -52,4 +60,23 @@ export async function osNotify(title: string, body: string): Promise<boolean> {
   } catch {
     return false; // plugin unavailable (browser dev / tests)
   }
+}
+
+/** The moment: a toast when the app is in view, an OS notification when
+ * it is not (falling back to a toast if that is refused). Every alert
+ * that reaches the user this way - a new assignment, a mention - goes
+ * through here, so a change to the duration, the fallback or the in-view
+ * rule lands in one place instead of drifting between callers. */
+export function announce(title: string, body: string): void {
+  if (appIsInView()) {
+    toast.info(title, { description: body, duration: 10_000 });
+    return;
+  }
+  // Out of view - go to the OS, and fall back to a toast they will find
+  // on return if notifications are refused.
+  osNotify(title, body)
+    .then((sent) => {
+      if (!sent) toast.info(title, { description: body, duration: 10_000 });
+    })
+    .catch(() => {});
 }

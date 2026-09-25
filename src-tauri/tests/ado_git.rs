@@ -383,3 +383,28 @@ async fn pr_description_encodes_the_repo_name() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     assert_eq!(client.pr_description("org", "proj", "my repo", 3).await.unwrap(), "body");
 }
+
+/// The mention scan skips your own PR comments by identity id, so each
+/// comment carries its author's id beside the display name.
+#[tokio::test]
+async fn pr_comments_carry_the_authors_identity_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/git/repositories/r/pullRequests/1/threads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            { "id": 1, "status": "active", "lastUpdatedDate": "2026-09-25T00:00:00Z",
+              "comments": [
+                { "id": 1, "content": "@<me-guid> look", "author": { "displayName": "Priya", "id": "u-priya" } },
+                { "id": 2, "content": "no id here", "author": { "displayName": "Bot" } } ] },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_threads("o", "p", "r", 1)
+        .await
+        .unwrap();
+
+    assert_eq!(out[0].comments[0].author_id, "u-priya");
+    assert_eq!(out[0].comments[1].author_id, "");
+}

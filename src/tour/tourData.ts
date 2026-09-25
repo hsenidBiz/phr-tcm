@@ -7,10 +7,12 @@ import type {
   BoardData,
   BridgeStatus,
   CaseHistory,
+  ConnectedUser,
   DbPresetOut,
   DbServerConfig,
   DetectedTool,
   EnsuredSuite,
+  Mention,
   Org,
   PbiHit,
   PlanWithSuites,
@@ -215,11 +217,11 @@ const st = (name: string, color: string, category: string) => ({ name, color, ca
 
 export const TOUR_BOARD: BoardData = {
   items: [
-    { id: 4821, title: "Guest checkout", work_item_type: "Product Backlog Item", state: "Committed", state_color: "007acc", column: "In Progress", assigned_to: "Sam Taylor", tags: "Checkout", priority: 2, changed_date: "2026-08-28T09:15:00Z" },
-    { id: 4822, title: "The basket keeps items for 30 days", work_item_type: "Product Backlog Item", state: "New", state_color: "b2b2b2", column: "To Do", assigned_to: "Sam Taylor", tags: "Basket", priority: 2, changed_date: "2026-08-27T11:02:00Z" },
-    { id: 4830, title: "Write the checkout test cases", work_item_type: "Task", state: "In Progress", state_color: "007acc", column: "In Progress", assigned_to: "Sam Taylor", tags: "", priority: 1, changed_date: "2026-08-28T14:40:00Z" },
-    { id: 4831, title: "Card errors show the wrong message", work_item_type: "Bug", state: "New", state_color: "cc293d", column: "To Do", assigned_to: "Sam Taylor", tags: "Payments", priority: 1, changed_date: "2026-08-26T08:20:00Z" },
-    { id: 4805, title: "Sign-in remembers me", work_item_type: "Product Backlog Item", state: "Done", state_color: "339947", column: "Done", assigned_to: "Sam Taylor", tags: "Sign in", priority: 3, changed_date: "2026-08-21T16:05:00Z" },
+    { id: 4821, title: "Guest checkout", work_item_type: "Product Backlog Item", state: "Committed", state_color: "007acc", column: "In Progress", assigned_to: "Sam Taylor", tags: "Checkout", priority: 2, changed_date: "2026-08-28T09:15:00Z", parent: null },
+    { id: 4822, title: "The basket keeps items for 30 days", work_item_type: "Product Backlog Item", state: "New", state_color: "b2b2b2", column: "To Do", assigned_to: "Sam Taylor", tags: "Basket", priority: 2, changed_date: "2026-08-27T11:02:00Z", parent: null },
+    { id: 4830, title: "Write the checkout test cases", work_item_type: "Task", state: "In Progress", state_color: "007acc", column: "In Progress", assigned_to: "Sam Taylor", tags: "", priority: 1, changed_date: "2026-08-28T14:40:00Z", parent: { id: 4821, title: "Guest checkout", work_item_type: "Product Backlog Item" } },
+    { id: 4831, title: "Card errors show the wrong message", work_item_type: "Bug", state: "New", state_color: "cc293d", column: "To Do", assigned_to: "Sam Taylor", tags: "Payments", priority: 1, changed_date: "2026-08-26T08:20:00Z", parent: { id: 4821, title: "Guest checkout", work_item_type: "Product Backlog Item" } },
+    { id: 4805, title: "Sign-in remembers me", work_item_type: "Product Backlog Item", state: "Done", state_color: "339947", column: "Done", assigned_to: "Sam Taylor", tags: "Sign in", priority: 3, changed_date: "2026-08-21T16:05:00Z", parent: null },
   ],
   states_by_type: {
     "Product Backlog Item": [
@@ -241,6 +243,11 @@ export const TOUR_BOARD: BoardData = {
 };
 
 export const TOUR_PR_OVERVIEW: PrOverview = { awaiting: [], mine: [] };
+
+// Identity for the mention scan's "is this me" check, and the mentions
+// list itself - empty, since the sample user has nothing waiting.
+export const TOUR_CONNECTED_USER: ConnectedUser = { id: "tour-user", display_name: "Sam Taylor" };
+export const TOUR_MENTIONS: Mention[] = [];
 
 export const TOUR_TOOLS: DetectedTool[] = [
   {

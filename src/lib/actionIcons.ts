@@ -54,6 +54,8 @@ export {
   Undo2 as IconUndo,
   X as IconCancel,
   ChevronsDownUp as IconCollapseAll,
+  // The opposite of IconCollapseAll: every folded group or lane opens.
+  ChevronsUpDown as IconExpandAll,
   ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
   Trash2 as IconRemove,

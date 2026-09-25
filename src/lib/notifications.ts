@@ -15,7 +15,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest } from "../bindings";
 
-export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
+export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments" | "mention";
 
 /** What a notification is about, in the app's own terms - enough for a
  * screen to open the thing without parsing a URL back apart. Every
@@ -130,6 +130,16 @@ export function raise(
   return added;
 }
 
+/** Record ids as seen without listing them - a source's backlog on its
+ * first run. raise() skips them from then on, exactly like a dismissed
+ * notification. */
+export function markSeen(org: string, ids: string[]): void {
+  if (!org || ids.length === 0) return;
+  const seen = new Set([...known(org), ...load(org).map((n) => n.id)]);
+  const unseen = [...new Set(ids)].filter((id) => !seen.has(id));
+  if (unseen.length > 0) remember(org, unseen);
+}
+
 /** Opening the bell: the badge goes, the items stay. */
 export function markAllRead(org: string): void {
   const cur = load(org);
@@ -232,4 +242,32 @@ export function notePrComments(org: string, project: string, pr: PullRequest, un
 /** Test seam: forget the in-memory copies (storage is cleared by the test). */
 export function resetForTests(): void {
   lists.clear();
+}
+
+/**
+ * Wipe every organisation's bell - the list and the known-set both - when
+ * `claimCacheFor` reports a different account just claimed the cache.
+ * Without this, a second account on the same Windows profile (or a
+ * mid-session re-sign-in as someone else) kept the previous person's
+ * mentions and PR notices, bodies included.
+ *
+ * Called from App during render, the same place `claimCacheFor` is - so
+ * the notify has to wait for a microtask rather than fire synchronously,
+ * or it would set state in the already-mounted bell mid-render (the
+ * re-sign-in path mounts it).
+ */
+export function forgetAllNotifications(): void {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("tcm-v2-notifications:") || k.startsWith("tcm-v2-notifications-known:")) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // storage unavailable - nothing was stored to leak
+  }
+  lists.clear();
+  queueMicrotask(() => {
+    for (const l of listeners) l();
+  });
 }

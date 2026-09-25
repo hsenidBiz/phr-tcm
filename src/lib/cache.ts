@@ -95,18 +95,25 @@ function tag(account: string): string {
  * plan and suite trees for up to the structure TTL, painted instantly from
  * `initialData` before any request could have been refused. The data was
  * fetched with a token the second account never held.
+ *
+ * Returns whether it actually wiped (a different account claimed the
+ * cache), not merely whether an account was given - callers with their own
+ * per-account state (the notification bell, the mentions baseline) key off
+ * that to forget theirs at the exact same moment.
  */
-export function claimCacheFor(account: string | null): void {
-  if (!account) return;
+export function claimCacheFor(account: string | null): boolean {
+  if (!account) return false;
   try {
     const now = tag(account);
-    if (localStorage.getItem(OWNER_KEY) === now) return;
+    if (localStorage.getItem(OWNER_KEY) === now) return false;
     for (const k of Object.keys(localStorage)) {
       if (k.startsWith(PREFIX)) localStorage.removeItem(k);
     }
     localStorage.setItem(OWNER_KEY, now);
+    return true;
   } catch {
     // storage unavailable - nothing was cached to leak
+    return false;
   }
 }
 

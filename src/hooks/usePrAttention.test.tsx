@@ -3,11 +3,28 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { resetForTests } from "../lib/notifications";
 import { usePrAttention } from "./usePrAttention";
 
-afterEach(() => clearMocks());
+vi.mock("../lib/toast", () => ({ toast: { info: vi.fn() } }));
+
+// announce() (the shared toast/OS-notification funnel, in the real,
+// unmocked assignedAlerts module) checks document.hasFocus() itself to
+// decide toast vs OS notification - force that the same way a real
+// focused window would, rather than mocking exports announce does not
+// call through this module's own boundary.
+let hasFocusSpy: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  localStorage.clear();
+  resetForTests();
+  hasFocusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+});
+afterEach(() => {
+  clearMocks();
+  hasFocusSpy.mockRestore();
+});
 
 function pr(id: number, opts: { conflicts?: boolean; repo?: string } = {}) {
   return {
@@ -77,4 +94,159 @@ test("counts conflicts and unresolved comments once per PR, ignoring settled one
 test("an empty overview needs no attention", async () => {
   mount({ mine: [], awaiting: [] }, {});
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("0"));
+});
+
+test("a PR comment that mentions you raises a Mention; yours and others' do not", async () => {
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  const c = (id: number, author: string, author_id: string, content: string) => ({
+    id, author, author_id, avatar: "", content, published: hourAgo, edited: false,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") return { id: "me-guid", display_name: "Avin" };
+    if (cmd === "pr_overview") return { mine: [pr(1)], awaiting: [] };
+    if (cmd === "pr_threads")
+      return [
+        {
+          id: 30, status: "active", file_path: "", line: 0, last_updated: hourAgo,
+          comments: [
+            c(5, "Sam", "sam-guid", "@<ME-GUID> can you look?"),
+            c(6, "Avin", "ME-GUID", "@<me-guid> note to self"),
+            c(7, "Sam", "sam-guid", "@<kim-guid> over to you"),
+          ],
+        },
+      ];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const ids = () =>
+    (JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string }>).map((n) => n.id);
+  await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:5"));
+  const list = JSON.parse(localStorage.getItem("tcm-v2-notifications:acme")!) as Array<Record<string, unknown>>;
+  expect(list.find((n) => n.id === "mention:pr:web:1:30:5")).toMatchObject({
+    kind: "mention",
+    title: "Sam mentioned you on PR #1",
+    body: "@you can you look?",
+    target: { kind: "pr", repo: "web", id: 1, project: "Web" },
+  });
+  expect(ids()).not.toContain("mention:pr:web:1:30:6");
+  expect(ids()).not.toContain("mention:pr:web:1:30:7");
+});
+
+test("a failed identity lookup is logged and retried, and the PR scan resumes once it succeeds", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+  try {
+    const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+    let userCalls = 0;
+    const logged: string[] = [];
+    mockIPC((cmd, args) => {
+      if (cmd === "connected_user") {
+        userCalls += 1;
+        if (userCalls === 1) throw { kind: "Network", detail: "Can't reach Azure DevOps." };
+        return { id: "me-guid", display_name: "Avin" };
+      }
+      if (cmd === "pr_overview") return { mine: [pr(1)], awaiting: [] };
+      if (cmd === "pr_threads")
+        return [
+          {
+            id: 30, status: "active", file_path: "", line: 0, last_updated: hourAgo,
+            comments: [{ id: 5, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<ME-GUID> can you look?", published: hourAgo, edited: false }],
+          },
+        ];
+      if (cmd === "log_ui") logged.push((args as { message: string }).message);
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ids = () =>
+      (JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string }>).map((n) => n.id);
+    const tick = async (ms: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    render(
+      <QueryClientProvider client={qc}>
+        <Probe org="acme" project="Web" />
+      </QueryClientProvider>,
+    );
+    await tick(50);
+    expect(userCalls).toBe(1);
+    expect(logged.some((m) => m.startsWith("mentions: "))).toBe(true);
+    // No URL in the failure line - just the readable sentence unwrap() built.
+    expect(logged.some((m) => m.includes("http"))).toBe(false);
+    expect(ids()).not.toContain("mention:pr:web:1:30:5");
+
+    // Five minutes on: the identity query is in error, so it is due for a
+    // retry - the same interval the other mention checks use.
+    await tick(5 * 60_000 + 1_000);
+    await tick(50);
+    expect(userCalls).toBe(2);
+    // waitFor polls with a real timer, which fake timers never advance -
+    // the effect chain has already settled by here, so assert directly.
+    expect(ids()).toContain("mention:pr:web:1:30:5");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+/// `reSignIn` invalidates connected-user, pr-overview and pr-threads
+/// together. If a thread refresh settles before identity does, scanning
+/// with the still-cached (about to be stale) `myId` would raise a mention
+/// meant for whoever is signing OUT. The scan must wait for identity to
+/// settle - `isFetching` alone is not enough, since a failed refetch keeps
+/// the previous `data` too (covered by the isError branch of the previous
+/// test, which resumes once the retry succeeds).
+test("the mention scan holds a new comment back until an in-flight identity refetch settles", async () => {
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  let userCalls = 0;
+  let resolveSecondUser: ((v: unknown) => void) | undefined;
+  let comments = [
+    { id: 5, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<ME-GUID> can you look?", published: hourAgo, edited: false },
+  ];
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") {
+      userCalls += 1;
+      if (userCalls === 1) return { id: "me-guid", display_name: "Avin" };
+      return new Promise((resolve) => {
+        resolveSecondUser = resolve;
+      });
+    }
+    if (cmd === "pr_overview") return { mine: [pr(1)], awaiting: [] };
+    if (cmd === "pr_threads")
+      return [{ id: 30, status: "active", file_path: "", line: 0, last_updated: hourAgo, comments }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const ids = () =>
+    (JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string }>).map((n) => n.id);
+  await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:5"));
+
+  // A second comment arrives, at the same moment identity starts a refetch
+  // that this test holds open.
+  comments = [
+    ...comments,
+    { id: 6, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<ME-GUID> and this too", published: hourAgo, edited: false },
+  ];
+  await act(async () => {
+    qc.invalidateQueries({ queryKey: ["connected-user", "acme"] });
+  });
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-threads", "acme", "Web", "web", 1] });
+  });
+  // The new comment is in, but identity is still mid-refetch: it must not
+  // be scanned yet, whatever the stale id would have matched.
+  expect(ids()).not.toContain("mention:pr:web:1:30:6");
+
+  // Identity settles - the deferred scan now runs and raises what it held.
+  await act(async () => {
+    resolveSecondUser?.({ id: "me-guid", display_name: "Avin" });
+  });
+  await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:6"));
 });

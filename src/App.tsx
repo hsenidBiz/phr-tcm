@@ -30,8 +30,9 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { noteAssigned, type NotificationTarget } from "./lib/notifications";
-import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
+import { forgetAllNotifications, noteAssigned, type NotificationTarget } from "./lib/notifications";
+import { forgetMentionBaselines } from "./lib/mentions";
+import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
 import {
@@ -615,8 +616,15 @@ export default function App() {
   // already mounted and seeded their queries from the previous account's
   // cache - the wipe then landed a beat too late to stop it being read.
   // `claimCacheFor` is idempotent and guarded by its own owner key, so
-  // calling it every render costs a string compare.
-  claimCacheFor(status.data?.account ?? null);
+  // calling it every render costs a string compare. When it actually wipes
+  // (a different account just claimed the cache), the bell and the
+  // mentions first-run baseline are the previous person's too - and go
+  // with it, or the new account's bell would open showing someone else's
+  // notifications, mention bodies included.
+  if (claimCacheFor(status.data?.account ?? null)) {
+    forgetAllNotifications();
+    forgetMentionBaselines();
+  }
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version
@@ -758,17 +766,7 @@ export default function App() {
       // And into the bell, where it stays until dismissed.
       noteAssigned(org, project, items);
       const { title, body } = summarize(items);
-      if (appIsInView()) {
-        toast.info(title, { description: body, duration: 10_000 });
-        return;
-      }
-      // Out of view - go to the OS, and fall back to a toast they will
-      // find on return if notifications are refused.
-      osNotify(title, body)
-        .then((sent) => {
-          if (!sent) toast.info(title, { description: body, duration: 10_000 });
-        })
-        .catch(() => {});
+      announce(title, body);
     });
     return () => {
       un.then((f) => f()).catch(() => {});

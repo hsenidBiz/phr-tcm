@@ -9,6 +9,7 @@ import { TOUR_ORG } from "./tour/tourData";
 import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
+import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
 import { resetSplashForTests } from "./lib/splash";
@@ -204,6 +205,10 @@ test("a pull request notification opens the Pull Requests panel in the app", asy
     "tcm-v2-prefs",
     JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
   );
+  // This account has already claimed the cache (an existing sign-in, not a
+  // fresh one) - otherwise App's own claim on first render would read as a
+  // brand-new account and clear the bell seeded just below.
+  claimCacheFor("a@b.com");
   localStorage.setItem(
     "tcm-v2-notifications:acme",
     JSON.stringify([
@@ -247,6 +252,10 @@ test("a notification for another project switches the project before opening", a
     "tcm-v2-prefs",
     JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
   );
+  // This account has already claimed the cache (an existing sign-in, not a
+  // fresh one) - otherwise App's own claim on first render would read as a
+  // brand-new account and clear the bell seeded just below.
+  claimCacheFor("a@b.com");
   localStorage.setItem(
     "tcm-v2-notifications:acme",
     JSON.stringify([

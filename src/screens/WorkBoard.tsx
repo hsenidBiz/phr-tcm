@@ -1,21 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, GitPullRequest, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "../lib/toast";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import Combobox from "../components/ui/combobox";
 import { Input } from "../components/ui/input";
 import MultiSelect from "../components/ui/multiselect";
 import { Skeleton } from "../components/ui/skeleton";
+import { Switch } from "../components/ui/switch";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
+import { IconCollapseAll, IconExpandAll } from "../lib/actionIcons";
+import {
+  NO_PARENT,
+  cardCount,
+  groupIntoLanes,
+  laneIdOf,
+  laneLabel,
+  laneToggleName,
+  loadCollapsedLanes,
+  loadSwimlanes,
+  saveCollapsedLanes,
+  saveSwimlanes,
+} from "../lib/boardLanes";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 
@@ -255,6 +270,29 @@ export default function WorkBoard({
   const [highlightFields, setHighlightFields] = useState<string[]>([]);
   // Per-area, session-only (an assignee list rarely transfers between areas).
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
+  // Swimlanes by direct parent: a view option, off by default, remembered
+  // on this machine. Collapsed lanes are remembered per org/project.
+  const [swimlanes, setSwimlanes] = useState(loadSwimlanes);
+  const changeSwimlanes = (on: boolean) => {
+    setSwimlanes(on);
+    saveSwimlanes(on);
+  };
+  const [collapsedLanes, setCollapsedLanes] = useState<Set<number>>(() =>
+    loadCollapsedLanes(org, project),
+  );
+  useEffect(() => {
+    setCollapsedLanes(loadCollapsedLanes(org, project));
+  }, [org, project]);
+  const updateCollapsed = (next: Set<number>) => {
+    setCollapsedLanes(next);
+    saveCollapsedLanes(org, project, next);
+  };
+  const toggleLane = (id: number) => {
+    const next = new Set(collapsedLanes);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    updateCollapsed(next);
+  };
 
   const boardKey = [
     "board",
@@ -427,6 +465,184 @@ export default function WorkBoard({
     return true;
   });
 
+  // Swimlanes: the filters above apply first, so a lane they emptied never
+  // appears.
+  const lanes = swimlanes ? groupIntoLanes(visible) : [];
+  const collapseAllLanes = () =>
+    updateCollapsed(new Set([...collapsedLanes, ...lanes.map((l) => l.id)]));
+  const expandAllLanes = () => updateCollapsed(new Set());
+  // A drop lands only in the dragged card's own lane: a column changes a
+  // card's state, and nothing on this board changes a parent.
+  const canDrop = (laneId: number | null) =>
+    dragging !== null && (laneId === null || laneIdOf(dragging) === laneId);
+
+  /** One To Do / In Progress / Done grid holding `cards`: the whole board
+   * with swimlanes off (`laneId` null), or one lane's cards. */
+  const renderGrid = (cards: BoardItem[], laneId: number | null) => (
+    // Hidden columns collapse to a slim rail (never to nothing) so the
+    // control that restores them stays visible; the track animation
+    // glides the open columns wider. Cards aren't rendered while
+    // collapsed - a 0-width column's wrapped cards once made the board
+    // scroll far past the visible items. Every lane shares the one set of
+    // hidden columns.
+    <div
+      data-tour={laneId === null ? "board-columns" : undefined}
+      className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
+      style={{
+        // All-fr on purpose: Chromium can't interpolate fr<->px track
+        // lists and leaves the transition STUCK at the start value.
+        // A 0fr track still floors at its content's min size - the
+        // rail's fixed w-9 - so hidden columns settle at 36px.
+        // A hiding column keeps its full track while its content
+        // fades ("fadeOut"); only then does the track collapse.
+        gridTemplateColumns: COLUMNS.map((c) =>
+          hiddenCols.has(c) && colAnim[c] !== "fadeOut" ? "0fr" : "1fr",
+        ).join(" "),
+      }}
+    >
+      {COLUMNS.map((col) => {
+        const collapsed = hiddenCols.has(col) && colAnim[col] !== "fadeOut";
+        const contentInvisible = colAnim[col] === "fadeOut" || colAnim[col] === "grow";
+        const items = cards.filter((i) => i.column === col);
+        if (collapsed) {
+          return (
+            <div
+              key={col}
+              data-testid={`col-${col}`}
+              // Fixed w-9 (no min-w-0): this is the 0fr track's floor.
+              className="rail-in flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
+            >
+              {/* Reads top-to-bottom in the rail, same as the label
+                  below it - the collapsed column is a vertical strip,
+                  so the control is too. In the accent, because a
+                  muted control on a 36px rail is easy to miss
+                  entirely, and this is the only way back.
+                  `text-center` centres the label along the axis it
+                  runs down; the flex centres the box across the
+                  rail.
+
+                  The padding is spelled out PHYSICALLY on purpose.
+                  Tailwind mixes the two systems - px/py are logical
+                  (padding-inline/block) while pl/pr/pt/pb are
+                  physical - and under vertical-rl the logical pair
+                  swaps axes, so `py` silently becomes left/right.
+                  Naming the sides directly means what you read is
+                  where the space goes.
+
+                  pt/pb-2 is the room above and below the word.
+                  pl-0/pr-0.5 is the sliver across it, and the
+                  lopsided 0/2 is measured, not eyeballed: in caps
+                  the ink runs ascent 8 / descent 0 while the font
+                  box is 9 / 3, so the glyphs sit 1px off the em-box
+                  centre. With `leading-none` the whole control is
+                  14px across - it hugs the text, which is the only
+                  thing it has to fit.
+
+                  The exact splits here and on Hide were read off the
+                  RENDERED PIXELS, not derived: font metrics predict
+                  the direction but not the amount, and at this size
+                  half a pixel is visible. If the font or size
+                  changes, measure again rather than reasoning.
+
+                  Both stop about half a pixel short of perfect, and
+                  that is a floor rather than a missing tweak: glyph
+                  baselines snap to whole pixels, so fractional
+                  padding below 1px moves nothing. Closing the last
+                  half pixel would mean changing the box height, not
+                  the padding. */}
+              {/* The label is HORIZONTAL text rotated as a finished
+                  box - not writing-mode text. vertical-rl rasterizes
+                  each rotated glyph, and that path's baseline snap is
+                  state-dependent: the first repaint after mount (or
+                  WebView2's hover repaint) could re-snap the run ~1px
+                  along the reading axis, so OPEN sat centred until you
+                  hovered and then rode up. A transform rotates the
+                  already-rasterized horizontal run as one unit - the
+                  same pipeline as the Hide button, which never moved -
+                  so every repaint lands identically. The box is sized
+                  explicitly because a transform does not change
+                  layout: h-11 reads as the old padded strip, w-4
+                  spans the glyph cross-axis in the 36px rail. */}
+              <button
+                aria-label={`Open ${col}`}
+                title={`Open ${col}`}
+                className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
+                onClick={() => toggleCol(col)}
+              >
+                <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
+                  Open
+                </span>
+              </button>
+              <span
+                className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
+                style={{ writingMode: "vertical-rl" }}
+              >
+                {col} · {items.length}
+              </span>
+            </div>
+          );
+        }
+        return (
+          <div
+            key={col}
+            data-testid={`col-${col}`}
+            className="min-w-0 overflow-hidden rounded-md border border-border bg-bg p-2"
+            onDragOver={(e) => {
+              if (canDrop(laneId)) e.preventDefault();
+            }}
+            onDrop={() => {
+              if (dragging && canDrop(laneId) && dragging.column !== col) {
+                move.mutate({ item: dragging, column: col });
+              }
+              setDragging(null);
+            }}
+          >
+            {/* Fades as one unit: out before the column shrinks, in
+                after it finishes widening - card text never visibly
+                re-wraps while the width animates. */}
+            <div
+              className={cn(
+                "space-y-2 transition-opacity duration-150",
+                contentInvisible ? "opacity-0" : "opacity-100",
+              )}
+            >
+            <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+              {col} <span className="ml-1 text-faint">{items.length}</span>
+              <button
+                aria-label={`Hide ${col}`}
+                title={
+                  hiddenCols.size >= COLUMNS.length - 1
+                    ? "At least one column must stay visible"
+                    : `Hide ${col}`
+                }
+                disabled={hiddenCols.size >= COLUMNS.length - 1}
+                className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => toggleCol(col)}
+              >
+                {/* Symmetric padding + the caps-only ink shift, not a
+                    hand-tuned pt/pb pair: the old pt-[3px] pb-px was a
+                    1px nudge where caps ink needs 1.5px (measured
+                    -0.66px high), and its 1px bottom padding read as
+                    "missing" in an inspector. Same button height. */}
+                <span className="pill-label-ink">Hide</span>
+              </button>
+            </h3>
+            {items.map((item) => (
+              <Card
+                key={item.id}
+                item={item}
+                prLinks={prByItem.get(item.id)}
+                onDragStart={() => setDragging(item)}
+                onOpen={() => setOpenItem(item.id)}
+              />
+            ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   if (!org || !project) {
     return (
       <p className="text-sm text-muted">
@@ -537,6 +753,22 @@ export default function WorkBoard({
               This sprint
             </label>
           )}
+          <label className="flex items-center gap-1.5 text-xs text-muted" title="Group cards under their parent work item">
+            <Switch checked={swimlanes} onCheckedChange={changeSwimlanes} ariaLabel="Swimlanes" />
+            Swimlanes
+          </label>
+          {swimlanes && lanes.length > 0 && (
+            <>
+              <Button size="sm" variant="ghost" onClick={collapseAllLanes}>
+                <IconCollapseAll aria-hidden />
+                Collapse all
+              </Button>
+              <Button size="sm" variant="ghost" onClick={expandAllLanes}>
+                <IconExpandAll aria-hidden />
+                Expand all
+              </Button>
+            </>
+          )}
           {/* Creation moved to the sidebar's "New Work Item" screen - the
               board stays a read-and-move surface. */}
         </div>
@@ -579,162 +811,63 @@ export default function WorkBoard({
           </p>
         )}
 
-        {board.data && (
-          // Hidden columns collapse to a slim rail (never to nothing) so the
-          // control that restores them stays visible; the track animation
-          // glides the open columns wider. Cards aren't rendered while
-          // collapsed - a 0-width column's wrapped cards once made the board
-          // scroll far past the visible items.
-          <div
-            data-tour="board-columns"
-            className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
-            style={{
-              // All-fr on purpose: Chromium can't interpolate fr<->px track
-              // lists and leaves the transition STUCK at the start value.
-              // A 0fr track still floors at its content's min size - the
-              // rail's fixed w-9 - so hidden columns settle at 36px.
-              // A hiding column keeps its full track while its content
-              // fades ("fadeOut"); only then does the track collapse.
-              gridTemplateColumns: COLUMNS.map((c) =>
-                hiddenCols.has(c) && colAnim[c] !== "fadeOut" ? "0fr" : "1fr",
-              ).join(" "),
-            }}
-          >
-            {COLUMNS.map((col) => {
-              const collapsed = hiddenCols.has(col) && colAnim[col] !== "fadeOut";
-              const contentInvisible = colAnim[col] === "fadeOut" || colAnim[col] === "grow";
-              const items = visible.filter((i) => i.column === col);
-              if (collapsed) {
-                return (
-                  <div
-                    key={col}
-                    data-testid={`col-${col}`}
-                    // Fixed w-9 (no min-w-0): this is the 0fr track's floor.
-                    className="rail-in flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
-                  >
-                    {/* Reads top-to-bottom in the rail, same as the label
-                        below it - the collapsed column is a vertical strip,
-                        so the control is too. In the accent, because a
-                        muted control on a 36px rail is easy to miss
-                        entirely, and this is the only way back.
-                        `text-center` centres the label along the axis it
-                        runs down; the flex centres the box across the
-                        rail.
+        {board.data && !swimlanes && renderGrid(visible, null)}
 
-                        The padding is spelled out PHYSICALLY on purpose.
-                        Tailwind mixes the two systems - px/py are logical
-                        (padding-inline/block) while pl/pr/pt/pb are
-                        physical - and under vertical-rl the logical pair
-                        swaps axes, so `py` silently becomes left/right.
-                        Naming the sides directly means what you read is
-                        where the space goes.
+        {/* Swimlanes group by parent - filtering out every card also
+            empties every lane, so the columns below have nothing to show.
+            The switch-off board still renders its (empty) columns in that
+            case; lanes have no such "nothing left, still show the frame"
+            fallback, so this says so instead of going blank. */}
+        {board.data && swimlanes && lanes.length === 0 && board.data.items.length > 0 && (
+          <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
+            No cards match these filters.
+          </p>
+        )}
 
-                        pt/pb-2 is the room above and below the word.
-                        pl-0/pr-0.5 is the sliver across it, and the
-                        lopsided 0/2 is measured, not eyeballed: in caps
-                        the ink runs ascent 8 / descent 0 while the font
-                        box is 9 / 3, so the glyphs sit 1px off the em-box
-                        centre. With `leading-none` the whole control is
-                        14px across - it hugs the text, which is the only
-                        thing it has to fit.
-
-                        The exact splits here and on Hide were read off the
-                        RENDERED PIXELS, not derived: font metrics predict
-                        the direction but not the amount, and at this size
-                        half a pixel is visible. If the font or size
-                        changes, measure again rather than reasoning.
-
-                        Both stop about half a pixel short of perfect, and
-                        that is a floor rather than a missing tweak: glyph
-                        baselines snap to whole pixels, so fractional
-                        padding below 1px moves nothing. Closing the last
-                        half pixel would mean changing the box height, not
-                        the padding. */}
-                    {/* The label is HORIZONTAL text rotated as a finished
-                        box - not writing-mode text. vertical-rl rasterizes
-                        each rotated glyph, and that path's baseline snap is
-                        state-dependent: the first repaint after mount (or
-                        WebView2's hover repaint) could re-snap the run ~1px
-                        along the reading axis, so OPEN sat centred until you
-                        hovered and then rode up. A transform rotates the
-                        already-rasterized horizontal run as one unit - the
-                        same pipeline as the Hide button, which never moved -
-                        so every repaint lands identically. The box is sized
-                        explicitly because a transform does not change
-                        layout: h-11 reads as the old padded strip, w-4
-                        spans the glyph cross-axis in the 36px rail. */}
-                    <button
-                      aria-label={`Open ${col}`}
-                      title={`Open ${col}`}
-                      className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
-                      onClick={() => toggleCol(col)}
-                    >
-                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
-                        Open
-                      </span>
-                    </button>
-                    <span
-                      className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
-                      style={{ writingMode: "vertical-rl" }}
-                    >
-                      {col} · {items.length}
-                    </span>
-                  </div>
-                );
-              }
+        {board.data && swimlanes && (
+          <div data-tour="board-columns" className="space-y-3">
+            {lanes.map((lane) => {
+              const collapsed = collapsedLanes.has(lane.id);
               return (
                 <div
-                  key={col}
-                  data-testid={`col-${col}`}
-                  className="min-w-0 overflow-hidden rounded-md border border-border bg-bg p-2"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => {
-                    if (dragging && dragging.column !== col) {
-                      move.mutate({ item: dragging, column: col });
-                    }
-                    setDragging(null);
-                  }}
+                  key={lane.id}
+                  data-testid={`lane-${lane.id}`}
+                  className="space-y-2 rounded-md border border-border bg-surface p-2"
                 >
-                  {/* Fades as one unit: out before the column shrinks, in
-                      after it finishes widening - card text never visibly
-                      re-wraps while the width animates. */}
-                  <div
-                    className={cn(
-                      "space-y-2 transition-opacity duration-150",
-                      contentInvisible ? "opacity-0" : "opacity-100",
-                    )}
-                  >
-                  <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                    {col} <span className="ml-1 text-faint">{items.length}</span>
+                  {/* The header row. The toggle carries the lane's name,
+                      its size and what a press will do; the title opens
+                      the parent in the drawer, the way a card click does.
+                      A collapsed lane is just this row. */}
+                  <div className="flex min-w-0 items-center gap-2 px-1">
                     <button
-                      aria-label={`Hide ${col}`}
-                      title={
-                        hiddenCols.size >= COLUMNS.length - 1
-                          ? "At least one column must stay visible"
-                          : `Hide ${col}`
-                      }
-                      disabled={hiddenCols.size >= COLUMNS.length - 1}
-                      className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
-                      onClick={() => toggleCol(col)}
+                      aria-label={laneToggleName(lane, collapsed)}
+                      aria-expanded={!collapsed}
+                      title={collapsed ? "Expand lane" : "Collapse lane"}
+                      className="shrink-0 rounded p-0.5 text-muted transition-colors hover:text-accent"
+                      onClick={() => toggleLane(lane.id)}
                     >
-                      {/* Symmetric padding + the caps-only ink shift, not a
-                          hand-tuned pt/pb pair: the old pt-[3px] pb-px was a
-                          1px nudge where caps ink needs 1.5px (measured
-                          -0.66px high), and its 1px bottom padding read as
-                          "missing" in an inspector. Same button height. */}
-                      <span className="pill-label-ink">Hide</span>
+                      {collapsed ? <ChevronRight size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
                     </button>
-                  </h3>
-                  {items.map((item) => (
-                    <Card
-                      key={item.id}
-                      item={item}
-                      prLinks={prByItem.get(item.id)}
-                      onDragStart={() => setDragging(item)}
-                      onOpen={() => setOpenItem(item.id)}
-                    />
-                  ))}
+                    {lane.parent?.work_item_type && (
+                      <Badge color={typeColor[lane.parent.work_item_type] ?? "#9ca3af"}>
+                        {lane.parent.work_item_type}
+                      </Badge>
+                    )}
+                    {lane.id === NO_PARENT ? (
+                      <span className="text-sm font-semibold text-muted">{laneLabel(lane)}</span>
+                    ) : (
+                      <button
+                        className="min-w-0 truncate text-left text-sm font-semibold text-text hover:text-accent hover:underline"
+                        title={`Open #${lane.id}`}
+                        onClick={() => setOpenItem(lane.id)}
+                      >
+                        <span className="id-mono text-xs text-faint">#{lane.id}</span>
+                        {lane.parent?.title ? ` ${lane.parent.title}` : ""}
+                      </button>
+                    )}
+                    <span className="shrink-0 text-xs text-faint">{cardCount(lane.items.length)}</span>
                   </div>
+                  {!collapsed && renderGrid(lane.items, lane.id)}
                 </div>
               );
             })}

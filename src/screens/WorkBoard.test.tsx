@@ -572,3 +572,214 @@ test("a focused item opens its drawer once the board has loaded, then reports ha
   expect(await screen.findByRole("dialog", { name: "Work item 12" })).toBeInTheDocument();
   expect(handled).toHaveBeenCalledTimes(1);
 });
+
+// ---- swimlanes --------------------------------------------------------------
+
+const leave = { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" };
+const payroll = { id: 600, title: "Payroll export", work_item_type: "Product Backlog Item" };
+
+function task(id: number, title: string, column: string, changed: string, parent: unknown) {
+  return {
+    id,
+    title,
+    work_item_type: "Task",
+    state: column,
+    state_color: "b2b2b2",
+    column,
+    assigned_to: "Avin",
+    tags: "",
+    priority: 2,
+    changed_date: changed,
+    parent,
+  };
+}
+
+// Board order is newest change first: 500's newest card, then the loose
+// one, then 600, 500 again, then the unreadable parent 900.
+const laneData = {
+  items: [
+    task(21, "Draft the form", "To Do", "2026-07-12T05:00:00Z", leave),
+    task(22, "Loose task", "To Do", "2026-07-12T04:00:00Z", null),
+    task(23, "Wire the API", "In Progress", "2026-07-12T03:00:00Z", payroll),
+    task(24, "Review the form", "Done", "2026-07-12T02:00:00Z", leave),
+    task(25, "Orphan task", "To Do", "2026-07-12T01:00:00Z", { id: 900, title: "", work_item_type: "" }),
+  ],
+  states_by_type: boardData.states_by_type,
+};
+
+function mockLanes(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_board") return laneData;
+    if (cmd === "classification_paths") return [];
+    return extra(cmd, args);
+  });
+}
+
+const laneIds = () => screen.getAllByTestId(/^lane-\d+$/).map((el) => el.getAttribute("data-testid"));
+
+test("swimlanes are off by default and the board is exactly as before", async () => {
+  mockLanes();
+  renderBoard();
+  await screen.findByText("Draft the form");
+  expect(screen.getByRole("switch", { name: "Swimlanes" })).toHaveAttribute("aria-checked", "false");
+  expect(screen.queryByTestId("lane-500")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+  expect(within(screen.getByTestId("col-To Do")).getByText("Draft the form")).toBeInTheDocument();
+  expect(within(screen.getByTestId("col-To Do")).getByText("Loose task")).toBeInTheDocument();
+});
+
+test("turning Swimlanes on groups cards by parent, newest first, No parent last, and is remembered", async () => {
+  mockLanes();
+  renderBoard();
+  await screen.findByText("Draft the form");
+  fireEvent.click(screen.getByRole("switch", { name: "Swimlanes" }));
+
+  expect(localStorage.getItem("tcm-v2-board-swimlanes")).toBe("on");
+  expect(laneIds()).toEqual(["lane-500", "lane-600", "lane-900", "lane-0"]);
+  const lane500 = screen.getByTestId("lane-500");
+  expect(within(lane500).getByRole("button", { name: "Leave requests, 2 cards, collapse" })).toBeInTheDocument();
+  expect(within(within(lane500).getByTestId("col-To Do")).getByText("Draft the form")).toBeInTheDocument();
+  expect(within(within(lane500).getByTestId("col-Done")).getByText("Review the form")).toBeInTheDocument();
+  expect(within(lane500).queryByText("Wire the API")).not.toBeInTheDocument();
+  // Unreadable parent: the lane reads its id.
+  expect(within(screen.getByTestId("lane-900")).getByRole("button", { name: "#900, 1 card, collapse" })).toBeInTheDocument();
+  // No parent has no title to open.
+  const loose = screen.getByTestId("lane-0");
+  expect(within(loose).getByRole("button", { name: "No parent, 1 card, collapse" })).toBeInTheDocument();
+  expect(within(loose).queryByRole("button", { name: /^#/ })).not.toBeInTheDocument();
+});
+
+test("filters apply first, so a lane they empty is not shown", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  mockLanes();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+  fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "wire" } });
+  expect(laneIds()).toEqual(["lane-600"]);
+});
+
+/// With the switch off the same filter state still shows the three
+/// (empty) columns - swimlanes has no such fallback, since a lane with no
+/// cards is simply not rendered, so filtering out everything used to leave
+/// a blank board with no explanation and no way to tell it apart from
+/// still loading.
+test("filtering out every card in swimlanes view shows the empty-state message, not a blank board", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  mockLanes();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+  fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "does-not-exist" } });
+  expect(screen.queryByTestId(/^lane-/)).not.toBeInTheDocument();
+  expect(screen.getByText("No cards match these filters.")).toBeInTheDocument();
+  // Collapse all / Expand all act on lanes - none left to act on.
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+});
+
+test("a lane collapses to its header and stays collapsed next time", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  mockLanes();
+  const view = renderBoard();
+  const lane500 = await screen.findByTestId("lane-500");
+  fireEvent.click(within(lane500).getByRole("button", { name: "Leave requests, 2 cards, collapse" }));
+
+  expect(within(lane500).queryByText("Draft the form")).not.toBeInTheDocument();
+  expect(within(lane500).getByRole("button", { name: "Leave requests, 2 cards, expand" })).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/Web")).toBe("[500]");
+
+  view.unmount();
+  renderBoard();
+  const again = await screen.findByTestId("lane-500");
+  expect(within(again).getByRole("button", { name: "Leave requests, 2 cards, expand" })).toBeInTheDocument();
+  expect(within(again).queryByText("Draft the form")).not.toBeInTheDocument();
+  expect(within(screen.getByTestId("lane-600")).getByText("Wire the API")).toBeInTheDocument();
+});
+
+test("Collapse all folds every lane on screen and Expand all opens them again", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  mockLanes();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+
+  fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+  expect(screen.getAllByRole("button", { name: /, expand$/ })).toHaveLength(4);
+  expect(screen.queryByText("Draft the form")).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/Web")).toBe("[0,500,600,900]");
+
+  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+  expect(screen.getAllByRole("button", { name: /, collapse$/ })).toHaveLength(4);
+  expect(screen.getByText("Draft the form")).toBeInTheDocument();
+});
+
+test("a card can be dropped only in its own lane's columns", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const moves: unknown[] = [];
+  mockLanes((cmd, args) => {
+    if (cmd === "move_board_item") {
+      moves.push(args);
+      return "In Progress";
+    }
+  });
+  renderBoard();
+  const card = (await screen.findByText("Draft the form")).closest("[draggable]")!;
+
+  fireEvent.dragStart(card);
+  fireEvent.drop(within(screen.getByTestId("lane-600")).getByTestId("col-In Progress"));
+  expect(moves).toEqual([]);
+  expect(within(screen.getByTestId("lane-500")).getByText("Draft the form")).toBeInTheDocument();
+
+  fireEvent.dragStart(card);
+  fireEvent.drop(within(screen.getByTestId("lane-500")).getByTestId("col-In Progress"));
+  await vi.waitFor(() => expect(moves).toHaveLength(1));
+  expect(moves[0]).toMatchObject({ itemId: 21, column: "In Progress" });
+});
+
+test("clicking a lane's title opens that parent in the drawer", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const opened: number[] = [];
+  mockLanes((cmd, args) => {
+    if (cmd === "work_item_detail") {
+      const id = (args as { id: number }).id;
+      opened.push(id);
+      return {
+        id,
+        title: "Leave requests",
+        work_item_type: "Product Backlog Item",
+        state: "Committed",
+        assigned_to: "",
+        assigned_to_unique: "",
+        activity: "",
+        tags: "",
+        area_path: "P",
+        iteration_path: "P\\S1",
+        remaining_work: null,
+        completed_work: null,
+        original_estimate: null,
+        start_date: "",
+        target_date: "",
+        description_text: "",
+        description_html: "",
+        description_field: "System.Description",
+        extra_pages: [],
+        extra_pages_error: null,
+        inline_images: [],
+      };
+    }
+    if (cmd === "list_team_members") return [];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+  });
+  renderBoard();
+  fireEvent.click(await screen.findByRole("button", { name: "#500 Leave requests" }));
+  await vi.waitFor(() => expect(opened).toContain(500));
+});
+
+test("a hidden column is hidden in every lane alike", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  localStorage.setItem("tcm-v2-hidden-cols", JSON.stringify(["Done"]));
+  mockLanes();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+  for (const id of ["lane-500", "lane-600", "lane-900", "lane-0"]) {
+    expect(within(screen.getByTestId(id)).getByRole("button", { name: "Open Done" })).toBeInTheDocument();
+  }
+});

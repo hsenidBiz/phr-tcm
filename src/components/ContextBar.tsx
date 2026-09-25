@@ -4,6 +4,7 @@ import { IconBoard, IconTestCases } from "../lib/actionIcons";
 import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
+import { useMentions } from "../hooks/useMentions";
 import { usePrAttention } from "../hooks/usePrAttention";
 import NotificationBell from "./NotificationBell";
 import type { NotificationTarget } from "../lib/notifications";
@@ -91,6 +92,8 @@ export default function ContextBar({
   // PRs with conflicts or comments still to resolve - the number on the
   // Work Manager pill. Shares the PR panel's cache keys.
   const prAttention = usePrAttention(org, project);
+  // Work-item @mentions of you, into the bell beside it.
+  useMentions(org, project);
 
   return (
     // flex-wrap: in a narrow window the right-side group drops to a second
