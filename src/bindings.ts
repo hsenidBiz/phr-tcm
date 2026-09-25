@@ -240,7 +240,10 @@ export const commands = {
 	 *  threads (`sources` is each comment's raw text, HTML or markdown) - the
 	 *  same downloader the detail drawer uses for a description's inline
 	 *  images, reused here because neither comments nor PR threads went
-	 *  through `get_work_item_detail`.
+	 *  through `get_work_item_detail`. `organization` is not needed to reach
+	 *  the attachment (its URL is already absolute) - it is here so the
+	 *  frontend has one to key its cache on, matching every other board
+	 *  command's shape.
 	 */
 	commentImages: (organization: string, sources: string[]) => typedError<InlineImage[], AdoError>(__TAURI_INVOKE("comment_images", { organization, sources })),
 	/**  Full-form work item creation (the New Work Item screen). POST only. */

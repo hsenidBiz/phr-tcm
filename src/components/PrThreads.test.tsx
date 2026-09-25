@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import PrThreads from "./PrThreads";
 
 afterEach(() => {
@@ -45,17 +45,22 @@ function renderThreads(threads: unknown[], imageResult: unknown[]) {
     }
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <PrThreads org="acme" project="Web" repo="repo" prId={1} enabled finalized={false} />
-    </QueryClientProvider>,
-  );
+  return {
+    qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <PrThreads org="acme" project="Web" repo="repo" prId={1} enabled finalized={false} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 /// A PR comment's attachment image gets 401 as a plain markdown image (the
 /// WebView sends no bearer header) - the panel asks Rust for it and swaps
 /// the markdown text for a blob: URL before it reaches the Markdown island,
-/// which refuses a data: src outright.
+/// which refuses a data: src outright. jsdom enforces no CSP at all, so
+/// this test cannot see the real app's img-src rule - that is pinned
+/// separately in src/vendor-bundle.test.ts against tauri.conf.json.
 test("an attachment image in a PR comment is swapped for its downloaded image", async () => {
   const { container } = renderThreads(
     threadWithComment(`Review Changes: ![image](${ATTACHMENT_URL})`),
@@ -80,4 +85,51 @@ test("a PR comment image that could not be fetched shows an unavailable note", a
 
   await screen.findByText("Image unavailable");
   expect(container.querySelector(`img[src="${ATTACHMENT_URL}"]`)).toBeNull();
+});
+
+/// Each render must not mint a fresh blob: URL (the query cache holds the
+/// data: URI, not the blob - only the view converts, in a useMemo keyed on
+/// the query data), and whatever it did mint must be released once this
+/// view no longer needs it, or every open PR review leaks another
+/// same-sized allocation for the life of the session.
+test("unmounting revokes the blob: URL it minted", async () => {
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
+  const { container, unmount } = renderThreads(
+    threadWithComment(`Review Changes: ![image](${ATTACHMENT_URL})`),
+    [{ url: ATTACHMENT_URL, data: "data:image/png;base64,iVBORw0KGgo=" }],
+  );
+
+  let blobUrl = "";
+  await waitFor(() => {
+    const img = container.querySelector("img[src^='blob:']");
+    expect(img).not.toBeNull();
+    blobUrl = img!.getAttribute("src")!;
+  });
+
+  unmount();
+  expect(revoke).toHaveBeenCalledWith(blobUrl);
+});
+
+test("a later fetch replacing the cached images revokes the earlier blob: URL", async () => {
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
+  const { container, qc } = renderThreads(
+    threadWithComment(`Review Changes: ![image](${ATTACHMENT_URL})`),
+    [{ url: ATTACHMENT_URL, data: "data:image/png;base64,iVBORw0KGgo=" }],
+  );
+
+  let firstBlobUrl = "";
+  await waitFor(() => {
+    const img = container.querySelector("img[src^='blob:']");
+    expect(img).not.toBeNull();
+    firstBlobUrl = img!.getAttribute("src")!;
+  });
+
+  // Simulate a refetch bringing back different bytes for the same URL -
+  // the same query key PrThreads itself computes (org, then the sorted
+  // attachment URLs found in the comment).
+  qc.setQueryData(["comment-images", "acme", [ATTACHMENT_URL]], [
+    { url: ATTACHMENT_URL, data: "data:image/png;base64,AAAAAAAA" },
+  ]);
+
+  await waitFor(() => expect(revoke).toHaveBeenCalledWith(firstBlobUrl));
 });

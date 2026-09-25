@@ -125,6 +125,11 @@ export default function CommentsPanel({
   // Attachment images in a comment get 401 as a plain <img> - the WebView
   // sends no bearer header. Held in memory for this open view only (data:
   // URIs are large, so this is a react-query cache, not the disk one).
+  // Cached as data: URIs - PrThreads keys its own fetch identically
+  // (["comment-images", org, urls]) and, because both hold exactly this
+  // shape, the two never disagree about what a cached entry looks like;
+  // PrThreads converts to blob: URLs itself, only where the Markdown
+  // island needs one, never in the shared cache.
   const commentTexts = (comments.data ?? []).map((c) => c.text_html);
   const imageUrls = attachmentUrls(commentTexts);
   const images = useQuery({

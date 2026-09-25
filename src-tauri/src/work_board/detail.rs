@@ -169,19 +169,38 @@ impl AdoClient {
         })
     }
 
+    /// The work item detail drawer's description and its extra form pages:
+    /// a handful of fields, so a runaway one is caught early.
+    const DETAIL_IMAGE_LIMIT: usize = 12;
+    /// A work item's comments, or a PR's threads, arrive as one call over
+    /// the item's whole history - room for more distinct images than a
+    /// single field, while the per-image byte cap still guards size.
+    const COMMENT_IMAGE_LIMIT: usize = 60;
+
     /// Download the attachment images referenced by rich text - HTML
     /// `src="..."` (a plain <img> gets 401 - the WebView sends no bearer
     /// header) or markdown `![alt](url)` (Azure DevOps comments and PR
     /// review threads store images that way, not as HTML) - and return
     /// url -> data-uri pairs for the caller to apply. Best-effort per
-    /// image; caps guard pathological fields.
-    pub async fn collect_attachment_images(&self, texts: &[&str]) -> Vec<InlineImage> {
+    /// image; `limit` caps how many are downloaded per call (the per-image
+    /// byte cap below guards size, this guards count) - see
+    /// `collect_attachment_images` and `collect_comment_images` for why
+    /// they use different ones.
+    async fn collect_attachment_images_capped(&self, texts: &[&str], limit: usize) -> Vec<InlineImage> {
         use base64::Engine;
         let html_re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
-        // Markdown link/URL syntax forbids whitespace and an unescaped `)`
-        // inside the plain form, so stopping at the first `)` or space is
-        // exactly the markdown grammar, not a heuristic.
-        let md_re = regex::Regex::new(r#"!\[[^\]]*\]\(([^)\s]+)\)"#).unwrap();
+        // Markdown URL syntax allows one level of balanced parentheses
+        // inside the plain (non angle-bracket) form - a pasted attachment
+        // name survives ADO's own encoding as
+        // `...fileName=Screenshot%20(1).png`, parens and all - so the
+        // capture is "a run of non-paren, non-space characters, or one
+        // nested (...) pair", one or more times. Rust's regex crate
+        // compiles to a bounded automaton rather than backtracking, so
+        // (unlike the same pattern in TypeScript) this has no quadratic
+        // case to guard against with a length cap - one was tried here and
+        // rejected by the compiler for blowing up the compiled program
+        // size instead.
+        let md_re = regex::Regex::new(r#"!\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)\)"#).unwrap();
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for text in texts {
@@ -189,7 +208,7 @@ impl AdoClient {
                 continue;
             }
             for cap in html_re.captures_iter(text).chain(md_re.captures_iter(text)) {
-                if out.len() >= 12 {
+                if out.len() >= limit {
                     return out;
                 }
                 // The src sits in an HTML attribute, so & is entity-encoded
@@ -238,6 +257,21 @@ impl AdoClient {
             }
         }
         out
+    }
+
+    /// A work item's description and its extra form pages, capped at
+    /// [`Self::DETAIL_IMAGE_LIMIT`].
+    pub async fn collect_attachment_images(&self, texts: &[&str]) -> Vec<InlineImage> {
+        self.collect_attachment_images_capped(texts, Self::DETAIL_IMAGE_LIMIT).await
+    }
+
+    /// A work item's whole comment history, or a whole PR's thread list,
+    /// downloaded in ONE call - routinely references more distinct images
+    /// than a single detail field ever would, so this gets its own, higher
+    /// ceiling ([`Self::COMMENT_IMAGE_LIMIT`]) rather than sharing the
+    /// drawer's. Same extraction, same token-host guard.
+    pub async fn collect_comment_images(&self, texts: &[&str]) -> Vec<InlineImage> {
+        self.collect_attachment_images_capped(texts, Self::COMMENT_IMAGE_LIMIT).await
     }
 
     /// Fetch an avatar as base64 PNG-ish bytes. Best-effort like v1

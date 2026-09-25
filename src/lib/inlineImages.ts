@@ -1,13 +1,23 @@
 import type { InlineImage } from "../bindings";
 
-/** An HTML `<img src="...">` tag, capturing the URL. */
-const IMG_TAG_RE = /<img\b[^>]*\ssrc=["']([^"']+)["'][^>]*>/gi;
+/** An HTML `<img src="...">` tag, capturing the URL. The attribute blobs
+ * either side of `src` and the URL itself are length-capped, not just
+ * "one or more" - this runs over whatever text a comment or a PR thread
+ * contains, which is exactly as attacker-controlled as its markdown, and
+ * an unbounded quantifier scanned across a large hostile blob is how a
+ * regex like this goes quadratic. */
+const IMG_TAG_RE = /<img\b[^>]{0,2000}\ssrc=["']([^"']{1,2000})["'][^>]{0,2000}>/gi;
 
-/** Markdown `![alt](url)` image syntax, capturing the URL. Markdown's own
- * grammar forbids whitespace and an unescaped `)` in the plain (non
- * angle-bracket) form, so stopping at the first one of either is the
- * grammar, not a heuristic. */
-const MD_IMG_RE = /!\[[^\]]*\]\(([^)\s]+)\)/g;
+/** Markdown `![alt](url)` image syntax, capturing the URL. Plain markdown
+ * URL syntax forbids whitespace and an unescaped `)`, but allows ONE level
+ * of balanced parentheses - a pasted attachment name survives Azure
+ * DevOps' own encoding as `...fileName=Screenshot%20(1).png`, parens and
+ * all - so the capture is "a run of non-paren, non-space characters, or
+ * one nested `(...)` pair", one or more times. Every repeat is
+ * length-capped for the same quadratic-scan reason as `IMG_TAG_RE`; unlike
+ * a backtracking-free engine, a bound here is load-bearing, not decoration
+ * (see the matching comment in `detail.rs`, which needs none). */
+const MD_IMG_RE = /!\[[^\]]{0,500}\]\(((?:[^()\s]|\([^()\s]{0,500}\)){1,2000})\)/g;
 
 /** Entity-unescape a `src` pulled out of HTML; a no-op for a markdown URL,
  * which is never entity-encoded. */

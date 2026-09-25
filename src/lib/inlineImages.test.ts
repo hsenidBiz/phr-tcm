@@ -52,6 +52,19 @@ test("attachmentUrls returns nothing for texts with no attachment images", () =>
   expect(attachmentUrls(["plain text", "<p>no images here</p>"])).toEqual([]);
 });
 
+/** A pasted attachment name survives Azure DevOps' own encoding with a
+ * literal, unescaped parenthesis pair - `Screenshot%20(1).png` - which a
+ * naive "stop at the first `)`" capture truncates well before the real end
+ * of the URL. One level of balanced parens must round-trip whole, in both
+ * attachmentUrls (extraction) and swapInlineImages (substitution). */
+test("a markdown URL with one level of balanced parens is captured and swapped whole", () => {
+  const url = "https://dev.azure.com/acme/Web/_apis/wit/attachments/att-1?fileName=Screenshot%20(1).png";
+  const md = `![shot](${url})`;
+
+  expect(attachmentUrls([md])).toEqual([url]);
+  expect(swapInlineImages(md, [{ url, data: DATA_URI }])).toBe(`![shot](${DATA_URI})`);
+});
+
 /** Astryx's Markdown island (PR threads) blocks a `data:` image src
  * outright - `toBlobImages` swaps it for a `blob:` object URL first, which
  * `swapInlineImages` can then put straight into the markdown text. */

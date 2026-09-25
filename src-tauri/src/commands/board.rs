@@ -310,7 +310,7 @@ pub async fn comment_images(
     let _ = &organization;
     let token = get_fresh_token(&app).await?;
     let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
-    Ok(ado::AdoClient::new(token).collect_attachment_images(&refs).await)
+    Ok(ado::AdoClient::new(token).collect_comment_images(&refs).await)
 }
 
 #[derive(serde::Serialize, specta::Type)]

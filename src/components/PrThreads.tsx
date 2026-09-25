@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, MessageSquare, RotateCcw } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { toast } from "../lib/toast";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { commands, type PrThread } from "../bindings";
@@ -184,19 +185,35 @@ export default function PrThreads({
   // Attachment images in a comment get 401 as a plain markdown image - the
   // WebView sends no bearer header. Held in memory for this open view only
   // (react-query, not the disk cache - the downloaded bytes are large).
+  // The cache holds data: URIs, the same shape CommentsPanel's identically
+  // keyed query holds - the two never disagree on what a cached entry
+  // looks like because there is only one shape.
   const commentTexts = (threads.data ?? []).flatMap((t) => t.comments.map((c) => c.content));
   const imageUrls = attachmentUrls(commentTexts);
   const images = useQuery({
     queryKey: ["comment-images", org, imageUrls],
-    queryFn: async () => toBlobImages(await unwrap(commands.commentImages(org, commentTexts))),
+    queryFn: () => unwrap(commands.commentImages(org, commentTexts)),
     enabled: imageUrls.length > 0,
     staleTime: Infinity,
   });
+  // Astryx's Markdown island refuses a data: image src outright, so - only
+  // here, not in the shared cache above - each one becomes a blob: object
+  // URL. Minted with useMemo (not in queryFn) so a re-render alone never
+  // mints another batch, and revoked in the matching effect below the
+  // moment this batch stops being the one in use: on the next data change,
+  // and on unmount.
+  const blobImages = useMemo(() => toBlobImages(images.data ?? []), [images.data]);
+  useEffect(
+    () => () => {
+      for (const img of blobImages) URL.revokeObjectURL(img.data);
+    },
+    [blobImages],
+  );
   /** Swap in what came back; anything still unswapped once the fetch has
    * settled becomes the unavailable note. While still loading, the text is
    * left unchanged - the image appears when it is ready. */
   const withImages = (md: string) => {
-    const swapped = swapInlineImages(md, images.data ?? []);
+    const swapped = swapInlineImages(md, blobImages);
     return images.isPending ? swapped : markUnavailableImages(swapped, "md");
   };
 
