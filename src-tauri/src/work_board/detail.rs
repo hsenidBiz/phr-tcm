@@ -169,24 +169,32 @@ impl AdoClient {
         })
     }
 
-    /// Download the attachment images referenced by rich-text HTML (a plain
-    /// <img> gets 401 - the WebView sends no bearer header) and return
-    /// url -> data-uri pairs for the preview to apply. Best-effort per
+    /// Download the attachment images referenced by rich text - HTML
+    /// `src="..."` (a plain <img> gets 401 - the WebView sends no bearer
+    /// header) or markdown `![alt](url)` (Azure DevOps comments and PR
+    /// review threads store images that way, not as HTML) - and return
+    /// url -> data-uri pairs for the caller to apply. Best-effort per
     /// image; caps guard pathological fields.
-    pub async fn collect_attachment_images(&self, htmls: &[&str]) -> Vec<InlineImage> {
+    pub async fn collect_attachment_images(&self, texts: &[&str]) -> Vec<InlineImage> {
         use base64::Engine;
-        let re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
+        let html_re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
+        // Markdown link/URL syntax forbids whitespace and an unescaped `)`
+        // inside the plain form, so stopping at the first `)` or space is
+        // exactly the markdown grammar, not a heuristic.
+        let md_re = regex::Regex::new(r#"!\[[^\]]*\]\(([^)\s]+)\)"#).unwrap();
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-        for html in htmls {
-            if !html.contains("<img") {
+        for text in texts {
+            if !text.contains("<img") && !text.contains("![") {
                 continue;
             }
-            for cap in re.captures_iter(html) {
+            for cap in html_re.captures_iter(text).chain(md_re.captures_iter(text)) {
                 if out.len() >= 12 {
                     return out;
                 }
-                // The src sits in an HTML attribute, so & is entity-encoded.
+                // The src sits in an HTML attribute, so & is entity-encoded
+                // there; markdown never entity-encodes, so this is a no-op
+                // for a markdown URL.
                 let url = cap[1].replace("&amp;", "&");
                 let Some(download) = attachment_download_url(&url, &self.base_url) else {
                     continue;

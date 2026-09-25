@@ -140,6 +140,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::connected_user,
             board::recent_mentions,
             board::avatar_b64,
+            board::comment_images,
             board::create_work_item,
             discovery::classification_paths,
             queue::share_queue,

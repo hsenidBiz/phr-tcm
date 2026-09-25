@@ -67,6 +67,64 @@ function mockAll(capture: { updated?: Record<string, unknown>[]; added?: Record<
   });
 }
 
+const ATTACHMENT_URL =
+  "https://dev.azure.com/acme/Web/_apis/wit/attachments/att-1?fileName=x.png";
+const COMMENT_WITH_IMAGE = {
+  id: 9,
+  text: "Review Changes",
+  text_html: `<div>Review Changes: <img src="${ATTACHMENT_URL}"></div>`,
+  created_by: "Ada",
+  created_by_id: "u-ada",
+  created_date: STAMP,
+  modified_date: STAMP,
+  avatar_url: "",
+};
+
+function mockWithImage(imageResult: unknown[]) {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "work_item_comments":
+        return [COMMENT_WITH_IMAGE];
+      case "connected_user":
+        return { id: "u-ada", display_name: "Ada" };
+      case "avatar_b64":
+        return null;
+      case "comment_images":
+        return imageResult;
+    }
+  });
+}
+
+/// A comment's attachment image gets 401 as a plain <img> (the WebView
+/// sends no bearer header) - the panel asks Rust for it and swaps in the
+/// data: URI it downloaded, the same way the work item drawer does for a
+/// description.
+test("an attachment image in a comment is swapped for its downloaded data: URI", async () => {
+  mockWithImage([{ url: ATTACHMENT_URL, data: "data:image/png;base64,iVBORw0KGgo=" }]);
+  const { container } = renderPanel();
+
+  await waitFor(() => {
+    const img = container.querySelector("img[src^='data:image/png']");
+    expect(img).not.toBeNull();
+  });
+  expect(container.querySelector(`img[src="${ATTACHMENT_URL}"]`)).toBeNull();
+});
+
+/// When the download comes back empty (fetch failed, or the host guard
+/// refused it), the comment shows a small note instead of a permanently
+/// broken image icon.
+test("an attachment image that could not be fetched shows an unavailable note", async () => {
+  mockWithImage([]);
+  const { container } = renderPanel();
+
+  await screen.findByText("Image unavailable");
+  expect(container.querySelector(`img[src="${ATTACHMENT_URL}"]`)).toBeNull();
+});
+
 /// Comments render as the rich text ADO stores (not flattened), say when
 /// they were edited, and offer Edit only on the signed-in user's own -
 /// the way ADO's own form does.

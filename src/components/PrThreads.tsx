@@ -20,6 +20,7 @@ import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/history";
 import { unwrap } from "../lib/ipc";
 import { isResolved } from "../lib/threadStatus";
+import { attachmentUrls, markUnavailableImages, swapInlineImages, toBlobImages } from "../lib/inlineImages";
 
 /** What Azure DevOps calls it, in words a reader recognises. */
 function statusLabel(status: string): string {
@@ -43,10 +44,14 @@ function Thread({
   thread,
   onSetStatus,
   busy,
+  withImages,
 }: {
   thread: PrThread;
   onSetStatus: (status: string) => void;
   busy: boolean;
+  /** Swaps attachment URLs in a comment's markdown for the downloaded
+   * image, or an "unavailable" note once the fetch has settled. */
+  withImages: (md: string) => string;
 }) {
   const resolved = isResolved(thread.status);
   const where = thread.file_path
@@ -104,7 +109,7 @@ function Thread({
                   return false;
                 }}
               >
-                {c.content}
+                {withImages(c.content)}
               </Markdown>
             </AstryxIsland>
           </div>
@@ -176,6 +181,25 @@ export default function PrThreads({
     onError: (e) => toast.error(`Could not update the thread: ${e.message}`),
   });
 
+  // Attachment images in a comment get 401 as a plain markdown image - the
+  // WebView sends no bearer header. Held in memory for this open view only
+  // (react-query, not the disk cache - the downloaded bytes are large).
+  const commentTexts = (threads.data ?? []).flatMap((t) => t.comments.map((c) => c.content));
+  const imageUrls = attachmentUrls(commentTexts);
+  const images = useQuery({
+    queryKey: ["comment-images", org, imageUrls],
+    queryFn: async () => toBlobImages(await unwrap(commands.commentImages(org, commentTexts))),
+    enabled: imageUrls.length > 0,
+    staleTime: Infinity,
+  });
+  /** Swap in what came back; anything still unswapped once the fetch has
+   * settled becomes the unavailable note. While still loading, the text is
+   * left unchanged - the image appears when it is ready. */
+  const withImages = (md: string) => {
+    const swapped = swapInlineImages(md, images.data ?? []);
+    return images.isPending ? swapped : markUnavailableImages(swapped, "md");
+  };
+
   if (!enabled) return null;
 
   const all = threads.data ?? [];
@@ -215,6 +239,7 @@ export default function PrThreads({
               thread={t}
               busy={setStatus.isPending}
               onSetStatus={(status) => setStatus.mutate({ threadId: t.id, status })}
+              withImages={withImages}
             />
           ))}
         </div>

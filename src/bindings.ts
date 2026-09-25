@@ -235,6 +235,14 @@ export const commands = {
 	recentMentions: (organization: string, project: string) => typedError<Mention[], AdoError>(__TAURI_INVOKE("recent_mentions", { organization, project })),
 	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
+	/**
+	 *  Attachment images referenced from work item comments or PR review
+	 *  threads (`sources` is each comment's raw text, HTML or markdown) - the
+	 *  same downloader the detail drawer uses for a description's inline
+	 *  images, reused here because neither comments nor PR threads went
+	 *  through `get_work_item_detail`.
+	 */
+	commentImages: (organization: string, sources: string[]) => typedError<InlineImage[], AdoError>(__TAURI_INVOKE("comment_images", { organization, sources })),
 	/**  Full-form work item creation (the New Work Item screen). POST only. */
 	createWorkItem: (organization: string, project: string, item: NewWorkItem) => typedError<CreatedItem, AdoError>(__TAURI_INVOKE("create_work_item", { organization, project, item })),
 	/**  The project's Area or Iteration paths for the create pickers. */
