@@ -112,6 +112,11 @@ function watchDraft(path: string, cases: Array<{ id: number | null; order: numbe
 
 // ---- Start from ----
 
+test("the dialog is named by its heading", () => {
+  mount();
+  expect(screen.getByRole("dialog", { name: "Execution order" })).toBeInTheDocument();
+});
+
 test("a found suggested order is offered first, with who saved it and when", () => {
   mount({ file: FILE([{ id: 203 }, { id: 201 }, { id: 202 }]), view: "suggested" });
   expect(screen.getByRole("heading", { name: "Execution order" })).toBeInTheDocument();

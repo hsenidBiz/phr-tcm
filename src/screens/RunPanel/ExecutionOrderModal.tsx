@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type RunOrderFile } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -78,6 +78,7 @@ export default function ExecutionOrderModal({
   onGroupMode,
   onClose,
 }: ExecutionOrderModalProps) {
+  const titleId = useId();
   const qc = useQueryClient();
   const specIds = useMemo(() => cases.map((c) => c.id), [cases]);
   const byId = useMemo(() => new Map(cases.map((c) => [c.id, c])), [cases]);
@@ -201,8 +202,8 @@ export default function ExecutionOrderModal({
         : "No suggested run order yet.");
 
   return (
-    <Modal onClose={close} className="flex max-h-[85vh] w-[640px] max-w-full flex-col gap-3 p-4">
-      <h2 className="text-sm font-semibold text-text">Execution order</h2>
+    <Modal onClose={close} labelledBy={titleId} className="flex max-h-[85vh] w-[640px] max-w-full flex-col gap-3 p-4">
+      <h2 id={titleId} className="text-sm font-semibold text-text">Execution order</h2>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted">Start from</span>
         <Select

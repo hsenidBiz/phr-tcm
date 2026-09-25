@@ -92,3 +92,35 @@ test("pasting an image into the dialog files it with the bug", async () => {
   fireEvent.click(screen.getByRole("button", { name: "File bug" }));
   await vi.waitFor(() => expect(filed.screenshotsB64).toEqual(["aW1n"]));
 });
+
+test("a Shared Steps row goes into the repro as Shared steps #N, with its title when known", () => {
+  mockIPC(() => null);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(["shared-step", "acme", 812], "Sign in as an admin");
+  render(
+    <QueryClientProvider client={qc}>
+      <BugDialog
+        org="acme"
+        project="Web"
+        testCase={{
+          ...testCase,
+          steps: [
+            { action: "Open page", expected: "Shown" },
+            { action: "", expected: "", shared: 812 },
+            { action: "", expected: "", shared: 900 },
+          ],
+          step_ids: ["2", "", ""],
+        }}
+        pbiId={42}
+        screenshots={[]}
+        onClose={vi.fn()}
+        onFiled={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  const repro = (screen.getByLabelText("Repro steps") as HTMLTextAreaElement).value;
+  expect(repro).toContain("1. Open page -> expected: Shown");
+  expect(repro).toContain("2. Shared steps #812 - Sign in as an admin");
+  expect(repro).toContain("3. Shared steps #900");
+  expect(repro).not.toMatch(/^\d+\. $/m);
+});

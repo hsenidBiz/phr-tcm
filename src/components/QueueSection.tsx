@@ -39,9 +39,11 @@ import {
   queueWriterFor,
   registerQueueWriter,
   submitFinished,
+  submitLabel,
   submitPhaseSnapshot,
   submitProgressed,
   submitStarted,
+  submitUploading,
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
@@ -730,6 +732,8 @@ export default function QueueSection({
         if (toSend.length === 0) {
           return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
         }
+        // Something to write: from here on the screen says it is uploading.
+        submitUploading(run);
         // What each sent update is about to change, from the same fresh
         // baseline - kept for the "Copy changes" note, since after the write
         // the server already holds the new values.
@@ -1789,7 +1793,13 @@ export default function QueueSection({
           lands it fills to the count. */}
       {progress && (
         <ScanProgress
-          label={progress.done === 0 ? "Processing the upload" : "Uploading"}
+          label={
+            progress.stage === "checking"
+              ? "Checking what changed"
+              : progress.done === 0
+                ? "Processing the upload"
+                : "Uploading"
+          }
           done={progress.done > 0 ? progress.done : undefined}
           total={progress.done > 0 ? progress.total : undefined}
         />
@@ -1881,7 +1891,7 @@ export default function QueueSection({
         {progress ? (
           <Button disabled>
             <IconConfirm aria-hidden />
-            Processing
+            {submitLabel(progress)}
           </Button>
         ) : !reviewing ? (
           <Button disabled={queue.length === 0} onClick={openReview}>
@@ -1965,7 +1975,9 @@ export default function QueueSection({
               >
                 <IconConfirm aria-hidden />
                 {submit.isPending
-                  ? "Processing"
+                  ? progress
+                    ? submitLabel(progress)
+                    : "Checking"
                   : armed
                     ? `Yes — ${actionLabel}`
                     : `Confirm & ${actionLabel || "create 0"}`}
@@ -2141,7 +2153,7 @@ export default function QueueSection({
             {progress ? (
               <Button tabIndex={-1} disabled>
                 <IconConfirm aria-hidden />
-                Processing
+                {submitLabel(progress)}
               </Button>
             ) : !reviewing ? (
               <Button tabIndex={-1} onClick={openReview}>
@@ -2156,7 +2168,7 @@ export default function QueueSection({
                 onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
               >
                 <IconConfirm aria-hidden />
-                {submit.isPending ? "Processing" : `Confirm & ${actionLabel || "create 0"}`}
+                {submit.isPending ? (progress ? submitLabel(progress) : "Checking") : `Confirm & ${actionLabel || "create 0"}`}
               </Button>
             )}
           </div>,

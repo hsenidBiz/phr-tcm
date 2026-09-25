@@ -30,6 +30,9 @@ export type SubmitPhase = {
   total: number;
   /** The title currently being written, for the bar's caption. */
   title: string;
+  /** "checking" while the submit reads what changed - an all-no-op submit
+   * ends there, having uploaded nothing - then "uploading". */
+  stage: "checking" | "uploading";
 } | null;
 
 let phase: SubmitPhase = null;
@@ -58,15 +61,28 @@ export function submitPhaseSnapshot(): SubmitPhase {
 export function submitStarted(org: string, pbiId: number, total: number): number | null {
   if (phase) return null;
   const run = nextRun++;
-  phase = { run, org, pbiId, done: 0, total, title: "" };
+  phase = { run, org, pbiId, done: 0, total, title: "", stage: "checking" };
   emit();
   return run;
 }
 
 export function submitProgressed(done: number, total: number, title: string): void {
   if (!phase) return; // a progress event with no submit is a stray
-  phase = { ...phase, done, total, title };
+  phase = { ...phase, done, total, title, stage: "uploading" };
   emit();
+}
+
+/** The submit found something to write: from here on it is an upload. */
+export function submitUploading(run: number): void {
+  if (!phase || phase.run !== run || phase.stage === "uploading") return;
+  phase = { ...phase, stage: "uploading" };
+  emit();
+}
+
+/** The word the queue's action button shows while `phase` runs: "Checking"
+ * while it is still reading what changed, "Processing" once it uploads. */
+export function submitLabel(phase: NonNullable<SubmitPhase>): string {
+  return phase.stage === "checking" ? "Checking" : "Processing";
 }
 
 /** Clear the phase - only if it is still this run's. */

@@ -8,6 +8,7 @@ import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { useLightbox } from "@astryxdesign/core/Lightbox";
 import AstryxIsland from "../../components/AstryxIsland";
+import SharedStepLabel from "../../components/SharedStepLabel";
 import { commands, type RunOutcome, type TestPoint } from "../../bindings";
 import { outcomeLabel } from "../../lib/outcomes";
 import { unwrap } from "../../lib/ipc";
@@ -130,8 +131,18 @@ export default function CasePreview({
               {tc.steps.map((s, i) => (
                 <tr key={i} className="border-t border-border/40 align-top">
                   <td className="px-2 py-1 text-faint">{i + 1}</td>
-                  <td className="whitespace-pre-wrap px-2 py-1 text-text">{s.action}</td>
-                  <td className="whitespace-pre-wrap px-2 py-1 text-muted">{s.expected}</td>
+                  {s.shared != null ? (
+                    // A Shared Steps reference: its steps live in that work
+                    // item, so it is one named line, not an empty row.
+                    <td colSpan={2} className="px-2 py-1">
+                      <SharedStepLabel id={s.shared} org={org} />
+                    </td>
+                  ) : (
+                    <>
+                      <td className="whitespace-pre-wrap px-2 py-1 text-text">{s.action}</td>
+                      <td className="whitespace-pre-wrap px-2 py-1 text-muted">{s.expected}</td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>

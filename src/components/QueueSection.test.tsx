@@ -324,9 +324,10 @@ test("a fresh mount shows a submit already in flight", async () => {
 /// it, and a stop control that a fresh mount cannot show would be a stop
 /// control missing exactly when someone came back to use it.
 test("an upload in flight shows the sweeping bar first, then the count, and no Stop", async () => {
-  const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
+  const { submitStarted, submitUploading, submitProgressed, submitFinished } = await import("../lib/submitRun");
   baseMocks();
   const run = submitStarted("acme", 42, 10)!;
+  submitUploading(run);
   try {
     renderQueue([makeCase()]);
     // Before the first batch answers: the suite is being resolved and the
@@ -346,6 +347,62 @@ test("an upload in flight shows the sweeping bar first, then the count, and no S
   } finally {
     submitFinished(run);
   }
+});
+
+/// Every queued update already matches Azure DevOps. The pre-flight read
+/// finds nothing to write and the submit ends there - so nothing on screen
+/// may say "Processing" while it looks.
+test("an upload with nothing to change says Checking while it looks, never Processing", async () => {
+  const gate: { open?: (v: unknown) => void } = {};
+  let submits = 0;
+  const base = {
+    title: "Login works",
+    tags: "smoke",
+    automation_status: "Not Automated",
+    steps: [{ action: "Open page", expected: "Page shown" }],
+    step_ids: ["2"],
+    module_value: "",
+    preconditions: "",
+  };
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") {
+      // The queue's own diff read answers at once; the upload's pre-flight
+      // read (made while a submit is running) is held open.
+      if (submitPhaseSnapshot() == null) return [{ id: 201, ...base }];
+      return new Promise((resolve) => {
+        gate.open = resolve;
+      });
+    }
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 201 })]);
+  expect(await screen.findByText(/nothing will change/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Confirm & update 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(gate.open).toBeDefined());
+  expect(screen.getByRole("progressbar", { name: "Checking what changed" })).toBeInTheDocument();
+  expect(screen.getAllByText("Checking").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
+
+  await act(async () => {
+    gate.open?.([{ id: 201, ...base }]);
+  });
+  await waitFor(() => expect(submitPhaseSnapshot()).toBeNull());
+  expect(submits).toBe(0);
+  expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
 });
 
 /// And a submit for a DIFFERENT scope stays invisible - PBI 7's progress
