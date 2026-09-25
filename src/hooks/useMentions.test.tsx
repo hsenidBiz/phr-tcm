@@ -7,23 +7,24 @@ import { toast } from "../lib/toast";
 import { useMentions } from "./useMentions";
 
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn() } }));
-// announce() (the shared toast/OS-notification funnel) must stay real -
-// only the in-view check is forced, so announce's own toast branch runs.
-vi.mock("../lib/assignedAlerts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/assignedAlerts")>()),
-  appIsInView: () => true,
-  osNotify: () => Promise.resolve(true),
-}));
 
+// announce() (the shared toast/OS-notification funnel, in the real,
+// unmocked assignedAlerts module) checks document.hasFocus() itself to
+// decide toast vs OS notification - force that the same way a real
+// focused window would, rather than mocking exports announce does not
+// call through this module's own boundary.
+let hasFocusSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   localStorage.clear();
   resetForTests();
   vi.mocked(toast.info).mockClear();
+  hasFocusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true);
 });
 afterEach(() => {
   clearMocks();
   localStorage.clear();
   resetForTests();
+  hasFocusSpy.mockRestore();
 });
 
 function Probe() {
@@ -61,10 +62,14 @@ test("a work-item mention reaches the bell and a toast, asked for this org and p
   await waitFor(() => expect(stored().map((n) => n.id)).toEqual(["mention:wi:41:7"]));
   expect(asked).toEqual([{ organization: "acme", project: "Web" }]);
   expect(stored()[0]).toMatchObject({ kind: "mention", title: "Sam mentioned you on Product Backlog Item #41" });
-  expect(toast.info).toHaveBeenCalledWith("Sam mentioned you on Product Backlog Item #41", {
-    description: "@Avin can you check this?",
-    duration: 10_000,
-  });
+  // announce()'s toast branch runs off a separate effect than the one that
+  // wrote the bell entry above - wait for it rather than racing it.
+  await waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith("Sam mentioned you on Product Backlog Item #41", {
+      description: "@Avin can you check this?",
+      duration: 10_000,
+    }),
+  );
 });
 
 test("a failed check is logged, raises nothing and shows no toast", async () => {
@@ -77,4 +82,7 @@ test("a failed check is logged, raises nothing and shows no toast", async () => 
   await waitFor(() => expect(logged.some((m) => m.startsWith("mentions: work-item check failed"))).toBe(true));
   expect(stored()).toEqual([]);
   expect(toast.info).not.toHaveBeenCalled();
+  // A failure must not start the org's 24h first-run window either - only
+  // a successful check may.
+  expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBeNull();
 });

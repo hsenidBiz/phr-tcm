@@ -15,6 +15,8 @@ import { isResolved } from "../lib/threadStatus";
 import { unwrap } from "../lib/ipc";
 import { announceMentions, noteMentions, prMentions, prNotification } from "../lib/mentions";
 import { notePrComments, notePrOverview } from "../lib/notifications";
+import { logUi } from "../lib/uiLog";
+import { tourBackendInstalled } from "../tour/tourBackend";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
  * exactly when the user is heads-down elsewhere in the app. */
@@ -69,15 +71,26 @@ export function usePrAttention(org: string, project: string): number {
   }, [signature, org, project]);
 
   // Who "you" are, for the mention scan: the same in-memory, once-per-org
-  // lookup the comments panel uses.
+  // lookup the comments panel uses. `staleTime: Infinity` means it is
+  // fetched once and left alone on success - but a failure must not sit
+  // there forever, or the scan below silently stops for the rest of the
+  // session; retry it on the same interval as every other mention check
+  // until it succeeds.
   const me = useQuery({
     queryKey: ["connected-user", org],
     queryFn: async () => (await unwrap(commands.connectedUser(org))) ?? null,
     enabled: Boolean(org),
     staleTime: Infinity,
+    refetchInterval: (q) => (q.state.status === "error" ? POLL_MS : false),
     retry: false,
   });
   const myId = me.data?.id ?? "";
+
+  useEffect(() => {
+    if (me.error) {
+      logUi(`mentions: PR identity check failed, trying again at the next check: ${me.error.message}`);
+    }
+  }, [me.error, me.errorUpdatedAt]);
 
   // Mentions of you in these same threads, on every thread refresh - no
   // request of their own. The store dedupes, so a rescan raises only
@@ -85,6 +98,10 @@ export function usePrAttention(org: string, project: string): number {
   const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
   useEffect(() => {
     if (!myId) return;
+    // The tour's reads are all stood in, but the writes noteMentions makes
+    // (the seen list, the first-run baseline) are real localStorage under
+    // the sample organisation - nothing here should persist past the tour.
+    if (tourBackendInstalled()) return;
     const found = prs.flatMap((pr, i) =>
       prMentions(pr, threads[i]?.data ?? [], myId).map((m) => ({
         notification: prNotification(org, project, m),
