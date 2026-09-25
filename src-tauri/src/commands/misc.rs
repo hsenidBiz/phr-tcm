@@ -83,9 +83,20 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
 
 /// Download the pending update and restart into it, streaming
 /// `UpdateProgress` so the banner can show how much is left.
+///
+/// Velopack's `apply_updates_and_restart` ends in `std::process::exit`,
+/// which skips the tao event loop entirely - `close_autorun_on_exit`
+/// (lib.rs) never runs. Auto Run's browsers are closed here instead,
+/// before the restart, under the same bound as the exit hook.
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
+    if tokio::time::timeout(std::time::Duration::from_secs(3), crate::commands::autorun::close_autorun_browsers())
+        .await
+        .is_err()
+    {
+        crate::applog::warn("Auto Run's browsers were still closing when the update restarted the app");
+    }
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
         let emitter = app.clone();

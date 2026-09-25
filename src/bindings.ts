@@ -137,6 +137,11 @@ export const commands = {
 	/**
 	 *  Download the pending update and restart into it, streaming
 	 *  `UpdateProgress` so the banner can show how much is left.
+	 * 
+	 *  Velopack's `apply_updates_and_restart` ends in `std::process::exit`,
+	 *  which skips the tao event loop entirely - `close_autorun_on_exit`
+	 *  (lib.rs) never runs. Auto Run's browsers are closed here instead,
+	 *  before the restart, under the same bound as the exit hook.
 	 */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	/**

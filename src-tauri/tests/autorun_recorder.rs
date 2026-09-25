@@ -447,20 +447,34 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     assert!(!recording_is_open().await);
 
     // Review Focus 5: exiting while a Try runs (it holds the recorder, with
-    // no recording to end) stops the Try too, in the Try's own words.
+    // no recording to end) stops the Try too, in the Try's own words - and
+    // waits for its browser to actually close, not just for a cancel to be
+    // asked for. The claim is held the way `auto_run_try_module_path` really
+    // holds it: for the whole call, outliving the check's own browser - so a
+    // freed claim, checked right after `close_autorun_browsers` returns and
+    // before the task is awaited, proves the browser is already gone.
     let rec = RecorderClaim::claim().expect("free again");
-    let tried = tokio::spawn(unless_cancelled(
-        async {
-            tokio::time::sleep(Duration::from_secs(600)).await;
-            Ok::<String, String>("/hr/leave".into())
-        },
-        TRY_CANCELLED,
-    ));
+    let closed = Arc::new(AtomicBool::new(false));
+    let for_task = closed.clone();
+    let tried = tokio::spawn(async move {
+        let _claim = rec;
+        let browser = ClosesOnDrop(for_task);
+        unless_cancelled(
+            async move {
+                let _browser = browser;
+                tokio::time::sleep(Duration::from_secs(600)).await;
+                Ok::<String, String>("/hr/leave".into())
+            },
+            TRY_CANCELLED,
+        )
+        .await
+    });
     tokio::time::sleep(Duration::from_millis(20)).await;
     tokio::time::timeout(Duration::from_secs(5), close_autorun_browsers()).await.expect("bounded");
+    assert!(!recording_is_going(), "close_autorun_browsers waits for the Try's claim to be freed");
+    assert!(closed.load(Ordering::SeqCst), "the Try's browser is already closed when the claim is free");
     let out = tokio::time::timeout(Duration::from_secs(5), tried).await.expect("the Try ends").unwrap();
     assert_eq!(out, Err(TRY_CANCELLED.to_string()));
-    drop(rec);
 
     // With nothing open there is nothing to do, and it returns at once.
     tokio::time::timeout(Duration::from_secs(1), close_autorun_browsers()).await.expect("nothing to close");
