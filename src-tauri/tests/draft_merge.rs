@@ -6,9 +6,10 @@ use serde_json::{json, Value};
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::import_parser::{apply_draft_edits, merge_cases_into_draft, parse_json_text};
 use v2_lib::model::{DraftEdit, TestCase};
+use v2_lib::steps_xml::Step;
 
 fn edit(before: TestCase, after: Option<TestCase>) -> DraftEdit {
-    DraftEdit { before, after }
+    DraftEdit { before, after, occurrence: None }
 }
 
 struct TempDir(std::path::PathBuf);
@@ -348,6 +349,74 @@ fn an_unchanged_row_still_claims_its_entry_so_the_next_same_titled_row_lands_on_
     let doc: Value = serde_json::from_str(&out).unwrap();
     assert!(doc["test_cases"][0].get("id").is_none(), "{out}");
     assert_eq!(doc["test_cases"][1]["id"], 7, "{out}");
+}
+
+/// After a re-sort, the queue's first "X" is the file's SECOND entry. The
+/// app says so (`occurrence`), and each write lands there: every entry keeps
+/// its own extra keys instead of trading them with its twin.
+#[test]
+fn a_named_occurrence_wins_over_queue_order_so_extra_keys_stay_with_their_case() {
+    let old = json!({ "test_cases": [
+        { "title": "X", "author": "first", "steps": [{ "action": "A.", "expected": "" }] },
+        { "title": "X", "author": "second", "steps": [{ "action": "B.", "expected": "" }] }
+    ]})
+    .to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+    let b_edited = TestCase {
+        steps: vec![Step { action: "B, edited.".into(), expected: String::new(), shared: None }],
+        ..row(1)
+    };
+    let out = apply_draft_edits(
+        &old,
+        &[
+            DraftEdit { before: row(1), after: Some(b_edited), occurrence: Some(2) },
+            DraftEdit { before: row(0), after: Some(row(0)), occurrence: Some(1) },
+        ],
+    )
+    .unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"][0]["author"], "first", "{out}");
+    assert_eq!(doc["test_cases"][0]["steps"][0]["action"], "A.", "{out}");
+    assert_eq!(doc["test_cases"][1]["author"], "second", "{out}");
+    assert_eq!(doc["test_cases"][1]["steps"][0]["action"], "B, edited.", "{out}");
+}
+
+/// Titles are compared the way the app compares them: all of Unicode
+/// lowercased, not ASCII only.
+#[test]
+fn a_title_differing_only_in_non_ascii_case_is_the_same_entry() {
+    let old = json!({ "test_cases": [
+        { "title": "ÜBERSICHT", "author": "a", "steps": [{ "action": "A.", "expected": "" }] }
+    ]})
+    .to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let before = TestCase { title: "übersicht".into(), source: Default::default(), ..parsed[0].clone() };
+    let after = TestCase { update_id: Some(3), ..before.clone() };
+    let out = apply_draft_edits(&old, &[edit(before, Some(after))]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"].as_array().unwrap().len(), 1, "{out}");
+    assert_eq!(doc["test_cases"][0]["author"], "a", "{out}");
+}
+
+/// Review Focus 3: the file lost the entry the app named (an assistant
+/// deleted it since the snapshot). The row falls back to the first
+/// unclaimed same-titled entry, and nothing is appended twice.
+#[test]
+fn an_occurrence_the_file_no_longer_has_falls_back_to_the_first_unclaimed_entry() {
+    let old = json!({ "test_cases": [
+        { "title": "X", "author": "only", "steps": [{ "action": "A.", "expected": "" }] }
+    ]})
+    .to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = TestCase { source: Default::default(), ..parsed[0].clone() };
+    let stamped = TestCase { update_id: Some(9), ..row.clone() };
+    let out =
+        apply_draft_edits(&old, &[DraftEdit { before: row, after: Some(stamped), occurrence: Some(2) }]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"].as_array().unwrap().len(), 1, "{out}");
+    assert_eq!(doc["test_cases"][0]["id"], 9, "{out}");
+    assert_eq!(doc["test_cases"][0]["author"], "only", "{out}");
 }
 
 #[test]

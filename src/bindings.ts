@@ -1233,34 +1233,45 @@ export type DraftCommentSaved = {
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit = DraftEdit_Serialize | DraftEdit_Deserialize;
 
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit_Deserialize = {
 	before: TestCase_Deserialize,
 	after: TestCase_Deserialize | null,
+	occurrence?: number | null,
 };
 
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit_Serialize = {
 	before: TestCase_Serialize,
 	after: TestCase_Serialize | null,
+	occurrence?: number | null,
 };
 
 /**

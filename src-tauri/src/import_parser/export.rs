@@ -314,14 +314,15 @@ fn patch_step(raw: &Value, old: &Step, new: &Step) -> Value {
 }
 
 /// The write-back behind `save_draft_cases`. `edits` are the owned queue
-/// rows IN QUEUE ORDER: each one's pre-edit row (`before`) and what it is
-/// now (`after`, `None` = removed). Each `before` finds its entry in the
-/// file by work item id, or by title among id-less entries, the first
-/// unclaimed one in file order - claimed in queue order, so the Nth
-/// same-titled row is the Nth same-titled entry (the app's occurrence rule,
-/// `keysFor`). Found entries are patched or removed. File entries no row
-/// mentions are kept (cases an assistant added since the last sync). A row
-/// whose entry is gone from the file is appended.
+/// rows IN QUEUE ORDER: each one's pre-edit row (`before`), what it is now
+/// (`after`, `None` = removed), and, when the app knows it, which same-titled
+/// entry it is (`occurrence`). Each `before` finds its entry in the file by
+/// work item id, then by `occurrence` among the id-less entries with its
+/// title, then by title alone: the first unclaimed one in file order. Rows
+/// that carry an `occurrence` claim first, so a row the app did not pair
+/// can never take an entry it did. Found entries are patched or removed.
+/// File entries no row mentions are kept (cases an assistant added since
+/// the last sync). A row whose entry is gone from the file is appended.
 ///
 /// An UNCHANGED row (`after == before`: every modelled field, steps with
 /// their Shared Steps references and the work item id included) still
@@ -334,12 +335,23 @@ pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, 
     let old_text = super::strip_bom(old_text);
     let parsed = super::parse_json_text(old_text).map(|p| p.cases).unwrap_or_default();
     let mut claimed = vec![false; parsed.len()];
+    let mut slot: Vec<Option<usize>> = vec![None; edits.len()];
+    for (e, edit) in edits.iter().enumerate() {
+        if edit.occurrence.is_some() {
+            slot[e] = claim_named(&parsed, &mut claimed, &edit.before, edit.occurrence);
+        }
+    }
+    for (e, edit) in edits.iter().enumerate() {
+        if slot[e].is_none() {
+            slot[e] = claim(&parsed, &mut claimed, &edit.before);
+        }
+    }
     // None = untouched; Some(None) = removed; Some(Some(case)) = edited.
     let mut fate: Vec<Option<Option<&TestCase>>> = vec![None; parsed.len()];
     let mut unmatched: Vec<TestCase> = vec![];
-    for edit in edits {
+    for (e, edit) in edits.iter().enumerate() {
         let unchanged = edit.after.as_ref() == Some(&edit.before);
-        match (claim(&parsed, &mut claimed, &edit.before), &edit.after) {
+        match (slot[e], &edit.after) {
             // Claimed (above) but left alone / not brought back.
             _ if unchanged => {}
             (Some(k), after) => fate[k] = Some(after.as_ref()),
@@ -361,17 +373,47 @@ pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, 
     merge_cases_into_draft(old_text, &out)
 }
 
+/// Titles as the app compares them (`caseKey` in fileSync.ts): trimmed, and
+/// lowercased across all of Unicode, not ASCII only.
+fn same_title(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
+}
+
+/// The first unclaimed entry for `want`: by work item id when it has one,
+/// otherwise by title among the id-less entries.
 fn claim(parsed: &[TestCase], claimed: &mut [bool], want: &TestCase) -> Option<usize> {
     let hit = (0..parsed.len()).find(|&k| {
         !claimed[k]
             && match want.update_id {
                 Some(id) => parsed[k].update_id == Some(id),
-                None => {
-                    parsed[k].update_id.is_none()
-                        && parsed[k].title.trim().eq_ignore_ascii_case(want.title.trim())
-                }
+                None => parsed[k].update_id.is_none() && same_title(&parsed[k].title, &want.title),
             }
     })?;
     claimed[hit] = true;
     Some(hit)
+}
+
+/// The entry the app named: by id when the row has one and the file has it,
+/// else the `occurrence`-th id-less entry with the row's title, if that one
+/// is still unclaimed. `None` sends the row to `claim`'s plain rule.
+fn claim_named(
+    parsed: &[TestCase],
+    claimed: &mut [bool],
+    want: &TestCase,
+    occurrence: Option<u32>,
+) -> Option<usize> {
+    if want.update_id.is_some() {
+        if let Some(k) = claim(parsed, claimed, want) {
+            return Some(k);
+        }
+    }
+    let n = occurrence.filter(|n| *n >= 1)? as usize;
+    let k = (0..parsed.len())
+        .filter(|&k| parsed[k].update_id.is_none() && same_title(&parsed[k].title, &want.title))
+        .nth(n - 1)?;
+    if claimed[k] {
+        return None;
+    }
+    claimed[k] = true;
+    Some(k)
 }

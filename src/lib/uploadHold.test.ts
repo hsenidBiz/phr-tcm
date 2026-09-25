@@ -5,7 +5,9 @@ import {
   checkExcludeIds,
   heldRows,
   holdFromResults,
+  holdSignature,
   loadHold,
+  narrowHold,
   reconciledResults,
   saveHold,
   subscribeHold,
@@ -38,6 +40,7 @@ test("only unknown results become a hold, named by the SENT row's title", () => 
     since: "S",
     titles: ["B"],
     ids: [901],
+    sigs: [holdSignature(sent[1])],
   });
   expect(holdFromResults([res(0, "created", 901), res(2, "failed")], sent, "S")).toBeNull();
 });
@@ -122,7 +125,7 @@ test("the hold records the PBI's earlier cases and every id this upload reported
       "S",
       [50, 51, 77],
     ),
-  ).toEqual({ since: "S", titles: ["B"], ids: [50, 51, 77, 901] });
+  ).toEqual({ since: "S", titles: ["B"], ids: [50, 51, 77, 901], sigs: [holdSignature(sent[1])] });
 });
 
 test("a hold stored before ids were recorded still loads, with no ids", () => {
@@ -148,4 +151,36 @@ test("ambiguousRows marks only the rows named by hold.ambiguous, same rule as he
   ]);
   expect(ambiguousRows(queue, { since: "S", titles: ["B", "B"] })).toEqual([false, false, false, false]);
   expect(ambiguousRows(queue, null)).toEqual([false, false, false, false]);
+});
+
+/// Two drafts share a title. Only the second came back unknown, so the
+/// hold must mark THAT row - first-come used to mark the first - and keep
+/// marking it after a re-sort.
+test("a hold marks the same-titled row that was sent, not merely the first one", () => {
+  const a = tc("Login works", { steps: [{ action: "Open A", expected: "" }] });
+  const b = tc("Login works", { steps: [{ action: "Open B", expected: "" }] });
+  const hold = holdFromResults([res(0, "failed"), res(1, "unknown")], [a, b], "S")!;
+  expect(heldRows([a, b], hold)).toEqual([false, true]);
+  expect(heldRows([b, a], hold)).toEqual([true, false]);
+  expect(ambiguousRows([a, b], { ...hold, ambiguous: ["Login works"] })).toEqual([false, true]);
+});
+
+/// Review Focus 2.
+test("a hold stored before signatures existed still marks its rows by title", () => {
+  localStorage.setItem("tcm-v2-upload-hold:acme/42", JSON.stringify({ since: "S", titles: ["B"] }));
+  const hold = loadHold("acme", 42);
+  expect(hold?.sigs).toBeUndefined();
+  expect(heldRows([tc("A"), tc("B"), tc("B")], hold)).toEqual([false, true, false]);
+});
+
+test("a Check keeps each still-held row's own signature", () => {
+  const h = { since: "S", titles: ["A", "B", "B"], ids: [1], sigs: ["sa", "sb1", "sb2"] };
+  expect(narrowHold(h, ["B"], [7])).toEqual({
+    since: "S",
+    titles: ["B", "B"],
+    ambiguous: ["B", "B"],
+    ids: [1, 7],
+    sigs: ["sb1", "sb2"],
+  });
+  expect(narrowHold(h, [], [7])).toBeNull();
 });

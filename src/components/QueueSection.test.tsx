@@ -1992,3 +1992,18 @@ test("a second submit is refused the instant it starts, before its own pre-fligh
 
   releaseFirstPreflight([]);
 });
+
+/// A double-click on Remove: the second click lands before the first has
+/// re-rendered, still carrying the same index - which by then names the
+/// NEXT row. Only the row that was clicked goes.
+test("a double-click on Remove removes that one row, not the next one too", async () => {
+  baseMocks();
+  renderQueue([makeCase({ title: "Alpha case" }), makeCase({ title: "Beta case" })]);
+  const remove = (await screen.findAllByRole("button", { name: "Remove" }))[0];
+  act(() => {
+    fireEvent.click(remove);
+    fireEvent.click(remove);
+  });
+  expect(screen.queryByText("Alpha case")).not.toBeInTheDocument();
+  expect(screen.getByText("Beta case")).toBeInTheDocument();
+});

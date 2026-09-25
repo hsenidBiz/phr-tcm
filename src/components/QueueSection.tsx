@@ -20,7 +20,7 @@ import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
@@ -30,6 +30,7 @@ import {
   heldRows,
   holdFromResults,
   loadHold,
+  narrowHold,
   reconciledResults,
   saveHold,
   subscribeHold,
@@ -909,15 +910,11 @@ export default function QueueSection({
       }
       const { found, ambiguous } = r.data;
       const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
-      const ambiguousSet = new Set(ambiguous.map((t) => t.trim()));
-      const stillHeld = h.titles.filter((t) => ambiguousSet.has(t.trim()));
-      // A smaller hold keeps its ids, plus what this Check just claimed.
-      const ids = [...new Set([...(h.ids ?? []), ...found.map((f) => f.id)])];
-      saveHold(
-        org,
-        pbiId,
-        stillHeld.length > 0 ? { since: h.since, titles: stillHeld, ambiguous: stillHeld, ids } : null,
-      );
+      // A smaller hold keeps its ids, plus what this Check just claimed,
+      // and each still-held row keeps its own content signature.
+      const next = narrowHold(h, ambiguous, found.map((f) => f.id));
+      const stillHeld = next?.titles ?? [];
+      saveHold(org, pbiId, next);
       if (createdResults.length > 0) {
         applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
       }
@@ -1057,7 +1054,14 @@ export default function QueueSection({
         );
       }
       if (known.length > 0) {
-        const files = stampFileSlices(prevQueue, ownerPaths(prevQueue, known), sent, outcomes);
+        const owned = fileOwners(prevQueue, known);
+        const files = stampFileSlices(
+          prevQueue,
+          owned.map((o) => o.path),
+          sent,
+          outcomes,
+          owned.map((o) => o.occurrence),
+        );
         for (const [path, f] of files) {
           if (!f.changed) continue;
           const r = await commands.saveDraftCases(path, f.edits);
@@ -1196,20 +1200,20 @@ export default function QueueSection({
     changed: Set<number>,
   ) => {
     if (watches.length === 0) return;
-    const owners = ownerPaths(prev, watches);
+    const owners = fileOwners(prev, watches);
     // Per file: one edit per owned row IN QUEUE ORDER - the row BEFORE the
-    // edit (how the file finds its own copy - a rename changes the title)
-    // and after it (null = removed). Removals stay interleaved where they
-    // happened, so the Nth same-titled row claims the Nth same-titled entry.
+    // edit (how the file finds its own copy - a rename changes the title),
+    // after it (null = removed), and which same-titled entry of the file
+    // the app paired it with, so Rust writes where the app thinks it does.
     // The file keeps everything else it holds.
     const files = new Map<string, { slice: TestCase[]; edits: DraftEdit[]; touched: boolean }>();
     prev.forEach((before, i) => {
-      const p = owners[i];
+      const { path: p, occurrence } = owners[i];
       if (!p) return;
       const f = files.get(p) ?? { slice: [], edits: [], touched: false };
       const after = next[i];
       if (after) f.slice.push(after);
-      f.edits.push({ before, after });
+      f.edits.push({ before, after, occurrence });
       if (changed.has(i)) f.touched = true;
       files.set(p, f);
     });
@@ -1319,13 +1323,22 @@ export default function QueueSection({
   // The owning FILE follows a single removal exactly as it follows a bulk
   // one: otherwise the next outside save of that file sees the case in
   // both snapshots, not in the queue, and puts it back.
+  //
+  // By identity, not position: a second click that lands before the first
+  // has re-rendered still carries index i, which by then names the NEXT
+  // row. The row object is the identity; a row already on its way out is
+  // not removed twice.
+  const removing = useRef(new WeakSet<TestCase>());
   const removeRow = useCallback(
     (i: number) => {
       const { queue: prev, writeBackOwned: writeBack } = latest.current;
-      setQueue((q) => q.filter((_, j) => j !== i));
+      const target = prev[i];
+      if (!target || removing.current.has(target)) return;
+      removing.current.add(target);
+      setQueue((q) => q.filter((t) => t !== target));
       void writeBack(
         prev,
-        prev.map((t, j) => (j === i ? null : t)),
+        prev.map((t) => (t === target ? null : t)),
         new Set([i]),
       );
     },
