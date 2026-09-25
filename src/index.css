@@ -791,9 +791,11 @@ table {
    screen: a large group rendered its rows a band at a time as the clip edge
    uncovered them, stalling the grow, then rendered the rest in one go when
    the clip came off. Rendered up front, the grow only uncovers rows that are
-   already painted. Once it settles the rows go back to `auto`, and the
-   remembered size above keeps the scrollbar where it was. */
-.t-collapse.is-entering .cv-row {
+   already painted. Only the rows the grow can reach are marked (revealRows
+   there), so the hundreds below the window in a big group stay skipped.
+   Once it settles the marks come off, and the remembered size above keeps
+   the scrollbar where it was. */
+.t-collapse.is-entering .cv-row[data-unfolding] {
   content-visibility: visible;
 }
 

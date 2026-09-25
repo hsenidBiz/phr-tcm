@@ -257,55 +257,174 @@ test("a fold entirely below the window neither animates nor leaves a copy", () =
 const growOf = (m: ReturnType<typeof stubMotion>) =>
   m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"));
 
+/** Run `fn` in a window `height` tall, putting the real height back after. */
+function inWindow(height: number, fn: () => void) {
+  const real = window.innerHeight;
+  window.innerHeight = height;
+  try {
+    fn();
+  } finally {
+    window.innerHeight = real;
+  }
+}
+
 test("a tall fold grows on the even curve, height and fade together", () => {
   // A 1000px group at the top of an 800px window: 800px on screen.
-  window.innerHeight = 800;
-  const m = stubMotion(1000, 0);
-  try {
-    render(<Host />);
-    const grow = growOf(m);
-    expect(grow!.frames).toEqual([{ height: "0px" }, { height: "800px" }]);
-    expect(EASE_TALL).not.toBe(EASE);
-    expect(grow!.opts.easing).toBe(EASE_TALL);
-    const fade = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse-inner"));
-    expect(fade!.opts.easing).toBe(EASE_TALL);
-  } finally {
-    m.restore();
-  }
+  inWindow(800, () => {
+    const m = stubMotion(1000, 0);
+    try {
+      render(<Host />);
+      const grow = growOf(m);
+      expect(grow!.frames).toEqual([{ height: "0px" }, { height: "800px" }]);
+      expect(EASE_TALL).not.toBe(EASE);
+      expect(grow!.opts.easing).toBe(EASE_TALL);
+      const fade = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse-inner"));
+      expect(fade!.opts.easing).toBe(EASE_TALL);
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 test("a short fold keeps the strong ease-out", () => {
-  window.innerHeight = 800;
-  const m = stubMotion(120, 0);
-  try {
-    render(<Host />);
-    expect(growOf(m)!.opts.easing).toBe(EASE);
-  } finally {
-    m.restore();
-  }
+  inWindow(800, () => {
+    const m = stubMotion(120, 0);
+    try {
+      render(<Host />);
+      expect(growOf(m)!.opts.easing).toBe(EASE);
+    } finally {
+      m.restore();
+    }
+  });
 });
 
 test("under prefers-reduced-motion a fold opens without animating", () => {
-  window.innerHeight = 800;
-  const realMatchMedia = window.matchMedia;
-  window.matchMedia = ((q: string) => ({
-    matches: q.includes("prefers-reduced-motion"),
-    media: q,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-  const m = stubMotion(1000, 0);
-  try {
-    render(<Host />);
-    expect(m.calls).toHaveLength(0);
-    expect(document.querySelector(".t-collapse")).not.toHaveClass("is-entering");
-    expect(screen.getByText("Row one")).toBeInTheDocument();
-  } finally {
-    m.restore();
-    window.matchMedia = realMatchMedia;
-  }
+  inWindow(800, () => {
+    const realMatchMedia = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes("prefers-reduced-motion"),
+      media: q,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    const m = stubMotion(1000, 0);
+    try {
+      render(<Host />);
+      expect(m.calls).toHaveLength(0);
+      expect(document.querySelector(".t-collapse")).not.toHaveClass("is-entering");
+      expect(screen.getByText("Row one")).toBeInTheDocument();
+      expect(document.querySelector("[data-unfolding]")).toBeNull();
+    } finally {
+      m.restore();
+      window.matchMedia = realMatchMedia;
+    }
+  });
+});
+
+// ---- Which rows render up front ---------------------------------------------
+// The other half of that report: the group's rows are content-visibility:
+// auto, and a growing fold clips them, so they rendered a band at a time as
+// the clip edge moved. The rows the grow can reach are marked to render
+// before it starts (index.css) - but only those: a group of hundreds must not
+// lay out every row in its opening frame for a grow that shows one window.
+
+/** A 100-row group at the top of the window, each row 40px, with jsdom's
+ * missing layout and Web Animations stood in. */
+function stubRows() {
+  const anims: { el: Element; anim: { cancel(): void; onfinish: (() => void) | null } }[] = [];
+  const realAnimate = Element.prototype.animate;
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.animate = function (this: Element) {
+    const anim = { cancel() {}, onfinish: null as (() => void) | null };
+    anims.push({ el: this, anim });
+    return anim as unknown as Animation;
+  } as typeof Element.prototype.animate;
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    const y = (this as HTMLElement).dataset?.y;
+    const top = y == null ? 0 : Number(y);
+    const height = y == null ? 4000 : 40;
+    return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} } as DOMRect;
+  };
+  return {
+    grow: () => anims.find((a) => (a.el as HTMLElement).classList.contains("t-collapse"))!.anim,
+    restore() {
+      Element.prototype.animate = realAnimate;
+      Element.prototype.getBoundingClientRect = realRect;
+    },
+  };
+}
+
+function Group() {
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+      <Collapse open={open}>
+        <ul>
+          {Array.from({ length: 100 }, (_, i) => (
+            <li key={i} className="cv-row" data-y={i * 40}>
+              Case {i}
+            </li>
+          ))}
+        </ul>
+      </Collapse>
+    </div>
+  );
+}
+
+const rows = () => [...document.querySelectorAll<HTMLElement>(".t-collapse:not(.is-closing) .cv-row")];
+const marked = () => rows().filter((r) => r.hasAttribute("data-unfolding"));
+
+test("a tall grow renders up front only the rows it can reach, until it ends", () => {
+  inWindow(800, () => {
+    const m = stubRows();
+    try {
+      render(<Group />);
+      // 800px on screen plus one more window: rows starting above 1600px.
+      expect(marked()).toEqual(rows().slice(0, 40));
+      expect(rows()[40]).not.toHaveAttribute("data-unfolding");
+      expect(rows()[99]).not.toHaveAttribute("data-unfolding");
+      act(() => m.grow().onfinish?.());
+      expect(document.querySelector("[data-unfolding]")).toBeNull();
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+test("the marks come off by the timer when the grow never reports its end", () => {
+  vi.useFakeTimers();
+  inWindow(800, () => {
+    const m = stubRows();
+    try {
+      render(<Group />);
+      expect(marked()).toHaveLength(40);
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      expect(document.querySelector("[data-unfolding]")).toBeNull();
+    } finally {
+      m.restore();
+    }
+  });
+});
+
+test("closing mid-grow leaves no marked row behind, in the copy or the page", () => {
+  vi.useFakeTimers();
+  inWindow(800, () => {
+    const m = stubRows();
+    try {
+      render(<Group />);
+      expect(marked()).toHaveLength(40);
+      fireEvent.click(screen.getByText("Toggle"));
+      expect(document.querySelector(".is-closing")).not.toBeNull();
+      expect(document.querySelector("[data-unfolding]")).toBeNull();
+    } finally {
+      m.restore();
+    }
+  });
 });

@@ -3,7 +3,9 @@
 // auto), and a growing fold clips its content: every row below the moving
 // clip edge was skipped, rendered a band at a time as the edge uncovered
 // it, and whatever was left rendered in one go when the clip came off.
-// While a fold grows, its rows render like any other content.
+// While a fold grows, the rows it can reach render like any other content -
+// only those (collapse.tsx marks them), so the hundreds below the window in a
+// big group stay skipped.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -19,8 +21,12 @@ function rule(source: string, selector: string): string {
   return source.slice(open + 1, source.indexOf("}", open));
 }
 
-test("rows inside a growing fold are rendered, not skipped", () => {
-  expect(rule(css, ".t-collapse.is-entering .cv-row")).toMatch(/content-visibility:\s*visible\s*;/);
+test("the rows a growing fold marks are rendered, not skipped", () => {
+  expect(rule(css, ".t-collapse.is-entering .cv-row[data-unfolding]")).toMatch(/content-visibility:\s*visible\s*;/);
+});
+
+test("no rule renders every row of a growing fold", () => {
+  expect(css).not.toMatch(/\.t-collapse\.is-entering\s+\.cv-row\s*[,{]/);
 });
 
 test("long-list rows are still skipped off screen once settled", () => {
