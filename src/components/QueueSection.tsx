@@ -195,6 +195,15 @@ export default function QueueSection({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
+  // Freshest known watches: kept in step with the prop on every render (so
+  // an outside sync is seen), and ALSO updated the instant one of THIS
+  // component's own writes lands (`writeBackOwned`) - without waiting for
+  // that write's result to travel all the way back through the parent's
+  // state and down through props again first. A write chained right behind
+  // another on the same file must see the first one's result the moment it
+  // is known, not whenever this component next happens to re-render.
+  const watchesRef = useRef(watches);
+  watchesRef.current = watches;
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
   // The last upload's "what changed" note for testers, or null when it
   // changed nothing a tester would act on. Built from diffs taken just
@@ -1064,42 +1073,59 @@ export default function QueueSection({
         // which this whole callback can be holding well after it was
         // captured (a submit takes as long as the upload does).
         for (const path of new Set(owners.filter((p): p is string => !!p))) {
-          await runOnFileChain(path, async () => {
-            const freshOwned = fileOwners(prevQueue, freshWatches(known));
-            const files = stampFileSlices(
-              prevQueue,
-              freshOwned.map((o) => o.path),
-              sent,
-              outcomes,
-              freshOwned.map((o) => o.occurrence),
-            );
-            const f = files.get(path);
-            if (!f || !f.changed) return;
-            const r = await commands.saveDraftCases(path, f.edits);
-            if (r.status === "error") {
-              toast.warning(
-                `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
-                  `Importing it again would create duplicates - fix the file before re-importing.`,
-                { duration: 20000 },
+          try {
+            await runOnFileChain(path, async () => {
+              // Storage, not the closed-over `known`: this callback can run
+              // well after it was captured, and reading storage fresh -
+              // the same thing `saveWatches` below writes to,
+              // synchronously - is what lets `freshWatches`' stamp check
+              // tell a write still queued behind another apart from one
+              // that is not.
+              const freshOwned = fileOwners(prevQueue, freshWatches(loadWatches(org, sentFor)));
+              const files = stampFileSlices(
+                prevQueue,
+                freshOwned.map((o) => o.path),
+                sent,
+                outcomes,
+                freshOwned.map((o) => o.occurrence),
               );
-              return;
-            }
-            // Storage always: the mount that started this submit may be
-            // gone, and a setter on an unmounted screen never runs its
-            // persist step. Then the screen showing this queue NOW, if
-            // any - not this closure's own callback, which may belong to
-            // that gone mount.
-            //
-            // The snapshot is what Rust says is now IN THE FILE, in file
-            // order - not a queue-order slice of the rows this write
-            // touched. Recorded here, before this task's own promise
-            // resolves, so a write queued behind it on the same path is
-            // built from what THIS write actually did.
-            noteWritten(path, r.data.cases);
-            const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
-            saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
-            queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
-          });
+              const f = files.get(path);
+              if (!f || !f.changed) return;
+              const r = await commands.saveDraftCases(path, f.edits);
+              if (r.status === "error") {
+                toast.warning(
+                  `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
+                    `Importing it again would create duplicates - fix the file before re-importing.`,
+                  { duration: 20000 },
+                );
+                return;
+              }
+              // Storage always: the mount that started this submit may be
+              // gone, and a setter on an unmounted screen never runs its
+              // persist step. Then the screen showing this queue NOW, if
+              // any - not this closure's own callback, which may belong to
+              // that gone mount.
+              //
+              // The snapshot is what Rust says is now IN THE FILE, in file
+              // order - not a queue-order slice of the rows this write
+              // touched. Recorded here, before this task's own promise
+              // resolves, so a write queued behind it on the same path is
+              // built from what THIS write actually did.
+              noteWritten(path, r.data);
+              const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+              saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
+              queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
+            });
+          } catch (e) {
+            // A THROW must not skip the paths after it, nor leave this
+            // fire-and-forget callback with an unhandled rejection.
+            toast.warning(
+              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ` +
+                `${e instanceof Error ? e.message : String(e)}. Importing it again would ` +
+                `create duplicates - fix the file before re-importing.`,
+              { duration: 20000 },
+            );
+          }
         }
       }
       // And the same comment now shows on the case where it LIVES: the
@@ -1238,34 +1264,49 @@ export default function QueueSection({
     // chain ahead of it has by then returned.
     const paths = new Set(fileOwners(prev, watches).flatMap((o) => (o.path ? [o.path] : [])));
     for (const path of paths) {
-      await runOnFileChain(path, async () => {
-        const owners = fileOwners(prev, freshWatches(watches));
-        const edits: DraftEdit[] = [];
-        let touched = false;
-        prev.forEach((before, i) => {
-          const o = owners[i];
-          if (!o || o.path !== path) return;
-          edits.push({ before, after: next[i], occurrence: o.occurrence });
-          if (changed.has(i)) touched = true;
+      try {
+        await runOnFileChain(path, async () => {
+          const owners = fileOwners(prev, freshWatches(watchesRef.current));
+          const edits: DraftEdit[] = [];
+          let touched = false;
+          prev.forEach((before, i) => {
+            const o = owners[i];
+            if (!o || o.path !== path) return;
+            edits.push({ before, after: next[i], occurrence: o.occurrence });
+            if (changed.has(i)) touched = true;
+          });
+          if (!touched) return;
+          const r = await commands.saveDraftCases(path, edits);
+          if (r.status === "error") {
+            // The queue HAS changed - saying so beats pretending nothing did.
+            toast.warning(
+              `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
+                `The file still has the old values.`,
+              { duration: 15000 },
+            );
+            return;
+          }
+          // The snapshot is what Rust says is now IN THE FILE, in file
+          // order - not a queue-order slice of the rows this write touched.
+          // Recorded here, before this chained task's promise resolves, so
+          // a task queued behind it on this path sees it (`noteWritten`),
+          // and so does a task that reads `watchesRef.current` before this
+          // component has re-rendered with the parent's own state update.
+          noteWritten(path, r.data);
+          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+          watchesRef.current = patchWatch(watchesRef.current, path, fields);
+          onWatchPatched?.(path, fields);
         });
-        if (!touched) return;
-        const r = await commands.saveDraftCases(path, edits);
-        if (r.status === "error") {
-          // The queue HAS changed - saying so beats pretending nothing did.
-          toast.warning(
-            `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
-              `The file still has the old values.`,
-            { duration: 15000 },
-          );
-          return;
-        }
-        // The snapshot is what Rust says is now IN THE FILE, in file
-        // order - not a queue-order slice of the rows this write touched.
-        // Recorded here, before this chained task's promise resolves, so
-        // the NEXT task queued for this path (if any) is built from it.
-        noteWritten(path, r.data.cases);
-        onWatchPatched?.(path, { stamp: r.data.stamp, snapshot: r.data.cases });
-      });
+      } catch (e) {
+        // A THROW (not a `{status:"error"}` result) must not skip the
+        // paths after it, nor leave the caller's fire-and-forget
+        // `void writeBackOwned(...)` with an unhandled rejection.
+        toast.warning(
+          `The queue was updated, but ${fileName(path)} could not be written back: ` +
+            `${e instanceof Error ? e.message : String(e)}. The file still has the old values.`,
+          { duration: 15000 },
+        );
+      }
     }
   };
 

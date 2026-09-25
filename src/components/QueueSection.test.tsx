@@ -6,7 +6,7 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../lib/toast";
 import type { TestCase } from "../bindings";
-import { patchWatch, type WatchedFile } from "../lib/fileSync";
+import { patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
 import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
 import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
@@ -2131,15 +2131,44 @@ function fakeDraftBackend(initial: TestCase[], opts: { manualReplies?: boolean }
 
 /** Owns both the queue and the watch state, so a write-back's returned
  * snapshot (`onWatchPatched`) actually feeds the NEXT write-back - the same
- * loop `ImportFile.tsx` runs, and the one the queue-order bug hid inside. */
-function WatchHarness({ initial, initialWatches }: { initial: TestCase[]; initialWatches: WatchedFile[] }) {
+ * loop `ImportFile.tsx` runs, and the one the queue-order bug hid inside.
+ * `setWatches` persists through `saveWatches`, exactly as `ImportFile.tsx`'s
+ * own wrapper does - the post-upload write-back path reads storage fresh
+ * (`loadWatches`), so a test whose watches never reach storage would never
+ * exercise it. `exposeSync` hands the test a way to move the queue and the
+ * watches on from OUTSIDE this module's write-back chain entirely - an
+ * outside sync (an assistant's own edit, picked up by the file watcher). */
+function WatchHarness({
+  initial,
+  initialWatches,
+  org = "acme",
+  pbiId = 42,
+  exposeSync,
+}: {
+  initial: TestCase[];
+  initialWatches: WatchedFile[];
+  org?: string;
+  pbiId?: number;
+  exposeSync?: (sync: (queue: TestCase[], watches: WatchedFile[]) => void) => void;
+}) {
   const [queue, setQueue] = useState<TestCase[]>(initial);
-  const [watches, setWatches] = useState<WatchedFile[]>(initialWatches);
+  const [watches, setWatchesState] = useState<WatchedFile[]>(initialWatches);
+  const setWatches = (next: WatchedFile[] | ((prev: WatchedFile[]) => WatchedFile[])) => {
+    setWatchesState((prev) => {
+      const list = typeof next === "function" ? next(prev) : next;
+      saveWatches(org, pbiId, list);
+      return list;
+    });
+  };
+  exposeSync?.((nextQueue, nextWatches) => {
+    setQueue(nextQueue);
+    setWatches(nextWatches);
+  });
   return (
     <QueueSection
-      org="acme"
+      org={org}
       project="Web"
-      pbiId={42}
+      pbiId={pbiId}
       queue={queue}
       setQueue={setQueue}
       watches={watches}
@@ -2148,11 +2177,15 @@ function WatchHarness({ initial, initialWatches }: { initial: TestCase[]; initia
   );
 }
 
-function renderWatchHarness(initial: TestCase[], initialWatches: WatchedFile[]) {
+function renderWatchHarness(
+  initial: TestCase[],
+  initialWatches: WatchedFile[],
+  extra?: { exposeSync?: (sync: (queue: TestCase[], watches: WatchedFile[]) => void) => void },
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <WatchHarness initial={initial} initialWatches={initialWatches} />
+      <WatchHarness initial={initial} initialWatches={initialWatches} exposeSync={extra?.exposeSync} />
     </QueryClientProvider>,
   );
 }
@@ -2301,7 +2334,12 @@ test("two quick Removes on the same file are serialised, each built from the las
   fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
 
   // Serialised: C's write has not been SENT yet - it is queued behind A's,
-  // which has not replied.
+  // which has not replied. A synchronous check here would be weak (the
+  // chained task itself starts on a microtask, so it would read 1 either
+  // way): give any UNSERIALISED dispatch several real ticks to happen -
+  // without the fix, C's write would already have gone out by now, making
+  // this 2.
+  await new Promise((r) => setTimeout(r, 20));
   expect(backend.pendingCount).toBe(1);
   backend.releaseNext();
 
@@ -2313,4 +2351,123 @@ test("two quick Removes on the same file are serialised, each built from the las
   await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open B."]));
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   expect(await screen.findByDisplayValue("Open B.")).toBeInTheDocument();
+});
+
+// ---- Fix round 3 (review: a Critical new in fix round 2): the remembered
+// ---- snapshot (`draftWriteQueue.ts`) must serve ONLY the writes queued
+// ---- back to back on a file - never a write that comes along later, after
+// ---- something else has moved the file on. Nothing used to clear it, so
+// ---- an outside sync (an assistant's own edit, a queue-card comment, a
+// ---- spec or run-order save) left every write after it pairing against a
+// ---- ghost of the file: an edit of the newly-synced row was silently
+// ---- dropped, and an upload's new id was never stamped into the file it
+// ---- actually lives in - a future duplicate. ------------------------------
+
+/// Write X, then an outside sync adds N (to the file, the watch AND the
+/// queue - the way a real file-watcher sync does), then edit N. The edit
+/// must land in the file, not be silently skipped because a stale
+/// remembered snapshot from the FIRST write still says N is unowned.
+test("an edit of a row an outside sync just added is not silently skipped", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+  mockDraftBackend(backend);
+
+  renderWatchHarness([X], [{ path: "C:/d/x7.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X, and let the write-back fully finish - the chain drains, so the
+  // OLD fix's remembered snapshot would (wrongly) still be sitting there
+  // for every write after this one.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open X."]));
+
+  // An outside sync lands: an assistant added N. This moves the file, the
+  // watch's snapshot AND stamp, and the queue - entirely outside this
+  // module's write-back chain, exactly like `ImportFile.tsx`'s own
+  // `syncFromFile` flow.
+  const editedX = backend.file[0];
+  const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+  backend.file.push(N);
+  act(() => {
+    sync!([editedX, N], [{ path: "C:/d/x7.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+  });
+
+  // Edit N.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "N, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() =>
+    expect(backend.file.map((c) => c.steps[0].expected)).toEqual(["X, edited.", "N, edited."]),
+  );
+});
+
+/// Same setup, but the second action is an upload instead of an edit: N's
+/// new work item id must be written back into the file it actually lives
+/// in, or re-importing that file creates N a second time in Azure DevOps.
+test("an upload of a row an outside sync just added still gets its new id stamped into the file", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      return a.queue.map((tc, index) => ({
+        index,
+        title: tc.title,
+        action: "created",
+        id: tc.title === "N" ? 901 : 900,
+        error: null,
+      }));
+    }
+    return undefined;
+  });
+
+  renderWatchHarness([X], [{ path: "C:/d/x8.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X, and let the write-back fully finish - the chain drains.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open X."]));
+
+  // An outside sync adds N - to the file, the watch AND the queue.
+  const editedX = backend.file[0];
+  const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+  backend.file.push(N);
+  act(() => {
+    sync!([editedX, N], [{ path: "C:/d/x8.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+  });
+
+  // Upload both.
+  fireEvent.click(await screen.findByRole("button", { name: /Review 2 test cases/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 2/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(backend.file.find((c) => c.title === "N")?.update_id).toBe(901));
 });
