@@ -81,6 +81,11 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 [target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+# Each database's login is kept in Windows Credential Manager rather than
+# in a file or the webview's storage - see db/credentials.rs.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
 [dev-dependencies]
 wiremock = "0.6.5"
 tempfile = "3"

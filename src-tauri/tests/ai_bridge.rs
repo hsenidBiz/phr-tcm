@@ -1763,25 +1763,25 @@ mod db_tests {
         }
     }
 
-    fn preset(label: &str) -> Connection {
-        let p = DB_PRESETS.iter().find(|p| p.label == label).expect("the preset");
+    fn preset(id: &str) -> Connection {
+        let p = DB_PRESETS.iter().find(|p| p.id == id).expect("the preset");
         parse_connection(p.connection_string).expect("the preset parses")
     }
 
     fn read_only() -> Connection {
-        preset("Dev \u{2014} read only")
+        preset("dev-read")
     }
 
     fn dev_login() -> Connection {
-        preset("Dev \u{2014} dev login")
+        preset("dev-login")
     }
 
     fn exe() -> PathBuf {
         PathBuf::from("sqlcmd.exe")
     }
 
-    fn with_connection(label: &str, writes: bool) -> BridgeContext {
-        let p = DB_PRESETS.iter().find(|p| p.label == label).expect("the preset");
+    fn with_connection(id: &str, writes: bool) -> BridgeContext {
+        let p = DB_PRESETS.iter().find(|p| p.id == id).expect("the preset");
         BridgeContext {
             db_connection_string: Some(p.connection_string.to_string()),
             db_writes: writes,
@@ -1814,7 +1814,7 @@ mod db_tests {
         let before = std::env::var(SQLCMD_OVERRIDE).ok();
         std::env::set_var(SQLCMD_OVERRIDE, "Z:\\no\\such\\sqlcmd.exe");
 
-        let c = with_connection("Dev \u{2014} read only", false);
+        let c = with_connection("dev-read", false);
         for (path, body) in [
             ("/db-lookup", r#"{"query":"leave"}"#),
             ("/db-query", r#"{"sql":"SELECT 1"}"#),
@@ -1832,7 +1832,7 @@ mod db_tests {
 
     #[tokio::test]
     async fn a_lookup_with_no_words_is_refused_before_anything_runs() {
-        let c = with_connection("Dev \u{2014} read only", false);
+        let c = with_connection("dev-read", false);
         for body in [r#"{"query":""}"#, r#"{"query":"   "}"#, "{}"] {
             let (status, said) = route(&c, None, "POST", "/db-lookup", body, "1.0.0").await;
             assert_eq!(status, 400, "{body}: {said}");

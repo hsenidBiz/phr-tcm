@@ -14,9 +14,13 @@ pub const DEFAULT_EXE_PATH: &str = "";
 pub const DEFAULT_DB_TYPE: &str = "mssql";
 pub const DEFAULT_SCHEMA_FILTER: &str = "PeoplesHR";
 
-/// One shipped environment: a label for the dropdown and the full
+/// One shipped environment: a stable id, a label for the dropdown and the full
 /// connection string it stands for.
+#[derive(Clone, Copy)]
 pub struct DbPreset {
+    /// What a saved login and a chosen connection are keyed on. The label is
+    /// copy and may be reworded; an id, once shipped, never changes.
+    pub id: &'static str,
     pub label: &'static str,
     pub connection_string: &'static str,
 }
@@ -26,15 +30,18 @@ pub struct DbPreset {
 /// read-only dev login leads - the least a set of defaults can hand out.
 pub const DB_PRESETS: &[DbPreset] = &[
     DbPreset {
-        label: "Dev — read only",
+        id: "dev-read",
+        label: "Dev - read only",
         connection_string: "Server=sgdev01db02.cloud;Database=hrmmain_philippines;User Id=sgdev01db02_readonly;Password=M5kjapL2H3bEIuZZ4YA4;TrustServerCertificate=True;",
     },
     DbPreset {
-        label: "Dev — dev login",
+        id: "dev-login",
+        label: "Dev - dev login",
         connection_string: "Server=sgdev01db02.cloud;Database=hrmmain_philippinesdev;User Id=sgdev01db01_devlogin;Password=abc123@@@###;TrustServerCertificate=True;",
     },
     DbPreset {
-        label: "QA — read only",
+        id: "qa-read",
+        label: "QA - read only",
         connection_string: "Server=sgqa01db01.cloud;Database=hrmmain_philippines;User Id=sgqa01db01_readonly;Password=nhi5tJF9pfnsgynODZXA;TrustServerCertificate=True;",
     },
 ];

@@ -55,7 +55,7 @@ fn read_only_preset() -> Connection {
 }
 
 fn dev_login_preset() -> Connection {
-    let p = DB_PRESETS.iter().find(|p| p.label == "Dev — dev login").expect("the dev login preset");
+    let p = DB_PRESETS.iter().find(|p| p.id == "dev-login").expect("the dev login preset");
     parse_connection(p.connection_string).unwrap()
 }
 

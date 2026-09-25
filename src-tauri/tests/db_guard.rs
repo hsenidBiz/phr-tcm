@@ -22,12 +22,12 @@ fn only_the_dev_login_preset_may_write() {
     let writers: Vec<&str> = DB_PRESETS
         .iter()
         .filter(|p| access_for(p.connection_string) == Access::DevWrites)
-        .map(|p| p.label)
+        .map(|p| p.id)
         .collect();
-    assert_eq!(writers, vec!["Dev — dev login"]);
+    assert_eq!(writers, vec!["dev-login"]);
     for p in DB_PRESETS {
         let expected =
-            if p.label == "Dev — dev login" { Access::DevWrites } else { Access::ReadOnly };
+            if p.id == "dev-login" { Access::DevWrites } else { Access::ReadOnly };
         assert_eq!(access_for(p.connection_string), expected, "{}", p.label);
     }
 }
