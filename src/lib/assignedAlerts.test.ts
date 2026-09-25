@@ -62,9 +62,9 @@ test("the app counts as in view only when focused AND not hidden", () => {
   expect(appIsInView()).toBe(false);
 });
 
-/// Fix round 1, Important #1: `announce` is the one place a new
-/// assignment and a mention both reach the user through, so both are
-/// covered by testing it directly, once, here.
+/// `announce` is the one place a new assignment and a mention both reach
+/// the user through, so both are covered by testing it directly, once,
+/// here.
 test("announce is a toast when the app is in view", () => {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);

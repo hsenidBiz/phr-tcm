@@ -191,3 +191,62 @@ test("a failed identity lookup is logged and retried, and the PR scan resumes on
     vi.useRealTimers();
   }
 });
+
+/// `reSignIn` invalidates connected-user, pr-overview and pr-threads
+/// together. If a thread refresh settles before identity does, scanning
+/// with the still-cached (about to be stale) `myId` would raise a mention
+/// meant for whoever is signing OUT. The scan must wait for identity to
+/// settle - `isFetching` alone is not enough, since a failed refetch keeps
+/// the previous `data` too (covered by the isError branch of the previous
+/// test, which resumes once the retry succeeds).
+test("the mention scan holds a new comment back until an in-flight identity refetch settles", async () => {
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  let userCalls = 0;
+  let resolveSecondUser: ((v: unknown) => void) | undefined;
+  let comments = [
+    { id: 5, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<ME-GUID> can you look?", published: hourAgo, edited: false },
+  ];
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") {
+      userCalls += 1;
+      if (userCalls === 1) return { id: "me-guid", display_name: "Avin" };
+      return new Promise((resolve) => {
+        resolveSecondUser = resolve;
+      });
+    }
+    if (cmd === "pr_overview") return { mine: [pr(1)], awaiting: [] };
+    if (cmd === "pr_threads")
+      return [{ id: 30, status: "active", file_path: "", line: 0, last_updated: hourAgo, comments }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const ids = () =>
+    (JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string }>).map((n) => n.id);
+  await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:5"));
+
+  // A second comment arrives, at the same moment identity starts a refetch
+  // that this test holds open.
+  comments = [
+    ...comments,
+    { id: 6, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<ME-GUID> and this too", published: hourAgo, edited: false },
+  ];
+  await act(async () => {
+    qc.invalidateQueries({ queryKey: ["connected-user", "acme"] });
+  });
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-threads", "acme", "Web", "web", 1] });
+  });
+  // The new comment is in, but identity is still mid-refetch: it must not
+  // be scanned yet, whatever the stale id would have matched.
+  expect(ids()).not.toContain("mention:pr:web:1:30:6");
+
+  // Identity settles - the deferred scan now runs and raises what it held.
+  await act(async () => {
+    resolveSecondUser?.({ id: "me-guid", display_name: "Avin" });
+  });
+  await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:6"));
+});

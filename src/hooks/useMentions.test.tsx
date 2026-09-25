@@ -62,8 +62,10 @@ test("a work-item mention reaches the bell and a toast, asked for this org and p
   await waitFor(() => expect(stored().map((n) => n.id)).toEqual(["mention:wi:41:7"]));
   expect(asked).toEqual([{ organization: "acme", project: "Web" }]);
   expect(stored()[0]).toMatchObject({ kind: "mention", title: "Sam mentioned you on Product Backlog Item #41" });
-  // announce()'s toast branch runs off a separate effect than the one that
-  // wrote the bell entry above - wait for it rather than racing it.
+  // Belt and braces: noteMentions and announceMentions run in the same
+  // synchronous effect as the bell write above, so this is already true by
+  // the time that assertion runs - waitFor only matters if announce() ever
+  // takes the async OS-notification path instead of the toast.
   await waitFor(() =>
     expect(toast.info).toHaveBeenCalledWith("Sam mentioned you on Product Backlog Item #41", {
       description: "@Avin can you check this?",

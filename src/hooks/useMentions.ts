@@ -11,7 +11,6 @@ import { commands } from "../bindings";
 import { unwrap } from "../lib/ipc";
 import { announceMentions, noteMentions, workItemNotification } from "../lib/mentions";
 import { logUi } from "../lib/uiLog";
-import { tourBackendInstalled } from "../tour/tourBackend";
 
 export const MENTIONS_POLL_MS = 5 * 60_000;
 
@@ -29,10 +28,8 @@ export function useMentions(org: string, project: string): void {
 
   useEffect(() => {
     if (!mentions.data) return;
-    // The tour's reads are all stood in, but the writes noteMentions makes
-    // (the seen list, the first-run baseline) are real localStorage under
-    // the sample organisation - nothing here should persist past the tour.
-    if (tourBackendInstalled()) return;
+    // The tour guard lives in noteMentions itself (the write chokepoint),
+    // not here - see mentions.ts.
     announceMentions(
       noteMentions(
         org,

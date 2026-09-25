@@ -16,7 +16,6 @@ import { unwrap } from "../lib/ipc";
 import { announceMentions, noteMentions, prMentions, prNotification } from "../lib/mentions";
 import { notePrComments, notePrOverview } from "../lib/notifications";
 import { logUi } from "../lib/uiLog";
-import { tourBackendInstalled } from "../tour/tourBackend";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
  * exactly when the user is heads-down elsewhere in the app. */
@@ -94,14 +93,19 @@ export function usePrAttention(org: string, project: string): number {
 
   // Mentions of you in these same threads, on every thread refresh - no
   // request of their own. The store dedupes, so a rescan raises only
-  // what is new.
+  // what is new. The tour guard lives in noteMentions itself (the write
+  // chokepoint), not here - see mentions.ts.
+  //
+  // Skipped while the identity query is unsettled: `reSignIn` invalidates
+  // `connected-user`, `pr-overview` and `pr-threads` together, and a
+  // thread result that lands before identity does would otherwise scan
+  // with the PREVIOUS account's id. `isFetching` alone is not enough - a
+  // failed refetch keeps the old `data` and would resume scanning with the
+  // stale id on the very next thread refresh - so `isError` gates it too.
+  // The existing retry interval on `me` (above) recovers from that state.
   const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
   useEffect(() => {
-    if (!myId) return;
-    // The tour's reads are all stood in, but the writes noteMentions makes
-    // (the seen list, the first-run baseline) are real localStorage under
-    // the sample organisation - nothing here should persist past the tour.
-    if (tourBackendInstalled()) return;
+    if (!myId || me.isFetching || me.isError) return;
     const found = prs.flatMap((pr, i) =>
       prMentions(pr, threads[i]?.data ?? [], myId).map((m) => ({
         notification: prNotification(org, project, m),
@@ -110,7 +114,7 @@ export function usePrAttention(org: string, project: string): number {
     );
     announceMentions(noteMentions(org, found));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadStamp, myId, org, project]);
+  }, [threadStamp, myId, me.isFetching, me.isError, me.dataUpdatedAt, org, project]);
 
   return prs.filter((pr, i) => pr.has_conflicts || unresolvedFor(i) > 0).length;
 }
