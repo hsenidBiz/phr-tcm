@@ -21,6 +21,7 @@ import AiBridge from "./screens/AiBridge";
 import PrPanel from "./screens/PrPanel";
 import Settings from "./screens/Settings";
 import SignIn from "./screens/SignIn";
+import WorkBoard from "./screens/WorkBoard";
 
 // axe walks the whole rendered tree of a real screen, which is slow by
 // nature: Settings sits around 4.5s idle and has crossed vitest's 5s
@@ -95,4 +96,25 @@ test("Pull Requests panel is accessible", async () => {
     if (cmd === "repo_pull_requests") return [];
   });
   await expectAccessible(<PrPanel org="acme" project="Web" />);
+});
+
+test("Work Manager board with swimlanes is accessible", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const item = (id: number, title: string, parent: unknown) => ({
+    id, title, work_item_type: "Task", state: "To Do", state_color: "b2b2b2", column: "To Do",
+    assigned_to: "Avin", tags: "", priority: 2, changed_date: "2026-09-24T00:00:00Z", parent,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        items: [
+          item(21, "Draft the form", { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" }),
+          item(22, "Loose task", null),
+        ],
+        states_by_type: {},
+      };
+    if (cmd === "classification_paths") return [];
+    if (cmd === "board_pr_links") return [];
+  });
+  await expectAccessible(<WorkBoard org="acme" project="Web" />);
 });
