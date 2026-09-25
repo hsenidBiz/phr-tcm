@@ -195,13 +195,104 @@ test("restoreUnsaved carries a refused save's text and status onto the matching 
   await flush();
   expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
 
-  // What a live swap does: fresh markup, same data-case identity, the
-  // file's OLDER text and no status - adopted in place of the old box.
+  // What a live swap does: fresh markup, the SAME case (same path + key in
+  // the fresh #tc-data, even though it is still slot 0 here), the file's
+  // OLDER text and no status - adopted in place of the old box.
   document.body.innerHTML =
-    '<textarea data-case="0" data-status="st">older text from disk</textarea><div id="st"></div>';
+    '<textarea data-case="0" data-status="st">older text from disk</textarea><div id="st"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "", id: null, title: "T", key: "t:t" }],
+      files: [],
+    })}</script>`;
   N.restoreUnsaved(document);
   expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
   expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+});
+
+/// Review round 1 re-review, Important A: `data-case`/`data-file` are this
+/// RENDER's slot, not a stable identity. Keying a carried failure by slot
+/// alone would misfile it onto whatever case a swap moves into that slot.
+test("restoreUnsaved keys a case box by path+key, not by slot - a case inserted ahead does not misfile the failed text", async () => {
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st0"></textarea><div id="st0"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "f.json", id: null, title: "Login", key: "t:login#0" }],
+      files: [],
+    })}</script>`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box0 = document.querySelector("textarea") as HTMLTextAreaElement;
+  box0.value = "unsaved login note";
+  box0.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved — duplicate");
+
+  // A live swap inserts a NEW case ahead of it: "Login" is now slot 1.
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="stA"></textarea><div id="stA"></div>' +
+    '<textarea data-case="1" data-status="stB"></textarea><div id="stB"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [
+        { path: "f.json", id: null, title: "New case", key: "t:new#0" },
+        { path: "f.json", id: null, title: "Login", key: "t:login#0" },
+      ],
+      files: [],
+    })}</script>`;
+  N.restoreUnsaved(document);
+
+  const boxes = Array.from(document.querySelectorAll("textarea")) as HTMLTextAreaElement[];
+  // Slot 0 now belongs to the NEW case - it must not inherit the stale text.
+  expect(boxes[0].value).toBe("");
+  expect(document.getElementById("stA")!.textContent).toBe("");
+  // Slot 1 is the ORIGINAL case, found by identity, not by slot.
+  expect(boxes[1].value).toBe("unsaved login note");
+  expect(document.getElementById("stB")!.textContent).toBe("Not saved — duplicate");
+});
+
+/// Same identity rule, the other named risk: once the failed case is gone
+/// from the file, nothing should show its text - not even the box that
+/// happens to inherit its old slot.
+test("restoreUnsaved drops a failed comment once its case is removed - it is not shown under another box", async () => {
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st0"></textarea><div id="st0"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "f.json", id: null, title: "Login", key: "t:login#0" }],
+      files: [],
+    })}</script>`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box0 = document.querySelector("textarea") as HTMLTextAreaElement;
+  box0.value = "unsaved login note";
+  box0.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved — duplicate");
+
+  // The failed case is removed from the file; a DIFFERENT case now sits at
+  // the same slot 0.
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="stA"></textarea><div id="stA"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "g.json", id: null, title: "Other case", key: "t:other#0" }],
+      files: [],
+    })}</script>`;
+  N.restoreUnsaved(document);
+
+  const boxA = document.querySelector("textarea") as HTMLTextAreaElement;
+  expect(boxA.value).toBe("");
+  expect(document.getElementById("stA")!.textContent).toBe("");
 });
 
 /// A save that DID succeed must not leave a stale entry behind - the next
