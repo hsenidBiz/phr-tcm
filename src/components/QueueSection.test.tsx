@@ -2127,6 +2127,13 @@ function fakeDraftBackend(initial: TestCase[], opts: { manualReplies?: boolean }
     releaseNext() {
       pending.shift()?.();
     },
+    /** `save_draft_comment`: sets the comment on the entry carrying `id`
+     * and returns the file's new stamp. */
+    saveComment(id: number, text: string) {
+      file = file.map((f) => (f.update_id === id ? { ...f, comment: text } : f));
+      n += 1;
+      return `s${n}`;
+    },
     save(edits: FakeEdit[]) {
       const claimed = file.map(() => false);
       const slot: (number | null)[] = edits.map(() => null);
@@ -2408,6 +2415,73 @@ test("two quick Removes on the same file are serialised, each built from the las
   await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open B."]));
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   expect(await screen.findByDisplayValue("Open B.")).toBeInTheDocument();
+});
+
+/// A stored note filling an id row's empty comment is patched into the
+/// file too. That patch replaces the watch's snapshot for the WHOLE file,
+/// so it must not put back a case list from before a Remove that finished
+/// while the patch was in flight: the id-less twins in the same file would
+/// then be paired with the wrong entries by the next write.
+test("a note patched into the file mid-Remove does not put the removed twin back into the snapshot", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "77": "Note for R" }));
+  const R = makeCase({ update_id: 77, title: "R", steps: [{ action: "Open R.", expected: "" }] });
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([R, A, B, C]);
+  let releaseComment: (() => void) | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "save_draft_comment") {
+      const a = args as { id: number; text: string };
+      return new Promise((resolve) => {
+        releaseComment = () => resolve(backend.saveComment(a.id, a.text));
+      });
+    }
+    return undefined;
+  });
+
+  renderWatchHarness([R, A, B, C], [{ path: "C:/d/n.json", stamp: "s0", snapshot: [R, A, B, C] }]);
+
+  // The note fills R's card, and its file patch is sent but held back.
+  expect(await screen.findByText("Note for R")).toBeInTheDocument();
+  await waitFor(() => expect(releaseComment).not.toBeNull());
+
+  // Remove A while the note's patch is still in flight.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  await new Promise((r) => setTimeout(r, 20));
+  act(() => releaseComment!());
+
+  await waitFor(() =>
+    expect(backend.file.map((c) => [c.steps[0].action, c.comment ?? ""])).toEqual([
+      ["Open R.", "Note for R"],
+      ["Open B.", ""],
+      ["Open C.", ""],
+    ]),
+  );
+
+  // Edit B - queue index 1 now that A is gone.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "B, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  // B's own entry takes the edit and C survives - not [R, B, B'].
+  await waitFor(() =>
+    expect(backend.file.map(stepText)).toEqual([
+      ["Open R.", ""],
+      ["Open B.", "B, edited."],
+      ["Open C.", ""],
+    ]),
+  );
 });
 
 // ---- Fix round 3 (review: a Critical new in fix round 2): the remembered

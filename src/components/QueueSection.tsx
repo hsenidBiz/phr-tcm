@@ -364,6 +364,14 @@ export default function QueueSection({
     // The file learns it too, one targeted comment patch per case (never
     // a whole-file rewrite for this), and the watch is told the stamp so
     // the app's own write is not reported back as an outside edit.
+    //
+    // Each patch waits its turn on the file's write chain, like every
+    // write-back does. The snapshot it hands on is read from the watch as
+    // it stands AFTER the patch landed, not from the list captured when
+    // this effect ran: a Remove or an edit can finish on the same file
+    // while this loop is still going, and putting the older case list back
+    // at the file's newest stamp would make the next write pair same-titled
+    // rows with the wrong entries.
     const known = watches ?? [];
     if (known.length === 0) return;
     const owners = ownerPaths(queue, known);
@@ -372,15 +380,24 @@ export default function QueueSection({
         const path = owners[i];
         if (!path) continue;
         const tc = queue[i];
-        const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
-        if (r.status !== "ok" || !onWatchPatched) continue;
-        const w = known.find((x) => x.path === path);
-        onWatchPatched(path, {
-          stamp: r.data,
-          snapshot: (w?.snapshot ?? []).map((c) =>
-            c.update_id === tc.update_id ? { ...c, comment: text } : c,
-          ),
-        });
+        try {
+          await runOnFileChain(path, async () => {
+            const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
+            if (r.status !== "ok") return;
+            const w = freshWatches(watchesRef.current).find((x) => x.path === path);
+            if (!w) return;
+            const snapshot = w.snapshot.map((c) =>
+              c.update_id === tc.update_id ? { ...c, comment: text } : c,
+            );
+            noteWritten(path, { stamp: r.data, cases: snapshot });
+            const fields = { stamp: r.data, snapshot };
+            watchesRef.current = patchWatch(watchesRef.current, path, fields);
+            onWatchPatched?.(path, fields);
+          });
+        } catch {
+          // The note is still on the card and in View Test Cases; a patch
+          // that could not reach the file is not worth stopping the rest.
+        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
