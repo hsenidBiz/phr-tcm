@@ -1,5 +1,4 @@
-// How a newly-assigned work item - or, since Task 5, a mention - reaches
-// the user.
+// How a newly-assigned work item, or a mention, reaches the user.
 //
 // In the app: a toast, because they are looking at it. Not in the app: a
 // Windows notification, because a toast behind another window is the same
