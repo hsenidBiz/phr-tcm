@@ -352,6 +352,12 @@
       wireMarks();
       if (window.__tcmWireNotes) window.__tcmWireNotes();
       if (window.__tcmWireSpecs) window.__tcmWireSpecs();
+      // A save that did not succeed - timed out, the app was closed, or it
+      // was refused - must survive this: the fresh copy just adopted carries
+      // the file's OLDER text and no status at all, which would otherwise
+      // silently overwrite what the reviewer typed and erase what they were
+      // told about it.
+      if (window.tcmNotes && window.tcmNotes.restoreUnsaved) window.tcmNotes.restoreUnsaved(document);
       window.scrollTo(0, y);
       return true;
     }
@@ -384,7 +390,10 @@
           if (ae && ae.tagName === 'TEXTAREA') { return; }
           if (window.tcmNotes && window.tcmNotes.busy() > 0) { return; }
           var target = v.revision;
-          fetch(base + '/report?' + qs)
+          // Returned into the chain: without it, the next poll was armed
+          // while a slow /report was still in flight, and could start a
+          // second fetch and swap for the very same revision.
+          return fetch(base + '/report?' + qs)
             .then(function (r) {
               if (!r.ok) { throw new Error('no report'); }
               return r.text();

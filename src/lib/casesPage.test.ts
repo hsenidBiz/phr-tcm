@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(resolve(here, "../../src-tauri/web/cases-page.js"), "utf8");
+const notesSrc = readFileSync(resolve(here, "../../src-tauri/web/cases-notes.js"), "utf8");
 
 type Page = {
   openState: (root: ParentNode) => Record<string, boolean>;
@@ -157,4 +158,86 @@ test("a closed app is asked less and less often, and an answer brings the 4 s po
   expect(versionAsks()).toBe(3);
   await poll(); // 32 s: back to every 4 s
   expect(versionAsks()).toBe(4);
+});
+
+// A page with one comment box, for the two tests below. Its identity
+// (data-case="0") is what a live swap must use to reunite the fresh box
+// with a save that had not succeeded on the old one.
+function pageWithNote(seq: string, note: string): string {
+  return `<div class="page">
+    <div id="tc-stale" role="status"><span>changed</span><button type="button" id="tc-stale-go">Refresh</button></div>
+    <div class="searchbar"><input id="tc-search" type="search">
+      <button id="tc-findings" type="button" aria-pressed="false">Hide findings</button><span id="tc-count"></span></div>
+    <div class="case"><h2><span class="seq">${seq}</span>Login</h2></div>
+    <div class="note"><label>My comment <span id="st" class="note-status"></span></label>
+      <textarea class="note-box" data-case="0" data-status="st">${note}</textarea></div>
+    <script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "", id: null, title: "T", key: "t:t" }],
+      files: [],
+    })}</script>
+  </div>`;
+}
+
+/// Review round 1, Important 1: freeing a timed-out save's box (so the poll
+/// no longer waits on it forever) opened a new hole - the very next live
+/// swap silently replaced the reviewer's unsaved text, and the status that
+/// told them about it, with the file's older copy.
+test("a save that times out keeps its text and status through the next live swap", async () => {
+  document.body.innerHTML = pageWithNote("1", "old");
+  new Function(notesSrc)();
+
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      if (url.includes("/note")) return new Promise(() => {}); // never answers
+      if (url.includes("/version")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ revision: 2 }) });
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(`<!DOCTYPE html><html><body>${pageWithNote("1", "fresh from disk")}</body></html>`),
+      });
+    }),
+  );
+
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "unsaved edit";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600); // the debounce fires; the save hangs
+  const timeoutMs = (window as unknown as { tcmNotes: { timeoutMs: number } }).tcmNotes.timeoutMs;
+  await later(timeoutMs);
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
+
+  await poll(); // the revision moved: the swap would otherwise adopt the older copy
+  expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
+});
+
+/// Same loss, reached through a refusal instead of a timeout - the review's
+/// "covers the timeout, closed and refused paths alike".
+test("a refused save keeps its text and status through the next live swap", async () => {
+  document.body.innerHTML = pageWithNote("1", "old");
+  new Function(notesSrc)();
+
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      if (url.includes("/note")) return Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) });
+      if (url.includes("/version")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ revision: 2 }) });
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(`<!DOCTYPE html><html><body>${pageWithNote("1", "fresh from disk")}</body></html>`),
+      });
+    }),
+  );
+
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "unsaved edit";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await later(0);
+  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+
+  await poll();
+  expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
 });

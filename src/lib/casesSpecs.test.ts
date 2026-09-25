@@ -212,6 +212,30 @@ test("a citation still finds a heading written without letter case", () => {
   expect(H.matchHeading(headings, "ログイン 画面")).toBe(2);
 });
 
+// Review round 1: the slug switched from a hand-picked block list to the
+// Unicode L/N/M class (built with \p{} at runtime). These pin that the
+// switch changed nothing for the ids already in the wild.
+test("ASCII and accented-Latin slugs are unchanged by the switch to \\p{L}\\p{N}\\p{M}", () => {
+  expect(H.slug("5.8 Display Rules")).toBe("5-8-display-rules");
+  expect(H.slug("Café résumé naïve")).toBe("café-résumé-naïve");
+  expect(H.slug("Überblick – Ärger")).toBe("überblick-ärger");
+});
+
+/// \p{M} alone would let an emoji's variation selector (U+FE0F, category
+/// Mn) start a "word" of its own - invisible, and first in the id. A mark
+/// must only continue a word already open, the way a combining accent
+/// decorates the letter right before it.
+test("a bare mark such as an emoji's variation selector never starts a word", () => {
+  expect(H.slug("⚠️ Warning")).toBe("warning");
+});
+
+/// The hand-picked block list dropped these as punctuation/symbols; \p{N}
+/// and \p{L} correctly keep them.
+test("a heading with a fraction or a letterlike symbol keeps that character", () => {
+  expect(H.slug("Add 1½ cups")).toBe("add-1½-cups");
+  expect(H.slug("Set ℂ")).toBe("set-ℂ");
+});
+
 describe("citation links in the page", () => {
   test("every citation in a paragraph is linked, and a link is never nested in a link", () => {
     document.body.innerHTML = `

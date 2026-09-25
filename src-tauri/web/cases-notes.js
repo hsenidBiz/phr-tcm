@@ -69,10 +69,43 @@
       );
     });
   }
-  window.tcmNotes = { makeQueue: makeQueue, busy: function () { return busyCount; }, timeoutMs: NOTE_TIMEOUT_MS };
+  // A save that did not succeed - timed out, the app was closed, or the app
+  // refused it - leaves the box's text and status here, keyed by the same
+  // data-ado/data-case/data-file identity the fresh markup carries too, and
+  // cleared the moment a save from that box succeeds. A live swap
+  // (cases-page.js) calls restoreUnsaved right after it adopts fresh markup,
+  // so the fresh copy's OLDER text - and the fact that nothing told the
+  // reviewer their edit did not land - can never silently replace what is
+  // still sitting unsaved in the box. Freeing the box from busy() as soon as
+  // a save ends (rather than only once it succeeds) is what made this
+  // reachable: before, a save that never finished held busy() up forever,
+  // so a swap could not happen at all.
+  var failedByKey = {};
+  function boxKey(box) {
+    if (box.dataset.ado != null) return 'ado:' + box.dataset.ado;
+    if (box.dataset.case != null) return 'case:' + box.dataset.case;
+    if (box.dataset.file != null) return 'file:' + box.dataset.file;
+    return null;
+  }
+  function restoreUnsaved(root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll('[data-ado],[data-case],[data-file]'), function (box) {
+      var key = boxKey(box), f = key && failedByKey[key];
+      if (!f) return;
+      box.value = f.value;
+      var status = document.getElementById(box.dataset.status);
+      if (status) { status.className = f.className; status.textContent = f.text; }
+    });
+  }
+  window.tcmNotes = {
+    makeQueue: makeQueue,
+    busy: function () { return busyCount; },
+    timeoutMs: NOTE_TIMEOUT_MS,
+    restoreUnsaved: restoreUnsaved
+  };
 
   function wire(box, status, build) {
     var timer = null;
+    var key = boxKey(box);
     // Whether THIS box currently holds the one busy-count unit it is
     // allowed to hold - typing again while already dirty (armed, in
     // flight, or queued - see makeQueue) must not double-count it.
@@ -96,6 +129,10 @@
       } else {
         status.className = 'note-status bad';
         status.textContent = 'Not saved — ' + ((r && r.error) || 'the app refused it');
+      }
+      if (key) {
+        if (r && r.ok) delete failedByKey[key];
+        else failedByKey[key] = { value: box.value, className: status.className, text: status.textContent };
       }
     });
     box.addEventListener('input', function () {

@@ -12,9 +12,20 @@ const here = dirname(fileURLToPath(import.meta.url));
 const webDir = resolve(here, "../../src-tauri/web");
 const scripts = readdirSync(webDir).filter((f) => f.endsWith(".js"));
 
-/** The code with comments removed, so prose ("let the page...") never counts. */
+/**
+ * The code with comments removed, so prose ("let the page...") never counts,
+ * and with a pattern string handed to `new RegExp(...)` blanked out too. That
+ * string is content, not syntax: unlike a literal `/…/u` regex or a bare
+ * `\p{}` escape, which fail to PARSE on an engine old enough to lack them
+ * (before the script using them ever runs), a string built at runtime only
+ * risks failing when the RegExp constructor reads it - which is exactly why
+ * that call is guarded by a try/catch (see cases-specs.js's UNICODE_BASE).
+ */
 function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|\s)\/\/.*$/gm, "$1")
+    .replace(/new RegExp\([^)]*\)/g, "new RegExp()");
 }
 
 const NOT_ES5: Array<[string, RegExp]> = [
