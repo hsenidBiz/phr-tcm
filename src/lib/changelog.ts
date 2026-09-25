@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.28",
+    date: "2026-09-25",
+    items: [
+      "Work Manager has swimlanes: turn on Swimlanes in the board's toolbar to group cards under the item they belong to, such as tasks under their PBI and PBIs under their Feature. Each lane collapses on its own or with Collapse all, and the board remembers which ones you closed.",
+      "The notification bell now tells you when someone @mentions you in a work item's discussion or in a comment on a pull request you're on, with a short preview of what they wrote. Click one to open it in the app.",
+      "The notification bell now belongs to whoever is signed in. Signing in as a different account no longer shows the previous person's notifications.",
+    ],
+  },
+  {
     version: "1.25.27",
     date: "2026-09-24",
     items: [
