@@ -8,7 +8,7 @@ import type {
   BridgeStatus,
   CaseHistory,
   ConnectedUser,
-  DbPresetOut,
+  DbDatabase,
   DbServerConfig,
   DetectedTool,
   EnsuredSuite,
@@ -276,16 +276,27 @@ export const TOUR_TOOLS: DetectedTool[] = [
   },
 ];
 
-export const TOUR_DB_PRESETS: DbPresetOut[] = [
-  { label: "Sample - read only", connection_string: "Server=sample;Database=Northwind;User Id=reader;" },
+export const TOUR_DATABASES: DbDatabase[] = [
+  {
+    id: "sample-read",
+    label: "Sample - read only",
+    shipped: true,
+    server: "sample",
+    port: null,
+    database: "Northwind",
+    user: "reader",
+    trust_cert: true,
+    has_password: true,
+    customised: false,
+  },
 ];
 
-// The AI Bridge screen's own default config - shown before the user picks a
-// preset or types their own. Obviously sample: no real host or credential.
+// The AI Bridge screen's own default config - the PHR X server settings a
+// never-configured card starts from. Obviously sample: no real host or credential.
 export const TOUR_DB_DEFAULTS: DbServerConfig = {
   exe_path: "C:\\Program Files\\Test Case Manager\\PeoplesHR.DBMCPServer.exe",
   db_type: "mssql",
-  connection_string: "Server=sample;Database=Northwind;User Id=reader;",
+  db_id: "sample-read",
   schema_filter: "dbo",
 };
 

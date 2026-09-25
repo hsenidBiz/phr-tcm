@@ -34,7 +34,13 @@ import { forgetAllNotifications, noteAssigned, type NotificationTarget } from ".
 import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
-import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
+import {
+  dbWritesSnapshot,
+  isDevLoginUser,
+  migrateLegacyDbConnection,
+  selectedDbSnapshot,
+  subscribeDbSettings,
+} from "./lib/dbServer";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -660,30 +666,50 @@ export default function App() {
   // The working repository decides where a writing job's file goes, so the
   // bridge learns of a change the moment the AI Bridge tab makes it.
   const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
-  // The database connection the two database tools run on, and whether
-  // they may write. Both live on the AI Bridge tab and both are pushed
-  // here, so choosing a different environment takes effect on the
-  // assistant's next call rather than after a restart.
-  const dbConnection = useSyncExternalStore(subscribeDbSettings, dbConnectionSnapshot);
+  // The database the two database tools run on, by id, and whether they
+  // may write. Both live on the AI Bridge tab and both are pushed here, so
+  // choosing a different database takes effect on the assistant's next
+  // call rather than after a restart. Rust resolves the id to its login at
+  // that call - no login ever crosses from here.
+  const dbId = useSyncExternalStore(subscribeDbSettings, selectedDbSnapshot);
   const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
+  // Who each database signs in as - the same list, under the same key, the
+  // AI Bridge card reads and refreshes when a login is saved.
+  const databases = useQuery({
+    queryKey: ["db-databases"],
+    queryFn: async () => (await commands.dbDatabases()) ?? [],
+    enabled: signedIn,
+  });
   // The write switch alone is only half the permission - the Rust side
-  // also requires the connection's own user to be the dev login, and
+  // also requires the database's own user to be the dev login, and
   // refuses a write when either is missing. Pushing the raw switch here
-  // would tell the assistant it may write on a read-only connection, which
-  // is not true. `isDevLoginConnection` is the same rule AiBridge uses to
-  // decide whether the switch may even be moved.
-  const devLogin = isDevLoginConnection(dbConnection);
-  // Every one of the AI Bridge form's fields - including the connection
-  // string's individual pieces - writes through to `dbConnection` on every
-  // keystroke, so pushing on every change sent one `set_bridge_context` +
-  // `bridge_status` IPC pair per character typed, including into the
-  // password field. Debounced so a burst of edits becomes one push once
-  // typing pauses; the pending push is flushed on unmount rather than
-  // dropped, so App never silently skips the last edit.
+  // would tell the assistant it may write on a read-only database, which
+  // is not true. `isDevLoginUser` is the same rule AiBridge uses to decide
+  // whether the switch may even be moved.
+  const devLogin = isDevLoginUser(databases.data?.find((d) => d.id === dbId)?.user ?? "");
+  // A connection string an older version kept in the webview moves into
+  // Rust first, so the very first push already names the database it
+  // became - and nothing is pushed until that has been tried.
+  const [dbMigrated, setDbMigrated] = useState(false);
+  useEffect(() => {
+    let live = true;
+    migrateLegacyDbConnection().finally(() => {
+      if (live) setDbMigrated(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // A burst of changes - the AI Bridge tab's fields write through the same
+  // store on every keystroke - used to push one `set_bridge_context` +
+  // `bridge_status` IPC pair per character typed. Debounced so a burst of
+  // edits becomes one push once typing pauses; the pending push is flushed
+  // on unmount rather than dropped, so App never silently skips the last
+  // edit.
   const pushBridgeContextRef = useRef<() => void>(() => {});
   const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (tourOpen) return;
+    if (tourOpen || !dbMigrated) return;
     if (!signedIn || !org || !project) return;
     const push = () => {
       commands
@@ -696,7 +722,7 @@ export default function App() {
             bridgePrefs.preconditionsRef,
             disabledTools,
             workingDir || null,
-            dbConnection || null,
+            dbId || null,
             dbWrites && devLogin,
           ),
         )
@@ -716,10 +742,11 @@ export default function App() {
     bridgePrefs.preconditionsRef,
     disabledTools,
     workingDir,
-    dbConnection,
+    dbId,
     dbWrites,
     devLogin,
     tourOpen,
+    dbMigrated,
   ]);
   // App itself effectively never unmounts, but a debounced push that IS
   // still pending when it does must fire rather than vanish silently.

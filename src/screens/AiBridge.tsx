@@ -1,14 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
-import { buildConnString, EMPTY_FIELDS, isRepresentable, parseConnString, type ConnFields } from "../lib/connString";
+import { DbCredentialsModal } from "../components/DbCredentialsModal";
 import { Button } from "../components/ui/button";
-import { Checkbox } from "../components/ui/checkbox";
 import { Switch } from "../components/ui/switch";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -17,11 +16,15 @@ import {
   forgetDbConfig,
   hasStoredDbConfig,
   isDbConfigComplete,
-  isDevLoginConnection,
+  isDevLoginUser,
   loadDbConfig,
   loadDbWrites,
   saveDbConfig,
   saveDbWrites,
+  saveSelectedDb,
+  selectedDbSnapshot,
+  subscribeDbSettings,
+  type DbServerSettings,
 } from "../lib/dbServer";
 import { autoRunToolsOffered, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
@@ -41,6 +44,7 @@ import {
   IconBrowse,
   IconConfirm,
   IconCopy,
+  IconEdit,
   IconRefresh,
   IconRegister,
   IconUnregister,
@@ -50,10 +54,6 @@ import {
  * state for each server this app can register. */
 const TCM_SERVER = "tcm-testcases";
 const DB_SERVER = "phr-db-mcp";
-
-/** The Combobox option for a server that is not one of the shipped
- * presets - picked explicitly, it clears the connection for typing. */
-const OWN_DATABASE = "Your own database";
 
 /** Clipboard copies are fire-and-forget from the UI's perspective, but the
  * promise must always be handled - a bare `.then()` leaves rejected copies
@@ -149,24 +149,37 @@ export default function AiBridge() {
   // Tools the user has switched off; App re-pushes these to the bridge.
   const [disabled, setDisabled] = useState<string[]>(loadDisabledTools);
   const visible = visibleRows();
-  // The company's database MCP server. Settings persist locally so a
-  // second editor can be registered without retyping the connection
-  // string - see lib/dbServer.ts for why that is acceptable here.
-  const [db, setDb] = useState<DbServerConfig>(loadDbConfig);
-  const editDb = (patch: Partial<DbServerConfig>) => {
+  // The company's database MCP server. Its settings persist locally so a
+  // second editor can be registered without retyping them; none of them is
+  // secret - the login is Rust's, named here only by the database's id.
+  const [db, setDb] = useState<DbServerSettings>(loadDbConfig);
+  const editDb = (patch: Partial<DbServerSettings>) => {
     const next = { ...db, ...patch };
     setDb(next);
     saveDbConfig(next);
   };
+  // Which database the app's own tools use. Read through the store so App's
+  // bridge push and this card agree the moment it changes.
+  const dbId = useSyncExternalStore(subscribeDbSettings, selectedDbSnapshot);
+  // Who each database signs in as and whether a password is saved - never
+  // the password. Not in the disk cache: a list of logins has no business
+  // outliving the session in storage.
+  const databases = useQuery({
+    queryKey: ["db-databases"],
+    queryFn: async () => (await commands.dbDatabases()) ?? [],
+  });
+  const selectedDb = databases.data?.find((d) => d.id === dbId) ?? null;
+  const [managing, setManaging] = useState(false);
   // Whether the assistant may create, update and delete. Half the
-  // permission: the Rust side also requires the connection's own user to
-  // be the dev login, and refuses the write when either is missing.
+  // permission: the Rust side also requires the database's own user to be
+  // the dev login, and refuses the write when either is missing.
   const [dbWrites, setWrites] = useState<boolean>(loadDbWrites);
   const setDbWrites = (on: boolean) => {
     setWrites(on);
     saveDbWrites(on);
   };
-  const devLogin = isDevLoginConnection(db.connection_string);
+  const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
+  const dbConfig = (id: string): DbServerConfig => ({ ...db, db_id: id });
 
   // Shipped defaults fill a form NOTHING was ever saved into - a machine
   // that configured (or deliberately cleared) its own values never has
@@ -177,50 +190,23 @@ export default function AiBridge() {
     queryFn: () => commands.dbServerDefaults(),
     staleTime: Infinity,
   });
-  const dbPresets = useQuery({
-    queryKey: ["db-presets"],
-    queryFn: () => commands.dbServerPresets(),
-    staleTime: Infinity,
-  });
   useEffect(() => {
     const d = dbDefaults.data;
-    if (!d || !d.connection_string.trim()) return; // no defaults shipped
+    if (!d) return; // no defaults shipped
     if (hasStoredDbConfig()) return;
+    const prefill = { exe_path: d.exe_path, db_type: d.db_type, schema_filter: d.schema_filter };
     // Only replace a still-pristine form, in case typing raced the IPC.
-    setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? { ...d } : cur));
+    setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? prefill : cur));
   }, [dbDefaults.data]);
 
-  // The connection-string FIELDS are a view over the stored string: parsed
-  // out on every render, rebuilt on every keystroke. No second copy of the
-  // secret, and a string saved before this form existed appears already
-  // filled in. The raw editor opens automatically for a string the fields
-  // cannot faithfully represent, so it is never silently rewritten.
-  // An EMPTY config starts from the defaults (trust the certificate - the
-  // company DB's is self-signed); an existing string is read as written,
-  // where an absent flag genuinely means off.
-  const conn = db.connection_string.trim()
-    ? parseConnString(db.connection_string)
-    : { ...EMPTY_FIELDS };
-  const editConn = (patch: Partial<ConnFields>) =>
-    editDb({ connection_string: buildConnString({ ...conn, ...patch }) });
-  const [rawConn, setRawConn] = useState(() => !isRepresentable(db.connection_string));
-  // Picking "Your own database" clears the connection - the string is then
-  // empty, so nothing would otherwise tell the picker apart from its blank,
-  // never-configured state. This flag holds that pick until either a preset
-  // is chosen or a hand-entered string makes the value stick on its own.
-  const [ownPicked, setOwnPicked] = useState(false);
-  const hostInputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (ownPicked) hostInputRef.current?.focus();
-  }, [ownPicked]);
-
-  // A warning back means the registration worked but the connection string
+  // A warning back means the registration worked but the login it carries
   // is somewhere git can carry it away (the file is already tracked, or the
   // folder is not a checkout). That is not a success sentence - it is the
   // one thing on this tab worth reading, so it replaces the toast and stays
   // up long enough to act on.
   const registerDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db, target, global)),
+    mutationFn: (id: string) =>
+      unwrapStr(commands.registerDbServer(id, dbConfig(dbId), target, global)),
     onSuccess: (warning) => {
       if (warning) toast.warning(warning, { duration: 12000 });
       else toast.success("Database server registered.");
@@ -229,10 +215,10 @@ export default function AiBridge() {
     onError: (e) => toast.error(`Could not register: ${e.message}`),
   });
 
-  // Picking a different Default connection rewrites the config of every
-  // tool the database server is ALREADY registered in - otherwise the
-  // dropdown changes the form and the .mcp.json keeps the old password
-  // until someone remembers to click Register again. Re-registering is an
+  // Choosing a different database rewrites the config of every tool the
+  // database server is ALREADY registered in - otherwise the dropdown
+  // changes the card and the .mcp.json keeps the old login until someone
+  // remembers to click Register again. Re-registering is an
   // upsert on every tool path. The running assistants read that file at
   // startup, so the toast says the one thing the user has to do next.
   const syncDb = useMutation({
@@ -295,7 +281,45 @@ export default function AiBridge() {
 
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
-  const dbReady = isDbConfigComplete(db);
+  const dbReady = isDbConfigComplete(db, dbId);
+
+  const chooseDb = (id: string) => {
+    saveSelectedDb(id);
+    const chosen = databases.data?.find((d) => d.id === id);
+    if (!chosen) return;
+    // A shipped database is the company's, which the PHR X server reads
+    // through its PeoplesHR schema - set as picking one always has.
+    const patch = chosen.shipped ? { db_type: "mssql", schema_filter: "PeoplesHR" } : {};
+    if (chosen.shipped) editDb(patch);
+    // Push the new database into every config that carries the server, so
+    // the file agrees with the card - but only when the PHR X option is
+    // switched on. With it off, a leftover registration is left alone here;
+    // the only action offered for it is Unregister.
+    if (showPhrx) {
+      const ids = installed
+        .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
+        .map((t) => t.id);
+      if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch, db_id: id } });
+    }
+  };
+  // Every saved login goes with the local settings, and permission to
+  // write with them: leaving it standing would hand the next database a
+  // decision nobody made about it.
+  const forgetDb = async () => {
+    forgetDbConfig();
+    setDb(loadDbConfig());
+    setDbWrites(false);
+    let failed: string | null = null;
+    try {
+      const res = await commands.forgetDbCredentials();
+      if (res.status === "error") failed = res.error;
+    } catch (e) {
+      failed = e instanceof Error ? e.message : String(e);
+    }
+    qc.invalidateQueries({ queryKey: ["db-databases"] });
+    if (failed) toast.error(failed);
+    else toast.success("Database settings forgotten.");
+  };
   // A tool can still carry a PHR X registration from before the option was
   // switched off (or from before it existed at all) - that row has to stay
   // reachable so the leftover connection string can be removed from it.
@@ -653,7 +677,7 @@ export default function AiBridge() {
           <h2 className="text-sm font-semibold text-text">Company database</h2>
         </div>
         <p className="text-xs text-muted">
-          The connection you choose here is the one this app&apos;s own database tools
+          The database you choose here is the one this app&apos;s own database tools
           use. Switch them on with{" "}
           <span className="font-medium text-text">Company database (read)</span> in the
           tool list, and an assistant can find the table behind a screen and read it
@@ -661,184 +685,51 @@ export default function AiBridge() {
         </p>
 
         <div className="space-y-2">
-          {/* CONNECTION_STRING, built from fields rather than typed whole.
-              The stored value is still the single string the MCP server
-              receives - these inputs are a view over it, parsed out on
-              every render and rebuilt on every keystroke, so a string
-              saved before this form existed appears already filled in.
-              The raw editor stays available for a string the fields
-              cannot faithfully represent - which is also the mode the
-              form OPENS in for such a string, so it is never silently
-              rewritten into something simpler. */}
-          {/* Shipped environments: picking one fills the connection (and
-              the schema/type defaults) - an explicit act, so it persists
-              like any edit. The trigger shows which preset the current
-              string IS, or stays blank for a hand-rolled one. */}
-          {(dbPresets.data?.length ?? 0) > 0 && (
-            <>
-              <label className="block text-xs text-muted">
-                Default connections
-                <Combobox
-                  ariaLabel="Default connections"
-                  className="mt-1 w-full"
-                  placeholder="Pick an environment…"
-                  value={
-                    dbPresets.data!.find((p) => p.connection_string === db.connection_string)
-                      ?.label ??
-                    (ownPicked || db.connection_string.trim() ? OWN_DATABASE : "")
-                  }
-                  options={[...dbPresets.data!.map((p) => p.label), OWN_DATABASE]}
-                  onChange={(label) => {
-                    if (label === OWN_DATABASE) {
-                      // The themed Combobox calls onChange even when the
-                      // already-selected option is picked again. Clear the
-                      // connection only when there is a preset's string to
-                      // clear, or nothing typed yet - a hand-entered string
-                      // that matches no preset is kept as is.
-                      const matchesPreset = dbPresets.data!.some(
-                        (p) => p.connection_string === db.connection_string,
-                      );
-                      setOwnPicked(true);
-                      if (matchesPreset || !db.connection_string.trim()) {
-                        editDb({ connection_string: "" });
-                        setRawConn(false);
-                      } else if (isRepresentable(db.connection_string)) {
-                        setRawConn(false);
-                      }
-                      return;
-                    }
-                    const preset = dbPresets.data!.find((p) => p.label === label);
-                    if (preset) {
-                      setOwnPicked(false);
-                      const patch = {
-                        connection_string: preset.connection_string,
-                        db_type: "mssql",
-                        schema_filter: "PeoplesHR",
-                      };
-                      editDb(patch);
-                      setRawConn(!isRepresentable(preset.connection_string));
-                      // Push the new string into every config that carries
-                      // the server, so the file agrees with the form - but
-                      // only when the PHR X option is switched on. With it
-                      // off, a leftover registration is left alone here;
-                      // the only action offered for it is Unregister.
-                      if (showPhrx) {
-                        const ids = installed
-                          .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
-                          .map((t) => t.id);
-                        if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
-                      }
-                    }
-                  }}
-                />
-              </label>
-              <p className="text-xs text-faint">
-                Not listed? Choose &quot;Your own database&quot; and enter its server, database,
-                user and password below. Connections you enter yourself are read only unless the
-                user is a dev login.
-              </p>
-            </>
-          )}
-
-          <div className="space-y-2 rounded-md border border-border/60 p-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted">CONNECTION_STRING</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-faint">
-                <Checkbox
-                  ariaLabel="Edit connection string as text"
-                  checked={rawConn}
-                  onCheckedChange={setRawConn}
-                />
-                Edit as one string
-              </label>
-            </div>
-            {rawConn ? (
-              <Input
-                aria-label="Connection string"
-                // Masked on screen; it still travels into each tool's MCP
-                // config, which is how MCP passes environment to a server.
-                type="password"
-                className="id-mono w-full py-1.5 text-xs"
-                placeholder="Server=host,1433;Database=…;User Id=…;Password=…;TrustServerCertificate=True;"
-                value={db.connection_string}
-                onChange={(e) => editDb({ connection_string: e.target.value })}
-              />
-            ) : (
-              <>
-                <div className="flex gap-2">
-                  <label className="min-w-0 flex-1 text-xs text-muted">
-                    Server host
-                    <Input
-                      ref={hostInputRef}
-                      aria-label="Database host"
-                      className="mt-1 w-full py-1.5 text-xs"
-                      placeholder="phrx-db.internal"
-                      value={conn.host}
-                      onChange={(e) => editConn({ host: e.target.value })}
-                    />
-                  </label>
-                  <label className="w-20 text-xs text-muted">
-                    Port
-                    <Input
-                      aria-label="Database port"
-                      className="mt-1 w-full py-1.5 text-xs"
-                      placeholder="1433"
-                      value={conn.port}
-                      onChange={(e) => editConn({ port: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <label className="block text-xs text-muted">
-                  Database
-                  <Input
-                    aria-label="Database name"
-                    className="mt-1 w-full py-1.5 text-xs"
-                    value={conn.database}
-                    onChange={(e) => editConn({ database: e.target.value })}
-                  />
-                </label>
-                <div className="flex gap-2">
-                  <label className="min-w-0 flex-1 text-xs text-muted">
-                    User
-                    <Input
-                      aria-label="Database user"
-                      className="mt-1 w-full py-1.5 text-xs"
-                      value={conn.user}
-                      onChange={(e) => editConn({ user: e.target.value })}
-                    />
-                  </label>
-                  <label className="min-w-0 flex-1 text-xs text-muted">
-                    Password
-                    <Input
-                      aria-label="Database password"
-                      type="password"
-                      className="mt-1 w-full py-1.5 text-xs"
-                      value={conn.password}
-                      onChange={(e) => editConn({ password: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-muted">
-                  <Checkbox
-                    ariaLabel="Trust the server certificate"
-                    checked={conn.trustCert}
-                    onCheckedChange={(v) => editConn({ trustCert: v })}
-                  />
-                  Trust the server certificate
-                  <span className="text-faint">(company DB uses a self-signed one)</span>
-                </label>
-              </>
-            )}
+          {/* Which database, by id. Its login is Rust's, kept in Windows
+              Credential Manager: the card says who signs in, and never
+              holds the password or a connection string. */}
+          <label className="block text-xs text-muted">
+            Database
+            <Combobox
+              ariaLabel="Database"
+              className="mt-1 w-full"
+              placeholder="Pick a database…"
+              value={dbId}
+              items={(databases.data ?? []).map((d) => ({ value: d.id, label: d.label }))}
+              loading={databases.isPending}
+              onChange={chooseDb}
+            />
+          </label>
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-xs text-muted">
+              {selectedDb && (selectedDb.user ? `Signs in as ${selectedDb.user}` : "No login saved")}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!selectedDb}
+              onClick={() => setManaging(true)}
+            >
+              <IconEdit aria-hidden />
+              Manage credentials
+            </Button>
           </div>
+          {managing && selectedDb && (
+            <DbCredentialsModal
+              database={selectedDb}
+              onClose={() => setManaging(false)}
+              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
+            />
+          )}
 
           {/* The second switch. Reading is the "Company database (read)"
               row in the tool list; writing is its own decision and lives
-              here, beside the connection it applies to, because that is
+              here, beside the database it applies to, because that is
               what decides whether it may be made at all.
 
-              Shown OFF on a connection that cannot write, whatever is
+              Shown OFF on a database that cannot write, whatever is
               stored: the app refuses such a write anyway (both doors -
-              this switch AND the connection's user), and a switch reading
+              this switch AND the database's user), and a switch reading
               "on" while every write comes back refused is a lie. The
               stored choice is kept, so going back to the dev login
               restores it. */}
@@ -872,7 +763,7 @@ export default function AiBridge() {
                 Optional: register the company&apos;s own database MCP server beside this
                 one. It is no longer needed for lookups. Point it at the built{" "}
                 <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and it receives
-                the connection above.
+                the login of the database above.
               </p>
 
               <div className="flex items-end gap-2">
@@ -924,7 +815,7 @@ export default function AiBridge() {
 
             {!dbReady ? (
               <p className="text-xs text-faint">
-                Fill in the executable and connection string to enable registration.
+                Choose a database and fill in the server path to enable registration.
               </p>
             ) : installed.length === 0 ? (
               <p className="text-xs text-muted">No supported AI tools detected on this machine.</p>
@@ -986,30 +877,16 @@ export default function AiBridge() {
 
         <p className="text-[11px] text-faint">
           {(showPhrx || phrxLeftover.length > 0)
-            ? "These settings are stored on this machine so you can register another editor without retyping them, and are written into each tool's MCP config."
-            : "These settings are stored on this machine."}{" "}
+            ? "Logins are kept in Windows Credential Manager and the other settings on this machine, so you can register another editor without retyping them. Registering writes the login into that tool's MCP config."
+            : "Logins are kept in Windows Credential Manager and the other settings on this machine."}{" "}
           <button
             className="underline underline-offset-2 hover:text-danger"
-            onClick={() => {
-              forgetDbConfig();
-              setDb(loadDbConfig());
-              // The picker's "Your own database" pick belongs to the form
-              // that held it - forgetting the form without clearing this
-              // would leave the picker claiming a choice over an empty,
-              // never-configured connection.
-              setOwnPicked(false);
-              // Writing goes with them. Forgetting the connection and
-              // leaving permission to write on it standing would mean the
-              // next connection chosen here inherits a decision nobody
-              // made about it.
-              setDbWrites(false);
-              toast.success("Database settings forgotten.");
-            }}
+            onClick={() => void forgetDb()}
           >
             Forget them
           </button>
           {(showPhrx || phrxLeftover.length > 0)
-            ? ". This clears the form only. Unregister above to remove them from a tool."
+            ? ". This clears them here only. Unregister above to remove them from a tool."
             : "."}
         </p>
       </section>
