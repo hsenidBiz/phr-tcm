@@ -453,12 +453,12 @@ function applyPatches() {
           last_updated: new Date(Date.now() - 3 * 3600_000).toISOString(),
           comments: [
             {
-              id: 1, author: "Priya Raman", avatar: "", edited: false,
+              id: 1, author: "Priya Raman", author_id: "demo-priya", avatar: "", edited: false,
               published: new Date(Date.now() - 4 * 3600_000).toISOString(),
               content: "This swallows the error - can we surface it instead of `catch {}`?",
             },
             {
-              id: 2, author: "Sam Doyle", avatar: "", edited: true,
+              id: 2, author: "Sam Doyle", author_id: "demo-sam", avatar: "", edited: true,
               published: new Date(Date.now() - 3 * 3600_000).toISOString(),
               content: "Good catch. Pushing a fix that toasts the message.",
             },
@@ -472,7 +472,7 @@ function applyPatches() {
           last_updated: new Date(Date.now() - 26 * 3600_000).toISOString(),
           comments: [
             {
-              id: 3, author: "Priya Raman", avatar: "", edited: false,
+              id: 3, author: "Priya Raman", author_id: "demo-priya", avatar: "", edited: false,
               published: new Date(Date.now() - 28 * 3600_000).toISOString(),
               content: "Does this need a changelog entry?",
             },
@@ -761,6 +761,16 @@ function applyPatches() {
     },
     // The demo user owns every demo comment, so Edit shows on all of them.
     connectedUser: () => ok({ id: "demo", display_name: "Demo User" }),
+    // One mention on the demo bug, two hours old, so the bell has one to show.
+    recentMentions: () =>
+      ok([
+        {
+          source: "work-item", item_id: 2003, item_type: "Bug",
+          item_title: "Demo Bug - session timeout not enforced", comment_id: 2,
+          author: "Sam Doyle", excerpt: "@Demo User can you confirm the timeout on the demo build?",
+          created_date: nowMinus(2 * 3600),
+        },
+      ]),
     listTeamMembers: () => ok([{ display_name: "Demo User", unique_name: "demo@local" }]),
     listTeams: () => ok(["Demo Team"]),
     createWorkItem: (_o: string, _p: string, item: NewWorkItem) => {

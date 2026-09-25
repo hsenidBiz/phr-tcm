@@ -91,3 +91,15 @@ pub const WIKI_PAGE_MAX: usize = 50;
 pub fn wiki_page(url: &str) -> String {
     format!("{WIKI_PAGE_PREFIX}{url}")
 }
+
+/// How long the signed-in identity is reused: in effect the session. An
+/// identity id never changes under one sign-in, and signing in as someone
+/// else clears the session tier anyway (`claim_for`).
+pub const CONNECTED_USER_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The signed-in identity for one organization (session tier only). The
+/// base_url is in the key so parallel tests on different mock servers
+/// cannot answer for each other.
+pub fn connected_user(base_url: &str, org: &str) -> String {
+    format!("connected-user:{base_url}|{org}")
+}

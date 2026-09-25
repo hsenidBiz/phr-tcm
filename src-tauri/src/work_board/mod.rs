@@ -13,6 +13,7 @@ mod board;
 pub mod detail;
 pub mod history;
 mod layout;
+pub mod mentions;
 
 use serde::Serialize;
 use std::collections::HashMap;

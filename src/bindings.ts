@@ -211,8 +211,16 @@ export const commands = {
 	workItemComments: (organization: string, project: string, id: number) => typedError<WorkComment[], AdoError>(__TAURI_INVOKE("work_item_comments", { organization, project, id })),
 	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
 	updateComment: (organization: string, project: string, id: number, commentId: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("update_comment", { organization, project, id, commentId, text })),
-	/**  Who is signed in, by identity id - so Edit shows only on one's own comments. */
+	/**
+	 *  Who is signed in, by identity id - so Edit shows only on one's own
+	 *  comments. Read once per organization per session, memory only.
+	 */
 	connectedUser: (organization: string) => typedError<ConnectedUser, AdoError>(__TAURI_INVOKE("connected_user", { organization })),
+	/**
+	 *  Work-item comments that @mention the signed-in user, for the bell.
+	 *  Read only.
+	 */
+	recentMentions: (organization: string, project: string) => typedError<Mention[], AdoError>(__TAURI_INVOKE("recent_mentions", { organization, project })),
 	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
 	/**  Full-form work item creation (the New Work Item screen). POST only. */
@@ -1465,6 +1473,23 @@ export type Member = {
 	unique_name: string,
 };
 
+/**  One comment that mentions you. */
+export type Mention = {
+	/**  Always "work-item" here; PR mentions are found in the webview. */
+	source: string,
+	item_id: number,
+	/**  "Work item" when the item's type could not be read. */
+	item_type: string,
+	/**  Empty when the item's title could not be read. */
+	item_title: string,
+	comment_id: number,
+	author: string,
+	/**  The comment as plain text, at most `EXCERPT_CHARS` characters. */
+	excerpt: string,
+	/**  ISO 8601, as Azure DevOps returns it. */
+	created_date: string,
+};
+
 export type ModuleRecordResult = {
 	saved: boolean,
 	module: string,
@@ -1626,6 +1651,12 @@ export type PrBuildState = {
 export type PrComment = {
 	id: number,
 	author: string,
+	/**
+	 *  The author's identity id, the one `connected_user` returns - how the
+	 *  mention scan tells your own comments apart. Empty when Azure DevOps
+	 *  sent none.
+	 */
+	author_id: string,
 	/**  The author's avatar URL, or empty. */
 	avatar: string,
 	content: string,

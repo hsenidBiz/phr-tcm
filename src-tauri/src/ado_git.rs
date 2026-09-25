@@ -85,6 +85,10 @@ pub struct PrWorkItem {
 pub struct PrComment {
     pub id: i32,
     pub author: String,
+    /// The author's identity id, the one `connected_user` returns - how the
+    /// mention scan tells your own comments apart. Empty when Azure DevOps
+    /// sent none.
+    pub author_id: String,
     /// The author's avatar URL, or empty.
     pub avatar: String,
     pub content: String,
@@ -489,6 +493,7 @@ impl AdoClient {
                 .map(|c| PrComment {
                     id: c["id"].as_i64().unwrap_or(0) as i32,
                     author: c["author"]["displayName"].as_str().unwrap_or("").to_string(),
+                    author_id: c["author"]["id"].as_str().unwrap_or("").to_string(),
                     avatar: c["author"]["imageUrl"].as_str().unwrap_or("").to_string(),
                     content: c["content"].as_str().unwrap_or("").to_string(),
                     published: c["publishedDate"].as_str().unwrap_or("").to_string(),
