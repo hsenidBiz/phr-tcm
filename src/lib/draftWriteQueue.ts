@@ -5,12 +5,11 @@
  * Two write-backs can touch the same file within one `save_draft_cases`
  * round trip - a Remove followed by another Remove on the row that just
  * slid up under the cursor, an edit racing the post-upload id stamp. Each
- * one used to build its `occurrence`s from whatever watch snapshot its own
- * React closure captured when it was called: correct for the first write,
- * stale for a second one that starts before the first's result has flowed
- * back through state. Rust then pairs a row with the wrong same-titled
- * entry and can delete or overwrite the wrong twin - the exact case Task 5
- * set out to fix, reopened by a race between two of its own writes.
+ * one building its `occurrence`s from whatever watch snapshot its own
+ * React closure captured when it was called would be correct for the first
+ * write and stale for a second one that starts before the first's result
+ * has flowed back through state. Rust would then pair a row with the wrong
+ * same-titled entry and could delete or overwrite the wrong twin.
  *
  * This module holds, per path, a promise chain (so a write only starts
  * once every write already queued for that file has settled) and the
@@ -20,15 +19,13 @@
  * started it (see the "mount may be gone" write-back in QueueSection,
  * mirroring `submitRun.ts`).
  *
- * A first fix kept the last write's result forever, for every future write
- * on that path - not just the ones already queued when it landed. Nothing
- * ever cleared it: not when the chain drained, not when an outside edit
- * (an assistant's own change, a comment save, a spec or run-order save -
- * none of them go through this module) moved the file on without this
- * module's knowledge. Every write after that first one paired against a
- * ghost of the file, however old, silently skipping a row it should have
- * owned - a queued upload's id then never lands in the file, and a
- * re-import of it creates a duplicate. Two rules fix this:
+ * The remembered result must never outlive the burst it was recorded for.
+ * An outside edit (an assistant's own change, a review-page comment, a
+ * spec or run-order save - none of them go through this module) moves the
+ * file on without this module's knowledge, and a write paired against an
+ * older copy of the file silently skips a row it should own: a queued
+ * upload's id then never lands in the file, and a re-import of it creates
+ * a duplicate. Two rules keep it current:
  * - the remembered `{stamp, cases}` is deleted the moment the LAST write
  *   currently queued for that path settles (so it lives only while a
  *   burst of back-to-back writes is still draining), and

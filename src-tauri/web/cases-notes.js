@@ -159,13 +159,13 @@
         status.className = 'note-status bad';
         status.textContent = err.name === 'TimeoutError'
           ? 'Not saved - the app did not answer'
-          : 'Not saved — the app is closed';
+          : 'Not saved - the app is closed';
       } else if (r && r.ok) {
         status.className = 'note-status';
         status.textContent = 'Saved ✓';
       } else {
         status.className = 'note-status bad';
-        status.textContent = 'Not saved — ' + ((r && r.error) || 'the app refused it');
+        status.textContent = 'Not saved - ' +((r && r.error) || 'the app refused it');
       }
       if (key) {
         if (r && r.ok) delete failedByKey[key];

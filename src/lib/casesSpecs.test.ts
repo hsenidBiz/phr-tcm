@@ -212,9 +212,9 @@ test("a citation still finds a heading written without letter case", () => {
   expect(H.matchHeading(headings, "ログイン 画面")).toBe(2);
 });
 
-// Review round 1: the slug switched from a hand-picked block list to the
-// Unicode L/N/M class (built with \p{} at runtime). These pin that the
-// switch changed nothing for the ids already in the wild.
+// The slug is built from the Unicode L/N/M class (\p{} at runtime), which
+// replaced a hand-picked block list. These pin that ids already in the
+// wild, in saved links, come out the same as before.
 test("ASCII and accented-Latin slugs are unchanged by the switch to \\p{L}\\p{N}\\p{M}", () => {
   expect(H.slug("5.8 Display Rules")).toBe("5-8-display-rules");
   expect(H.slug("Café résumé naïve")).toBe("café-résumé-naïve");

@@ -287,3 +287,40 @@ test("a thread refresh rescans that PR's threads only, not every PR's", async ()
   // waitFor's real-timer polling is what catches it.
   await waitFor(() => expect(scanned()).toEqual([2]));
 });
+
+/// What was scanned is kept only for the PRs in the current list, so it
+/// cannot grow with every PR seen in a session. A PR that leaves the list
+/// and comes back is simply scanned again; the store dedupes what it finds.
+test("a PR that leaves the list and comes back is scanned again", async () => {
+  vi.mocked(prMentions).mockClear();
+  let listed = [pr(1), pr(2)];
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") return { id: "me-guid", display_name: "Avin" };
+    if (cmd === "pr_overview") return { mine: listed, awaiting: [] };
+    if (cmd === "pr_threads") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const scanned = () => vi.mocked(prMentions).mock.calls.map((c) => c[0].id);
+  await waitFor(() => expect([...scanned()].sort()).toEqual([1, 2]));
+
+  // #2 leaves the list... (the refetched observer notifies on a later
+  // macrotask, so give it a few before moving on)
+  listed = [pr(1)];
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-overview", "acme", "Web"] });
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
+  // ...and comes back, its threads still cached from before.
+  vi.mocked(prMentions).mockClear();
+  listed = [pr(1), pr(2)];
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-overview", "acme", "Web"] });
+  });
+  await waitFor(() => expect(scanned()).toEqual([2]));
+});

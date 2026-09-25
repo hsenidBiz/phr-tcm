@@ -108,25 +108,32 @@ export function usePrAttention(org: string, project: string): number {
   // settling re-renders this hook with EVERY PR's threads, and scanning
   // them all each time made one poll cycle PRs x threads. `scanned` holds
   // the `dataUpdatedAt` each PR was last scanned at, for one organisation
-  // and one signed-in id; either changing scans everything afresh.
+  // and one signed-in id; either changing scans everything afresh. It is
+  // rebuilt from the current list on every pass, so a PR that has left the
+  // list is forgotten rather than kept for the rest of the session.
   const scanned = useRef<{ who: string; at: Map<string, number> }>({ who: "", at: new Map() });
   const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
   useEffect(() => {
     if (!myId || me.isFetching || me.isError) return;
     const who = `${org}|${myId}`;
-    if (scanned.current.who !== who) scanned.current = { who, at: new Map() };
-    const at = scanned.current.at;
+    const before = scanned.current.who === who ? scanned.current.at : new Map<string, number>();
+    const at = new Map<string, number>();
     const found = prs.flatMap((pr, i) => {
       const t = threads[i];
-      if (!t?.data) return [];
       const key = `${pr.repo}:${pr.id}`;
-      if (at.get(key) === t.dataUpdatedAt) return [];
+      const last = before.get(key);
+      if (!t?.data) {
+        if (last !== undefined) at.set(key, last);
+        return [];
+      }
       at.set(key, t.dataUpdatedAt);
+      if (last === t.dataUpdatedAt) return [];
       return prMentions(pr, t.data, myId).map((m) => ({
         notification: prNotification(org, project, m),
         created: m.createdDate,
       }));
     });
+    scanned.current = { who, at };
     // Called even with nothing found: the organisation's first check is
     // what sets its first-run baseline (mentions.ts).
     announceMentions(noteMentions(org, found));

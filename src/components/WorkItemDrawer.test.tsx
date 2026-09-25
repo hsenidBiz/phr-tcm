@@ -173,7 +173,8 @@ test("an item that arrives with no states reads its own type's", async () => {
   expect(asked).toEqual([{ organization: "acme", project: "Web", workItemType: "Bug" }]);
 });
 
-/// Review Focus 1.
+/// A failed states lookup must not leave the drawer unable to open: the
+/// item's own current state is always a valid choice.
 test("a lane parent whose type's states cannot be read still opens, offering its own state", async () => {
   mockIPC((cmd) => {
     switch (cmd) {

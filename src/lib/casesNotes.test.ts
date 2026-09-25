@@ -150,7 +150,7 @@ test("a save the app never answers ends after the limit, frees the box and says 
   expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
 });
 
-/// Review Focus 4: slow is not dead. A reply inside the limit is saved.
+/// Slow is not dead. A reply inside the limit is saved.
 test("a save the app answers slowly, inside the limit, is still saved", async () => {
   const gate: { answer?: (v: unknown) => void } = {};
   vi.stubGlobal(
@@ -179,7 +179,7 @@ test("a save the app answers slowly, inside the limit, is still saved", async ()
   expect(N.busy()).toBe(0);
 });
 
-/// Review round 1, Important 1, refused path: `restoreUnsaved` is what
+/// The refused path: `restoreUnsaved` is what
 /// cases-page.js calls right after a live swap adopts fresh markup, so a
 /// save the app refused survives it too - not just a timeout.
 test("restoreUnsaved carries a refused save's text and status onto the matching fresh box", async () => {
@@ -193,7 +193,7 @@ test("restoreUnsaved carries a refused save's text and status onto the matching 
   box.dispatchEvent(new Event("input"));
   await vi.advanceTimersByTimeAsync(600);
   await flush();
-  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
 
   // What a live swap does: fresh markup, the SAME case (same path + key in
   // the fresh #tc-data, even though it is still slot 0 here), the file's
@@ -207,10 +207,10 @@ test("restoreUnsaved carries a refused save's text and status onto the matching 
     })}</script>`;
   N.restoreUnsaved(document);
   expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
-  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
 });
 
-/// Review round 1 re-review, Important A: `data-case`/`data-file` are this
+/// `data-case`/`data-file` are this
 /// RENDER's slot, not a stable identity. Keying a carried failure by slot
 /// alone would misfile it onto whatever case a swap moves into that slot.
 test("restoreUnsaved keys a case box by path+key, not by slot - a case inserted ahead does not misfile the failed text", async () => {
@@ -231,7 +231,7 @@ test("restoreUnsaved keys a case box by path+key, not by slot - a case inserted 
   box0.dispatchEvent(new Event("input"));
   await vi.advanceTimersByTimeAsync(600);
   await flush();
-  expect(document.getElementById("st0")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved - duplicate");
 
   // A live swap inserts a NEW case ahead of it: "Login" is now slot 1.
   document.body.innerHTML =
@@ -253,10 +253,10 @@ test("restoreUnsaved keys a case box by path+key, not by slot - a case inserted 
   expect(document.getElementById("stA")!.textContent).toBe("");
   // Slot 1 is the ORIGINAL case, found by identity, not by slot.
   expect(boxes[1].value).toBe("unsaved login note");
-  expect(document.getElementById("stB")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("stB")!.textContent).toBe("Not saved - duplicate");
 });
 
-/// Same identity rule, the other named risk: once the failed case is gone
+/// Same identity rule, the other way round: once the failed case is gone
 /// from the file, nothing should show its text - not even the box that
 /// happens to inherit its old slot.
 test("restoreUnsaved drops a failed comment once its case is removed - it is not shown under another box", async () => {
@@ -277,7 +277,7 @@ test("restoreUnsaved drops a failed comment once its case is removed - it is not
   box0.dispatchEvent(new Event("input"));
   await vi.advanceTimersByTimeAsync(600);
   await flush();
-  expect(document.getElementById("st0")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved - duplicate");
 
   // The failed case is removed from the file; a DIFFERENT case now sits at
   // the same slot 0.

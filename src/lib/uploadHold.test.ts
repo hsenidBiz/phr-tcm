@@ -165,7 +165,8 @@ test("a hold marks the same-titled row that was sent, not merely the first one",
   expect(ambiguousRows([a, b], { ...hold, ambiguous: ["Login works"] })).toEqual([false, true]);
 });
 
-/// Review Focus 2.
+/// A hold saved by an older version has no `sigs`; it must still load and
+/// mark its rows by title rather than be dropped.
 test("a hold stored before signatures existed still marks its rows by title", () => {
   localStorage.setItem("tcm-v2-upload-hold:acme/42", JSON.stringify({ since: "S", titles: ["B"] }));
   const hold = loadHold("acme", 42);

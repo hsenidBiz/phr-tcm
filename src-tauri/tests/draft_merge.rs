@@ -399,7 +399,7 @@ fn a_title_differing_only_in_non_ascii_case_is_the_same_entry() {
     assert_eq!(doc["test_cases"][0]["author"], "a", "{out}");
 }
 
-/// Review Focus 3: the file lost the entry the app named (an assistant
+/// The file lost the entry the app named (an assistant
 /// deleted it since the snapshot). The row falls back to the first
 /// unclaimed same-titled entry, and nothing is appended twice.
 #[test]
@@ -419,10 +419,10 @@ fn an_occurrence_the_file_no_longer_has_falls_back_to_the_first_unclaimed_entry(
     assert_eq!(doc["test_cases"][0]["author"], "only", "{out}");
 }
 
-/// Fix round 1 (review Important #1): the app's watch snapshot after a
+/// The app's watch snapshot after a
 /// write must be a fresh parse of what was ACTUALLY written, in FILE
 /// order - not the queue's own order, which a re-sort can put out of step
-/// with the file. This proves the composition `save_draft_cases` now
+/// with the file. This proves the composition `save_draft_cases`
 /// uses (`apply_draft_edits` then `parse_json_text` on its own output)
 /// carries a twin's identity correctly into a SECOND write, even though
 /// the queue never returns to file order.
@@ -477,7 +477,7 @@ fn a_second_write_counts_occurrences_against_the_first_writes_real_file_order() 
     assert_eq!(doc["test_cases"][1]["steps"][0]["action"], "Open C.", "{out}");
 }
 
-/// Fix round 2 (review New #3): the write-back's own round trip -
+/// The write-back's own round trip -
 /// `apply_draft_edits` then a fresh `parse_json_text` of what it just
 /// wrote - is what a caller relies on to recognise its own row afterwards
 /// (`claimRows`' exact-match pass, fileSync.ts). A field that does not

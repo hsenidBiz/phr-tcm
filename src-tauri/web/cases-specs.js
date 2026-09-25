@@ -166,8 +166,8 @@
   // character past ASCII that is not in a punctuation, symbol, space or
   // surrogate block. Scripts without case - CJK, kana, Hangul, Arabic, Thai,
   // Devanagari - used to be dropped whole, and every such heading got the
-  // id "h"; this list still under- and over-matches a little (see the
-  // review of this change), which \p{} above does not.
+  // id "h"; this list still under- and over-matches a little (a block
+  // boundary is not a letter class), which \p{} above does not.
   var NOT_WORD = /[\u0080-\u00bf\u00d7\u00f7\u2000-\u206f\u20a0-\u20cf\u2100-\u214f\u2190-\u2bff\u2e00-\u2e7f\u3000-\u3004\u3008-\u3020\u3030\u303d\ufe10-\ufe1f\ufe30-\ufe6f\uff00-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\ud800-\udfff\ufeff\ufff0-\uffff]/;
   function isWordChar(c) {
     if (UNICODE_BASE) return UNICODE_BASE.test(c);

@@ -179,10 +179,10 @@ function pageWithNote(seq: string, note: string): string {
   </div>`;
 }
 
-/// Review round 1, Important 1: freeing a timed-out save's box (so the poll
-/// no longer waits on it forever) opened a new hole - the very next live
-/// swap silently replaced the reviewer's unsaved text, and the status that
-/// told them about it, with the file's older copy.
+/// A timed-out save's box is freed so the poll does not wait on it forever,
+/// but the next live swap must not then silently replace the reviewer's
+/// unsaved text, and the status that told them about it, with the file's
+/// older copy.
 test("a save that times out keeps its text and status through the next live swap", async () => {
   document.body.innerHTML = pageWithNote("1", "old");
   new Function(notesSrc)();
@@ -212,8 +212,8 @@ test("a save that times out keeps its text and status through the next live swap
   expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
 });
 
-/// Same loss, reached through a refusal instead of a timeout - the review's
-/// "covers the timeout, closed and refused paths alike".
+/// Same loss, reached through a refusal instead of a timeout: the timeout,
+/// closed and refused paths are all kept alike.
 test("a refused save keeps its text and status through the next live swap", async () => {
   document.body.innerHTML = pageWithNote("1", "old");
   new Function(notesSrc)();
@@ -235,9 +235,9 @@ test("a refused save keeps its text and status through the next live swap", asyn
   box.dispatchEvent(new Event("input"));
   await vi.advanceTimersByTimeAsync(600);
   await later(0);
-  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
 
   await poll();
   expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
-  expect(document.getElementById("st")!.textContent).toBe("Not saved — duplicate");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
 });

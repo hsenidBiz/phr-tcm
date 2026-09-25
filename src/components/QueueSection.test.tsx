@@ -2081,7 +2081,7 @@ test("a double-click on Remove removes that one row, not the next one too", asyn
   expect(screen.getByText("Beta case")).toBeInTheDocument();
 });
 
-// ---- Fix round 1 (review Important #1): after a write, the watch snapshot
+// ---- After a write, the watch snapshot
 // ---- must be what Rust says is now in the FILE, in FILE order - not a
 // ---- queue-order slice of the rows the write touched. The backend below
 // ---- applies the same claim-by-occurrence-then-title rule Rust's
@@ -2091,12 +2091,11 @@ test("a double-click on Remove removes that one row, not the next one too", asyn
 
 type FakeEdit = { before: TestCase; after: TestCase | null; occurrence: number | null };
 
-/// Fix round 2 (review "The test double"): this fake now matches export.rs
-/// on the two gaps that mattered - occurrence counts id-less entries only,
-/// and an id claims its entry before any occurrence is even considered -
-/// so a test using an `update_id` row is no longer trusting a rule Rust
-/// doesn't actually have. Two smaller gaps are left, and don't need
-/// closing for what these tests check:
+/// This fake matches export.rs on the two rules that decide which entry a
+/// row lands on - occurrence counts id-less entries only, and an id claims
+/// its entry before any occurrence is even considered - so a test using an
+/// `update_id` row is not trusting a rule Rust doesn't actually have. Two
+/// smaller differences remain, and don't matter for what these tests check:
 /// - "unchanged" is decided with `JSON.stringify`, not Rust's `PartialEq`.
 ///   Every case built by these tests is a plain object literal compared
 ///   against another built the same way, so key order - the one thing
@@ -2268,7 +2267,7 @@ const mockDraftBackend = (backend: ReturnType<typeof fakeDraftBackend>) =>
 
 const stepText = (tc: TestCase) => [tc.steps[0].action, tc.steps[0].expected];
 
-/// The review's exact scenario: a file `[A, B, C]`, all titled "X". The
+/// A file `[A, B, C]`, all titled "X". The
 /// queue is re-sorted to `[C, B, A]`. Removing the middle row, then editing
 /// the last one, must land on A and C's own entries - not trade them.
 test("a second write-back after a re-sort still lands its edit on the row's own file entry", async () => {
@@ -2366,8 +2365,7 @@ test("a file entry no row owns survives a write and does not shift later occurre
   );
 });
 
-// ---- Fix round 2 (review: Minor #3 re-graded Important, a Task 5
-// ---- regression): no re-sort needed. Two write-backs to the SAME file -
+// ---- No re-sort needed. Two write-backs to the SAME file -
 // ---- Remove, then the next row's Remove landing before the first write
 // ---- has replied - must not both build their occurrences from the
 // ---- snapshot the FIRST write has not replaced yet, or Rust deletes the
@@ -2375,7 +2373,7 @@ test("a file entry no row owns survives a write and does not shift later occurre
 // ---- what the one before it on that path actually returned
 // ---- (`freshWatches`/`noteWritten`), not a snapshot captured before it. --
 
-/// The reviewer's exact replay: file, snapshot and queue all `[A,B,C]`,
+/// File, snapshot and queue all `[A,B,C]`,
 /// every title "X". Remove A, then remove C - now at queue index 1 - before
 /// A's write has replied. The file must end with B; so must the queue.
 test("two quick Removes on the same file are serialised, each built from the last write's own result", async () => {
@@ -2401,7 +2399,7 @@ test("two quick Removes on the same file are serialised, each built from the las
   // which has not replied. A synchronous check here would be weak (the
   // chained task itself starts on a microtask, so it would read 1 either
   // way): give any UNSERIALISED dispatch several real ticks to happen -
-  // without the fix, C's write would already have gone out by now, making
+  // unserialised, C's write would already have gone out by now, making
   // this 2.
   await new Promise((r) => setTimeout(r, 20));
   expect(backend.pendingCount).toBe(1);
@@ -2484,15 +2482,15 @@ test("a note patched into the file mid-Remove does not put the removed twin back
   );
 });
 
-// ---- Fix round 3 (review: a Critical new in fix round 2): the remembered
+// ---- The remembered
 // ---- snapshot (`draftWriteQueue.ts`) must serve ONLY the writes queued
 // ---- back to back on a file - never a write that comes along later, after
-// ---- something else has moved the file on. Nothing used to clear it, so
-// ---- an outside sync (an assistant's own edit, a queue-card comment, a
-// ---- spec or run-order save) left every write after it pairing against a
-// ---- ghost of the file: an edit of the newly-synced row was silently
-// ---- dropped, and an upload's new id was never stamped into the file it
-// ---- actually lives in - a future duplicate. ------------------------------
+// ---- something else has moved the file on. Kept past that, an outside
+// ---- sync (an assistant's own edit, a review-page comment, a spec or
+// ---- run-order save) would leave every write after it pairing against an
+// ---- older copy of the file: an edit of the newly-synced row would be
+// ---- silently dropped, and an upload's new id never stamped into the file
+// ---- it actually lives in - a future duplicate. --------------------------
 
 /// Write X, then an outside sync adds N (to the file, the watch AND the
 /// queue - the way a real file-watcher sync does), then edit N. The edit
@@ -2510,9 +2508,9 @@ test("an edit of a row an outside sync just added is not silently skipped", asyn
     },
   });
 
-  // Edit X, and let the write-back fully finish - the chain drains, so the
-  // OLD fix's remembered snapshot would (wrongly) still be sitting there
-  // for every write after this one.
+  // Edit X, and let the write-back fully finish - the chain drains, and a
+  // remembered snapshot that outlived it would (wrongly) still be sitting
+  // there for every write after this one.
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "X, edited." },

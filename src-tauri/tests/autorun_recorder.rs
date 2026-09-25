@@ -410,7 +410,7 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     // The Cancel is used up: the next check runs to its end.
     assert_eq!(unless_cancelled(async { Ok::<_, String>("/hr/leave") }, CANCELLED).await, Ok("/hr/leave"));
 
-    // Item 7: a cancelled Try says so in its own words, not the recording's.
+    // A cancelled Try says so in its own words, not the recording's.
     let tried = tokio::spawn(unless_cancelled(
         async {
             tokio::time::sleep(Duration::from_secs(600)).await;
@@ -434,7 +434,7 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     drop(rec);
     assert!(!auto_run_recording_is_open().await);
 
-    // Item 6: the app exiting ends an open recording the way Cancel does -
+    // The app exiting ends an open recording the way Cancel does -
     // its browser is closed and the recorder is free.
     let rec = RecorderClaim::claim().expect("free again");
     let (closed, spawned) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
@@ -446,7 +446,7 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     assert!(!recording_is_going());
     assert!(!recording_is_open().await);
 
-    // Review Focus 5: exiting while a Try runs (it holds the recorder, with
+    // Exiting while a Try runs (it holds the recorder, with
     // no recording to end) stops the Try too, in the Try's own words - and
     // waits for its browser to actually close, not just for a cancel to be
     // asked for. The claim is held the way `auto_run_try_module_path` really
