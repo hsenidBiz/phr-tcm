@@ -322,11 +322,28 @@ test("a Try can be cancelled, and a cancelled Try is not shown as the path faili
   fireEvent.click(await screen.findByRole("button", { name: "Cancel trying Leave" }));
   await waitFor(() => expect(cancels).toBe(1));
   await act(async () => {
-    resolveTry?.({ ok: false, detail: "the recording was cancelled - nothing was saved" });
+    resolveTry?.({ ok: false, cancelled: true, detail: "the check was cancelled - the saved path was not changed" });
   });
   await waitFor(() => expect(toast.info).toHaveBeenCalledWith("Stopped trying Leave."));
-  expect(screen.queryByText("the recording was cancelled - nothing was saved")).not.toBeInTheDocument();
+  expect(screen.queryByText("the check was cancelled - the saved path was not changed")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Cancel trying Leave" })).not.toBeInTheDocument();
+});
+
+/// A Try cancelled from somewhere else - another dialog's "Cancel that
+/// recording" - comes back cancelled though THIS dialog never asked. It is
+/// still not the path failing.
+test("a Try cancelled from elsewhere reads as stopped, not as the path failing", async () => {
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [LEAVE] };
+    if (cmd === "auto_run_try_module_path") {
+      return { ok: false, cancelled: true, detail: "the check was cancelled - the saved path was not changed" };
+    }
+  });
+  const tryIt = await screen.findByRole("button", { name: "Try Leave" });
+  await waitFor(() => expect(tryIt).toBeEnabled());
+  fireEvent.click(tryIt);
+  await waitFor(() => expect(toast.info).toHaveBeenCalledWith("Stopped trying Leave."));
+  expect(screen.queryByText("the check was cancelled - the saved path was not changed")).not.toBeInTheDocument();
 });
 
 /// Review M5: leaving the Auto Run section mid-recording unmounts the

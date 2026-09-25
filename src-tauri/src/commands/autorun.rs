@@ -118,9 +118,12 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
 /// Kill the process and drop its throwaway profile. Shared with
 /// `autorun_replay`, whose `RealBrowsers` closes one of these after every
 /// case (and on the way out of a failed open) so a background browser can
-/// never outlive the run that started it.
+/// never outlive the run that started it. It waits for the process to be
+/// gone first: a browser still shutting down holds files in its profile,
+/// and removing the folder under it fails.
 pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
     let _ = browser.child.kill();
+    let _ = browser.child.wait();
     let _ = std::fs::remove_dir_all(&browser.profile_dir);
 }
 
@@ -136,6 +139,19 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
         crate::applog::info("Auto-run browser closed");
     }
     Ok(())
+}
+
+/// Auto Run's browsers go with the app. A recording - or a Start, a check or
+/// a Try still going - is ended the way Cancel ends it, which closes the
+/// recording browser; then the supervised browser is closed. Each takes its
+/// throwaway profile with it (`close_browser`). Called from the app's exit
+/// hook in lib.rs, which bounds it.
+pub async fn close_autorun_browsers() {
+    let _ = crate::commands::autorun_record::auto_run_record_cancel().await;
+    if let Some(s) = SESSION.lock().await.take() {
+        close_session(s);
+        crate::applog::info("Auto-run browser closed as the app exits");
+    }
 }
 
 /// Run one step's actions in order and report every outcome. Actions after

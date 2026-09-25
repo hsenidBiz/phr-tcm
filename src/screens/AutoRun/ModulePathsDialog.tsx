@@ -234,10 +234,11 @@ export default function ModulePathsDialog({
     setLeftOpen(false);
     cancelAsked.current = false;
     setTrying(module);
-    const show = (result: { ok: boolean; detail: string }) => {
-      if (cancelAsked.current && !result.ok) {
-        // A cancelled Try says nothing about the path: drop any old answer
-        // rather than show the cancel as the path failing.
+    const show = (result: { ok: boolean; detail: string; cancelled?: boolean }) => {
+      // A cancelled Try says nothing about the path: drop any old answer
+      // rather than show the cancel as the path failing. Cancelled by this
+      // dialog (asked), or by anything else (the backend says so).
+      if (result.cancelled || (cancelAsked.current && !result.ok)) {
         setTried((t) => {
           const next = { ...t };
           delete next[module];
@@ -246,7 +247,7 @@ export default function ModulePathsDialog({
         toast.info(`Stopped trying ${module}.`);
         return;
       }
-      setTried((t) => ({ ...t, [module]: result }));
+      setTried((t) => ({ ...t, [module]: { ok: result.ok, detail: result.detail } }));
     };
     try {
       const r = await commands.autoRunTryModulePath(org, project, module, who, chosenBrowser());

@@ -1518,6 +1518,11 @@ export type ModuleRecordResult = {
 export type ModuleTryResult = {
 	ok: boolean,
 	detail: string,
+	/**
+	 *  The Try was cancelled - by this dialog or any other - so it says
+	 *  nothing about the path. The dialog shows it as stopped, not failed.
+	 */
+	cancelled: boolean,
 };
 
 /**
