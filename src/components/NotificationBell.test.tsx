@@ -147,3 +147,41 @@ test("renders nothing without an organisation", () => {
   const { container } = render(<NotificationBell org="" />);
   expect(container).toBeEmptyDOMElement();
 });
+
+test("a mention wears the Mention label and opens its work item in the app", () => {
+  raise("acme", [
+    {
+      id: "mention:wi:41:7",
+      kind: "mention",
+      title: "Sam mentioned you on Product Backlog Item #41",
+      body: "@Avin can you check this?",
+      href: "https://x/41",
+      target: { kind: "work-item", id: 41, project: "Web" },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  expect(screen.getByText("Mention")).toHaveClass("text-danger");
+  expect(screen.getByText("@Avin can you check this?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on Product Backlog Item #41" }));
+  expect(opened).toEqual([{ kind: "work-item", id: 41, project: "Web" }]);
+});
+
+test("a PR mention opens its pull request in the app", () => {
+  raise("acme", [
+    {
+      id: "mention:pr:web:12:3:9",
+      kind: "mention",
+      title: "Sam mentioned you on PR #12",
+      body: "@you please look",
+      href: "https://x/pr/12",
+      target: { kind: "pr", repo: "web", id: 12, project: "Web" },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on PR #12" }));
+  expect(opened).toEqual([{ kind: "pr", repo: "web", id: 12, project: "Web" }]);
+});

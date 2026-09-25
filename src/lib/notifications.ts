@@ -15,7 +15,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest } from "../bindings";
 
-export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
+export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments" | "mention";
 
 /** What a notification is about, in the app's own terms - enough for a
  * screen to open the thing without parsing a URL back apart. Every
@@ -128,6 +128,16 @@ export function raise(
   );
   save(org, [...added, ...load(org)].slice(0, LIST_CAP));
   return added;
+}
+
+/** Record ids as seen without listing them - a source's backlog on its
+ * first run. raise() skips them from then on, exactly like a dismissed
+ * notification. */
+export function markSeen(org: string, ids: string[]): void {
+  if (!org || ids.length === 0) return;
+  const seen = new Set([...known(org), ...load(org).map((n) => n.id)]);
+  const unseen = [...new Set(ids)].filter((id) => !seen.has(id));
+  if (unseen.length > 0) remember(org, unseen);
 }
 
 /** Opening the bell: the badge goes, the items stay. */

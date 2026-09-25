@@ -5,6 +5,7 @@ import {
   clearAll,
   dismiss,
   markAllRead,
+  markSeen,
   noteAssigned,
   notePrComments,
   notePrOverview,
@@ -173,4 +174,13 @@ test("sources carry a structured target beside the browser href", () => {
   expect(byId["pr-conflict:web:12"]).toEqual({ kind: "pr", repo: "web", id: 12, project: "Web" });
   expect(byId["pr-review:web:13"]).toEqual({ kind: "pr", repo: "web", id: 13, project: "Web" });
   expect(byId["pr-comments:web:14:2"]).toEqual({ kind: "pr", repo: "web", id: 14, project: "Web" });
+});
+
+test("markSeen records ids without listing them, and raise skips them after", () => {
+  markSeen(ORG, ["mention:wi:1:1", "mention:wi:1:1"]);
+  expect(read()).toEqual([]);
+  expect(raise(ORG, [{ id: "mention:wi:1:1", kind: "mention", title: "M", body: "" }])).toEqual([]);
+  expect(raise(ORG, [{ id: "mention:wi:2:1", kind: "mention", title: "N", body: "" }]).map((n) => n.id)).toEqual([
+    "mention:wi:2:1",
+  ]);
 });
