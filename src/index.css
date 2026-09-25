@@ -786,6 +786,17 @@ table {
   contain-intrinsic-size: auto var(--cv-size, 38px);
 }
 
+/* ...except inside a fold that is growing open (ui/collapse.tsx). The fold
+   clips its content while its height moves, and a clipped row counts as off
+   screen: a large group rendered its rows a band at a time as the clip edge
+   uncovered them, stalling the grow, then rendered the rest in one go when
+   the clip came off. Rendered up front, the grow only uncovers rows that are
+   already painted. Once it settles the rows go back to `auto`, and the
+   remembered size above keeps the scrollbar where it was. */
+.t-collapse.is-entering .cv-row {
+  content-visibility: visible;
+}
+
 /* The rail's icons take the colour of the text beside them - the same
    muted/accent treatment as the label, so an active item reads as one
    thing rather than a coloured glyph next to a word.

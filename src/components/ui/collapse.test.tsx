@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { Collapse, foldMs, useSettled } from "./collapse";
+import { Collapse, EASE, EASE_TALL, foldMs, useSettled } from "./collapse";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -244,5 +244,68 @@ test("a fold entirely below the window neither animates nor leaves a copy", () =
     expect(document.querySelector(".is-closing")).toBeNull();
   } finally {
     m.restore();
+  }
+});
+
+// ---- The curve a tall fold grows on ---------------------------------------
+// Field report: a group of about 120 cases grew, slowed to a crawl partway,
+// then showed the rest at once. Part of that was the curve: the strong
+// ease-out covers ~96% of the distance in half the time, so the second half
+// of a window-tall grow barely moved. A tall span grows on a more even curve;
+// a short detail keeps the quick settle it always had.
+
+const growOf = (m: ReturnType<typeof stubMotion>) =>
+  m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"));
+
+test("a tall fold grows on the even curve, height and fade together", () => {
+  // A 1000px group at the top of an 800px window: 800px on screen.
+  window.innerHeight = 800;
+  const m = stubMotion(1000, 0);
+  try {
+    render(<Host />);
+    const grow = growOf(m);
+    expect(grow!.frames).toEqual([{ height: "0px" }, { height: "800px" }]);
+    expect(EASE_TALL).not.toBe(EASE);
+    expect(grow!.opts.easing).toBe(EASE_TALL);
+    const fade = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse-inner"));
+    expect(fade!.opts.easing).toBe(EASE_TALL);
+  } finally {
+    m.restore();
+  }
+});
+
+test("a short fold keeps the strong ease-out", () => {
+  window.innerHeight = 800;
+  const m = stubMotion(120, 0);
+  try {
+    render(<Host />);
+    expect(growOf(m)!.opts.easing).toBe(EASE);
+  } finally {
+    m.restore();
+  }
+});
+
+test("under prefers-reduced-motion a fold opens without animating", () => {
+  window.innerHeight = 800;
+  const realMatchMedia = window.matchMedia;
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes("prefers-reduced-motion"),
+    media: q,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  const m = stubMotion(1000, 0);
+  try {
+    render(<Host />);
+    expect(m.calls).toHaveLength(0);
+    expect(document.querySelector(".t-collapse")).not.toHaveClass("is-entering");
+    expect(screen.getByText("Row one")).toBeInTheDocument();
+  } finally {
+    m.restore();
+    window.matchMedia = realMatchMedia;
   }
 });

@@ -3,7 +3,15 @@ import { cn } from "../../lib/cn";
 import { leaveExitGhost, reducedMotion } from "../../lib/exitGhost";
 
 /** --motion-ease-smooth-out in index.css. */
-const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+export const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+/**
+ * The grow for a fold taller than TALL_PX. EASE covers ~96% of the distance
+ * in half the time, which suits a detail but left a window-tall group
+ * crawling through its whole second half. This one keeps moving to the end.
+ */
+export const EASE_TALL = "cubic-bezier(0.33, 0, 0.2, 1)";
+const TALL_PX = 400;
 
 /** The longest a fold may take. Also how long the clip may stay on if the
  * animation never reports its end. */
@@ -141,14 +149,15 @@ function Panel({
       return;
     }
     const ms = foldMs(span);
-    const grow = node.animate([{ height: "0px" }, { height: `${span}px` }], { duration: ms, easing: EASE });
+    const easing = span > TALL_PX ? EASE_TALL : EASE;
+    const grow = node.animate([{ height: "0px" }, { height: `${span}px` }], { duration: ms, easing });
     const inner = node.firstElementChild as HTMLElement | null;
     const fade = inner?.animate(
       [
         { opacity: 0, filter: "blur(2px)" },
         { opacity: 1, filter: "blur(0px)" },
       ],
-      { duration: ms, easing: EASE },
+      { duration: ms, easing },
     );
     grow.onfinish = () => setEntering(false);
     return () => {
