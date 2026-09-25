@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import ExistingCases from "./ExistingCases";
 
@@ -178,16 +178,19 @@ test("the header checkbox selects the group; title and chevron both collapse", a
         { ...fullCase, id: 203, title: "Standalone thing" },
       ];
   });
-  renderCases();
+  const { container } = renderCases();
 
   const header = await screen.findByRole("button", { name: "Login (2)" });
   const box = screen.getByRole("checkbox", { name: "Select all in Login" });
   fireEvent.click(box);
-  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  // The count now also travels with ActionDock's floating copy, which
+  // duplicates the same text off in a portal under document.body - scoped
+  // to `container` to see only the in-place one.
+  expect(within(container).getByText("2 selected")).toBeInTheDocument();
 
   // Clicking again clears the group's selection.
   fireEvent.click(box);
-  expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
+  expect(within(container).queryByText("2 selected")).not.toBeInTheDocument();
 
   // The TITLE collapses the group's cards (header stays)...
   fireEvent.click(header);
@@ -209,13 +212,15 @@ test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
       return null;
     }
   });
-  renderCases();
+  const { container } = renderCases();
 
-  // Single click selects one; ctrl+click adds the second.
+  // Single click selects one; ctrl+click adds the second. Scoped to
+  // `container`: the count also shows in ActionDock's floating copy,
+  // portalled outside it.
   fireEvent.click(await screen.findByText("Valid login"));
-  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  expect(within(container).getByText("1 selected")).toBeInTheDocument();
   fireEvent.click(screen.getByText("Invalid login"), { ctrlKey: true });
-  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  expect(within(container).getByText("2 selected")).toBeInTheDocument();
 
   // Bulk edit both: pick a status, apply serially.
   fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
@@ -235,16 +240,16 @@ test("cancelling Power Rename keeps the selection", async () => {
     if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
     if (cmd === "list_project_tags") return [];
   });
-  renderCases();
+  const { container } = renderCases();
 
   fireEvent.click(await screen.findByText("Valid login"));
   fireEvent.click(screen.getByText("Invalid login"), { ctrlKey: true });
-  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  expect(within(container).getByText("2 selected")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   fireEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
 
-  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  expect(within(container).getByText("2 selected")).toBeInTheDocument();
   // And the dialog really did close, so this is not just a stale render.
   expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument();
 });
@@ -342,4 +347,30 @@ test("folding a group keeps the open editor and its unsaved edits", async () => 
   expect((screen.getByLabelText("Case title") as HTMLInputElement).value).toBe(
     "Login - valid EDITED",
   );
+});
+
+/// The owner's standing rule: actions on a selection live in one dock,
+/// bottom-right once scrolled past - the count travels with it so the
+/// floating copy still says how many are selected.
+test("a selection puts its actions in a named dock, count included", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
+  });
+  renderCases();
+
+  expect(screen.queryByRole("region", { name: "Selection actions" })).not.toBeInTheDocument();
+
+  fireEvent.click(await screen.findByText("Valid login"));
+  // Not `getByRole(..., { name })`: an aria-hidden node's OWN accessible
+  // name computes as empty regardless of the `hidden` query option (that
+  // option only reinstates hidden elements into the search, it does not
+  // change name computation) - jsdom never fires the IntersectionObserver
+  // here, so the floating copy stays aria-hidden. The aria-label attribute
+  // itself, and its still-nameable children, are unaffected.
+  const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
+  expect(dock).not.toBeNull();
+  expect(dock.getAttribute("aria-label")).toBe("Selection actions");
+  expect(within(dock).getByText("1 selected")).toBeInTheDocument();
+  expect(within(dock).getByRole("button", { name: "Bulk edit", hidden: true })).toBeInTheDocument();
 });

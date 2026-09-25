@@ -125,6 +125,27 @@ describe("readability", () => {
   });
 });
 
+describe("action placement", () => {
+  // Owner's rule: actions on the thing live bottom-right, view controls
+  // (Collapse all) live bottom-left. ActionDock.tsx is the one approved
+  // place that builds a bottom-right floating action row - everything
+  // else that does `fixed` + `right-` by hand is either this pattern
+  // reimplemented (drift risk: two floating-button behaviors instead of
+  // one) or something that was never meant to float there.
+  test("no fixed + right- floating element outside ActionDock", () => {
+    const allow = new Set([
+      "components/ActionDock.tsx", // the one approved implementation
+      // Run Tests' selection bar (Run N in runner / Clear selection) is the
+      // same bottom-right floating-actions idea, predating ActionDock and
+      // out of scope for this pass (Task 4: Import File, Suite Management,
+      // Update Test Cases only). Left as a known follow-up.
+      "screens/RunPanel/index.tsx",
+    ]);
+    const re = /\bfixed\b[^\n]*\bright-|\bright-\S*[^\n]*\bfixed\b/;
+    expect(violations(re, allow)).toEqual([]);
+  });
+});
+
 describe("button icons", () => {
   // An icon beside a label makes a button quicker to FIND. It must not
   // change what the button IS called: the label already names the action,

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
+import ActionDock from "../../components/ActionDock";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
@@ -95,12 +95,12 @@ export default function SuiteCases({
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
   const dirty = cases.data ? !sameOrder(order, cases.data) : false;
-  // The floating bar stands in for the suite's own toolbar, so it never
-  // shows while that toolbar is on screen - one set of buttons at a time,
-  // like the Import tab's floating Review button. With the toolbar out of
-  // view it follows the user down the suite's cases; an unsaved order keeps
-  // it up even once the whole suite has scrolled away, so a change is never
-  // out of reach.
+  // The floating bar stands in for the order actions' own row (fed to
+  // ActionDock as its rowRef, below), so it never shows while that row is
+  // on screen - one set of buttons at a time, like the Import tab's
+  // floating Review button. With the row out of view it follows the user
+  // down the suite's cases; an unsaved order keeps it up even once the
+  // whole suite has scrolled away, so a change is never out of reach.
   const [toolbarRef, toolbarOnScreen] = useOnScreen();
   const [listRef, listOnScreen] = useOnScreen();
   const floating = !toolbarOnScreen && (listOnScreen || dirty);
@@ -162,20 +162,12 @@ export default function SuiteCases({
 
   return (
     <div className="my-2 space-y-2">
-      <div ref={toolbarRef} className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={!dirty || busy} onClick={() => apply.mutate()}>
-          <IconConfirm aria-hidden />
-          {apply.isPending ? "Saving" : "Apply order"}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={!dirty || busy} onClick={() => cases.data && setOrder(cases.data)}>
-          <IconUndo aria-hidden />
-          Reset
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => pickFiles.mutate()}>
-          <IconImport aria-hidden />
-          {pickFiles.isPending ? "Reading files" : "Apply order from files"}
-        </Button>
-        <label className="ml-2 flex items-center gap-2 text-xs text-muted">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* View controls stay left, the owner's standing rule (actions on
+            the thing live bottom-right; view controls live bottom-left /
+            with the other view controls) - only Apply order, Reset and
+            Apply order from files are actions on the suite's order. */}
+        <label className="flex items-center gap-2 text-xs text-muted">
           <Switch checked={grouped} onCheckedChange={setGroupedAndRemember} ariaLabel="Group by title" />
           Group by title
         </label>
@@ -200,6 +192,55 @@ export default function SuiteCases({
             {anyOpen ? "Collapse groups" : "Expand groups"}
           </Button>
         )}
+        <ActionDock
+          label={`Order actions for ${suiteName}`}
+          className="ml-auto"
+          // Feeds this screen's own on/off-screen watch (toolbarRef, above)
+          // rather than leaving it to a separate one of the dock's own, so
+          // `floating` - which also depends on the case list and the dirty
+          // flag - stays the single source of truth for whether this
+          // suite's bar is up.
+          rowRef={toolbarRef}
+          stack={rank ?? 0}
+          active={rank != null}
+        >
+          {(floating) => (
+            <>
+              {floating && (
+                <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
+              )}
+              <Button
+                size="sm"
+                tabIndex={floating ? -1 : undefined}
+                disabled={!dirty || busy}
+                onClick={() => apply.mutate()}
+              >
+                <IconConfirm aria-hidden />
+                {apply.isPending ? "Saving" : "Apply order"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                tabIndex={floating ? -1 : undefined}
+                disabled={!dirty || busy}
+                onClick={() => cases.data && setOrder(cases.data)}
+              >
+                <IconUndo aria-hidden />
+                Reset
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                tabIndex={floating ? -1 : undefined}
+                disabled={busy}
+                onClick={() => pickFiles.mutate()}
+              >
+                <IconImport aria-hidden />
+                {pickFiles.isPending ? "Reading files" : "Apply order from files"}
+              </Button>
+            </>
+          )}
+        </ActionDock>
       </div>
       <div ref={listRef}>
       <CaseOrderList
@@ -219,39 +260,6 @@ export default function SuiteCases({
         onToggleCollapsed={toggleCollapsed}
       />
       </div>
-      {rank != null &&
-        // Bottom RIGHT of the app window, like the Import tab's floating
-        // Review button: a long suite puts the toolbar a screen and a half
-        // above the row being dragged. Stacked by rank, because several
-        // suites can be open at once.
-        //
-        // Portalled to <body>: this screen renders inside AnimatedContent,
-        // whose GSAP transform makes `fixed` mean the scroll region instead
-        // of the window - which is why this bar, unportalled, scrolled away
-        // with the page instead of staying put.
-        createPortal(
-          <div
-            role="region"
-            aria-label={`Order actions for ${suiteName}`}
-            className="fixed right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl"
-            style={{ bottom: `${1.5 + rank * 3.5}rem` }}
-          >
-            <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
-            <Button size="sm" disabled={!dirty || busy} onClick={() => apply.mutate()}>
-              <IconConfirm aria-hidden />
-              {apply.isPending ? "Saving" : "Apply order"}
-            </Button>
-            <Button size="sm" variant="ghost" disabled={!dirty || busy} onClick={() => cases.data && setOrder(cases.data)}>
-              <IconUndo aria-hidden />
-              Reset
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => pickFiles.mutate()}>
-              <IconImport aria-hidden />
-              {pickFiles.isPending ? "Reading files" : "Apply order from files"}
-            </Button>
-          </div>,
-          document.body,
-        )}
       {orderFiles && orderFiles.length > 0 && (
         <FileOrderDialog
           suiteCases={order}

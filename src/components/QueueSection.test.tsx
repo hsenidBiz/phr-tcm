@@ -1247,9 +1247,10 @@ test("a floating copy of the main button appears once the real one scrolls away"
     expect(el).not.toBeNull();
     return el as HTMLElement;
   });
-  // Same words as the real control, and out of the reading order.
+  // Same words as the real control. Shown, so it is reachable by name for
+  // assistive tech too - aria-hidden only applies while it stands down.
   expect(floating).toHaveTextContent("Review 2 test cases");
-  expect(floating).toHaveAttribute("aria-hidden");
+  expect(floating).not.toHaveAttribute("aria-hidden");
 
   // It does exactly what the real button does: the same review, with the
   // PBI stage armed and the duplicate check already run.
@@ -1272,6 +1273,7 @@ test("the floating copy stands down when the real button is in view", async () =
   const floating = document.querySelector("[data-sticky-action]") as HTMLElement;
   expect(floating.className).toContain("opacity-0");
   expect(floating.className).toContain("pointer-events-none");
+  expect(floating).toHaveAttribute("aria-hidden", "true");
 });
 
 /// The "Click to view ... changing" affordance used to appear only once

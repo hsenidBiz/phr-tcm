@@ -129,10 +129,14 @@ test("a queue that starts EMPTY still gets the floating button once it fills", a
   io.report(false);
   expect(floating.className).toContain("opacity-100");
   expect(floating).toHaveTextContent("Review 2 test cases");
-  expect(floating).toHaveAttribute("aria-hidden");
+  // Shown, so it is reachable by name for assistive tech too - aria-hidden
+  // (and its own accessible name going along with it) only applies while
+  // it stands down.
+  expect(floating).not.toHaveAttribute("aria-hidden");
 
   // And back down again when the real row returns.
   io.report(true);
   expect(floating.className).toContain("opacity-0");
   expect(floating.className).toContain("pointer-events-none");
+  expect(floating).toHaveAttribute("aria-hidden", "true");
 });

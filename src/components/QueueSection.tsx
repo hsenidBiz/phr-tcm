@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
+import ActionDock from "./ActionDock";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import {
   commands,
@@ -15,7 +16,6 @@ import {
   type TestCaseFull,
 } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import { useOnScreen } from "../hooks/useOnScreen";
 import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
@@ -1488,17 +1488,10 @@ export default function QueueSection({
   ]
     .filter(Boolean)
     .join(" · ");
-  // -24px so the real row has to be properly in view, not just peeking
-  // over the bottom edge, before the floating copy stands down. The ref
-  // is the hook's own callback ref, because the action row is NOT in the
-  // page while the queue is empty - and an empty queue growing long is
-  // exactly the flow the floating copy exists for.
-  const [actionRow, actionOnScreen] = useOnScreen("0px 0px -24px 0px");
-
-  // The same row, held as a plain node so it can be scrolled to. The hook
-  // above keeps its node in state for the observer and does not hand it
-  // back, and reading it out of there would make this depend on when the
-  // observer happens to re-render.
+  // The row, held as a plain node so it can be scrolled to. ActionDock owns
+  // the on/off-screen watch that decides when its floating copy shows and
+  // keeps that node in its own state instead of handing it back, so this
+  // ref exists purely for scrollIntoView below.
   const actionRowEl = useRef<HTMLDivElement | null>(null);
 
   // Opening the review, and arming the confirmation, both grow this row -
@@ -1894,132 +1887,166 @@ export default function QueueSection({
         </Modal>
       )}
 
-      <div
+      <ActionDock
+        label="Queue actions"
         // The tour rings this row, not the Review button inside it: the
         // row is what holds Review before review and the confirm/upload
         // button during it, so the stop makes sense either way.
-        data-tour="queue-review"
-        ref={(el) => {
+        rowProps={{ "data-tour": "queue-review" }}
+        rowRef={(el) => {
           actionRowEl.current = el;
-          actionRow(el);
         }}
-        className="flex items-center gap-3"
+        // The dock's default row is right-aligned for the standard case;
+        // this row has always read left-to-right instead, and Import File
+        // has to look unchanged.
+        className="justify-start gap-3"
+        // The floating copy stands down for the armed warning and the
+        // duplicate gate on purpose, since those have to be read - the row
+        // comes to the reader for those instead (see the scroll effect
+        // below).
+        active={queue.length > 0 && !armed && dupsPending.length === 0}
       >
-        {progress ? (
-          <Button disabled>
-            <IconConfirm aria-hidden />
-            {submitLabel(progress)}
-          </Button>
-        ) : !reviewing ? (
-          <Button disabled={queue.length === 0} onClick={openReview}>
-            <IconReview aria-hidden />
-            Review {queue.length} test case{queue.length === 1 ? "" : "s"}
-          </Button>
-        ) : (
-          <div className="w-full space-y-2">
-            {/* The duplicate warning sits ABOVE the way on rather than
-                replacing it, and the button below is disabled while it
-                stands - the per-row hint it replaced was scrollable-past,
-                and 43 duplicates once sailed through that. */}
-            {dupsPending.length > 0 && (
-              <div className="space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
-                <p className="text-sm font-semibold text-text">
-                  Stopped: {dupsPending.length} case{dupsPending.length === 1 ? "" : "s"} with the
-                  same title already exist{dupsPending.length === 1 ? "s" : ""} on PBI #{pbiId}.
-                </p>
-                <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
-                  {dupsPending.map((t) => (
-                    <li key={t}>• {t}</li>
-                  ))}
-                </ul>
-                <p className="text-xs text-muted">
-                  If you meant to update the existing cases, import a file that includes their
-                  ids (View Test Cases → Export JSON has them). Creating anyway makes
-                  duplicates - and cleaning those up needs delete permission.
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      // Backing out here abandons the armed confirmation
-                      // too - the chip must stop glowing, same as Back.
-                      arm(false);
-                      setReviewing(false);
-                    }}
-                  >
-                    <IconBack aria-hidden />
-                    Stop — take me back
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={submit.isPending || !online}
-                    // Accepting does NOT write. It records the choice and
-                    // frees the button, so the last click is still the one
-                    // that creates and still says so.
-                    onClick={() => setAcceptedDups((prev) => [...prev, ...dupsPending])}
-                  >
-                    Create duplicates anyway
-                  </Button>
+        {(floating) =>
+          progress ? (
+            <Button tabIndex={floating ? -1 : undefined} disabled>
+              <IconConfirm aria-hidden />
+              {submitLabel(progress)}
+            </Button>
+          ) : !reviewing ? (
+            <Button
+              tabIndex={floating ? -1 : undefined}
+              disabled={!floating && queue.length === 0}
+              onClick={openReview}
+            >
+              <IconReview aria-hidden />
+              Review {queue.length} test case{queue.length === 1 ? "" : "s"}
+            </Button>
+          ) : floating ? (
+            // Simplified on purpose: the floating copy skips Back, the
+            // blockers hint and the duplicate/armed panels - those need
+            // the full row, which the scroll effect below brings back.
+            // Arms rather than submitting outright unless every row is a
+            // pure update - a floating corner button is an easy accident,
+            // and creating something needs the fuller row read first.
+            <Button
+              tabIndex={-1}
+              disabled={holdActive || hasBlockers || submit.isPending || !online}
+              title={online ? undefined : OFFLINE_HINT}
+              onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
+            >
+              <IconConfirm aria-hidden />
+              {submit.isPending
+                ? progress
+                  ? submitLabel(progress)
+                  : "Checking"
+                : `Confirm & ${actionLabel || "create 0"}`}
+            </Button>
+          ) : (
+            <div className="w-full space-y-2">
+              {/* The duplicate warning sits ABOVE the way on rather than
+                  replacing it, and the button below is disabled while it
+                  stands - the per-row hint it replaced was scrollable-past,
+                  and 43 duplicates once sailed through that. */}
+              {dupsPending.length > 0 && (
+                <div className="space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
+                  <p className="text-sm font-semibold text-text">
+                    Stopped: {dupsPending.length} case{dupsPending.length === 1 ? "" : "s"} with the
+                    same title already exist{dupsPending.length === 1 ? "s" : ""} on PBI #{pbiId}.
+                  </p>
+                  <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
+                    {dupsPending.map((t) => (
+                      <li key={t}>• {t}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted">
+                    If you meant to update the existing cases, import a file that includes their
+                    ids (View Test Cases → Export JSON has them). Creating anyway makes
+                    duplicates - and cleaning those up needs delete permission.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        // Backing out here abandons the armed confirmation
+                        // too - the chip must stop glowing, same as Back.
+                        arm(false);
+                        setReviewing(false);
+                      }}
+                    >
+                      <IconBack aria-hidden />
+                      Stop — take me back
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={submit.isPending || !online}
+                      // Accepting does NOT write. It records the choice and
+                      // frees the button, so the last click is still the one
+                      // that creates and still says so.
+                      onClick={() => setAcceptedDups((prev) => [...prev, ...dupsPending])}
+                    >
+                      Create duplicates anyway
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
-            {armed && (
-              <div className="rounded-md border border-warning/50 bg-warning/10 p-3">
-                <p className="text-sm text-text">
-                  Check the highlighted PBI above — everything here will be written to{" "}
-                  <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
-                  <span className="font-semibold">needs delete permission</span> in Azure DevOps,
-                  and deleting a test case in Azure DevOps is permanent.
-                </p>
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <Button
-                disabled={
-                  queue.length === 0 ||
-                  holdActive ||
-                  hasBlockers ||
-                  submit.isPending ||
-                  !online ||
-                  // While the check is in flight, and while a duplicate is
-                  // waiting to be looked at.
-                  checkingDups ||
-                  dupsPending.length > 0
-                }
-                title={online ? undefined : OFFLINE_HINT}
-                onClick={() => void guardedSubmit()}
-              >
-                <IconConfirm aria-hidden />
-                {submit.isPending
-                  ? progress
-                    ? submitLabel(progress)
-                    : "Checking"
-                  : armed
-                    ? `Yes — ${actionLabel}`
-                    : `Confirm & ${actionLabel || "create 0"}`}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  arm(false);
-                  setReviewing(false);
-                }}
-              >
-                <IconBack aria-hidden />
-                Back
-              </Button>
-              {hasBlockers && (
-                <span className="text-xs text-danger">Fix the flagged items first.</span>
               )}
-              {holdActive && (
-                <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>
+              {armed && (
+                <div className="rounded-md border border-warning/50 bg-warning/10 p-3">
+                  <p className="text-sm text-text">
+                    Check the highlighted PBI above — everything here will be written to{" "}
+                    <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
+                    <span className="font-semibold">needs delete permission</span> in Azure DevOps,
+                    and deleting a test case in Azure DevOps is permanent.
+                  </p>
+                </div>
               )}
+              <div className="flex items-center gap-2">
+                <Button
+                  disabled={
+                    queue.length === 0 ||
+                    holdActive ||
+                    hasBlockers ||
+                    submit.isPending ||
+                    !online ||
+                    // While the check is in flight, and while a duplicate is
+                    // waiting to be looked at.
+                    checkingDups ||
+                    dupsPending.length > 0
+                  }
+                  title={online ? undefined : OFFLINE_HINT}
+                  onClick={() => void guardedSubmit()}
+                >
+                  <IconConfirm aria-hidden />
+                  {submit.isPending
+                    ? progress
+                      ? submitLabel(progress)
+                      : "Checking"
+                    : armed
+                      ? `Yes — ${actionLabel}`
+                      : `Confirm & ${actionLabel || "create 0"}`}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    arm(false);
+                    setReviewing(false);
+                  }}
+                >
+                  <IconBack aria-hidden />
+                  Back
+                </Button>
+                {hasBlockers && (
+                  <span className="text-xs text-danger">Fix the flagged items first.</span>
+                )}
+                {holdActive && (
+                  <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )
+        }
+      </ActionDock>
 
       {/* What just happened, as a panel rather than a paragraph of coloured
           text pasted under the queue. The headline answers "did it work"
@@ -2140,57 +2167,6 @@ export default function QueueSection({
           document.body,
         )}
 
-      {/* The same main button, following the user down a long queue.
-          Bottom RIGHT, keeping clear of Collapse all on the left. It does
-          share that corner with the toasts, which render above it and can
-          cover it for the few seconds one is up - the trade the placement
-          makes, since the button is persistent and a toast is not.
-          Portalled for the same reason Collapse all is - AnimatedContent's
-          transform would make `fixed` mean this scroll region instead of
-          the window. It is aria-hidden and unfocusable on purpose: it
-          duplicates a control that is already in the page. It never covers
-          the armed confirmation or the duplicate gate - those are there to
-          be read before a write that cannot be undone. */}
-      {queue.length > 0 &&
-        !armed &&
-        dupsPending.length === 0 &&
-        createPortal(
-          <div
-            aria-hidden
-            data-sticky-action
-            className={cn(
-              // No pill behind it: the button is its own affordance, and the
-              // ring of background around it read as a second control.
-              "fixed bottom-6 right-6 z-40 transition-all duration-200",
-              actionOnScreen
-                ? "pointer-events-none translate-y-3 opacity-0"
-                : "translate-y-0 opacity-100",
-            )}
-          >
-            {progress ? (
-              <Button tabIndex={-1} disabled>
-                <IconConfirm aria-hidden />
-                {submitLabel(progress)}
-              </Button>
-            ) : !reviewing ? (
-              <Button tabIndex={-1} onClick={openReview}>
-                <IconReview aria-hidden />
-                Review {queue.length} test case{queue.length === 1 ? "" : "s"}
-              </Button>
-            ) : (
-              <Button
-                tabIndex={-1}
-                disabled={holdActive || hasBlockers || submit.isPending || !online}
-                title={online ? undefined : OFFLINE_HINT}
-                onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
-              >
-                <IconConfirm aria-hidden />
-                {submit.isPending ? (progress ? submitLabel(progress) : "Checking") : `Confirm & ${actionLabel || "create 0"}`}
-              </Button>
-            )}
-          </div>,
-          document.body,
-        )}
     </section>
   );
 }

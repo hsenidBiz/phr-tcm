@@ -121,9 +121,13 @@ function stubScroll() {
       for (const w of watched.filter((x) => match(x.el))) w.cb([{ isIntersecting }]);
     });
   return {
-    /** The suite's own toolbar scrolls out of view, or back into it. */
+    /** The suite's own order-actions row (the ActionDock's in-place row,
+     * which ActionDock and this screen both watch) scrolls out of view, or
+     * back into it. Matched by "Apply order" rather than the "Group by
+     * title" switch: the view controls now sit outside the dock, so the
+     * switch is no longer inside the watched element. */
     toolbar: (onScreen: boolean) =>
-      report((el) => within(el as HTMLElement).queryByRole("switch", { name: "Group by title" }) != null, onScreen),
+      report((el) => within(el as HTMLElement).queryByRole("button", { name: "Apply order" }) != null, onScreen),
     /** The suite's case list scrolls out of view, or back into it. */
     list: (l: HTMLElement, onScreen: boolean) => report((el) => el.contains(l), onScreen),
     restore: () => {
@@ -565,6 +569,26 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
   } finally {
     scroll.restore();
   }
+});
+
+/// The owner's standing rule: actions on the thing (the order) live in the
+/// right-aligned dock; view controls (grouping) stay out of it, on the left.
+test("the order actions sit in a right-aligned dock, separate from the view controls", async () => {
+  localStorage.setItem("tcm-v2-group-manage", "on");
+  mount();
+  await list();
+
+  const dock = screen.getByRole("button", { name: "Apply order" }).closest(".justify-end") as HTMLElement;
+  expect(dock).not.toBeNull();
+  expect(within(dock).getByRole("button", { name: "Reset" })).toBeInTheDocument();
+  expect(within(dock).getByRole("button", { name: "Apply order from files" })).toBeInTheDocument();
+
+  // The view controls - grouping, A-Z, expand/collapse - are outside it,
+  // but still on the page.
+  expect(within(dock).queryByRole("switch", { name: "Group by title" })).toBeNull();
+  expect(within(dock).queryByRole("button", { name: "A-Z groups" })).toBeNull();
+  expect(screen.getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "A-Z groups" })).toBeInTheDocument();
 });
 
 // ---- Run order (execution-order-modal design §6) ----
