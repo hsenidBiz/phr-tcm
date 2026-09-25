@@ -2,6 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import type { PullRequest } from "../bindings";
 import {
+  KNOWN_CAP,
   LIST_CAP,
   clearAll,
   dismiss,
@@ -217,4 +218,38 @@ test("forgetAllNotifications empties every organisation's bell and un-forgets di
   // The dismissed id is no longer "known" - it can raise again, for the
   // next account, exactly like a first-ever sighting.
   expect(raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }]).map((n) => n.id)).toEqual(["a"]);
+});
+
+/// A source re-reports its whole state on every check. An id it still
+/// reports must stay "seen", however many other ids arrive over time - or a
+/// mention dismissed weeks ago comes back once 500 newer ids push it out.
+test("an id every check still reports never falls out of the seen set", () => {
+  const mention = { id: "mention:wi:41:7", kind: "mention" as const, title: "Sam mentioned you", body: "" };
+  expect(raise(ORG, [mention])).toHaveLength(1);
+  dismiss(ORG, mention.id);
+  for (let check = 0; check < 5; check++) {
+    // Between two checks: fewer new ids than the cap, but many in all.
+    raise(
+      ORG,
+      Array.from({ length: 300 }, (_, i) => ({
+        id: `pr-comments:web:${check}:${i}`,
+        kind: "pr-comments" as const,
+        title: "t",
+        body: "",
+      })),
+    );
+    // The next check reports the mention again: still seen, not raised.
+    expect(raise(ORG, [mention])).toEqual([]);
+  }
+});
+
+test("one report larger than the cap keeps every id it reported", () => {
+  const many = Array.from({ length: KNOWN_CAP + 100 }, (_, i) => ({
+    id: `pr-review:web:${i}`,
+    kind: "pr-review" as const,
+    title: "t",
+    body: "",
+  }));
+  raise(ORG, many);
+  expect(raise(ORG, [many[KNOWN_CAP + 99]])).toEqual([]);
 });
