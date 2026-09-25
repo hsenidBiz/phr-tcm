@@ -1772,11 +1772,18 @@ export type Project = {
 
 /**
  *  What the screen knows about a case that the run file does not: the
- *  case's real Azure DevOps step ids, in document order.
+ *  case's real Azure DevOps step ids, in document order, and which of its
+ *  rows are Shared Steps references.
  */
 export type PublishCase = {
 	case_id: number,
 	step_ids: string[],
+	/**
+	 *  The case's Shared Steps rows, by position (1-based). A Shared Steps
+	 *  row's step id is "", the same as a step with no id, so the ids alone
+	 *  cannot tell them apart. Absent: no such rows are known.
+	 */
+	shared_steps?: number[],
 };
 
 export type PublishReport = {

@@ -71,6 +71,9 @@ export default function RunReview(props: {
    * Only the Send button reads this, to build what `auto_run_publish`
    * sends - accepted here so the host does not change twice. */
   stepIds: Record<number, string[]>;
+  /** Each case's Shared Steps rows, 1-based. Sent with the run so a script
+   * numbered without them never has its step marks recorded a row off. */
+  sharedSteps?: Record<number, number[]>;
   onClose: () => void;
 }) {
   const { runId, onClose } = props;
@@ -235,7 +238,11 @@ export default function RunReview(props: {
           run.pbi_id,
           run.id,
           `${props.pbiTitle} - Auto Run`,
-          confirmedCases.map((c) => ({ case_id: c.case_id, step_ids: props.stepIds[c.case_id] ?? [] })),
+          confirmedCases.map((c) => ({
+            case_id: c.case_id,
+            step_ids: props.stepIds[c.case_id] ?? [],
+            shared_steps: props.sharedSteps?.[c.case_id] ?? [],
+          })),
         ),
       );
       if (r.status === "refused") {

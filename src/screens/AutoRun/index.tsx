@@ -603,6 +603,9 @@ export default function AutoRun({
           pbiId={pbi.id}
           runId={reviewing}
           stepIds={Object.fromEntries(rows.map((c) => [c.id, c.step_ids]))}
+          sharedSteps={Object.fromEntries(
+            rows.map((c) => [c.id, c.steps.flatMap((s, i) => (s.shared != null ? [i + 1] : []))]),
+          )}
           onClose={() => setReviewing(null)}
         />
       )}

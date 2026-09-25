@@ -6,8 +6,8 @@
 use v2_lib::ado::AdoClient;
 use v2_lib::ado_testplan::EnsuredSuite;
 use v2_lib::autorun::publish::{
-    comment_for, pictures_for, publish_run, refuse_locally, step_marks, PublishCase, PublishResult,
-    SkippedCase,
+    comment_for, pictures_for, publish_run, refuse_locally, step_marks, step_marks_checked, PublishCase,
+    PublishResult, SkippedCase,
 };
 use v2_lib::autorun::nav::UNREACHED_PREFIX;
 use v2_lib::autorun::replay::MODULE_STEP;
@@ -55,8 +55,8 @@ fn reviewed_run(root: &std::path::Path) -> LocalRun {
 /// never gets one), case 8 has one.
 fn publish_cases() -> Vec<PublishCase> {
     vec![
-        PublishCase { case_id: 7, step_ids: vec!["101".into(), "102".into(), "103".into()] },
-        PublishCase { case_id: 8, step_ids: vec!["201".into()] },
+        PublishCase { case_id: 7, step_ids: vec!["101".into(), "102".into(), "103".into()], shared_steps: vec![] },
+        PublishCase { case_id: 8, step_ids: vec!["201".into()], shared_steps: vec![] },
     ]
 }
 
@@ -89,6 +89,31 @@ fn step_marks_follow_the_cases_own_steps_and_leave_the_unrun_unmarked() {
         vec![Some("Passed".to_string()), Some("Failed".to_string()), None, None],
         "step 3 was not run and the case has no step 4; the sign-in is never a step"
     );
+}
+
+/// A run whose script puts a step on one of the case's Shared Steps rows
+/// was numbered before those rows were counted: its marks would land a row
+/// off, so it sends none and says why. With no Shared Steps it is exactly
+/// step_marks.
+#[test]
+fn a_run_numbered_without_the_shared_steps_row_sends_no_step_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = reviewed_run(dir.path());
+    let ids = vec!["101".to_string(), String::new(), "103".to_string()];
+
+    let plain = PublishCase { case_id: 7, step_ids: ids.clone(), shared_steps: vec![] };
+    let (sent_ids, marks) = step_marks_checked(&run.cases[0], Some(&plain)).unwrap();
+    assert_eq!(sent_ids, ids);
+    assert_eq!(marks, step_marks(&run.cases[0], &ids));
+
+    // Case 7's run has steps 0 to 3; row 2 of the case is a Shared Steps row.
+    let shared = PublishCase { case_id: 7, step_ids: ids, shared_steps: vec![2] };
+    let why = step_marks_checked(&run.cases[0], Some(&shared)).unwrap_err();
+    assert!(why.contains("step 2") && why.contains("Shared Steps"), "{why}");
+    assert!(!why.contains("http"), "{why}");
+
+    // No PublishCase at all (the screen did not send the case): no ids, no marks.
+    assert_eq!(step_marks_checked(&run.cases[0], None).unwrap(), (vec![], vec![]));
 }
 
 #[test]

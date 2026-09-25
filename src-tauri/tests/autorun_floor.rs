@@ -2,7 +2,7 @@
 //! its test case's expected results. Pure functions over `CaseScript` and
 //! `steps_xml::Step` - no browser, no filesystem.
 
-use v2_lib::autorun::floor::{check_floor, expected_of, Expected};
+use v2_lib::autorun::floor::{check_floor, expected_of, steps_on_shared_rows, Expected};
 use v2_lib::autorun::CaseScript;
 use v2_lib::steps_xml::Step;
 
@@ -10,7 +10,7 @@ fn case(expected: &[&str]) -> Vec<Expected> {
     expected
         .iter()
         .enumerate()
-        .map(|(i, e)| Expected { step_number: i as i32 + 1, expected: e.to_string() })
+        .map(|(i, e)| Expected { step_number: i as i32 + 1, expected: e.to_string(), shared: false })
         .collect()
 }
 
@@ -186,4 +186,41 @@ fn expected_of_trims_and_keeps_position_including_empty_ones() {
     assert_eq!(out[1].expected, "");
     assert_eq!(out[2].step_number, 3);
     assert_eq!(out[2].expected, "The row is gone");
+}
+
+/// Scripts saved before 1.25.23 were numbered as if the case had no Shared
+/// Steps rows. On a case with one, such a script puts a step on the Shared
+/// Steps row itself. That is refused, with the way to fix it.
+#[test]
+fn a_script_step_on_a_shared_steps_row_is_refused() {
+    let steps = vec![
+        Step { action: "Open the page".into(), expected: "The page shows".into(), shared: None },
+        Step { shared: Some(812), ..Default::default() },
+        Step { action: "Save".into(), expected: "Saved".into(), shared: None },
+    ];
+    let expected = expected_of(&steps);
+    assert!(expected[1].shared && !expected[0].shared && !expected[2].shared);
+
+    // Numbered without the Shared Steps row: "Save" sits on step 2.
+    let old = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "page" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Saved" }] }
+    ]));
+    let out = check_floor(&old, &expected);
+    let on_shared = out.iter().find(|s| s.starts_with("step 2 is a Shared Steps entry")).expect("rule 5");
+    assert!(on_shared.contains("from 2 on"), "{on_shared}");
+
+    // Numbered with it: holds.
+    let fixed = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "page" }] },
+        { "step_number": 3, "actions": [{ "kind": "check_text", "value": "Saved" }] }
+    ]));
+    assert!(check_floor(&fixed, &expected).is_empty(), "{:?}", check_floor(&fixed, &expected));
+}
+
+#[test]
+fn steps_on_shared_rows_are_sorted_and_named_once() {
+    assert_eq!(steps_on_shared_rows(&[4, 2, 2, 1, 0, -1], &[2, 4]), vec![2, 4]);
+    assert!(steps_on_shared_rows(&[1, 3], &[2]).is_empty());
+    assert!(steps_on_shared_rows(&[1, 2], &[]).is_empty());
 }

@@ -12,11 +12,17 @@ use crate::commands::runs::{record_point_outcome, PointOutcome, RunAttachment};
 use std::path::Path;
 
 /// What the screen knows about a case that the run file does not: the
-/// case's real Azure DevOps step ids, in document order.
+/// case's real Azure DevOps step ids, in document order, and which of its
+/// rows are Shared Steps references.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct PublishCase {
     pub case_id: i32,
     pub step_ids: Vec<String>,
+    /// The case's Shared Steps rows, by position (1-based). A Shared Steps
+    /// row's step id is "", the same as a step with no id, so the ids alone
+    /// cannot tell them apart. Absent: no such rows are known.
+    #[serde(default)]
+    pub shared_steps: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
@@ -117,6 +123,28 @@ fn mark_for_step(case: &CaseRecord, step_number: i32) -> Option<String> {
     } else {
         Some("Passed".to_string())
     }
+}
+
+/// The step ids and marks one case's result carries - or, when the run put
+/// a step on one of the case's Shared Steps rows, why it carries none. Such
+/// a run came from a script numbered without those rows (every script saved
+/// before 1.25.23), so each mark from that row on would land on the wrong
+/// step. The verdict and the comment still go; the marks do not.
+pub fn step_marks_checked(
+    case: &CaseRecord,
+    publish: Option<&PublishCase>,
+) -> Result<(Vec<String>, Vec<Option<String>>), String> {
+    let Some(p) = publish else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let ran: Vec<i32> = case.steps.iter().map(|s| s.step_number).collect();
+    if let Some(&n) = super::floor::steps_on_shared_rows(&ran, &p.shared_steps).first() {
+        return Err(format!(
+            "its script puts step {n} on a Shared Steps row, so its step-by-step marks were not sent - add one to every script step number from {n} on, then run it again"
+        ));
+    }
+    let marks = step_marks(case, &p.step_ids);
+    Ok((p.step_ids.clone(), marks))
 }
 
 /// Every failed action's screenshot, then the step-end picture of the last
@@ -320,8 +348,13 @@ pub async fn publish_run(
     use base64::Engine;
     for case in &sendable {
         let id = case.case_id;
-        let step_ids = cases.iter().find(|c| c.case_id == id).map(|c| c.step_ids.clone()).unwrap_or_default();
-        let marks = step_marks(case, &step_ids);
+        let (step_ids, marks) = match step_marks_checked(case, cases.iter().find(|c| c.case_id == id)) {
+            Ok((ids, marks)) => (Some(ids), Some(marks)),
+            Err(why) => {
+                problems.push(format!("case {id}: {why}"));
+                (None, None)
+            }
+        };
 
         let mut attachments = Vec::new();
         let mut per_step: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
@@ -354,8 +387,8 @@ pub async fn publish_run(
                 outcome: case.verdict.clone(),
                 comment: Some(comment_for(case)),
                 duration_ms: case.duration_ms,
-                step_ids: Some(step_ids.clone()),
-                step_outcomes: Some(marks.clone()),
+                step_ids: step_ids.clone(),
+                step_outcomes: marks.clone(),
                 attachments: Some(attachments.clone()),
                 bug_ids: None,
             };

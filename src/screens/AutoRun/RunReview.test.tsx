@@ -75,6 +75,7 @@ function renderReview(
     pbiId?: number;
     runId?: string;
     stepIds?: Record<number, string[]>;
+    sharedSteps?: Record<number, number[]>;
     /** Extra command handling for tests that need `auto_run_save_run` or
      * `auto_run_publish` to do something other than answer null. */
     extra?: (cmd: string, args: unknown) => unknown;
@@ -99,6 +100,7 @@ function renderReview(
         pbiId={overrides.pbiId ?? 42}
         runId={overrides.runId ?? "run-1"}
         stepIds={overrides.stepIds ?? {}}
+        sharedSteps={overrides.sharedSteps}
         onClose={onClose}
       />
     </QueryClientProvider>,
@@ -432,10 +434,42 @@ test("sending says what it will do and sends only after the person agrees", asyn
     runId: "run-9",
     runName: "Leave module - Auto Run",
     cases: [
-      { case_id: 1, step_ids: ["2", "3", "4"] },
-      { case_id: 2, step_ids: ["2"] },
+      { case_id: 1, step_ids: ["2", "3", "4"], shared_steps: [] },
+      { case_id: 2, step_ids: ["2"], shared_steps: [] },
     ],
   });
+});
+
+test("each case's Shared Steps rows travel with the send", async () => {
+  const publishCalls: unknown[] = [];
+  renderReview(SEND_RUN, {
+    pbiTitle: "Leave module",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    sharedSteps: { 1: [2] },
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_publish") {
+        publishCalls.push(args);
+        return {
+          status: "sent",
+          run_id: 9,
+          web_url: "https://dev.azure.com/acme/_testManagement/runs/9",
+          sent: [1, 2],
+          skipped: [],
+          problems: [],
+        };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(publishCalls).toHaveLength(1));
+  expect((publishCalls[0] as { cases: unknown[] }).cases).toEqual([
+    { case_id: 1, step_ids: ["2", "3", "4"], shared_steps: [2] },
+    { case_id: 2, step_ids: ["2"], shared_steps: [] },
+  ]);
 });
 
 test("what was sent, skipped and went wrong is all shown", async () => {
