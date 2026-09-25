@@ -11,10 +11,11 @@
 //! memory, never against the real vault of whoever runs the suite.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::db::guard::normalised_key;
-use crate::db::sqlcmd::parse_connection;
+use crate::db::sqlcmd::{hide_password, parse_connection, run_sql, Runner};
 use crate::db_defaults::{DbPreset, DB_PRESETS};
 
 pub const OWN_ID: &str = "own";
@@ -291,6 +292,42 @@ pub fn find_shipped(connection_string: &str) -> Option<&'static str> {
     let wanted = normalise(connection_string);
     DB_PRESETS.iter().find(|p| normalise(p.connection_string) == wanted).map(|p| p.id)
 }
+
+/// Sign in with `conn` and run `SELECT 1`, through the same `run_sql` every
+/// database tool uses, guard included. The answer is a sentence for the
+/// person either way: who it signed in as, or the server's own reason with
+/// the password taken out.
+pub async fn test_connection_with<R: Runner>(r: &R, exe: &Path, conn: &str) -> Result<String, String> {
+    let c = parse_connection(conn)?;
+    // `run_sql` already hides the password in everything it returns; this
+    // second pass means a failure it learns to build later cannot be the
+    // one that forgets.
+    run_sql(r, exe, &c, "SELECT 1")
+        .await
+        .map(|_| format!("Connected to {} on {} as {}.", c.database, c.server, c.user))
+        .map_err(|e| hide_password(&e, &c.password))
+}
+
+/// The one-time move of a connection string the webview saved before
+/// databases had ids. A shipped string, however it was spaced, selects its
+/// database and stores nothing, so the shipped login stays the live one.
+/// Anything else is the person's own and is kept as they wrote it: it may
+/// carry keys the form cannot express. Answers the id to select.
+pub fn import_legacy(store: &dyn SecretStore, cs: &str) -> Result<String, String> {
+    if let Some(id) = find_shipped(cs) {
+        return Ok(id.into());
+    }
+    // A string nothing could sign in with is refused rather than saved as
+    // a login that fails on first use.
+    parse_connection(cs)?;
+    store.put(&target(OWN_ID), cs.trim())?;
+    Ok(OWN_ID.into())
+}
+
+/// The store the app runs against, held as Tauri state. Shared rather than
+/// owned so the AI bridge's context can carry the same store and resolve a
+/// login at the moment a database tool runs.
+pub struct DbSecrets(pub Arc<dyn SecretStore>);
 
 /// The real store: Windows Credential Manager, per user, on this machine
 /// only. It is what the OS already offers for exactly this, encrypted to

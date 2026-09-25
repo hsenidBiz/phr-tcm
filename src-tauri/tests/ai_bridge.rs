@@ -12,7 +12,8 @@ fn ctx() -> BridgeContext {
         preconditions_ref: Some("Custom.Preconditions".into()),
         disabled_tools: vec![],
         working_dir: None,
-        db_connection_string: None,
+        db_id: None,
+        db_secrets: None,
         db_writes: false,
     }
 }
@@ -1554,7 +1555,8 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         preconditions_ref: None,
         disabled_tools: vec![],
         working_dir: None,
-        db_connection_string: None,
+        db_id: None,
+        db_secrets: None,
         db_writes: false,
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
@@ -1708,10 +1710,11 @@ async fn transform_from_a_file_echoes_its_specs() {
 
 mod db_tests {
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::db::credentials::{save, DbCredentialsForm, MemoryStore, SecretStore, OWN_ID};
     use v2_lib::db::query::{run_lookup, run_query, NO_CONNECTION, WRITES_OFF};
     use v2_lib::db::{
         classify, parse_connection, Connection, Output, Runner, Verdict, NOT_INSTALLED,
@@ -1780,16 +1783,70 @@ mod db_tests {
         PathBuf::from("sqlcmd.exe")
     }
 
+    /// The context names a database by id and carries a store to resolve it
+    /// in - an empty one here, so a shipped id resolves to its shipped login.
     fn with_connection(id: &str, writes: bool) -> BridgeContext {
-        let p = DB_PRESETS.iter().find(|p| p.id == id).expect("the preset");
+        with_store(id, writes, Arc::new(MemoryStore::default()))
+    }
+
+    fn with_store(id: &str, writes: bool, store: Arc<dyn SecretStore>) -> BridgeContext {
         BridgeContext {
-            db_connection_string: Some(p.connection_string.to_string()),
+            db_id: Some(id.to_string()),
+            db_secrets: Some(store),
             db_writes: writes,
             ..BridgeContext::default()
         }
     }
 
+    /// A store whose every entry is `value` - how a test sees which string
+    /// the route actually read, without ever reaching sqlcmd.
+    struct Holding(Result<Option<String>, String>);
+    impl SecretStore for Holding {
+        fn get(&self, _: &str) -> Result<Option<String>, String> {
+            self.0.clone()
+        }
+        fn put(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     // ---------------------------------------------------------- the routes
+
+    #[tokio::test]
+    async fn the_routes_read_the_login_saved_for_the_chosen_id() {
+        // No password in the saved override: the route refuses on the
+        // missing key, which only happens if it read the store rather than
+        // the shipped string.
+        let saved = Holding(Ok(Some("Server=x;Database=y;User Id=u".into())));
+        let c = with_store("dev-read", false, Arc::new(saved));
+        let (status, said) = route(&c, None, "POST", "/db-query", r#"{"sql":"SELECT 1"}"#, "1.0.0").await;
+        assert_eq!(status, 409, "{said}");
+        assert!(said.contains("Password="), "{said}");
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_vault_says_so_and_names_no_login() {
+        let c = with_store("dev-read", false, Arc::new(Holding(Err("Could not read the saved login.".into()))));
+        let (status, said) = route(&c, None, "POST", "/db-lookup", r#"{"query":"leave"}"#, "1.0.0").await;
+        assert_eq!(status, 409, "{said}");
+        assert_eq!(said, "Could not read the saved login.");
+    }
+
+    #[tokio::test]
+    async fn your_own_database_with_nothing_saved_is_no_connection() {
+        let c = with_connection(OWN_ID, false);
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NO_CONNECTION, "{path}");
+        }
+    }
 
     #[tokio::test]
     async fn both_routes_need_a_connection_to_have_been_chosen() {
@@ -1814,14 +1871,29 @@ mod db_tests {
         let before = std::env::var(SQLCMD_OVERRIDE).ok();
         std::env::set_var(SQLCMD_OVERRIDE, "Z:\\no\\such\\sqlcmd.exe");
 
-        let c = with_connection("dev-read", false);
-        for (path, body) in [
-            ("/db-lookup", r#"{"query":"leave"}"#),
-            ("/db-query", r#"{"sql":"SELECT 1"}"#),
-        ] {
-            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
-            assert_eq!(status, 409, "{path}: {said}");
-            assert_eq!(said, NOT_INSTALLED, "{path}");
+        // Your own database, once a login is saved for it, gets as far as
+        // looking for sqlcmd - the same as a shipped one. Kept in this test
+        // because both set the process-wide override.
+        let own = MemoryStore::default();
+        let form = DbCredentialsForm {
+            server: "own-host".into(),
+            port: None,
+            database: "own-db".into(),
+            user: "me".into(),
+            password: Some("pw".into()),
+            trust_cert: false,
+        };
+        save(&own, OWN_ID, &form).unwrap();
+
+        for c in [with_connection("dev-read", false), with_store(OWN_ID, false, Arc::new(own))] {
+            for (path, body) in [
+                ("/db-lookup", r#"{"query":"leave"}"#),
+                ("/db-query", r#"{"sql":"SELECT 1"}"#),
+            ] {
+                let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+                assert_eq!(status, 409, "{path}: {said}");
+                assert_eq!(said, NOT_INSTALLED, "{path}");
+            }
         }
 
         match before {

@@ -7,12 +7,15 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use tauri::State;
+
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
     legacy_command_path, merge_entry, project_command_dir, remove_entry, tcm_server,
     DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, MANAGED_SERVERS, TCM_SERVER,
     TOOL_SPECS,
 };
+use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets, OWN_ID};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -122,13 +125,17 @@ pub struct DbServerConfig {
     pub exe_path: String,
     /// "mssql" or "sqlserver".
     pub db_type: String,
-    pub connection_string: String,
+    /// Which database the server signs in to. Only the id crosses IPC; the
+    /// login it stands for is resolved in Rust at registration.
+    pub db_id: String,
     /// Comma-separated; blank means the server's own default (dbo).
     pub schema_filter: String,
 }
 
 impl DbServerConfig {
-    fn to_server(&self) -> Result<McpServer, String> {
+    /// `connection_string` is what `db_id` resolved to - passed in rather
+    /// than looked up here, so the config shape stays free of the store.
+    fn to_server(&self, connection_string: &str) -> Result<McpServer, String> {
         let exe = self.exe_path.trim();
         if exe.is_empty() {
             return Err("pick the database MCP server first".into());
@@ -141,14 +148,14 @@ impl DbServerConfig {
         if self.db_type.trim().is_empty() {
             return Err("DB_TYPE is required".into());
         }
-        if self.connection_string.trim().is_empty() {
-            return Err("CONNECTION_STRING is required".into());
+        if connection_string.trim().is_empty() {
+            return Err(NO_LOGIN.into());
         }
         let mut env = std::collections::BTreeMap::new();
         env.insert("DB_TYPE".to_string(), self.db_type.trim().to_string());
         env.insert(
             "CONNECTION_STRING".to_string(),
-            self.connection_string.trim().to_string(),
+            connection_string.trim().to_string(),
         );
         // Omitted entirely when blank, so the server applies its default
         // rather than being handed an empty filter.
@@ -167,38 +174,87 @@ impl DbServerConfig {
     }
 }
 
-/// The shipped defaults for the database server form - see db_defaults.rs
-/// for why shipping them is acceptable here. The frontend applies these
-/// only to a form nothing was ever saved into.
+/// Said when the chosen database has no login to hand the server.
+const NO_LOGIN: &str = "Save a login for this database first.";
+
+/// The shipped defaults for the database server form: the first shipped
+/// database by id, never its login. The frontend applies these only to a
+/// form nothing was ever saved into.
 #[tauri::command]
 #[specta::specta]
 pub fn db_server_defaults() -> DbServerConfig {
     DbServerConfig {
         exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
         db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
-        connection_string: crate::db_defaults::default_connection_string().to_string(),
+        db_id: crate::db_defaults::DB_PRESETS.first().map_or(OWN_ID, |p| p.id).to_string(),
         schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
     }
 }
 
-#[derive(serde::Serialize, specta::Type)]
-pub struct DbPresetOut {
-    pub label: String,
-    pub connection_string: String,
-}
-
-/// The shipped environments for the AI Bridge's preset dropdown - picking
-/// one fills the form; nothing registers until the explicit click.
+/// Every database the Company database card offers, as the public view:
+/// who signs in and whether a password is saved, never the password or
+/// the connection string.
 #[tauri::command]
 #[specta::specta]
-pub fn db_server_presets() -> Vec<DbPresetOut> {
-    crate::db_defaults::DB_PRESETS
-        .iter()
-        .map(|p| DbPresetOut {
-            label: p.label.to_string(),
-            connection_string: p.connection_string.to_string(),
-        })
-        .collect()
+pub fn db_databases(secrets: State<'_, DbSecrets>) -> Vec<DbDatabase> {
+    credentials::databases(&*secrets.0)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn save_db_credentials(
+    secrets: State<'_, DbSecrets>,
+    id: String,
+    form: DbCredentialsForm,
+) -> Result<DbDatabase, String> {
+    credentials::save(&*secrets.0, &id, &form)
+}
+
+/// Signs in with what the form holds now (a blank password meaning the
+/// saved one), or with the saved login when there is no form, and runs
+/// `SELECT 1`. Nothing is saved either way.
+#[tauri::command]
+#[specta::specta]
+pub async fn test_db_connection(
+    secrets: State<'_, DbSecrets>,
+    id: String,
+    form: Option<DbCredentialsForm>,
+) -> Result<String, String> {
+    let store = &*secrets.0;
+    let conn = match form {
+        Some(f) => credentials::apply_form(store, &id, &f)?,
+        None => credentials::resolve(store, &id)?
+            .ok_or_else(|| "No login saved for this database yet.".to_string())?,
+    };
+    // The same lookup, and the same sentence when it fails, as the
+    // assistant's database tools: a test that finds sqlcmd means they will.
+    let exe = crate::db::sqlcmd_path().ok_or_else(|| crate::db::NOT_INSTALLED.to_string())?;
+    credentials::test_connection_with(&crate::db::RealRunner, &exe, &conn).await
+}
+
+/// A shipped database back to its shipped login.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_db_credentials(secrets: State<'_, DbSecrets>, id: String) -> Result<DbDatabase, String> {
+    credentials::reset(&*secrets.0, &id)
+}
+
+/// Every saved login off this machine - part of "Forget them".
+#[tauri::command]
+#[specta::specta]
+pub fn forget_db_credentials(secrets: State<'_, DbSecrets>) -> Result<(), String> {
+    credentials::forget_all(&*secrets.0)
+}
+
+/// The one-time move of a connection string the webview kept before
+/// databases had ids. Answers the id the card should now select.
+#[tauri::command]
+#[specta::specta]
+pub fn import_legacy_db_connection(
+    secrets: State<'_, DbSecrets>,
+    connection_string: String,
+) -> Result<String, String> {
+    credentials::import_legacy(&*secrets.0, &connection_string)
 }
 
 /// `Ok(Some(warning))` when the registration worked but the connection
@@ -207,14 +263,19 @@ pub fn db_server_presets() -> Vec<DbPresetOut> {
 #[tauri::command]
 #[specta::specta]
 pub fn register_db_server(
+    secrets: State<'_, DbSecrets>,
     id: String,
     config: DbServerConfig,
     working_dir: Option<String>,
     global: bool,
 ) -> Result<Option<String>, String> {
+    // The server reads its login from its own config, so this is where a
+    // resolved connection string leaves the store: into the AI tool's
+    // config file, never back over IPC.
+    let conn = credentials::resolve(&*secrets.0, &config.db_id)?.ok_or_else(|| NO_LOGIN.to_string())?;
     // No command files are written for the database server, so the disabled
     // set is irrelevant here.
-    register_server(&id, &config.to_server()?, working_dir.as_deref(), &[], global)
+    register_server(&id, &config.to_server(&conn)?, working_dir.as_deref(), &[], global)
 }
 
 #[tauri::command]

@@ -444,7 +444,7 @@ fn undouble(said: &str) -> String {
 
 /// sqlcmd echoes the whole command line back in some failures. Nothing
 /// leaves this module without going through here first.
-fn hide_password(text: &str, password: &str) -> String {
+pub(crate) fn hide_password(text: &str, password: &str) -> String {
     if password.is_empty() {
         return text.to_string();
     }

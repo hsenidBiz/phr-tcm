@@ -29,24 +29,28 @@ pub struct BridgeContext {
     /// none is set - in which case a writing job cannot start, because
     /// there is nowhere agreed for its file to go.
     pub working_dir: Option<String>,
-    /// The database connection chosen under Company database, or None when
-    /// none is - in which case both database tools refuse.
-    ///
-    /// It carries a password, so it is never serialised out of here and
-    /// never printed: the `Serialize` below skips it and `Debug` is
-    /// hand-written, the same as `db::sqlcmd::Connection`. Nothing reads
-    /// this field except the two database routes.
+    /// The database chosen under Company database, by id, or None when none
+    /// is - in which case both database tools refuse. Only the id travels
+    /// here: the login it stands for is resolved from `db_secrets` each time
+    /// a database tool runs, so a login saved a moment ago applies to the
+    /// very next call.
+    pub db_id: Option<String>,
+    /// Where `db_id` is resolved: the app's own store, set by
+    /// `set_bridge_context`. None in a context nobody set up, which the
+    /// database tools read as "nothing chosen". What it holds are
+    /// passwords, so it is never serialised and `Debug` names only whether
+    /// it is there.
     #[serde(skip)]
-    pub db_connection_string: Option<String>,
+    pub db_secrets: Option<std::sync::Arc<dyn crate::db::SecretStore>>,
     /// Whether the person has switched create, update and delete on. It is
     /// half the permission: `/db-query` also needs the connection's own
     /// user to be one that may write.
     pub db_writes: bool,
 }
 
-/// Hand-written so the connection string - and therefore the password -
-/// cannot reach a log line, a panic message or a bug report through a
-/// stray `{:?}` on the context.
+/// Hand-written so the store - and therefore every password in it - cannot
+/// reach a log line, a panic message or a bug report through a stray
+/// `{:?}` on the context (and a trait object has no `Debug` to derive).
 impl std::fmt::Debug for BridgeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BridgeContext")
@@ -56,7 +60,8 @@ impl std::fmt::Debug for BridgeContext {
             .field("preconditions_ref", &self.preconditions_ref)
             .field("disabled_tools", &self.disabled_tools)
             .field("working_dir", &self.working_dir)
-            .field("db_connection_string", &self.db_connection_string.as_ref().map(|_| "(hidden)"))
+            .field("db_id", &self.db_id)
+            .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .finish()
     }
@@ -650,15 +655,18 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
 fn db_ready(
     ctx: &BridgeContext,
 ) -> Result<(crate::db::Connection, std::path::PathBuf), (u16, String)> {
-    let chosen = ctx
-        .db_connection_string
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| (409, crate::db::query::NO_CONNECTION.to_string()))?;
+    let nothing_chosen = || (409, crate::db::query::NO_CONNECTION.to_string());
+    let id = ctx.db_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(nothing_chosen)?;
+    let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
+    // Resolved now, not when the context was pushed: a login saved since
+    // is the one this call signs in with. `own` with nothing saved is the
+    // same as nothing chosen - there is no login to use either way.
+    let chosen = crate::db::credentials::resolve(store, id)
+        .map_err(|why| (409, why))?
+        .ok_or_else(nothing_chosen)?;
     // The error names the missing key and nothing else - the rest of that
     // string is a credential, and this sentence is shown to a person.
-    let connection = crate::db::parse_connection(chosen)
+    let connection = crate::db::parse_connection(&chosen)
         .map_err(|why| (409, format!("{why} - choose a connection under Company database on the AI Bridge tab")))?;
     let exe = crate::db::sqlcmd_path()
         .ok_or_else(|| (409, crate::db::NOT_INSTALLED.to_string()))?;

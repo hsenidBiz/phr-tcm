@@ -87,10 +87,11 @@ pub fn set_bridge_context(
     preconditions_ref: Option<String>,
     disabled_tools: Vec<String>,
     working_dir: Option<String>,
-    db_connection_string: Option<String>,
+    db_id: Option<String>,
     db_writes: bool,
 ) {
     use tauri::Manager;
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let handle = app.state::<BridgeHandle>();
     let guard = handle.running.lock().unwrap();
     if let Some((shared, _)) = guard.as_ref() {
@@ -101,10 +102,11 @@ pub fn set_bridge_context(
             preconditions_ref,
             disabled_tools: disabled_tools.clone(),
             working_dir: working_dir.clone(),
-            // The chosen connection travels in, never out: it is held in
-            // memory for the two database routes and is skipped by the
-            // context's own Serialize. See `BridgeContext`.
-            db_connection_string,
+            // Only the id comes from the webview; the login it stands for
+            // stays in the store and is resolved when a database tool
+            // runs. See `BridgeContext`.
+            db_id,
+            db_secrets: Some(secrets),
             db_writes,
         };
     }

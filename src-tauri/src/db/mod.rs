@@ -14,7 +14,7 @@ pub mod schema;
 pub mod sqlcmd;
 
 pub use credentials::{
-    CredentialManager, DbCredentialsForm, DbDatabase, MemoryStore, SecretStore, OWN_ID,
+    CredentialManager, DbCredentialsForm, DbDatabase, DbSecrets, MemoryStore, SecretStore, OWN_ID,
 };
 pub use guard::{
     access_for, access_for_user, allowed, classify, Access, Verdict, MAX_SQL_CHARS,

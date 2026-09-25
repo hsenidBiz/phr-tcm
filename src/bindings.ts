@@ -263,16 +263,40 @@ export const commands = {
 	 */
 	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
 	/**
-	 *  The shipped defaults for the database server form - see db_defaults.rs
-	 *  for why shipping them is acceptable here. The frontend applies these
-	 *  only to a form nothing was ever saved into.
+	 *  The shipped defaults for the database server form: the first shipped
+	 *  database by id, never its login. The frontend applies these only to a
+	 *  form nothing was ever saved into.
 	 */
 	dbServerDefaults: () => __TAURI_INVOKE<DbServerConfig>("db_server_defaults"),
 	/**
-	 *  The shipped environments for the AI Bridge's preset dropdown - picking
-	 *  one fills the form; nothing registers until the explicit click.
+	 *  Every database the Company database card offers, as the public view:
+	 *  who signs in and whether a password is saved, never the password or
+	 *  the connection string.
 	 */
-	dbServerPresets: () => __TAURI_INVOKE<DbPresetOut[]>("db_server_presets"),
+	dbDatabases: () => __TAURI_INVOKE<DbDatabase[]>("db_databases"),
+	saveDbCredentials: (id: string, form: DbCredentialsForm) => typedError<DbDatabase, string>(__TAURI_INVOKE("save_db_credentials", { id, form })),
+	/**
+	 *  Signs in with what the form holds now (a blank password meaning the
+	 *  saved one), or with the saved login when there is no form, and runs
+	 *  `SELECT 1`. Nothing is saved either way.
+	 */
+	testDbConnection: (id: string, form: {
+	server: string,
+	port: number | null,
+	database: string,
+	user: string,
+	password: string | null,
+	trust_cert: boolean,
+} | null) => typedError<string, string>(__TAURI_INVOKE("test_db_connection", { id, form })),
+	/**  A shipped database back to its shipped login. */
+	resetDbCredentials: (id: string) => typedError<DbDatabase, string>(__TAURI_INVOKE("reset_db_credentials", { id })),
+	/**  Every saved login off this machine - part of "Forget them". */
+	forgetDbCredentials: () => typedError<null, string>(__TAURI_INVOKE("forget_db_credentials")),
+	/**
+	 *  The one-time move of a connection string the webview kept before
+	 *  databases had ids. Answers the id the card should now select.
+	 */
+	importLegacyDbConnection: (connectionString: string) => typedError<string, string>(__TAURI_INVOKE("import_legacy_db_connection", { connectionString })),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -691,7 +715,7 @@ export const commands = {
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
-	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbConnectionString: string | null, dbWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbConnectionString, dbWrites }),
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, dbWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, dbWrites }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
@@ -1127,9 +1151,39 @@ export type CreatedItem = {
 	url: string,
 };
 
-export type DbPresetOut = {
+/**
+ *  What the edit form sends back. `password: None` (or blank) keeps the
+ *  password already in force, so the form never needs to be shown it.
+ */
+export type DbCredentialsForm = {
+	server: string,
+	port: number | null,
+	database: string,
+	user: string,
+	password: string | null,
+	trust_cert: boolean,
+};
+
+/**
+ *  One database as the webview sees it. There is deliberately no password
+ *  field, not even an empty one: a field that exists is a field someone
+ *  fills in later.
+ */
+export type DbDatabase = {
+	id: string,
 	label: string,
-	connection_string: string,
+	shipped: boolean,
+	server: string,
+	port: number | null,
+	database: string,
+	user: string,
+	trust_cert: boolean,
+	has_password: boolean,
+	/**
+	 *  A saved override exists - for a shipped database, "Reset" has
+	 *  something to undo.
+	 */
+	customised: boolean,
 };
 
 /**
@@ -1143,7 +1197,11 @@ export type DbServerConfig = {
 	exe_path: string,
 	/**  "mssql" or "sqlserver". */
 	db_type: string,
-	connection_string: string,
+	/**
+	 *  Which database the server signs in to. Only the id crosses IPC; the
+	 *  login it stands for is resolved in Rust at registration.
+	 */
+	db_id: string,
 	/**  Comma-separated; blank means the server's own default (dbo). */
 	schema_filter: string,
 };

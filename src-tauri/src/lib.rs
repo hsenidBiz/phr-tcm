@@ -146,7 +146,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,
             ai_tools::db_server_defaults,
-            ai_tools::db_server_presets,
+            ai_tools::db_databases,
+            ai_tools::save_db_credentials,
+            ai_tools::test_db_connection,
+            ai_tools::reset_db_credentials,
+            ai_tools::forget_db_credentials,
+            ai_tools::import_legacy_db_connection,
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,
             autorun::auto_run_step,
@@ -333,6 +338,9 @@ pub fn run() {
         .manage(SubmitCancel::default())
         .manage(commands::ai_bridge::BridgeHandle::default())
         .manage(filewatch::FileWatchState::default())
+        // Each database's saved login. Shared, not owned, because the AI
+        // bridge's context carries the same store to its database tools.
+        .manage(db::DbSecrets(std::sync::Arc::new(db::CredentialManager)))
         .invoke_handler(builder.invoke_handler())
         // Once, for the main window's first load: the gap between the
         // set-up line and this one is WebView2 starting and fetching the
