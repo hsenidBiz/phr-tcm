@@ -79,7 +79,7 @@ export default function GeneralComments({
       case "saved":
         return <span className="text-accent">Saved ✓</span>;
       case "failed":
-        return <span className="text-danger">Not saved — {errors[path]}</span>;
+        return <span className="text-danger">Not saved: {errors[path]}</span>;
       default:
         return null;
     }
@@ -103,7 +103,7 @@ export default function GeneralComments({
         )}
         General comments
         <span className="font-normal text-faint">
-          — notes about the set, saved into the JSON
+          (notes about the set, saved into the JSON)
         </span>
       </button>
       <Collapse open={open}>
@@ -123,7 +123,7 @@ export default function GeneralComments({
                   "w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text",
                   "placeholder:text-faint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                 )}
-                placeholder="e.g. Spec 3.2 is ambiguous about the timeout — asked Dev, waiting"
+                placeholder="e.g. Spec 3.2 is ambiguous about the timeout; asked Dev, waiting"
                 value={draft[w.path] ?? w.comment ?? ""}
                 onChange={(e) => save(w.path, e.target.value)}
               />
