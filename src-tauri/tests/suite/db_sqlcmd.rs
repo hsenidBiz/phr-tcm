@@ -211,7 +211,7 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!args.iter().any(|a| a == "-h" || a == "-h-1"), "{args:?}");
     // Every flag is an element of its own, exactly once: nothing was glued
     // into a command line that something downstream could re-split.
-    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-X1", "-x", "-Q"] {
+    for flag in ["-S", "-d", "-U", "-C", "-s", "-W", "-f", "-l", "-t", "-b", "-x", "-Q"] {
         assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
     }
 
@@ -219,14 +219,16 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(!sqlcmd_args(&plain, "SELECT 1").contains(&"-C".to_string()));
 }
 
-/// `-X1` and `-x` are the second layer of defence behind the guard's refusal
-/// of sqlcmd's client commands: `!!` and `$(var)` still reach sqlcmd
-/// unless it is TOLD not to obey them, and the guard alone is one future
-/// edit away from that protection being silently lost. Pinned in their own
-/// test so removing either flag fails a test by name, not just a security
-/// review.
+/// `-x` switches off `$(var)` substitution, behind the guard's own refusal
+/// of it. `-X`/`-X1` must NOT come back: on the ODBC tools' sqlcmd 15 they
+/// also stop sqlcmd reading environment variables - SQLCMDPASSWORD among
+/// them - so it prompts for a password on a console nobody has, and every
+/// connection answers "Login failed" (1.25.26/27; all three presets,
+/// measured 2026-09-25). go-sqlcmd accepts them, which is why a machine
+/// with only go-sqlcmd never saw it. The guard refuses `!!`, `:r`/`:out`/
+/// `:connect`/`:setvar` and `$(...)` itself (tests/db_guard.rs).
 #[test]
-fn sqlcmd_runs_with_shell_out_and_variable_substitution_switched_off() {
+fn sqlcmd_runs_with_variable_substitution_off_and_can_still_read_its_password() {
     let c = Connection {
         server: "s".into(),
         database: "d".into(),
@@ -235,11 +237,13 @@ fn sqlcmd_runs_with_shell_out_and_variable_substitution_switched_off() {
         trust_cert: false,
     };
     let args = sqlcmd_args(&c, "SELECT 1");
-    // `-X1`, not bare `-X`: bare `-X` only warns and keeps going when a
-    // disabled command is hit - `1` makes sqlcmd exit instead.
-    assert!(args.contains(&"-X1".to_string()), "{args:?}");
-    assert!(!args.contains(&"-X".to_string()), "{args:?} (bare -X only warns)");
     assert!(args.contains(&"-x".to_string()), "{args:?}");
+    assert!(
+        !args.iter().any(|a| a.starts_with("-X")),
+        "{args:?} - -X/-X1 stop sqlcmd 15 reading SQLCMDPASSWORD, and every login fails"
+    );
+    // Which is still how the password travels.
+    assert_eq!(sqlcmd_env(&c), vec![(PASSWORD_ENV.to_string(), "p".to_string())]);
 }
 
 #[tokio::test]
