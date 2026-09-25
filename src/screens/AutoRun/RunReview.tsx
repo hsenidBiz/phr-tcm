@@ -72,8 +72,10 @@ export default function RunReview(props: {
    * sends - accepted here so the host does not change twice. */
   stepIds: Record<number, string[]>;
   /** Each case's Shared Steps rows, 1-based. Sent with the run so a script
-   * numbered without them never has its step marks recorded a row off. */
-  sharedSteps?: Record<number, number[]>;
+   * numbered without them never has its step marks recorded a row off.
+   * Required, like `stepIds`: a caller that silently omits it would let
+   * publish skip the check that refuses step marks on a Shared Steps row. */
+  sharedSteps: Record<number, number[]>;
   onClose: () => void;
 }) {
   const { runId, onClose } = props;
@@ -241,7 +243,7 @@ export default function RunReview(props: {
           confirmedCases.map((c) => ({
             case_id: c.case_id,
             step_ids: props.stepIds[c.case_id] ?? [],
-            shared_steps: props.sharedSteps?.[c.case_id] ?? [],
+            shared_steps: props.sharedSteps[c.case_id] ?? [],
           })),
         ),
       );

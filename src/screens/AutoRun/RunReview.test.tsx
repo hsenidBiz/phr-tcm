@@ -100,7 +100,7 @@ function renderReview(
         pbiId={overrides.pbiId ?? 42}
         runId={overrides.runId ?? "run-1"}
         stepIds={overrides.stepIds ?? {}}
-        sharedSteps={overrides.sharedSteps}
+        sharedSteps={overrides.sharedSteps ?? {}}
         onClose={onClose}
       />
     </QueryClientProvider>,
@@ -180,7 +180,7 @@ test("saving writes the verdicts and notes and leaves the proposal alone", async
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={() => {}} />
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} sharedSteps={{}} onClose={() => {}} />
     </QueryClientProvider>,
   );
   await screen.findByText(/proposed: failed/i);
@@ -292,7 +292,7 @@ test("a run that fails to load shows the error, not Loading forever", async () =
   const onClose = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={onClose} />
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} sharedSteps={{}} onClose={onClose} />
     </QueryClientProvider>,
   );
 
@@ -330,7 +330,7 @@ test("a save the app refuses is shown and the dialog stays open", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={() => {}} />
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} sharedSteps={{}} onClose={() => {}} />
     </QueryClientProvider>,
   );
   render(<Toaster />);
