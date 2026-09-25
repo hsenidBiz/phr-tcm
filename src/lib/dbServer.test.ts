@@ -3,10 +3,12 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 // The migration's only IPC. Mocked at the module so each test decides what
 // Rust answers, and can count how often it was asked.
 const importLegacy = vi.fn();
+const dbDatabases = vi.fn();
 const logUi = vi.fn();
 vi.mock("../bindings", () => ({
   commands: {
     importLegacyDbConnection: (cs: string) => importLegacy(cs),
+    dbDatabases: () => dbDatabases(),
     logUi: (m: string) => {
       logUi(m);
       return Promise.resolve(null);
@@ -32,6 +34,8 @@ import {
 
 beforeEach(() => {
   importLegacy.mockReset();
+  dbDatabases.mockReset();
+  dbDatabases.mockResolvedValue([{ id: "dev-read" }, { id: "dev-login" }, { id: "own" }]);
   logUi.mockReset();
 });
 afterEach(() => localStorage.clear());
@@ -148,6 +152,32 @@ test("a failed import leaves the blob untouched, for the next start to retry", a
   expect(logUi).toHaveBeenCalledTimes(1);
   // The log line carries Rust's sentence, never the string itself.
   expect(logUi.mock.calls[0][0]).not.toContain("secret");
+});
+
+/// A retry that works on a later start must not undo a choice made while
+/// the string waited: the person's pick wins. Only a selection naming no
+/// database this build knows is replaced.
+test("a retry that succeeds keeps a database picked while it waited", async () => {
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({ ...settings, connection_string: LEGACY }));
+  importLegacy.mockResolvedValueOnce({ status: "error", error: "Could not save the login in Windows Credential Manager." });
+  await migrateLegacyDbConnection();
+
+  saveSelectedDb("dev-login");
+  importLegacy.mockResolvedValueOnce({ status: "ok", data: "own" });
+  await migrateLegacyDbConnection();
+
+  expect(loadSelectedDb()).toBe("dev-login");
+  expect(localStorage.getItem("tcm-v2-db-mcp")).not.toContain("secret");
+});
+
+test("a retry that succeeds replaces a selection naming no known database", async () => {
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({ ...settings, connection_string: LEGACY }));
+  saveSelectedDb("a-preset-since-removed");
+  importLegacy.mockResolvedValue({ status: "ok", data: "own" });
+
+  await migrateLegacyDbConnection();
+
+  expect(loadSelectedDb()).toBe("own");
 });
 
 test("with no connection string stored there is nothing to import", async () => {

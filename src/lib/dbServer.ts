@@ -214,6 +214,20 @@ export function migrateLegacyDbConnection(): Promise<void> {
   return migrating;
 }
 
+/** Whether the current selection is a database this build knows, and so
+ * a choice the person made. Unsure (the list could not be read) counts as
+ * yes: keeping a pick is recoverable, overwriting one is not. */
+async function keepsCurrentSelection(): Promise<boolean> {
+  const current = loadSelectedDb();
+  if (!current) return false;
+  try {
+    const known = await commands.dbDatabases();
+    return known.some((d) => d.id === current);
+  } catch {
+    return true;
+  }
+}
+
 async function runMigration(): Promise<void> {
   const cs = legacyConnectionString(readBlob());
   if (!cs) return;
@@ -230,7 +244,11 @@ async function runMigration(): Promise<void> {
     logUi("database login: could not move the saved connection");
     return;
   }
-  saveSelectedDb(id);
+  // A retry lands on a later start, and the person may have picked a
+  // database while the string waited - their pick wins. Only an empty
+  // selection, or one naming a database this build does not know, takes
+  // the imported one.
+  if (!(await keepsCurrentSelection())) saveSelectedDb(id);
   // Re-read rather than reuse the blob from before the await: the PHR X
   // settings may have been edited meanwhile.
   const blob = readBlob();
