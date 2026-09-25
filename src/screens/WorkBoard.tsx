@@ -813,6 +813,17 @@ export default function WorkBoard({
 
         {board.data && !swimlanes && renderGrid(visible, null)}
 
+        {/* Swimlanes group by parent - filtering out every card also
+            empties every lane, so the columns below have nothing to show.
+            The switch-off board still renders its (empty) columns in that
+            case; lanes have no such "nothing left, still show the frame"
+            fallback, so this says so instead of going blank. */}
+        {board.data && swimlanes && lanes.length === 0 && board.data.items.length > 0 && (
+          <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
+            No cards match these filters.
+          </p>
+        )}
+
         {board.data && swimlanes && (
           <div data-tour="board-columns" className="space-y-3">
             {lanes.map((lane) => {

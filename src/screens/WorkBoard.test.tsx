@@ -658,6 +658,23 @@ test("filters apply first, so a lane they empty is not shown", async () => {
   expect(laneIds()).toEqual(["lane-600"]);
 });
 
+/// With the switch off the same filter state still shows the three
+/// (empty) columns - swimlanes has no such fallback, since a lane with no
+/// cards is simply not rendered, so filtering out everything used to leave
+/// a blank board with no explanation and no way to tell it apart from
+/// still loading.
+test("filtering out every card in swimlanes view shows the empty-state message, not a blank board", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  mockLanes();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+  fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "does-not-exist" } });
+  expect(screen.queryByTestId(/^lane-/)).not.toBeInTheDocument();
+  expect(screen.getByText("No cards match these filters.")).toBeInTheDocument();
+  // Collapse all / Expand all act on lanes - none left to act on.
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+});
+
 test("a lane collapses to its header and stays collapsed next time", async () => {
   localStorage.setItem("tcm-v2-board-swimlanes", "on");
   mockLanes();
