@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.29",
+    date: "2026-09-25",
+    items: [
+      "Moving around the app with Tab now shows a focus outline in your theme's colour, without the white-then-black flash some controls had.",
+      "The notification bell's panel now opens with a short animation, like the app's other menus.",
+      "Test cases in the same file that share a title now save correctly. Quick edits or removals in a row no longer overwrite each other.",
+      "Shared Steps are now named as Shared Steps in the case preview and in bug reports raised from a run.",
+      "The review page in your browser copes better with a dropped connection, and a comment that fails to save stays in its box so you can try again.",
+      "In Work Manager, the state list on a card's details now shows the states for that item's own type, including a parent shown only as a swimlane.",
+      "If you're offline when signing in, the message now says the app couldn't reach Microsoft sign-in.",
+      "The check before a test run now says Checking while it works.",
+    ],
+  },
+  {
     version: "1.25.28",
     date: "2026-09-25",
     items: [
