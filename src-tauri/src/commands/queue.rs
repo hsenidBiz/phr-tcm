@@ -437,23 +437,34 @@ pub fn save_draft_comment(
     crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
 }
 
+/// What a write-back actually did: the file's new fingerprint, and a fresh
+/// parse of the text just written, in FILE order - EVERY case now there,
+/// including ones no queue row owns (an assistant's addition). This is
+/// what the caller must store as its watch snapshot. A queue-order slice of
+/// only the rows it sent stops matching the file the moment a re-sort makes
+/// queue order and file order disagree, and the NEXT write then counts a
+/// same-titled twin's position wrong.
+#[derive(serde::Serialize, specta::Type)]
+pub struct DraftSaveResult {
+    pub stamp: String,
+    pub cases: Vec<model::TestCase>,
+}
+
 /// Write a queue edit back into the draft file its cases came from, so the
 /// file says what the queue says. `edits` holds one entry per queue row the
 /// file owns, IN QUEUE ORDER: the row before the edit (how the file finds
-/// its own copy, since a rename changes the title) and after it (`None` when
-/// the edit removed it). Order matters: the Nth same-titled row claims the
-/// Nth same-titled entry. The file is patched (`apply_draft_edits`): cases
-/// it holds that the queue never showed, keys the app does not model, and
-/// the author's spellings all survive. Returns the file's new fingerprint so
-/// the caller can move its watch snapshot forward - the watcher stays silent
-/// about our own write, so nothing else would.
+/// its own copy, since a rename changes the title), after it (`None` when
+/// the edit removed it), and which same-titled entry it is
+/// (`DraftEdit.occurrence`). The file is patched (`apply_draft_edits`):
+/// cases it holds that the queue never showed, keys the app does not model,
+/// and the author's spellings all survive.
 #[tauri::command]
 #[specta::specta]
 pub fn save_draft_cases(
     app: tauri::AppHandle,
     path: String,
     edits: Vec<model::DraftEdit>,
-) -> Result<String, String> {
+) -> Result<DraftSaveResult, String> {
     // Same guard as the comment writers: a bulk edit and a comment box
     // autosave can reach the same file, and read-patch-write from both at
     // once loses one of them silently.
@@ -461,7 +472,9 @@ pub fn save_draft_cases(
     draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
     let old = import_parser::read_json_text(std::path::Path::new(&path))?;
     let out = import_parser::apply_draft_edits(&old, &edits)?;
-    crate::filewatch::write_watched(&watch_state(&app), &path, &out)
+    let stamp = crate::filewatch::write_watched(&watch_state(&app), &path, &out)?;
+    let cases = import_parser::parse_json_text(&out).map(|p| p.cases).unwrap_or_default();
+    Ok(DraftSaveResult { stamp, cases })
 }
 
 /// Render the queue's HTML report to a temp file and open it in the

@@ -419,6 +419,64 @@ fn an_occurrence_the_file_no_longer_has_falls_back_to_the_first_unclaimed_entry(
     assert_eq!(doc["test_cases"][0]["author"], "only", "{out}");
 }
 
+/// Fix round 1 (review Important #1): the app's watch snapshot after a
+/// write must be a fresh parse of what was ACTUALLY written, in FILE
+/// order - not the queue's own order, which a re-sort can put out of step
+/// with the file. This proves the composition `save_draft_cases` now
+/// uses (`apply_draft_edits` then `parse_json_text` on its own output)
+/// carries a twin's identity correctly into a SECOND write, even though
+/// the queue never returns to file order.
+#[test]
+fn a_second_write_counts_occurrences_against_the_first_writes_real_file_order() {
+    let old = json!({ "test_cases": [
+        { "title": "X", "steps": [{ "action": "Open A.", "expected": "" }] },
+        { "title": "X", "steps": [{ "action": "Open B.", "expected": "" }] },
+        { "title": "X", "steps": [{ "action": "Open C.", "expected": "" }] }
+    ]})
+    .to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+
+    // Re-sorted queue: [C, B, A]. Remove the middle row (B).
+    let after_remove = apply_draft_edits(
+        &old,
+        &[
+            DraftEdit { before: row(2), after: Some(row(2)), occurrence: Some(3) },
+            DraftEdit { before: row(1), after: None, occurrence: Some(2) },
+            DraftEdit { before: row(0), after: Some(row(0)), occurrence: Some(1) },
+        ],
+    )
+    .unwrap();
+
+    // What `save_draft_cases` now hands back as the new watch snapshot: a
+    // fresh parse of the text it just wrote, in FILE order - [A, C], not
+    // the queue's [C, A].
+    let snapshot = parse_json_text(&after_remove).unwrap().cases;
+    let snap = |i: usize| TestCase { source: Default::default(), ..snapshot[i].clone() };
+    assert_eq!(snapshot.len(), 2, "{after_remove}");
+    assert_eq!(snap(0).steps[0].action, "Open A.", "{after_remove}");
+    assert_eq!(snap(1).steps[0].action, "Open C.", "{after_remove}");
+
+    // Edit the queue's last row (still A). Paired against the FILE-order
+    // snapshot, A is occurrence 1 and the untouched C is occurrence 2.
+    let a_edited = TestCase {
+        steps: vec![Step { action: "Open A.".into(), expected: "A, edited.".into(), shared: None }],
+        ..snap(0)
+    };
+    let out = apply_draft_edits(
+        &after_remove,
+        &[
+            DraftEdit { before: snap(1), after: Some(snap(1)), occurrence: Some(2) },
+            DraftEdit { before: snap(0), after: Some(a_edited), occurrence: Some(1) },
+        ],
+    )
+    .unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"].as_array().unwrap().len(), 2, "C must not be dropped: {out}");
+    assert_eq!(doc["test_cases"][0]["steps"][0]["expected"], "A, edited.", "{out}");
+    assert_eq!(doc["test_cases"][1]["steps"][0]["action"], "Open C.", "{out}");
+}
+
 #[test]
 fn a_bare_array_keeps_its_skipped_entries_in_the_wrapper() {
     let old = r#"[{"title":"Draft","steps":[]},{"title":"Real","steps":[{"action":"Go."}]}]"#;

@@ -524,15 +524,13 @@ export const commands = {
 	 *  Write a queue edit back into the draft file its cases came from, so the
 	 *  file says what the queue says. `edits` holds one entry per queue row the
 	 *  file owns, IN QUEUE ORDER: the row before the edit (how the file finds
-	 *  its own copy, since a rename changes the title) and after it (`None` when
-	 *  the edit removed it). Order matters: the Nth same-titled row claims the
-	 *  Nth same-titled entry. The file is patched (`apply_draft_edits`): cases
-	 *  it holds that the queue never showed, keys the app does not model, and
-	 *  the author's spellings all survive. Returns the file's new fingerprint so
-	 *  the caller can move its watch snapshot forward - the watcher stays silent
-	 *  about our own write, so nothing else would.
+	 *  its own copy, since a rename changes the title), after it (`None` when
+	 *  the edit removed it), and which same-titled entry it is
+	 *  (`DraftEdit.occurrence`). The file is patched (`apply_draft_edits`):
+	 *  cases it holds that the queue never showed, keys the app does not model,
+	 *  and the author's spellings all survive.
 	 */
-	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
+	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
 	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
@@ -1292,6 +1290,45 @@ export type DraftGeneralCommentSaved = {
 	path: string,
 	stamp: string,
 	text: string,
+};
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult = DraftSaveResult_Serialize | DraftSaveResult_Deserialize;
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult_Deserialize = {
+	stamp: string,
+	cases: TestCase_Deserialize[],
+};
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult_Serialize = {
+	stamp: string,
+	cases: TestCase_Serialize[],
 };
 
 export type EnsuredSuite = {

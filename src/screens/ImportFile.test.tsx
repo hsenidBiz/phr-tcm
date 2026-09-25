@@ -900,7 +900,7 @@ test("the app's own id write-back after a submit does not re-import the file", a
     // file's fingerprint moves on.
     if (cmd === "save_draft_cases") {
       onDisk = after;
-      return "stamp-2";
+      return { stamp: "stamp-2", cases: after };
     }
     if (cmd === "submit_queue") {
       const a = args as { queue: Array<{ title: string; update_id: number | null }> };
@@ -963,7 +963,7 @@ test("after an upload the rows stay, and a later file edit updates them in place
     if (cmd === "test_case_field_values") return [];
     if (cmd === "save_draft_cases") {
       onDisk = stamped;
-      return "stamp-2";
+      return { stamp: "stamp-2", cases: stamped };
     }
     if (cmd === "submit_queue") {
       const a = args as { queue: Array<{ title: string }> };

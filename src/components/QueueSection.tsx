@@ -1037,11 +1037,14 @@ export default function QueueSection({
     const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
     void (async () => {
       const known = watches.length > 0 ? watches : loadWatches(org, sentFor);
+      // One pairing pass serves both the orphan check below and the stamp
+      // write-back after it, instead of computing it twice.
+      const owned = known.length > 0 ? fileOwners(prevQueue, known) : prevQueue.map(() => null);
       // The other half of the promise "the file learns what the submit made
       // real": say it LOUDLY when a created case's id could not be recorded
       // anywhere - no owning file matched it, or there is no file at all.
       // Both duplicate incidents to date were this situation, silent.
-      const owners = known.length > 0 ? ownerPaths(prevQueue, known) : prevQueue.map(() => "");
+      const owners = owned.map((o) => o?.path ?? "");
       const orphaned = unstampedCreated(prevQueue, owners, sent, outcomes);
       if (orphaned.length > 0) {
         const named = orphaned.slice(0, 3).join("; ");
@@ -1054,13 +1057,12 @@ export default function QueueSection({
         );
       }
       if (known.length > 0) {
-        const owned = fileOwners(prevQueue, known);
         const files = stampFileSlices(
           prevQueue,
-          owned.map((o) => o.path),
+          owners,
           sent,
           outcomes,
-          owned.map((o) => o.occurrence),
+          owned.map((o) => o?.occurrence ?? null),
         );
         for (const [path, f] of files) {
           if (!f.changed) continue;
@@ -1077,7 +1079,13 @@ export default function QueueSection({
           // and a setter on an unmounted screen never runs its persist step.
           // Then the screen showing this queue NOW, if any - not this
           // closure's own callback, which may belong to that gone mount.
-          const fields = { stamp: r.data, snapshot: f.slice };
+          //
+          // The snapshot is what Rust says is now IN THE FILE, in file
+          // order - not `f.slice` (the rows this write touched, in queue
+          // order). A queue-order slice stops matching the file the moment
+          // a re-sort makes the two disagree, and the next write then
+          // counts a same-titled twin's position wrong.
+          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
           saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
           queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
         }
@@ -1206,14 +1214,12 @@ export default function QueueSection({
     // after it (null = removed), and which same-titled entry of the file
     // the app paired it with, so Rust writes where the app thinks it does.
     // The file keeps everything else it holds.
-    const files = new Map<string, { slice: TestCase[]; edits: DraftEdit[]; touched: boolean }>();
+    const files = new Map<string, { edits: DraftEdit[]; touched: boolean }>();
     prev.forEach((before, i) => {
       const { path: p, occurrence } = owners[i];
       if (!p) return;
-      const f = files.get(p) ?? { slice: [], edits: [], touched: false };
-      const after = next[i];
-      if (after) f.slice.push(after);
-      f.edits.push({ before, after, occurrence });
+      const f = files.get(p) ?? { edits: [], touched: false };
+      f.edits.push({ before, after: next[i], occurrence });
       if (changed.has(i)) f.touched = true;
       files.set(p, f);
     });
@@ -1228,7 +1234,12 @@ export default function QueueSection({
           { duration: 15000 },
         );
       } else {
-        onWatchPatched?.(path, { stamp: r.data, snapshot: f.slice });
+        // The snapshot is what Rust says is now IN THE FILE, in file
+        // order - not a queue-order slice of the rows this write touched.
+        // That stops matching the file the moment a re-sort makes queue
+        // order and file order disagree, and the next write then counts a
+        // same-titled twin's position wrong.
+        onWatchPatched?.(path, { stamp: r.data.stamp, snapshot: r.data.cases });
       }
     }
   };
