@@ -149,11 +149,16 @@
     return bestScore >= need ? best : -1;
   }
 
-  // A letter is anything with a case (c.toLowerCase() !== c.toUpperCase()),
-  // plus the digits - ES5, where \p{L} and the u flag do not exist and
-  // break the whole script on an older engine.
+  // A word character is a letter or a digit in any script. ES5 has no
+  // \p{L}, and the u flag breaks the whole script on an older engine, so:
+  // anything with a case, the ASCII digits, and any other character past
+  // ASCII that is not in a punctuation, symbol, space or surrogate block.
+  // Scripts without case - CJK, kana, Hangul, Arabic, Thai, Devanagari -
+  // used to be dropped whole, and every such heading got the id "h".
+  var NOT_WORD = /[\u0080-¿×÷ -⁯₠-⃏℀-⅏←-⯿⸀-⹿　-〄〈-〠〰〽︐-︟︰-﹯＀-／：-＠［-｀｛-･\ud800-\udfff﻿￰-￿]/;
   function isWordChar(c) {
-    return c.toLowerCase() !== c.toUpperCase() || /[0-9]/.test(c);
+    if (c.toLowerCase() !== c.toUpperCase() || /[0-9]/.test(c)) return true;
+    return c > '\u007f' && !NOT_WORD.test(c);
   }
   function slug(text) {
     var s = String(text || '').toLowerCase().trim(), out = '', gap = false;

@@ -126,13 +126,27 @@ pub fn refresh_params(refresh_token: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// A transport failure as one of the no-URL sentences (`ado/transport.rs`).
-/// reqwest's Display names the login endpoint, which nobody can act on.
+/// What sign-in says when it cannot talk to Microsoft's sign-in service.
+/// Offline it used to say "Can't reach Azure DevOps" - but sign-in asks
+/// Microsoft, not Azure DevOps. The same shape and the same rule as the
+/// sentences in `ado/transport.rs`: no URL (reqwest's Display names the
+/// login endpoint, which nobody can act on), and a way to the details.
+pub const SIGN_IN_NET_TIMEOUT: &str =
+    "Microsoft sign-in didn't respond in time. Check your connection and try again. Settings → Logs has the details.";
+pub const SIGN_IN_NET_UNREACHABLE: &str =
+    "Can't reach Microsoft sign-in. Check your internet connection or VPN, then try again. Settings → Logs has the details.";
+pub const SIGN_IN_NET_GENERIC: &str =
+    "The connection to Microsoft sign-in failed. Try again - restart the app if it keeps happening. Settings → Logs has the details.";
+
 fn sign_in_network_error(e: &reqwest::Error) -> String {
-    match crate::ado::network_error(e) {
-        crate::ado::AdoError::Network(m) => m,
-        other => other.to_string(),
+    if e.is_timeout() {
+        SIGN_IN_NET_TIMEOUT
+    } else if e.is_connect() {
+        SIGN_IN_NET_UNREACHABLE
+    } else {
+        SIGN_IN_NET_GENERIC
     }
+    .to_string()
 }
 
 async fn post_token_endpoint(url: &str, params: &[(&str, String)]) -> Result<TokenResponse, String> {
@@ -318,20 +332,51 @@ fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
     );
 }
 
+/// The first line of one loopback request, read against ONE budget for the
+/// whole line. A per-read timeout alone restarts with every byte, so a
+/// connection that sent a byte at a time just inside it could hold the wait
+/// far past the sign-in window. `None` when no whole line came in time.
+fn read_request_line(stream: &mut std::net::TcpStream, budget: Duration) -> Option<String> {
+    use std::io::Read;
+    let until = Instant::now() + budget;
+    let mut line: Vec<u8> = Vec::with_capacity(256);
+    let mut chunk = [0u8; 512];
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        stream.set_read_timeout(Some(left)).ok()?;
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            return None;
+        }
+        line.extend_from_slice(&chunk[..n]);
+        if let Some(end) = line.iter().position(|&b| b == b'\n') {
+            line.truncate(end + 1);
+            return String::from_utf8(line).ok();
+        }
+        if line.len() >= 8192 {
+            return None;
+        }
+    }
+}
+
 /// Wait on the loopback for the browser's redirect, for at most `window`.
 ///
 /// Non-blocking accept so the deadline is real (a closed browser tab used
 /// to leave sign-in pending forever, leaking a thread and a port). Each
-/// connection gets `read_timeout` to send its request line; one that sends
-/// nothing (a browser preconnect) or something else (a favicon) is dropped
-/// and the wait goes on, so it cannot hide the real redirect behind it.
+/// connection gets `read_timeout` in all to send its request line (never
+/// past `window`); one that sends nothing (a browser preconnect) or
+/// something else (a favicon) is dropped and the wait goes on, so it
+/// cannot hide the real redirect behind it.
 pub fn await_redirect(
     listener: std::net::TcpListener,
     expected_state: &str,
     window: Duration,
     read_timeout: Duration,
 ) -> Result<String, String> {
-    use std::io::{BufRead, BufReader, ErrorKind, Read};
+    use std::io::ErrorKind;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + window;
     loop {
@@ -351,13 +396,13 @@ pub fn await_redirect(
         if stream.set_nonblocking(false).is_err() {
             continue;
         }
-        let _ = stream.set_read_timeout(Some(read_timeout));
         let _ = stream.set_write_timeout(Some(read_timeout));
-        let Ok(reader) = stream.try_clone() else { continue };
-        let mut line = String::new();
-        if BufReader::new(reader.take(8192)).read_line(&mut line).is_err() {
-            continue; // said nothing in time: drop it, keep waiting
-        }
+        // The whole request line within `read_timeout`, and never past the
+        // sign-in window itself.
+        let budget = read_timeout.min(deadline.saturating_duration_since(Instant::now()));
+        let Some(line) = read_request_line(&mut stream, budget) else {
+            continue; // no whole line in time: drop it, keep waiting
+        };
         match read_redirect(&line, expected_state) {
             Redirect::NotTheRedirect => respond(&mut stream, "404 Not Found", ""),
             Redirect::Code(code) => {

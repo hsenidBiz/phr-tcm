@@ -11,6 +11,7 @@ type Report = (r: unknown, err: unknown) => void;
 type Notes = {
   makeQueue: (send: (payload: string) => Promise<unknown>, report: Report) => (payload: string) => void;
   busy: () => number;
+  timeoutMs: number;
 };
 let N: Notes;
 
@@ -128,5 +129,51 @@ test("busy() counts an armed debounce timer, an in-flight save, and a save queue
 
   settle[1].ok({ json: () => Promise.resolve({ ok: true }) });
   await flush();
+  expect(N.busy()).toBe(0);
+});
+
+/// A save the app never answers must still end, or the box stays "busy"
+/// for good and the page's live update waits on it forever.
+test("a save the app never answers ends after the limit, frees the box and says so", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "hi";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  expect(N.busy()).toBe(1);
+
+  await vi.advanceTimersByTimeAsync(N.timeoutMs);
+  await flush();
+  expect(N.busy()).toBe(0);
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
+});
+
+/// Review Focus 4: slow is not dead. A reply inside the limit is saved.
+test("a save the app answers slowly, inside the limit, is still saved", async () => {
+  const gate: { answer?: (v: unknown) => void } = {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise((ok) => {
+          gate.answer = ok;
+        }),
+    ),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "hi";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await vi.advanceTimersByTimeAsync(N.timeoutMs - 1_000);
+  gate.answer?.({ json: () => Promise.resolve({ ok: true }) });
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Saved ✓");
+
+  // The limit passing afterwards changes nothing.
+  await vi.advanceTimersByTimeAsync(2_000);
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Saved ✓");
   expect(N.busy()).toBe(0);
 });

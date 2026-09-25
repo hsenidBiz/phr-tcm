@@ -42,7 +42,34 @@
   var busyCount = 0;
   function busyStart() { busyCount++; }
   function busyEnd() { if (busyCount > 0) busyCount--; }
-  window.tcmNotes = { makeQueue: makeQueue, busy: function () { return busyCount; } };
+  // A save the app never answers - it hung, or its listener stalled - must
+  // still end: until it does the box counts as busy, and the page's live
+  // update (cases-page.js) waits for busy() to reach 0 before it swaps.
+  var NOTE_TIMEOUT_MS = 10000;
+  function postNote(payload) {
+    return new Promise(function (ok, fail) {
+      var done = false;
+      var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        if (ctl) ctl.abort();
+        var e = new Error('the app did not answer');
+        e.name = 'TimeoutError';
+        fail(e);
+      }, NOTE_TIMEOUT_MS);
+      fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+        signal: ctl ? ctl.signal : undefined
+      }).then(function (r) { return r.json(); }).then(
+        function (v) { if (done) return; done = true; clearTimeout(timer); ok(v); },
+        function (e) { if (done) return; done = true; clearTimeout(timer); fail(e); }
+      );
+    });
+  }
+  window.tcmNotes = { makeQueue: makeQueue, busy: function () { return busyCount; }, timeoutMs: NOTE_TIMEOUT_MS };
 
   function wire(box, status, build) {
     var timer = null;
@@ -53,20 +80,16 @@
     function settle() {
       if (dirty) { dirty = false; busyEnd(); }
     }
-    var save = makeQueue(function (payload) {
-      return fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      }).then(function (r) { return r.json(); });
-    }, function (r, err) {
+    var save = makeQueue(postNote, function (r, err) {
       // The report callback fires only for the newest save once nothing is
       // queued behind it (see makeQueue's `finish`) - exactly when this box
       // stops being dirty, saved or not.
       settle();
       if (err) {
         status.className = 'note-status bad';
-        status.textContent = 'Not saved — the app is closed';
+        status.textContent = err.name === 'TimeoutError'
+          ? 'Not saved - the app did not answer'
+          : 'Not saved — the app is closed';
       } else if (r && r.ok) {
         status.className = 'note-status';
         status.textContent = 'Saved ✓';

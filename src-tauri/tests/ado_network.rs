@@ -9,6 +9,7 @@
 //! user an action.
 
 use v2_lib::ado::{AdoClient, AdoError, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
+use v2_lib::auth::{SIGN_IN_NET_GENERIC, SIGN_IN_NET_TIMEOUT, SIGN_IN_NET_UNREACHABLE};
 
 /// Address nothing is listening on: bound to let the OS pick a free port,
 /// then dropped. Connecting to it fails at connect, which is what a machine
@@ -41,7 +42,7 @@ async fn an_unreachable_host_names_no_url() {
 /// Every sentence, not just the one the test above happens to reach.
 #[test]
 fn no_message_can_carry_a_url() {
-    for msg in [NET_TIMEOUT, NET_UNREACHABLE, NET_GENERIC] {
+    for msg in [NET_TIMEOUT, NET_UNREACHABLE, NET_GENERIC, SIGN_IN_NET_TIMEOUT, SIGN_IN_NET_UNREACHABLE, SIGN_IN_NET_GENERIC] {
         assert!(!msg.contains("http"), "{msg}");
         assert!(!msg.contains("dev.azure.com"), "{msg}");
         assert!(!msg.contains("url ("), "{msg}");
@@ -159,7 +160,10 @@ async fn a_sign_in_network_failure_names_no_url() {
         Ok(_) => panic!("nothing is listening"),
         Err(e) => e,
     };
-    assert_eq!(err, NET_UNREACHABLE);
+    // Offline, it is Microsoft's sign-in that cannot be reached, not Azure
+    // DevOps - the sentence says which.
+    assert_eq!(err, SIGN_IN_NET_UNREACHABLE);
+    assert!(err.contains("Microsoft sign-in") && !err.contains("Azure DevOps"), "{err}");
     assert!(!err.contains("127.0.0.1") && !err.contains("http") && !err.contains("oauth2"), "{err}");
 }
 

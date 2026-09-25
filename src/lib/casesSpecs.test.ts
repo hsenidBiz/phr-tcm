@@ -193,6 +193,25 @@ describe("citationRanges", () => {
   });
 });
 
+test("a heading in a script without letter case keeps its words in the slug", () => {
+  expect(H.slug("5.8 表示ルール")).toBe("5-8-表示ルール");
+  expect(H.slug("ログイン　画面")).toBe("ログイン-画面"); // an ideographic space separates
+  expect(H.slug("概要、目的。")).toBe("概要-目的");
+  expect(H.slug("사용자 설정")).toBe("사용자-설정");
+  expect(H.slug("🙂 Emoji")).toBe("emoji");
+  // Nothing wordlike at all: empty, and the page falls back to "h".
+  expect(H.slug("🙂 !!")).toBe("");
+});
+
+/// Citations resolve through matchHeading, not through the ids, so a
+/// caseless heading must still be found by its words and by its number.
+test("a citation still finds a heading written without letter case", () => {
+  const headings = ["1 概要", "2 表示ルール", "3 ログイン 画面"];
+  expect(H.matchHeading(headings, "2 表示ルール")).toBe(1);
+  expect(H.matchHeading(headings, "表示ルール")).toBe(1);
+  expect(H.matchHeading(headings, "ログイン 画面")).toBe(2);
+});
+
 describe("citation links in the page", () => {
   test("every citation in a paragraph is linked, and a link is never nested in a link", () => {
     document.body.innerHTML = `

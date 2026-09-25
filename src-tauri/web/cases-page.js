@@ -356,12 +356,19 @@
       return true;
     }
 
-    setInterval(function () {
+    // How long until the next ask. A closed app answers nothing, and every
+    // refused ask is an error line in the browser's console - so each
+    // failure doubles the wait, up to a minute, and the first answer brings
+    // it back to 4 s.
+    var POLL_MS = 4000, POLL_MAX_MS = 60000, wait = POLL_MS;
+    function schedule() { setTimeout(poll, wait); }
+    function poll() {
       var s = staleBanner();
-      if (document.hidden || (s && s.classList.contains('show'))) { return; }
+      if (document.hidden || (s && s.classList.contains('show'))) { schedule(); return; }
       fetch(base + '/version?' + qs)
         .then(function (r) { return r.json(); })
         .then(function (v) {
+          wait = POLL_MS;
           // null means the app did not recognise this page; that is not
           // staleness and must not be reported as it.
           if (typeof v.revision !== 'number' || v.revision === rev) { return; }
@@ -387,7 +394,9 @@
             })
             .catch(banner);
         })
-        .catch(function () { /* app closed, or no listener - stay quiet */ });
-    }, 4000);
+        .catch(function () { wait = Math.min(wait * 2, POLL_MAX_MS); })
+        .then(schedule);
+    }
+    schedule();
   }
 })();

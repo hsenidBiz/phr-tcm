@@ -121,3 +121,40 @@ test("the poll skips the swap while a comment box is busy (armed, in flight, or 
   await poll();
   expect(document.querySelector(".rev-body")!.textContent).toBe("fresh");
 });
+
+async function later(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+/// A closed app answers nothing, and every refused ask is an error line in
+/// the browser's console. Each failure doubles the wait (to at most a
+/// minute); the first answer brings the 4 s poll back.
+test("a closed app is asked less and less often, and an answer brings the 4 s poll back", async () => {
+  let up = false;
+  const asked: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      asked.push(url);
+      if (!up) return Promise.reject(new TypeError("Failed to fetch"));
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ revision: 1 }) });
+    }),
+  );
+  const versionAsks = () => asked.filter((u) => u.includes("/version")).length;
+
+  await poll(); // 4 s: asked, refused - the next ask waits 8 s
+  expect(versionAsks()).toBe(1);
+  await poll(); // 8 s: not yet
+  expect(versionAsks()).toBe(1);
+  await poll(); // 12 s: asked, refused - the next waits 16 s
+  expect(versionAsks()).toBe(2);
+  await later(15_000); // 27 s: not yet
+  expect(versionAsks()).toBe(2);
+
+  up = true;
+  await later(1_000); // 28 s: asked, answered
+  expect(versionAsks()).toBe(3);
+  await poll(); // 32 s: back to every 4 s
+  expect(versionAsks()).toBe(4);
+});
