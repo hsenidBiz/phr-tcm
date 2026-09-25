@@ -274,11 +274,10 @@ export const commands = {
 	 */
 	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
 	/**
-	 *  The shipped defaults for the database server form: the first shipped
-	 *  database by id, never its login. The frontend applies these only to a
-	 *  form nothing was ever saved into.
+	 *  The shipped defaults for the database server form. The frontend applies
+	 *  these only to a form nothing was ever saved into.
 	 */
-	dbServerDefaults: () => __TAURI_INVOKE<DbServerConfig>("db_server_defaults"),
+	dbServerDefaults: () => __TAURI_INVOKE<DbServerDefaults>("db_server_defaults"),
 	/**
 	 *  Every database the Company database card offers, as the public view:
 	 *  who signs in and whether a password is saved, never the password or
@@ -1214,6 +1213,17 @@ export type DbServerConfig = {
 	 */
 	db_id: string,
 	/**  Comma-separated; blank means the server's own default (dbo). */
+	schema_filter: string,
+};
+
+/**
+ *  The PHR X server settings a never-configured form starts from. No
+ *  database among them: a machine that never chose one has none chosen,
+ *  and registering names the selected database when the person clicks.
+ */
+export type DbServerDefaults = {
+	exe_path: string,
+	db_type: string,
 	schema_filter: string,
 };
 

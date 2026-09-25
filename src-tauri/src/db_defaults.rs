@@ -1,8 +1,8 @@
 //! The database MCP server's SHIPPED defaults - the values the AI Bridge
 //! form starts from on a machine that has never configured it, plus the
 //! named presets its dropdown offers. A person's own saved config always
-//! wins; the first preset only fills an empty form, and registering still
-//! takes an explicit click.
+//! wins; no preset is chosen for them, and registering still takes an
+//! explicit click.
 //!
 //! Shipping credentials in a public binary is a deliberate owner call,
 //! same as storing the connection string locally (see lib/dbServer.ts):
@@ -25,9 +25,9 @@ pub struct DbPreset {
     pub connection_string: &'static str,
 }
 
-/// The environments the app ships knowing about. ORDER MATTERS: the first
-/// entry is the automatic prefill for a never-configured machine, so the
-/// read-only dev login leads - the least a set of defaults can hand out.
+/// The environments the app ships knowing about, in the order the dropdown
+/// lists them. None is preselected on a fresh machine; the read-only dev
+/// login leads so the first one offered is the least it can hand out.
 pub const DB_PRESETS: &[DbPreset] = &[
     DbPreset {
         id: "dev-read",

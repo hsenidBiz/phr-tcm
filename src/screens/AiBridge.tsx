@@ -184,7 +184,8 @@ export default function AiBridge() {
   // Shipped defaults fill a form NOTHING was ever saved into - a machine
   // that configured (or deliberately cleared) its own values never has
   // them overwritten. Prefill only: nothing persists or registers until
-  // the person edits or clicks Register themselves.
+  // the person edits or clicks Register themselves. The defaults name no
+  // database - a fresh machine has none selected until the person picks.
   const dbDefaults = useQuery({
     queryKey: ["db-defaults"],
     queryFn: () => commands.dbServerDefaults(),

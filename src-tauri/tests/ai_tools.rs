@@ -1014,3 +1014,16 @@ fn the_cli_is_run_directly_not_through_cmd() {
     let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
     assert_eq!(args, mcp_add_args(&server, "user"));
 }
+
+/// A machine that never chose a database has none chosen: the shipped
+/// defaults fill the PHR X server's own settings and name no database, so
+/// nothing can prefill one.
+#[test]
+fn the_shipped_server_defaults_name_no_database() {
+    let json = serde_json::to_value(v2_lib::commands::ai_tools::db_server_defaults()).unwrap();
+    let keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys.len(), 3, "{keys:?}");
+    for k in ["exe_path", "db_type", "schema_filter"] {
+        assert!(keys.contains(&k), "{keys:?}");
+    }
+}

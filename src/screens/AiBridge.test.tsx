@@ -361,7 +361,6 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
   const DEFAULTS = {
     exe_path: "D:\\Phr-Database-McpServer",
     db_type: "mssql",
-    db_id: "dev-read",
     schema_filter: "PeoplesHR",
   };
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");

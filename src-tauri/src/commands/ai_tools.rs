@@ -15,7 +15,7 @@ use crate::ai_tools::{
     DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, MANAGED_SERVERS, TCM_SERVER,
     TOOL_SPECS,
 };
-use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets, OWN_ID};
+use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -177,16 +177,24 @@ impl DbServerConfig {
 /// Said when the chosen database has no login to hand the server.
 const NO_LOGIN: &str = "Save a login for this database first.";
 
-/// The shipped defaults for the database server form: the first shipped
-/// database by id, never its login. The frontend applies these only to a
-/// form nothing was ever saved into.
+/// The PHR X server settings a never-configured form starts from. No
+/// database among them: a machine that never chose one has none chosen,
+/// and registering names the selected database when the person clicks.
+#[derive(serde::Serialize, specta::Type)]
+pub struct DbServerDefaults {
+    pub exe_path: String,
+    pub db_type: String,
+    pub schema_filter: String,
+}
+
+/// The shipped defaults for the database server form. The frontend applies
+/// these only to a form nothing was ever saved into.
 #[tauri::command]
 #[specta::specta]
-pub fn db_server_defaults() -> DbServerConfig {
-    DbServerConfig {
+pub fn db_server_defaults() -> DbServerDefaults {
+    DbServerDefaults {
         exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
         db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
-        db_id: crate::db_defaults::DB_PRESETS.first().map_or(OWN_ID, |p| p.id).to_string(),
         schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
     }
 }
