@@ -1172,3 +1172,28 @@ async fn more_than_two_hundred_parents_are_read_in_batches_of_two_hundred() {
     assert_eq!(all.len(), 201, "each parent id asked for exactly once");
     assert_eq!(board.items.len(), 201);
 }
+
+/// A swimlane's parent is often a type with no card on the board (a
+/// Feature above PBIs). Its drawer reads that type's own states through
+/// `work_item_type_states`, which is this read.
+#[tokio::test]
+async fn a_type_with_no_card_on_the_board_has_its_states_read() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Feature/states"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "name": "New", "color": "b2b2b2", "category": "Proposed" },
+                { "name": "In Progress", "color": "007acc", "category": "InProgress" },
+                { "name": "Done", "color": "339933", "category": "Completed" }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let states = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri())
+        .get_work_item_states("org", "proj", "Feature")
+        .await
+        .unwrap();
+    let names: Vec<&str> = states.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["New", "In Progress", "Done"]);
+}

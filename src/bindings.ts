@@ -208,6 +208,13 @@ export const commands = {
 	 */
 	updateWorkItem: (organization: string, project: string, id: number, patches: FieldPatch[]) => typedError<null, AdoError>(__TAURI_INVOKE("update_work_item", { organization, project, id, patches })),
 	activityValues: (organization: string, project: string, wiType: string) => typedError<string[], AdoError>(__TAURI_INVOKE("activity_values", { organization, project, wiType })),
+	/**
+	 *  The states a work item type has on this project's process. For an item
+	 *  the board did not load as a card - a swimlane's parent, or one a
+	 *  notification opened - whose drawer would otherwise offer no state to
+	 *  pick. Read only.
+	 */
+	workItemTypeStates: (organization: string, project: string, workItemType: string) => typedError<StateInfo[], AdoError>(__TAURI_INVOKE("work_item_type_states", { organization, project, workItemType })),
 	workItemComments: (organization: string, project: string, id: number) => typedError<WorkComment[], AdoError>(__TAURI_INVOKE("work_item_comments", { organization, project, id })),
 	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
 	updateComment: (organization: string, project: string, id: number, commentId: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("update_comment", { organization, project, id, commentId, text })),

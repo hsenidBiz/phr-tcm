@@ -133,6 +133,19 @@ export default function WorkItemDrawer({
     staleTime: Infinity,
   });
 
+  // A swimlane's parent that is not itself a card, or an item a
+  // notification opened from outside the loaded board, arrives with no
+  // states. Read its own type's, the way the board reads them for its
+  // cards. In memory only, like `activities`.
+  const ownStates = useQuery({
+    queryKey: ["work-item-type-states", org, project, detail.data?.work_item_type],
+    queryFn: () => unwrap(commands.workItemTypeStates(org, project, detail.data!.work_item_type)),
+    enabled: states.length === 0 && Boolean(detail.data?.work_item_type),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const stateNames = states.length > 0 ? states : (ownStates.data ?? []).map((s) => s.name);
+
   const [draft, setDraft] = useState<Draft | null>(null);
   // Rich text opens rendered (like ADO's own form); Write is for editing.
   const [descMode, setDescMode] = useState<"write" | "preview">("preview");
@@ -402,8 +415,8 @@ export default function WorkItemDrawer({
                     value={draft.state}
                     onChange={(e) => setDraft({ ...draft, state: e.target.value })}
                   >
-                    {!states.includes(draft.state) && <option>{draft.state}</option>}
-                    {states.map((s) => (
+                    {!stateNames.includes(draft.state) && <option>{draft.state}</option>}
+                    {stateNames.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
                   </Select>

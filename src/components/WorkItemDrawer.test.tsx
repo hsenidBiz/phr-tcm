@@ -9,7 +9,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function renderDrawer() {
+function renderDrawer(states: string[] = ["To Do", "In Progress", "Done"]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -17,7 +17,7 @@ function renderDrawer() {
         org="acme"
         project="Web"
         itemId={2003}
-        states={["To Do", "In Progress", "Done"]}
+        states={states}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />
@@ -131,4 +131,64 @@ test("a loaded work item is cached for the next open", async () => {
   const raw = localStorage.getItem("tcm-v2-cache:wi-detail:acme/Web/2003");
   expect(raw).toBeTruthy();
   expect(JSON.parse(raw as string).data.title).toBe("Session timeout not enforced");
+});
+
+// The State field is `ui/select.tsx`'s themed combobox (button + listbox),
+// not a native <select>, so its choices only exist in the DOM while open:
+// open it, read the option labels, then close it back to how it started.
+const optionsOf = () => {
+  const trigger = screen.getByLabelText("State");
+  fireEvent.click(trigger);
+  const opts = screen.getAllByRole("option").map((o) => o.textContent);
+  fireEvent.click(trigger);
+  return opts;
+};
+
+/// A swimlane's parent that is not itself a card (or an item a notification
+/// opened from outside the loaded board) arrives with no states. The drawer
+/// reads its own type's instead of offering nothing.
+test("an item that arrives with no states reads its own type's", async () => {
+  const asked: unknown[] = [];
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Parent feature");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+      case "work_item_type_states":
+        asked.push(args);
+        return [
+          { name: "To Do", color: "b2b2b2", category: "Proposed" },
+          { name: "Doing", color: "007acc", category: "InProgress" },
+          { name: "Done", color: "339933", category: "Completed" },
+        ];
+    }
+  });
+  renderDrawer([]);
+  await waitFor(() => expect(optionsOf()).toEqual(["To Do", "Doing", "Done"]));
+  expect(asked).toEqual([{ organization: "acme", project: "Web", workItemType: "Bug" }]);
+});
+
+/// Review Focus 1.
+test("a lane parent whose type's states cannot be read still opens, offering its own state", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Parent feature");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+      case "work_item_type_states":
+        throw { kind: "Network", detail: "Can't reach Azure DevOps." };
+    }
+  });
+  renderDrawer([]);
+  await waitFor(() => expect(optionsOf()).toEqual(["To Do"]));
 });

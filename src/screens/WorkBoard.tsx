@@ -335,9 +335,9 @@ export default function WorkBoard({
   });
 
   // A notification handed us an item: open its drawer. It waits for the
-  // board's own load because the drawer reads the item's states from it -
-  // an item outside the loaded board still opens, just without the state
-  // dropdown. Handled once: the handoff is cleared by the caller.
+  // board's own load because the drawer takes a card's states from it; an
+  // item outside the loaded board still opens, and the drawer reads its
+  // type's states itself. Handled once: the handoff is cleared by the caller.
   useEffect(() => {
     if (focusItem == null || !board.data) return;
     setOpenItem(focusItem);

@@ -179,6 +179,24 @@ pub async fn activity_values(
         .await
 }
 
+/// The states a work item type has on this project's process. For an item
+/// the board did not load as a card - a swimlane's parent, or one a
+/// notification opened - whose drawer would otherwise offer no state to
+/// pick. Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn work_item_type_states(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    work_item_type: String,
+) -> Result<Vec<work_board::StateInfo>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_work_item_states(&organization, &project, &work_item_type)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn work_item_comments(
