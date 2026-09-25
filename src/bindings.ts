@@ -845,6 +845,23 @@ export type BoardItem = {
 	tags: string,
 	priority: number | null,
 	changed_date: string,
+	/**
+	 *  The direct parent (tasks and bugs under their PBI, PBIs under their
+	 *  Feature); None when the item has none.
+	 */
+	parent: BoardParent | null,
+};
+
+/**  A card's direct parent, as its swimlane shows it. */
+export type BoardParent = {
+	id: number,
+	/**
+	 *  Empty when the parent could not be read (deleted, in another
+	 *  project, or no permission): the lane then reads `#id`.
+	 */
+	title: string,
+	/**  Empty whenever `title` is. */
+	work_item_type: string,
 };
 
 export type BridgeStatus = {

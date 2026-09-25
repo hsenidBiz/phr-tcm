@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use super::{
-    wiql_str, BoardData, BoardItem, Member, StateInfo, TeamRef, BOARD_FIELDS,
-    EXCLUDED_TYPES, MAX_ITEMS,
+    wiql_str, BoardData, BoardItem, BoardParent, Member, StateInfo, TeamRef, BOARD_FIELDS,
+    EXCLUDED_TYPES, MAX_ITEMS, TITLE_FIELDS,
 };
 use crate::ado::{AdoClient, AdoError};
 use super::column_for_state;
@@ -269,6 +269,52 @@ impl AdoClient {
             .collect())
     }
 
+    /// Title and type of each readable id, read in batches of 200 with
+    /// `errorPolicy=omit` so a deleted, moved or forbidden id comes back as
+    /// a null entry instead of failing its whole batch. Never fails: a batch
+    /// that errors is logged and its ids are simply absent from the answer.
+    /// Read only.
+    pub(crate) async fn read_titles(
+        &self,
+        org: &str,
+        project: &str,
+        ids: &[i32],
+    ) -> HashMap<i32, (String, String)> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let url = format!(
+                "{}/{}/{}/_apis/wit/workitems?ids={}&fields={}&errorPolicy=omit&api-version=7.1",
+                self.base_url, org, project, ids_csv, TITLE_FIELDS
+            );
+            match self.get_json(url).await {
+                Ok(data) => {
+                    for w in data["value"].as_array().cloned().unwrap_or_default() {
+                        // An omitted id is a null entry: nothing to read.
+                        let Some(id) = w["id"].as_i64() else { continue };
+                        let f = &w["fields"];
+                        out.insert(
+                            id as i32,
+                            (
+                                f["System.Title"].as_str().unwrap_or_default().to_string(),
+                                f["System.WorkItemType"].as_str().unwrap_or_default().to_string(),
+                            ),
+                        );
+                    }
+                }
+                Err(e) => crate::applog::warn(format!(
+                    "could not read the titles of {} work item(s); they show as ids only: {e}",
+                    chunk.len()
+                )),
+            }
+        }
+        out
+    }
+
     /// The board in one call, ported from v1 _fetch_work: scope is "me"
     /// (AssignedTo = @Me), an area (everything UNDER that area path,
     /// whoever it's assigned to - areas are the classification tree the
@@ -376,6 +422,41 @@ impl AdoClient {
             }
         }
 
+        // Each card's direct parent, for the board's swimlanes. A parent
+        // that is itself on the board is already in hand; the others are
+        // read once each, and one that cannot be read keeps its id with an
+        // empty title. This read never fails the board.
+        let mut known: HashMap<i32, (String, String)> = raw_items
+            .iter()
+            .filter_map(|w| {
+                let f = &w["fields"];
+                Some((
+                    w["id"].as_i64()? as i32,
+                    (
+                        f["System.Title"].as_str().unwrap_or_default().to_string(),
+                        f["System.WorkItemType"].as_str().unwrap_or_default().to_string(),
+                    ),
+                ))
+            })
+            .collect();
+        let mut to_read: Vec<i32> = vec![];
+        let mut queued = std::collections::HashSet::new();
+        for w in &raw_items {
+            if let Some(p) = w["fields"]["System.Parent"].as_i64().map(|p| p as i32) {
+                if !known.contains_key(&p) && queued.insert(p) {
+                    to_read.push(p);
+                }
+            }
+        }
+        known.extend(self.read_titles(org, project, &to_read).await);
+        let parent_of = |f: &serde_json::Value| {
+            f["System.Parent"].as_i64().map(|p| {
+                let id = p as i32;
+                let (title, work_item_type) = known.get(&id).cloned().unwrap_or_default();
+                BoardParent { id, title, work_item_type }
+            })
+        };
+
         // Preserve WIQL order (ChangedDate DESC), not batch-GET order.
         let by_id: HashMap<i64, &serde_json::Value> = raw_items
             .iter()
@@ -407,6 +488,7 @@ impl AdoClient {
                     tags: f["System.Tags"].as_str().unwrap_or_default().to_string(),
                     priority: f["Microsoft.VSTS.Common.Priority"].as_i64().map(|i| i as i32),
                     changed_date: f["System.ChangedDate"].as_str().unwrap_or_default().to_string(),
+                    parent: parent_of(f),
                 })
             })
             .collect();

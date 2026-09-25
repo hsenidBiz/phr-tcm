@@ -31,14 +31,29 @@ pub const EXCLUDED_TYPES: [&str; 5] = [
 const MAX_ITEMS: u32 = 500;
 
 /// Fields the board fetch asks for (rich-text fields deliberately excluded -
-/// they are heavy and only the detail editor needs them).
-const BOARD_FIELDS: &str = "System.Id,System.Title,System.WorkItemType,System.State,System.AssignedTo,System.ChangedDate,System.Tags,Microsoft.VSTS.Common.Priority";
+/// they are heavy and only the detail editor needs them). System.Parent is
+/// the plain id of the card's direct parent, for the swimlanes.
+const BOARD_FIELDS: &str = "System.Id,System.Title,System.WorkItemType,System.State,System.AssignedTo,System.ChangedDate,System.Tags,Microsoft.VSTS.Common.Priority,System.Parent";
+
+/// What a lane header needs of a work item, and nothing more.
+pub(crate) const TITLE_FIELDS: &str = "System.Title,System.WorkItemType";
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct StateInfo {
     pub name: String,
     pub color: String,
     pub category: String,
+}
+
+/// A card's direct parent, as its swimlane shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+pub struct BoardParent {
+    pub id: i32,
+    /// Empty when the parent could not be read (deleted, in another
+    /// project, or no permission): the lane then reads `#id`.
+    pub title: String,
+    /// Empty whenever `title` is.
+    pub work_item_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -54,6 +69,9 @@ pub struct BoardItem {
     pub tags: String,
     pub priority: Option<i32>,
     pub changed_date: String,
+    /// The direct parent (tasks and bugs under their PBI, PBIs under their
+    /// Feature); None when the item has none.
+    pub parent: Option<BoardParent>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
