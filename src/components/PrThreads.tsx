@@ -11,10 +11,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, MessageSquare, RotateCcw } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useLayoutEffect, useState } from "react";
 import { toast } from "../lib/toast";
 import { Markdown } from "@astryxdesign/core/Markdown";
-import { commands, type PrThread } from "../bindings";
+import { commands, type InlineImage, type PrThread } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { Skeleton } from "./ui/skeleton";
 import { cn } from "../lib/cn";
@@ -198,22 +198,32 @@ export default function PrThreads({
   });
   // Astryx's Markdown island refuses a data: image src outright, so - only
   // here, not in the shared cache above - each one becomes a blob: object
-  // URL. Minted with useMemo (not in queryFn) so a re-render alone never
-  // mints another batch, and revoked in the matching effect below the
-  // moment this batch stops being the one in use: on the next data change,
-  // and on unmount.
-  const blobImages = useMemo(() => toBlobImages(images.data ?? []), [images.data]);
-  useEffect(
-    () => () => {
-      for (const img of blobImages) URL.revokeObjectURL(img.data);
-    },
-    [blobImages],
-  );
+  // URL. Minted and revoked in ONE effect, keyed on the query data: a batch
+  // minted anywhere else (a useMemo) outlives StrictMode's rehearsal
+  // cleanup, which revokes it while the memo keeps handing it out - every
+  // image of a cached PR broken on reopen. Layout rather than passive, so
+  // the batch is in state before the frame that would show the raw URL.
+  // Each batch is tagged with the data it was minted from; until the tag
+  // matches the current data the new batch is not ready yet.
+  const [blob, setBlob] = useState<{ src: InlineImage[] | undefined; imgs: InlineImage[] }>({
+    src: undefined,
+    imgs: [],
+  });
+  useLayoutEffect(() => {
+    const imgs = toBlobImages(images.data ?? []);
+    setBlob({ src: images.data, imgs });
+    return () => {
+      for (const img of imgs) URL.revokeObjectURL(img.data);
+    };
+  }, [images.data]);
+  const minted = blob.src === images.data;
   /** Swap in what came back; anything still unswapped once the fetch has
-   * settled becomes the unavailable note. While still loading, the text is
-   * left unchanged - the image appears when it is ready. */
+   * settled becomes the unavailable note. While still loading - or while
+   * this data's batch is still being minted - the text is left unchanged,
+   * so an image that is on its way never flashes as unavailable. */
   const withImages = (md: string) => {
-    const swapped = swapInlineImages(md, blobImages);
+    if (!minted) return md;
+    const swapped = swapInlineImages(md, blob.imgs);
     return images.isPending ? swapped : markUnavailableImages(swapped, "md");
   };
 

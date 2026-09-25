@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import PrThreads from "./PrThreads";
 
@@ -88,7 +89,7 @@ test("a PR comment image that could not be fetched shows an unavailable note", a
 });
 
 /// Each render must not mint a fresh blob: URL (the query cache holds the
-/// data: URI, not the blob - only the view converts, in a useMemo keyed on
+/// data: URI, not the blob - only the view converts, in an effect keyed on
 /// the query data), and whatever it did mint must be released once this
 /// view no longer needs it, or every open PR review leaks another
 /// same-sized allocation for the life of the session.
@@ -132,4 +133,56 @@ test("a later fetch replacing the cached images revokes the earlier blob: URL", 
   ]);
 
   await waitFor(() => expect(revoke).toHaveBeenCalledWith(firstBlobUrl));
+});
+
+/// Reopening a PR whose threads and images are both already cached mounts
+/// with the images in hand. The app runs in <StrictMode>, which mounts,
+/// cleans up and mounts again: a batch minted outside the effect that
+/// revokes it would be revoked by that rehearsal and still be rendered -
+/// every image broken in a dev build. What is on screen must be alive,
+/// and released on unmount; a data change releases only the old batch.
+test("under StrictMode, a cached PR's images render from a live blob: URL", async () => {
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
+  // Earlier tests in this file spied the same function; count only ours.
+  revoke.mockClear();
+  const threads = threadWithComment(`Review Changes: ![image](${ATTACHMENT_URL})`);
+  mockIPC((cmd) => {
+    if (cmd === "pr_threads") return threads;
+    if (cmd === "comment_images") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(["pr-threads", "acme", "Web", "repo", 1], threads);
+  qc.setQueryData(["comment-images", "acme", [ATTACHMENT_URL]], [
+    { url: ATTACHMENT_URL, data: "data:image/png;base64,iVBORw0KGgo=" },
+  ]);
+  const { container, unmount } = render(
+    <StrictMode>
+      <QueryClientProvider client={qc}>
+        <PrThreads org="acme" project="Web" repo="repo" prId={1} enabled finalized={false} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+
+  let shown = "";
+  await waitFor(() => {
+    const img = container.querySelector("img[src^='blob:']");
+    expect(img).not.toBeNull();
+    shown = img!.getAttribute("src")!;
+  });
+  expect(revoke).not.toHaveBeenCalledWith(shown);
+
+  qc.setQueryData(["comment-images", "acme", [ATTACHMENT_URL]], [
+    { url: ATTACHMENT_URL, data: "data:image/png;base64,AAAAAAAA" },
+  ]);
+  let next = "";
+  await waitFor(() => {
+    next = container.querySelector("img[src^='blob:']")?.getAttribute("src") ?? "";
+    expect(next).not.toBe("");
+    expect(next).not.toBe(shown);
+  });
+  expect(revoke).toHaveBeenCalledWith(shown);
+  expect(revoke).not.toHaveBeenCalledWith(next);
+
+  unmount();
+  expect(revoke).toHaveBeenCalledWith(next);
 });
