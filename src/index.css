@@ -24,14 +24,32 @@
    its outline colour before it is focused - there is nothing to fade from -
    and the ring itself is the accent. In the lowest layer, so any
    component's own focus style (Astryx, XiodUI, a focus-visible: utility)
-   still wins. */
+   still wins for the properties it sets.
+
+   Astryx's reset, in this same layer and earlier in the cascade, drops
+   the ring on touch-only devices (no keyboard there, so a ring only
+   flashes on tap) and on a <dialog>. Rules of equal weight later in the
+   layer would undo both, so the ring is kept off touch-only devices with
+   the reverse of Astryx's own media condition, and dialogs are given
+   their "no outline" back. */
 @layer reset {
   :where(*) {
     outline-color: var(--color-accent);
   }
-  :where(:focus-visible) {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
+  @media not all and (hover: none) and (pointer: coarse) {
+    :where(:focus-visible) {
+      outline: 2px solid var(--color-accent);
+    }
+    /* The gap is only for elements that do not style their own outline.
+       A control that draws its own ring (Button's focus-visible:outline-2)
+       keeps the offset it chose, flush unless it says otherwise, rather
+       than being pushed out to where an overflow-hidden parent clips it. */
+    :where(:focus-visible:not([class*="outline"])) {
+      outline-offset: 2px;
+    }
+  }
+  :where(dialog:focus-visible) {
+    outline: none;
   }
 }
 
