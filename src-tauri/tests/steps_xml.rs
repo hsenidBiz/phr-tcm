@@ -565,3 +565,28 @@ fn an_unreadable_shared_reference_is_kept_verbatim_or_refused() {
         assert_eq!(merge_steps_xml(original, &[step("Open", ""), shared(0)]), None, "{original:?}");
     }
 }
+
+/// A prolog or a comment around the root belongs to the original, and a
+/// merge keeps it where it was.
+#[test]
+fn a_merge_keeps_what_sits_outside_the_root() {
+    let xml = concat!(
+        "<?xml version=\"1.0\"?><!-- kept -->",
+        "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step></steps>",
+        "<!-- after -->"
+    );
+    let merged = merge(xml, &[step("Open the page", "")]);
+    assert!(merged.starts_with("<?xml version=\"1.0\"?><!-- kept --><steps "), "{merged}");
+    assert!(merged.ends_with("</steps><!-- after -->"), "{merged}");
+    assert!(merged.contains("Open the page"), "{merged}");
+    assert!(merged.contains("<step id=\"2\""), "the edited step keeps its id: {merged}");
+}
+
+/// Only a `<steps>` document is edited in place. Anything else used to be
+/// closed with `</steps>` and stop being XML; it is rebuilt instead.
+#[test]
+fn a_root_that_is_not_steps_is_rebuilt_not_closed_as_steps() {
+    let xml = "<list id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step></list>";
+    let steps = vec![step("Open the page", "")];
+    assert_eq!(merge(xml, &steps), build_steps_xml(&steps));
+}

@@ -473,3 +473,25 @@ fn the_page_embeds_the_revision_it_is_written_at() {
     let want = format!("var REPORT_REV={};", revision(REPORT_DRAFT) + 1);
     assert!(html.contains(&want), "expected {want}");
 }
+
+/// A bare array is a draft only when it holds case objects with a title.
+/// Any other JSON array is somebody else's file.
+#[test]
+fn a_bare_array_is_a_draft_only_when_it_holds_titled_cases() {
+    use v2_lib::commands::queue::draft_write_allowed;
+    let cases = tmp("bare-cases.json");
+    let numbers = tmp("bare-numbers.json");
+    let empty = tmp("bare-empty.json");
+    let settings = tmp("bare-settings.json");
+    std::fs::write(&cases, r#"[{"title":"Login works","steps":[]},{"steps":[]}]"#).unwrap();
+    std::fs::write(&numbers, "[1, 2, 3]").unwrap();
+    std::fs::write(&empty, "[]").unwrap();
+    std::fs::write(&settings, r#"[{"theme":"dark"}]"#).unwrap();
+    assert!(draft_write_allowed(&cases, &[]).is_ok(), "a half-written entry beside a titled one is still a draft");
+    for p in [&numbers, &empty, &settings] {
+        assert!(draft_write_allowed(p, &[]).is_err(), "{p}");
+    }
+    for p in [cases, numbers, empty, settings] {
+        let _ = std::fs::remove_file(p);
+    }
+}

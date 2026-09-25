@@ -274,8 +274,9 @@ fn writable(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
 /// Not `writable()`: the post-upload id stamp writes the files a queue came
 /// from after a PBI switch has already unwatched them, and refusing it
 /// leaves files that re-import as duplicates. So: a watched file, or an
-/// existing `.json` file that already holds a draft (`test_cases`, or a
-/// bare case array). Anything else is not ours to overwrite.
+/// existing .json file that already holds a draft (a test_cases list, or a
+/// bare array of titled case objects - see is_draft_shape). Anything else is
+/// not ours to overwrite.
 pub fn draft_write_allowed(path: &str, watched: &[String]) -> Result<(), String> {
     if watched.iter().any(|p| p == path) {
         return Ok(());
@@ -290,9 +291,29 @@ pub fn draft_write_allowed(path: &str, watched: &[String]) -> Result<(), String>
     }
     let text = std::fs::read_to_string(p).map_err(|e| format!("could not read the file: {e}"))?;
     match serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) {
-        Ok(v) if v.is_array() || v.get("test_cases").is_some_and(|t| t.is_array()) => Ok(()),
+        Ok(v) if is_draft_shape(&v) => Ok(()),
         _ => Err("that file is not a test case draft, so the app will not write to it".into()),
     }
+}
+
+/// What a draft file holds: a `test_cases` list, or a bare array of case
+/// objects - every entry an object, and at least one titled the way the
+/// importer reads a title. A bare `[1, 2]`, `[]` or a list of settings is
+/// somebody else's JSON.
+fn is_draft_shape(v: &serde_json::Value) -> bool {
+    if v.get("test_cases").is_some_and(|t| t.is_array()) {
+        return true;
+    }
+    let Some(items) = v.as_array() else {
+        return false;
+    };
+    !items.is_empty()
+        && items.iter().all(|c| c.is_object())
+        && items.iter().any(|c| {
+            crate::import_parser::TITLE_KEYS
+                .iter()
+                .any(|k| c.get(*k).and_then(|t| t.as_str()).is_some_and(|t| !t.trim().is_empty()))
+        })
 }
 
 /// Where a comment posted from a report page belongs. The default arm also

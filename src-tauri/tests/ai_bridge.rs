@@ -2227,6 +2227,12 @@ fn bridge_writes_only_under_test_cases_or_to_a_watched_file() {
     assert!(bridge_may_write(&outside, None, &[outside.clone()]), "a followed file may be written");
     let sneaky = dir.0.join(".test-cases").join("..").join("b.json");
     assert!(!bridge_may_write(&sneaky.to_string_lossy(), Some(&root), &[]), "`..` is resolved first");
+
+    // A sibling that only shares the prefix is outside the folder.
+    std::fs::create_dir_all(dir.0.join(".test-cases-extra")).unwrap();
+    let sibling = dir.0.join(".test-cases-extra").join("c.json");
+    std::fs::write(&sibling, "{}").unwrap();
+    assert!(!bridge_may_write(&sibling.to_string_lossy(), Some(&root), &[]));
 }
 
 /// The proxy names its own build on every call, so the app can log a proxy
