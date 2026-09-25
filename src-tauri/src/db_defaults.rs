@@ -45,9 +45,3 @@ pub const DB_PRESETS: &[DbPreset] = &[
         connection_string: "Server=sgqa01db01.cloud;Database=hrmmain_philippines;User Id=sgqa01db01_readonly;Password=nhi5tJF9pfnsgynODZXA;TrustServerCertificate=True;",
     },
 ];
-
-/// The automatic-prefill string: the first preset, or blank when none
-/// ship (blank means the form simply starts empty, as before).
-pub fn default_connection_string() -> &'static str {
-    DB_PRESETS.first().map(|p| p.connection_string).unwrap_or("")
-}

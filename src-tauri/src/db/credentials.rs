@@ -112,10 +112,17 @@ fn shipped(id: &str) -> Option<&'static DbPreset> {
     DB_PRESETS.iter().find(|p| p.id == id)
 }
 
+/// Whether `id` names a database this build knows: `own` or a shipped
+/// one. An id saved by an older release can name a preset since removed,
+/// and a caller that reads that as "nothing chosen" asks here first.
+pub fn is_known(id: &str) -> bool {
+    id == OWN_ID || shipped(id).is_some()
+}
+
 /// Refused up front so a stray id can never write an entry nothing will
 /// ever read or clean up.
 fn known(id: &str) -> Result<(), String> {
-    if id == OWN_ID || shipped(id).is_some() {
+    if is_known(id) {
         Ok(())
     } else {
         Err("That database is not one the app knows.".into())

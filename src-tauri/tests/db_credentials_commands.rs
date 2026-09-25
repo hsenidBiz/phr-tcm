@@ -76,3 +76,11 @@ fn legacy_import_of_something_that_is_not_a_connection_stores_nothing() {
     assert!(import_legacy(&s, "not a connection string").is_err());
     assert_eq!(resolve(&s, OWN_ID).unwrap(), None);
 }
+
+#[test]
+fn only_own_and_the_shipped_ids_are_known() {
+    assert!(is_known(OWN_ID));
+    assert!(DB_PRESETS.iter().all(|p| is_known(p.id)));
+    assert!(!is_known("a-preset-since-removed"));
+    assert!(!is_known(""));
+}

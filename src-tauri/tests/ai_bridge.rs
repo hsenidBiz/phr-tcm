@@ -1835,6 +1835,32 @@ mod db_tests {
         assert_eq!(said, "Could not read the saved login.");
     }
 
+    /// An id saved for a preset a later release removed: nothing to sign in
+    /// with, so the same sentence as nothing chosen, on both routes.
+    #[tokio::test]
+    async fn an_id_this_build_does_not_know_is_no_connection() {
+        let c = with_connection("a-preset-since-removed", false);
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NO_CONNECTION, "{path}");
+        }
+    }
+
+    /// The id comes from the webview, which could send anything - a whole
+    /// connection string included. Debug shows a known id and nothing else.
+    #[test]
+    fn debug_prints_a_known_id_and_hides_anything_else() {
+        let leaked = "Server=h;Database=d;User Id=u;Password=pw-Zq9";
+        let shown = format!("{:?}", with_connection(leaked, false));
+        assert!(!shown.contains("pw-Zq9") && !shown.contains("Server=h"), "{shown}");
+        assert!(shown.contains("(unknown)"), "{shown}");
+        assert!(format!("{:?}", with_connection("dev-read", false)).contains("dev-read"));
+    }
+
     #[tokio::test]
     async fn your_own_database_with_nothing_saved_is_no_connection() {
         let c = with_connection(OWN_ID, false);

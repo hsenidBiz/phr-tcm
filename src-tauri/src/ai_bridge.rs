@@ -60,7 +60,14 @@ impl std::fmt::Debug for BridgeContext {
             .field("preconditions_ref", &self.preconditions_ref)
             .field("disabled_tools", &self.disabled_tools)
             .field("working_dir", &self.working_dir)
-            .field("db_id", &self.db_id)
+            // The id comes from the webview; one this build does not know
+            // could be anything the webview sent, so only a known id is shown.
+            .field(
+                "db_id",
+                &self.db_id.as_deref().map(|id| {
+                    if crate::db::credentials::is_known(id) { id } else { "(unknown)" }
+                }),
+            )
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .finish()
@@ -656,11 +663,20 @@ fn db_ready(
     ctx: &BridgeContext,
 ) -> Result<(crate::db::Connection, std::path::PathBuf), (u16, String)> {
     let nothing_chosen = || (409, crate::db::query::NO_CONNECTION.to_string());
-    let id = ctx.db_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(nothing_chosen)?;
+    // An id this build does not know - one saved for a preset a later
+    // release removed - is nothing chosen too: the person's next step is
+    // the same, pick a database.
+    let id = ctx
+        .db_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| crate::db::credentials::is_known(id))
+        .ok_or_else(nothing_chosen)?;
     let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
     // Resolved now, not when the context was pushed: a login saved since
     // is the one this call signs in with. `own` with nothing saved is the
-    // same as nothing chosen - there is no login to use either way.
+    // same as nothing chosen - there is no login to use either way. A store
+    // that cannot be read keeps its own sentence: picking again won't help.
     let chosen = crate::db::credentials::resolve(store, id)
         .map_err(|why| (409, why))?
         .ok_or_else(nothing_chosen)?;
