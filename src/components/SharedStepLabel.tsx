@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { commands } from "../bindings";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { unwrap } from "../lib/ipc";
+import { sharedStepQueryKey } from "../lib/sharedSteps";
 
 /** A Shared Steps reference as one locked line - "Shared steps #812 - Sign
  * in as an admin". Its steps live in that work item, so the app neither
@@ -21,7 +22,7 @@ export default function SharedStepLabel({ id, org }: { id: number; org?: string 
 
 function SharedStepTitle({ id, org }: { id: number; org: string }) {
   const title = useQuery({
-    queryKey: ["shared-step", org, id],
+    queryKey: sharedStepQueryKey(org, id),
     ...persistentQuery({
       key: cacheKeys.sharedStepTitle(org, id),
       fetcher: async () => {

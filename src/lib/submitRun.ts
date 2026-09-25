@@ -30,6 +30,9 @@ export type SubmitPhase = {
   total: number;
   /** The title currently being written, for the bar's caption. */
   title: string;
+  /** "checking" while the submit reads what changed - an all-no-op submit
+   * ends there, having uploaded nothing - then "uploading". */
+  stage: "checking" | "uploading";
 } | null;
 
 let phase: SubmitPhase = null;
@@ -58,15 +61,28 @@ export function submitPhaseSnapshot(): SubmitPhase {
 export function submitStarted(org: string, pbiId: number, total: number): number | null {
   if (phase) return null;
   const run = nextRun++;
-  phase = { run, org, pbiId, done: 0, total, title: "" };
+  phase = { run, org, pbiId, done: 0, total, title: "", stage: "checking" };
   emit();
   return run;
 }
 
 export function submitProgressed(done: number, total: number, title: string): void {
   if (!phase) return; // a progress event with no submit is a stray
-  phase = { ...phase, done, total, title };
+  phase = { ...phase, done, total, title, stage: "uploading" };
   emit();
+}
+
+/** The submit found something to write: from here on it is an upload. */
+export function submitUploading(run: number): void {
+  if (!phase || phase.run !== run || phase.stage === "uploading") return;
+  phase = { ...phase, stage: "uploading" };
+  emit();
+}
+
+/** The word the queue's action button shows while `phase` runs: "Checking"
+ * while it is still reading what changed, "Processing" once it uploads. */
+export function submitLabel(phase: NonNullable<SubmitPhase>): string {
+  return phase.stage === "checking" ? "Checking" : "Processing";
 }
 
 /** Clear the phase - only if it is still this run's. */
@@ -82,12 +98,18 @@ export function submitFinished(run: number): void {
  *
  * `patchWatch` is the mounted screen's own watch-list update, for the same
  * reason: the mount that STARTED a submit may be gone by the time it
- * finishes, and its callback would update a screen nobody is looking at. */
+ * finishes, and its callback would update a screen nobody is looking at.
+ *
+ * `watches` reads that screen's watch list as it is NOW. Storage is only a
+ * copy of it, and a copy that can silently fall behind: a failed storage
+ * write is swallowed by design, so a finish that paired rows against
+ * storage alone could miss the file a row lives in. */
 type QueueWriter = {
   org: string;
   pbiId: number;
   setQueue: (updater: (q: TestCase[]) => TestCase[]) => void;
   patchWatch?: (path: string, fields: Partial<WatchedFile>) => void;
+  watches?: () => WatchedFile[];
 };
 
 let writer: QueueWriter | null = null;

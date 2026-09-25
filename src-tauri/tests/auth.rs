@@ -158,6 +158,28 @@ fn nobody_coming_back_times_out_with_a_plain_sentence() {
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
+/// A connection that drips one byte at a time, each inside the per-read
+/// timeout, used to hold the wait for as long as it kept dripping - past
+/// the sign-in window itself.
+#[test]
+fn a_slow_drip_connection_cannot_hold_the_wait_past_the_window() {
+    let (l, port) = loopback();
+    let dripper = std::thread::spawn(move || {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        for _ in 0..100 {
+            if s.write_all(b"G").is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let started = std::time::Instant::now();
+    let out = await_redirect(l, "s1", Duration::from_millis(600), Duration::from_millis(200));
+    assert_eq!(out, Err(SIGN_IN_TIMEOUT.to_string()));
+    assert!(started.elapsed() < Duration::from_secs(2), "held for {:?}", started.elapsed());
+    dripper.join().unwrap();
+}
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::auth::{store_refreshed, AuthState, TokenSet};

@@ -193,6 +193,49 @@ describe("citationRanges", () => {
   });
 });
 
+test("a heading in a script without letter case keeps its words in the slug", () => {
+  expect(H.slug("5.8 表示ルール")).toBe("5-8-表示ルール");
+  expect(H.slug("ログイン　画面")).toBe("ログイン-画面"); // an ideographic space separates
+  expect(H.slug("概要、目的。")).toBe("概要-目的");
+  expect(H.slug("사용자 설정")).toBe("사용자-설정");
+  expect(H.slug("🙂 Emoji")).toBe("emoji");
+  // Nothing wordlike at all: empty, and the page falls back to "h".
+  expect(H.slug("🙂 !!")).toBe("");
+});
+
+/// Citations resolve through matchHeading, not through the ids, so a
+/// caseless heading must still be found by its words and by its number.
+test("a citation still finds a heading written without letter case", () => {
+  const headings = ["1 概要", "2 表示ルール", "3 ログイン 画面"];
+  expect(H.matchHeading(headings, "2 表示ルール")).toBe(1);
+  expect(H.matchHeading(headings, "表示ルール")).toBe(1);
+  expect(H.matchHeading(headings, "ログイン 画面")).toBe(2);
+});
+
+// The slug is built from the Unicode L/N/M class (\p{} at runtime), which
+// replaced a hand-picked block list. These pin that ids already in the
+// wild, in saved links, come out the same as before.
+test("ASCII and accented-Latin slugs are unchanged by the switch to \\p{L}\\p{N}\\p{M}", () => {
+  expect(H.slug("5.8 Display Rules")).toBe("5-8-display-rules");
+  expect(H.slug("Café résumé naïve")).toBe("café-résumé-naïve");
+  expect(H.slug("Überblick – Ärger")).toBe("überblick-ärger");
+});
+
+/// \p{M} alone would let an emoji's variation selector (U+FE0F, category
+/// Mn) start a "word" of its own - invisible, and first in the id. A mark
+/// must only continue a word already open, the way a combining accent
+/// decorates the letter right before it.
+test("a bare mark such as an emoji's variation selector never starts a word", () => {
+  expect(H.slug("⚠️ Warning")).toBe("warning");
+});
+
+/// The hand-picked block list dropped these as punctuation/symbols; \p{N}
+/// and \p{L} correctly keep them.
+test("a heading with a fraction or a letterlike symbol keeps that character", () => {
+  expect(H.slug("Add 1½ cups")).toBe("add-1½-cups");
+  expect(H.slug("Set ℂ")).toBe("set-ℂ");
+});
+
 describe("citation links in the page", () => {
   test("every citation in a paragraph is linked, and a link is never nested in a link", () => {
     document.body.innerHTML = `

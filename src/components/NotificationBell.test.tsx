@@ -40,6 +40,17 @@ test("the badge shows the unread count and opening the panel clears it", () => {
   expect(screen.getByRole("button", { name: "Notifications" })).not.toHaveTextContent("2");
 });
 
+/// The panel opens the way the app's other dropdowns do - growing from the
+/// bell's corner - and reduced motion switches it off with them (index.css).
+test("the panel opens with the dropdown motion, from the bell's right-hand corner", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  const panel = screen.getByRole("dialog", { name: "Notifications" });
+  expect(panel).toHaveClass("t-dropdown");
+  expect(panel).toHaveAttribute("data-origin", "top-right");
+});
+
 test("X dismisses one item; Clear all empties the panel", () => {
   seed();
   render(<NotificationBell org="acme" />);

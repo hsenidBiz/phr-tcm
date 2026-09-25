@@ -111,13 +111,18 @@ pub struct TestCase {
 
 /// One queue row's part in a draft write-back (`save_draft_cases`): the row
 /// as it was BEFORE the edit (how the file finds its own copy - a rename
-/// changes the title) and what it is now, or `None` when the edit removed
-/// it. A write-back sends one per owned row, in queue order, so the Nth
-/// same-titled row claims the Nth same-titled entry in the file.
+/// changes the title), what it is now (`None` when the edit removed it), and
+/// which of the file's id-less entries with that title the app paired the
+/// row with (`occurrence`, 1 = the first in the file). The app pairs exact
+/// rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+/// not always the Nth entry. Without `occurrence` a row claims the first
+/// unclaimed same-titled entry, in queue order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct DraftEdit {
     pub before: TestCase,
     pub after: Option<TestCase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<u32>,
 }
 
 impl TestCase {

@@ -57,3 +57,19 @@ test("once the inner modal is gone, Escape reaches the outer one", async () => {
   expect(onOuterClose).toHaveBeenCalledTimes(1);
   expect(onInnerClose).not.toHaveBeenCalled();
 });
+
+test("a modal is named by the heading it points at, or by a label", () => {
+  const { unmount } = render(
+    <Modal onClose={vi.fn()} labelledBy="modal-title">
+      <h2 id="modal-title">Execution order</h2>
+    </Modal>,
+  );
+  expect(screen.getByRole("dialog", { name: "Execution order" })).toBeInTheDocument();
+  unmount();
+  render(
+    <Modal onClose={vi.fn()} label="Screenshot">
+      <p>picture</p>
+    </Modal>,
+  );
+  expect(screen.getByRole("dialog", { name: "Screenshot" })).toBeInTheDocument();
+});

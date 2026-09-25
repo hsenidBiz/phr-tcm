@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "vitest";
-import { submitFinished, submitPhaseSnapshot, submitProgressed, submitStarted } from "./submitRun";
+import {
+  submitFinished,
+  submitLabel,
+  submitPhaseSnapshot,
+  submitProgressed,
+  submitStarted,
+  submitUploading,
+} from "./submitRun";
 
 afterEach(() => {
   const p = submitPhaseSnapshot();
@@ -27,4 +34,16 @@ test("finishing clears only the run that finished", () => {
   expect(submitPhaseSnapshot()).toBeNull();
   // And the slot is free again.
   expect(submitStarted("acme", 7, 1)).toEqual(expect.any(Number));
+});
+
+test("a submit reads as checking until it starts to upload", () => {
+  const run = submitStarted("acme", 42, 3)!;
+  try {
+    expect(submitPhaseSnapshot()?.stage).toBe("checking");
+    expect(submitLabel(submitPhaseSnapshot()!)).toBe("Checking");
+    submitUploading(run);
+    expect(submitLabel(submitPhaseSnapshot()!)).toBe("Processing");
+  } finally {
+    submitFinished(run);
+  }
 });

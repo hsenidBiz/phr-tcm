@@ -11,6 +11,8 @@ type Report = (r: unknown, err: unknown) => void;
 type Notes = {
   makeQueue: (send: (payload: string) => Promise<unknown>, report: Report) => (payload: string) => void;
   busy: () => number;
+  timeoutMs: number;
+  restoreUnsaved: (root?: ParentNode) => void;
 };
 let N: Notes;
 
@@ -129,4 +131,187 @@ test("busy() counts an armed debounce timer, an in-flight save, and a save queue
   settle[1].ok({ json: () => Promise.resolve({ ok: true }) });
   await flush();
   expect(N.busy()).toBe(0);
+});
+
+/// A save the app never answers must still end, or the box stays "busy"
+/// for good and the page's live update waits on it forever.
+test("a save the app never answers ends after the limit, frees the box and says so", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "hi";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  expect(N.busy()).toBe(1);
+
+  await vi.advanceTimersByTimeAsync(N.timeoutMs);
+  await flush();
+  expect(N.busy()).toBe(0);
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - the app did not answer");
+});
+
+/// Slow is not dead. A reply inside the limit is saved.
+test("a save the app answers slowly, inside the limit, is still saved", async () => {
+  const gate: { answer?: (v: unknown) => void } = {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise((ok) => {
+          gate.answer = ok;
+        }),
+    ),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "hi";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await vi.advanceTimersByTimeAsync(N.timeoutMs - 1_000);
+  gate.answer?.({ json: () => Promise.resolve({ ok: true }) });
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Saved ✓");
+
+  // The limit passing afterwards changes nothing.
+  await vi.advanceTimersByTimeAsync(2_000);
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Saved ✓");
+  expect(N.busy()).toBe(0);
+});
+
+/// The refused path: `restoreUnsaved` is what
+/// cases-page.js calls right after a live swap adopts fresh markup, so a
+/// save the app refused survives it too - not just a timeout.
+test("restoreUnsaved carries a refused save's text and status onto the matching fresh box", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "unsaved edit";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
+
+  // What a live swap does: fresh markup, the SAME case (same path + key in
+  // the fresh #tc-data, even though it is still slot 0 here), the file's
+  // OLDER text and no status - adopted in place of the old box.
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st">older text from disk</textarea><div id="st"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "", id: null, title: "T", key: "t:t" }],
+      files: [],
+    })}</script>`;
+  N.restoreUnsaved(document);
+  expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("unsaved edit");
+  expect(document.getElementById("st")!.textContent).toBe("Not saved - duplicate");
+});
+
+/// `data-case`/`data-file` are this
+/// RENDER's slot, not a stable identity. Keying a carried failure by slot
+/// alone would misfile it onto whatever case a swap moves into that slot.
+test("restoreUnsaved keys a case box by path+key, not by slot - a case inserted ahead does not misfile the failed text", async () => {
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st0"></textarea><div id="st0"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "f.json", id: null, title: "Login", key: "t:login#0" }],
+      files: [],
+    })}</script>`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box0 = document.querySelector("textarea") as HTMLTextAreaElement;
+  box0.value = "unsaved login note";
+  box0.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved - duplicate");
+
+  // A live swap inserts a NEW case ahead of it: "Login" is now slot 1.
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="stA"></textarea><div id="stA"></div>' +
+    '<textarea data-case="1" data-status="stB"></textarea><div id="stB"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [
+        { path: "f.json", id: null, title: "New case", key: "t:new#0" },
+        { path: "f.json", id: null, title: "Login", key: "t:login#0" },
+      ],
+      files: [],
+    })}</script>`;
+  N.restoreUnsaved(document);
+
+  const boxes = Array.from(document.querySelectorAll("textarea")) as HTMLTextAreaElement[];
+  // Slot 0 now belongs to the NEW case - it must not inherit the stale text.
+  expect(boxes[0].value).toBe("");
+  expect(document.getElementById("stA")!.textContent).toBe("");
+  // Slot 1 is the ORIGINAL case, found by identity, not by slot.
+  expect(boxes[1].value).toBe("unsaved login note");
+  expect(document.getElementById("stB")!.textContent).toBe("Not saved - duplicate");
+});
+
+/// Same identity rule, the other way round: once the failed case is gone
+/// from the file, nothing should show its text - not even the box that
+/// happens to inherit its old slot.
+test("restoreUnsaved drops a failed comment once its case is removed - it is not shown under another box", async () => {
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st0"></textarea><div id="st0"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "f.json", id: null, title: "Login", key: "t:login#0" }],
+      files: [],
+    })}</script>`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: false, error: "duplicate" }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box0 = document.querySelector("textarea") as HTMLTextAreaElement;
+  box0.value = "unsaved login note";
+  box0.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st0")!.textContent).toBe("Not saved - duplicate");
+
+  // The failed case is removed from the file; a DIFFERENT case now sits at
+  // the same slot 0.
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="stA"></textarea><div id="stA"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "g.json", id: null, title: "Other case", key: "t:other#0" }],
+      files: [],
+    })}</script>`;
+  N.restoreUnsaved(document);
+
+  const boxA = document.querySelector("textarea") as HTMLTextAreaElement;
+  expect(boxA.value).toBe("");
+  expect(document.getElementById("stA")!.textContent).toBe("");
+});
+
+/// A save that DID succeed must not leave a stale entry behind - the next
+/// swap must show the fresh box exactly as the file has it.
+test("restoreUnsaved does nothing once the box's save has succeeded", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ ok: true }) })),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "saved edit";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  await flush();
+  expect(document.getElementById("st")!.textContent).toBe("Saved ✓");
+
+  document.body.innerHTML = '<textarea data-case="0" data-status="st">saved edit</textarea><div id="st"></div>';
+  N.restoreUnsaved(document);
+  expect((document.querySelector("textarea") as HTMLTextAreaElement).value).toBe("saved edit");
+  expect(document.getElementById("st")!.textContent).toBe("");
 });

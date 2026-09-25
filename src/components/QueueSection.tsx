@@ -20,7 +20,7 @@ import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
@@ -30,6 +30,7 @@ import {
   heldRows,
   holdFromResults,
   loadHold,
+  narrowHold,
   reconciledResults,
   saveHold,
   subscribeHold,
@@ -38,12 +39,15 @@ import {
   queueWriterFor,
   registerQueueWriter,
   submitFinished,
+  submitLabel,
   submitPhaseSnapshot,
   submitProgressed,
   submitStarted,
+  submitUploading,
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
+import { freshWatches, noteWritten, runOnFileChain } from "../lib/draftWriteQueue";
 import { cacheKeys, cacheRemove } from "../lib/cache";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
@@ -193,6 +197,16 @@ export default function QueueSection({
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
+  // Freshest known watches: kept in step with the prop on every render (so
+  // an outside sync is seen), and ALSO updated the instant one of THIS
+  // component's own writes lands (`writeBackOwned`, and the post-upload id
+  // stamp through the registered `patchWatch`) - without waiting for
+  // that write's result to travel all the way back through the parent's
+  // state and down through props again first. A write chained right behind
+  // another on the same file must see the first one's result the moment it
+  // is known, not whenever this component next happens to re-render.
+  const watchesRef = useRef(watches);
+  watchesRef.current = watches;
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
   // The last upload's "what changed" note for testers, or null when it
   // changed nothing a tester would act on. Built from diffs taken just
@@ -248,7 +262,11 @@ export default function QueueSection({
         org,
         pbiId,
         setQueue: (updater) => setQueue(updater),
-        patchWatch: (path, fields) => watchPatched.current?.(path, fields),
+        patchWatch: (path, fields) => {
+          watchesRef.current = patchWatch(watchesRef.current, path, fields);
+          watchPatched.current?.(path, fields);
+        },
+        watches: () => watchesRef.current,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
@@ -346,6 +364,14 @@ export default function QueueSection({
     // The file learns it too, one targeted comment patch per case (never
     // a whole-file rewrite for this), and the watch is told the stamp so
     // the app's own write is not reported back as an outside edit.
+    //
+    // Each patch waits its turn on the file's write chain, like every
+    // write-back does. The snapshot it hands on is read from the watch as
+    // it stands AFTER the patch landed, not from the list captured when
+    // this effect ran: a Remove or an edit can finish on the same file
+    // while this loop is still going, and putting the older case list back
+    // at the file's newest stamp would make the next write pair same-titled
+    // rows with the wrong entries.
     const known = watches ?? [];
     if (known.length === 0) return;
     const owners = ownerPaths(queue, known);
@@ -354,15 +380,24 @@ export default function QueueSection({
         const path = owners[i];
         if (!path) continue;
         const tc = queue[i];
-        const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
-        if (r.status !== "ok" || !onWatchPatched) continue;
-        const w = known.find((x) => x.path === path);
-        onWatchPatched(path, {
-          stamp: r.data,
-          snapshot: (w?.snapshot ?? []).map((c) =>
-            c.update_id === tc.update_id ? { ...c, comment: text } : c,
-          ),
-        });
+        try {
+          await runOnFileChain(path, async () => {
+            const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
+            if (r.status !== "ok") return;
+            const w = freshWatches(watchesRef.current).find((x) => x.path === path);
+            if (!w) return;
+            const snapshot = w.snapshot.map((c) =>
+              c.update_id === tc.update_id ? { ...c, comment: text } : c,
+            );
+            noteWritten(path, { stamp: r.data, cases: snapshot });
+            const fields = { stamp: r.data, snapshot };
+            watchesRef.current = patchWatch(watchesRef.current, path, fields);
+            onWatchPatched?.(path, fields);
+          });
+        } catch {
+          // The note is still on the card and in View Test Cases; a patch
+          // that could not reach the file is not worth stopping the rest.
+        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -714,6 +749,8 @@ export default function QueueSection({
         if (toSend.length === 0) {
           return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
         }
+        // Something to write: from here on the screen says it is uploading.
+        submitUploading(run);
         // What each sent update is about to change, from the same fresh
         // baseline - kept for the "Copy changes" note, since after the write
         // the server already holds the new values.
@@ -909,15 +946,11 @@ export default function QueueSection({
       }
       const { found, ambiguous } = r.data;
       const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
-      const ambiguousSet = new Set(ambiguous.map((t) => t.trim()));
-      const stillHeld = h.titles.filter((t) => ambiguousSet.has(t.trim()));
-      // A smaller hold keeps its ids, plus what this Check just claimed.
-      const ids = [...new Set([...(h.ids ?? []), ...found.map((f) => f.id)])];
-      saveHold(
-        org,
-        pbiId,
-        stillHeld.length > 0 ? { since: h.since, titles: stillHeld, ambiguous: stillHeld, ids } : null,
-      );
+      // A smaller hold keeps its ids, plus what this Check just claimed,
+      // and each still-held row keeps its own content signature.
+      const next = narrowHold(h, ambiguous, found.map((f) => f.id));
+      const stillHeld = next?.titles ?? [];
+      saveHold(org, pbiId, next);
       if (createdResults.length > 0) {
         applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
       }
@@ -1038,13 +1071,27 @@ export default function QueueSection({
     // block survives because merge_cases_into_draft keeps every top-level
     // key it does not own.
     const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
+    // The watch list as it is at the moment of asking: the screen showing
+    // this queue, if one is mounted, and storage only when none is (or it
+    // watches nothing). Storage alone is not enough - a failed storage
+    // write is swallowed, so it can hold nothing, or a list from before an
+    // outside sync, and a row whose file it misses would silently go
+    // unstamped. The orphan check and every stamp write read THIS, so they
+    // always agree on which file owns a row.
+    const currentWatches = (): WatchedFile[] => {
+      const live = queueWriterFor(org, sentFor)?.watches?.() ?? [];
+      return live.length > 0 ? live : loadWatches(org, sentFor);
+    };
     void (async () => {
-      const known = watches.length > 0 ? watches : loadWatches(org, sentFor);
+      const known = currentWatches();
+      // One pairing pass serves both the orphan check below and the stamp
+      // write-back after it, instead of computing it twice.
+      const owned = known.length > 0 ? fileOwners(prevQueue, known) : prevQueue.map(() => null);
       // The other half of the promise "the file learns what the submit made
       // real": say it LOUDLY when a created case's id could not be recorded
       // anywhere - no owning file matched it, or there is no file at all.
       // Both duplicate incidents to date were this situation, silent.
-      const owners = known.length > 0 ? ownerPaths(prevQueue, known) : prevQueue.map(() => "");
+      const owners = owned.map((o) => o?.path ?? "");
       const orphaned = unstampedCreated(prevQueue, owners, sent, outcomes);
       if (orphaned.length > 0) {
         const named = orphaned.slice(0, 3).join("; ");
@@ -1057,25 +1104,64 @@ export default function QueueSection({
         );
       }
       if (known.length > 0) {
-        const files = stampFileSlices(prevQueue, ownerPaths(prevQueue, known), sent, outcomes);
-        for (const [path, f] of files) {
-          if (!f.changed) continue;
-          const r = await commands.saveDraftCases(path, f.edits);
-          if (r.status === "error") {
+        // Same rule as `writeBackOwned`: one write at a time per file, each
+        // one recomputing its own pairing against whatever the write ahead
+        // of it on that path actually returned - not against `known`,
+        // which this whole callback can be holding well after it was
+        // captured (a submit takes as long as the upload does).
+        for (const path of new Set(owners.filter((p): p is string => !!p))) {
+          try {
+            await runOnFileChain(path, async () => {
+              // Read fresh, not the closed-over `known`: this callback can
+              // run well after it was captured. Both sources are patched
+              // synchronously below the moment a write lands, which is
+              // what lets `freshWatches`' stamp check tell a write still
+              // queued behind another apart from one that is not.
+              const freshOwned = fileOwners(prevQueue, freshWatches(currentWatches()));
+              const files = stampFileSlices(
+                prevQueue,
+                freshOwned.map((o) => o.path),
+                sent,
+                outcomes,
+                freshOwned.map((o) => o.occurrence),
+              );
+              const f = files.get(path);
+              if (!f || !f.changed) return;
+              const r = await commands.saveDraftCases(path, f.edits);
+              if (r.status === "error") {
+                toast.warning(
+                  `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
+                    `Importing it again would create duplicates - fix the file before re-importing.`,
+                  { duration: 20000 },
+                );
+                return;
+              }
+              // Storage always: the mount that started this submit may be
+              // gone, and a setter on an unmounted screen never runs its
+              // persist step. Then the screen showing this queue NOW, if
+              // any - not this closure's own callback, which may belong to
+              // that gone mount.
+              //
+              // The snapshot is what Rust says is now IN THE FILE, in file
+              // order - not a queue-order slice of the rows this write
+              // touched. Recorded here, before this task's own promise
+              // resolves, so a write queued behind it on the same path is
+              // built from what THIS write actually did.
+              noteWritten(path, r.data);
+              const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+              saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
+              queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
+            });
+          } catch (e) {
+            // A THROW must not skip the paths after it, nor leave this
+            // fire-and-forget callback with an unhandled rejection.
             toast.warning(
-              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
-                `Importing it again would create duplicates - fix the file before re-importing.`,
+              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ` +
+                `${e instanceof Error ? e.message : String(e)}. Importing it again would ` +
+                `create duplicates - fix the file before re-importing.`,
               { duration: 20000 },
             );
-            continue;
           }
-          // Storage always: the mount that started this submit may be gone,
-          // and a setter on an unmounted screen never runs its persist step.
-          // Then the screen showing this queue NOW, if any - not this
-          // closure's own callback, which may belong to that gone mount.
-          const fields = { stamp: r.data, snapshot: f.slice };
-          saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
-          queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
         }
       }
       // And the same comment now shows on the case where it LIVES: the
@@ -1189,42 +1275,73 @@ export default function QueueSection({
    * keys and a rename is exactly the operation that breaks that match.
    * Only files owning a changed case are written; each write returns the
    * file's new fingerprint, and the watch snapshot moves forward with it
-   * so the watcher stays silent about our own write. */
+   * so the watcher stays silent about our own write.
+   *
+   * One touched file at a time, through `runOnFileChain`: two write-backs
+   * on the SAME file - a Remove followed by the next row's Remove landing
+   * before the first one's IPC round trip has returned - must not both
+   * build their `occurrence`s from the snapshot this render started with.
+   * Each file's own task recomputes ownership right before it runs, against
+   * `freshWatches` (this module's `watches` plus whatever the last write on
+   * that path actually returned), so the SECOND write is paired against
+   * what the FIRST one really did to the file, not against a guess made
+   * before the first one had a chance to run. */
   const writeBackOwned = async (
     prev: TestCase[],
     next: (TestCase | null)[],
     changed: Set<number>,
   ) => {
     if (watches.length === 0) return;
-    const owners = ownerPaths(prev, watches);
-    // Per file: one edit per owned row IN QUEUE ORDER - the row BEFORE the
-    // edit (how the file finds its own copy - a rename changes the title)
-    // and after it (null = removed). Removals stay interleaved where they
-    // happened, so the Nth same-titled row claims the Nth same-titled entry.
-    // The file keeps everything else it holds.
-    const files = new Map<string, { slice: TestCase[]; edits: DraftEdit[]; touched: boolean }>();
-    prev.forEach((before, i) => {
-      const p = owners[i];
-      if (!p) return;
-      const f = files.get(p) ?? { slice: [], edits: [], touched: false };
-      const after = next[i];
-      if (after) f.slice.push(after);
-      f.edits.push({ before, after });
-      if (changed.has(i)) f.touched = true;
-      files.set(p, f);
-    });
-    for (const [path, f] of files) {
-      if (!f.touched) continue;
-      const r = await commands.saveDraftCases(path, f.edits);
-      if (r.status === "error") {
-        // The queue HAS changed - saying so beats pretending nothing did.
+    // Only used to find which files are touched - not for occurrences.
+    // Ownership itself (WHICH file a row belongs to) does not shift when
+    // an unrelated row elsewhere in the same file is removed, so today's
+    // `watches` is fine for that; each path's own task below recomputes
+    // the occurrences that actually matter, fresh, from whatever the
+    // chain ahead of it has by then returned.
+    const paths = new Set(fileOwners(prev, watches).flatMap((o) => (o.path ? [o.path] : [])));
+    for (const path of paths) {
+      try {
+        await runOnFileChain(path, async () => {
+          const owners = fileOwners(prev, freshWatches(watchesRef.current));
+          const edits: DraftEdit[] = [];
+          let touched = false;
+          prev.forEach((before, i) => {
+            const o = owners[i];
+            if (!o || o.path !== path) return;
+            edits.push({ before, after: next[i], occurrence: o.occurrence });
+            if (changed.has(i)) touched = true;
+          });
+          if (!touched) return;
+          const r = await commands.saveDraftCases(path, edits);
+          if (r.status === "error") {
+            // The queue HAS changed - saying so beats pretending nothing did.
+            toast.warning(
+              `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
+                `The file still has the old values.`,
+              { duration: 15000 },
+            );
+            return;
+          }
+          // The snapshot is what Rust says is now IN THE FILE, in file
+          // order - not a queue-order slice of the rows this write touched.
+          // Recorded here, before this chained task's promise resolves, so
+          // a task queued behind it on this path sees it (`noteWritten`),
+          // and so does a task that reads `watchesRef.current` before this
+          // component has re-rendered with the parent's own state update.
+          noteWritten(path, r.data);
+          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+          watchesRef.current = patchWatch(watchesRef.current, path, fields);
+          onWatchPatched?.(path, fields);
+        });
+      } catch (e) {
+        // A THROW (not a `{status:"error"}` result) must not skip the
+        // paths after it, nor leave the caller's fire-and-forget
+        // `void writeBackOwned(...)` with an unhandled rejection.
         toast.warning(
-          `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
-            `The file still has the old values.`,
+          `The queue was updated, but ${fileName(path)} could not be written back: ` +
+            `${e instanceof Error ? e.message : String(e)}. The file still has the old values.`,
           { duration: 15000 },
         );
-      } else {
-        onWatchPatched?.(path, { stamp: r.data, snapshot: f.slice });
       }
     }
   };
@@ -1319,13 +1436,22 @@ export default function QueueSection({
   // The owning FILE follows a single removal exactly as it follows a bulk
   // one: otherwise the next outside save of that file sees the case in
   // both snapshots, not in the queue, and puts it back.
+  //
+  // By identity, not position: a second click that lands before the first
+  // has re-rendered still carries index i, which by then names the NEXT
+  // row. The row object is the identity; a row already on its way out is
+  // not removed twice.
+  const removing = useRef(new WeakSet<TestCase>());
   const removeRow = useCallback(
     (i: number) => {
       const { queue: prev, writeBackOwned: writeBack } = latest.current;
-      setQueue((q) => q.filter((_, j) => j !== i));
+      const target = prev[i];
+      if (!target || removing.current.has(target)) return;
+      removing.current.add(target);
+      setQueue((q) => q.filter((t) => t !== target));
       void writeBack(
         prev,
-        prev.map((t, j) => (j === i ? null : t)),
+        prev.map((t) => (t === target ? null : t)),
         new Set([i]),
       );
     },
@@ -1684,7 +1810,13 @@ export default function QueueSection({
           lands it fills to the count. */}
       {progress && (
         <ScanProgress
-          label={progress.done === 0 ? "Processing the upload" : "Uploading"}
+          label={
+            progress.stage === "checking"
+              ? "Checking what changed"
+              : progress.done === 0
+                ? "Processing the upload"
+                : "Uploading"
+          }
           done={progress.done > 0 ? progress.done : undefined}
           total={progress.done > 0 ? progress.total : undefined}
         />
@@ -1776,7 +1908,7 @@ export default function QueueSection({
         {progress ? (
           <Button disabled>
             <IconConfirm aria-hidden />
-            Processing
+            {submitLabel(progress)}
           </Button>
         ) : !reviewing ? (
           <Button disabled={queue.length === 0} onClick={openReview}>
@@ -1860,7 +1992,9 @@ export default function QueueSection({
               >
                 <IconConfirm aria-hidden />
                 {submit.isPending
-                  ? "Processing"
+                  ? progress
+                    ? submitLabel(progress)
+                    : "Checking"
                   : armed
                     ? `Yes — ${actionLabel}`
                     : `Confirm & ${actionLabel || "create 0"}`}
@@ -2036,7 +2170,7 @@ export default function QueueSection({
             {progress ? (
               <Button tabIndex={-1} disabled>
                 <IconConfirm aria-hidden />
-                Processing
+                {submitLabel(progress)}
               </Button>
             ) : !reviewing ? (
               <Button tabIndex={-1} onClick={openReview}>
@@ -2051,7 +2185,7 @@ export default function QueueSection({
                 onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
               >
                 <IconConfirm aria-hidden />
-                {submit.isPending ? "Processing" : `Confirm & ${actionLabel || "create 0"}`}
+                {submit.isPending ? (progress ? submitLabel(progress) : "Checking") : `Confirm & ${actionLabel || "create 0"}`}
               </Button>
             )}
           </div>,

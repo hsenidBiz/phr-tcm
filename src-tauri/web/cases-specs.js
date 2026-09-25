@@ -149,17 +149,44 @@
     return bestScore >= need ? best : -1;
   }
 
-  // A letter is anything with a case (c.toLowerCase() !== c.toUpperCase()),
-  // plus the digits - ES5, where \p{L} and the u flag do not exist and
-  // break the whole script on an older engine.
+  // A word character is a letter, digit or mark (Unicode General_Category
+  // L*, N*, M*) in any script - built once at runtime, since a literal
+  // \p{}-with-u-flag regex would throw a SyntaxError merely by existing on
+  // an engine old enough to lack it, before isWordChar ever runs. This page
+  // already calls fetch and chains Promises, so \p{} is there in practice;
+  // the fallback below (today's hand-picked block list) is only for the
+  // rare embedded engine that somehow still runs this without either.
+  var UNICODE_BASE = null, UNICODE_MARK = null;
+  try {
+    UNICODE_BASE = new RegExp('[\\p{L}\\p{N}]', 'u');
+    UNICODE_MARK = new RegExp('\\p{M}', 'u');
+  } catch (e) { /* engine has no \p{}: isWordChar falls back below */ }
+
+  // Fallback only. Anything with a case, the ASCII digits, and any other
+  // character past ASCII that is not in a punctuation, symbol, space or
+  // surrogate block. Scripts without case - CJK, kana, Hangul, Arabic, Thai,
+  // Devanagari - used to be dropped whole, and every such heading got the
+  // id "h"; this list still under- and over-matches a little (a block
+  // boundary is not a letter class), which \p{} above does not.
+  var NOT_WORD = /[\u0080-\u00bf\u00d7\u00f7\u2000-\u206f\u20a0-\u20cf\u2100-\u214f\u2190-\u2bff\u2e00-\u2e7f\u3000-\u3004\u3008-\u3020\u3030\u303d\ufe10-\ufe1f\ufe30-\ufe6f\uff00-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65\ud800-\udfff\ufeff\ufff0-\uffff]/;
   function isWordChar(c) {
-    return c.toLowerCase() !== c.toUpperCase() || /[0-9]/.test(c);
+    if (UNICODE_BASE) return UNICODE_BASE.test(c);
+    if (c.toLowerCase() !== c.toUpperCase() || /[0-9]/.test(c)) return true;
+    return c > '\u007f' && !NOT_WORD.test(c);
+  }
+  // A bare mark - one with no letter or digit of its own - only counts
+  // where \p{M} is available, and only as a CONTINUATION of a word already
+  // open (a combining accent decorates the base letter right before it).
+  // Without that guard, an emoji's variation selector (U+FE0F, category Mn)
+  // would start a "word" of its own: invisible, and first in the id.
+  function isMarkChar(c) {
+    return !!UNICODE_MARK && UNICODE_MARK.test(c);
   }
   function slug(text) {
     var s = String(text || '').toLowerCase().trim(), out = '', gap = false;
     for (var i = 0; i < s.length; i++) {
       var c = s.charAt(i);
-      if (isWordChar(c)) {
+      if (isWordChar(c) || (isMarkChar(c) && !gap)) {
         if (gap && out) out += '-';
         out += c;
         gap = false;

@@ -42,6 +42,9 @@ export function stampFileSlices(
   owners: string[],
   sent: TestCase[],
   results: StampOutcome[],
+  /** Per queue index, which same-titled entry of its file the row is
+   * (`fileOwners`); written with each edit so Rust pairs as the app did. */
+  occurrences: (number | null)[] = [],
 ): Map<string, StampedFile> {
   // Post-submit form per queue index, only for cases that succeeded.
   const post = new Map<number, TestCase>();
@@ -66,7 +69,7 @@ export function stampFileSlices(
     const f = files.get(path) ?? { slice: [], edits: [], changed: false };
     const after = post.get(i) ?? tc;
     f.slice.push(after);
-    f.edits.push({ before: tc, after });
+    f.edits.push({ before: tc, after, occurrence: occurrences[i] ?? null });
     if (post.has(i)) f.changed = true;
     files.set(path, f);
   });

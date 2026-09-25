@@ -130,15 +130,25 @@ export function fileOwnedKeys(
   snapshot: TestCase[],
   taken?: boolean[],
 ): (string | null)[] {
+  return claimRows(queue, snapshot, taken).map((c) => c?.key ?? null);
+}
+
+/** One row's claim on a snapshot entry: the ownership key, and which entry
+ * (`slot`, its index in the snapshot). */
+type Claim = { key: string; slot: number };
+
+/** `fileOwnedKeys`' pairing, keeping the snapshot index each row claimed. */
+function claimRows(queue: TestCase[], snapshot: TestCase[], taken?: boolean[]): (Claim | null)[] {
   const snapKeys = keysFor(snapshot);
-  const open = new Map<string, { key: string; c: TestCase }[]>();
+  const open = new Map<string, { key: string; c: TestCase; slot: number }[]>();
   snapshot.forEach((c, i) => {
     const base = caseKey(c);
+    const entry = { key: snapKeys[i], c, slot: i };
     const list = open.get(base);
-    if (list) list.push({ key: snapKeys[i], c });
-    else open.set(base, [{ key: snapKeys[i], c }]);
+    if (list) list.push(entry);
+    else open.set(base, [entry]);
   });
-  const out: (string | null)[] = queue.map(() => null);
+  const out: (Claim | null)[] = queue.map(() => null);
   const free = (i: number) => out[i] == null && !taken?.[i];
   // Exact matches first: an untouched file case is its own best evidence.
   queue.forEach((c, i) => {
@@ -147,7 +157,7 @@ export function fileOwnedKeys(
     if (!list) return;
     const j = list.findIndex((o) => sameCase(o.c, c));
     if (j === -1) return;
-    out[i] = list[j].key;
+    out[i] = { key: list[j].key, slot: list[j].slot };
     list.splice(j, 1);
   });
   // An id-stamped row whose id isn't in the snapshot yet (the post-upload
@@ -173,14 +183,14 @@ export function fileOwnedKeys(
     if (!list) return;
     const j = list.findIndex((o) => sameCase(o.c, withoutId));
     if (j === -1) return;
-    out[i] = idKey;
+    out[i] = { key: idKey, slot: list[j].slot };
     list.splice(j, 1);
   });
   // Then rows edited in the app, in order.
   queue.forEach((c, i) => {
     if (!free(i)) return;
     const claim = open.get(caseKey(c))?.shift();
-    if (claim) out[i] = claim.key;
+    if (claim) out[i] = { key: claim.key, slot: claim.slot };
   });
   return out;
 }
@@ -396,25 +406,51 @@ export function withoutFileCases(
   return queue.filter((_, i) => mine[i] == null);
 }
 
-/** The file each queued case came from, aligned with `queue`; empty for a
- * case that was typed by hand and belongs to no file.
+/** Which file each queued case came from, and which of that file's id-less
+ * entries with its title it is (1 = the first in the file), aligned with
+ * `queue`. Path "" and occurrence null for a case typed by hand.
  *
- * A comment is written back into the file that put the case there, so this
- * is what decides where it lands. Files claim rows in the order they were
- * imported, so when two files hold the same title the first keeps the row
- * both match, and the second claims the next same-titled row if there is
- * one - the same claiming `withoutFileCases` and `syncFromFile` use. */
-export function ownerPaths(queue: TestCase[], watches: WatchedFile[]): string[] {
-  const out = queue.map(() => "");
+ * A comment or an edit is written back into the file that put the case
+ * there, so this decides where it lands. Files claim rows in the order they
+ * were imported, so when two files hold the same title the first keeps the
+ * row both match, and the second claims the next same-titled row if there
+ * is one - the same claiming `withoutFileCases` and `syncFromFile` use. The
+ * occurrence travels with the write (`DraftEdit.occurrence`), so Rust writes
+ * to the entry this pairing chose, not to whichever comes first in queue
+ * order. */
+export type FileOwner = { path: string; occurrence: number | null };
+
+export function fileOwners(queue: TestCase[], watches: WatchedFile[]): FileOwner[] {
+  const out: FileOwner[] = queue.map(() => ({ path: "", occurrence: null }));
   const taken = queue.map(() => false);
   for (const w of watches) {
-    fileOwnedKeys(queue, w.snapshot, taken).forEach((k, i) => {
-      if (k == null) return;
-      out[i] = w.path;
+    claimRows(queue, w.snapshot, taken).forEach((c, i) => {
+      if (c == null) return;
+      out[i] = { path: w.path, occurrence: occurrenceIn(w.snapshot, c.slot) };
       taken[i] = true;
     });
   }
   return out;
+}
+
+/** 1-based: which of the snapshot's id-less entries titled like `slot`'s
+ * this one is, compared the way Rust compares them (trimmed, lowercased).
+ * Null for an entry that has an id - Rust finds that one by its id. */
+function occurrenceIn(snapshot: TestCase[], slot: number): number | null {
+  const at = snapshot[slot];
+  if (!at || at.update_id != null) return null;
+  const want = at.title.trim().toLowerCase();
+  let n = 0;
+  for (let k = 0; k <= slot; k++) {
+    if (snapshot[k].update_id == null && snapshot[k].title.trim().toLowerCase() === want) n += 1;
+  }
+  return n;
+}
+
+/** The file each queued case came from, aligned with `queue`; empty for a
+ * case that was typed by hand and belongs to no file. */
+export function ownerPaths(queue: TestCase[], watches: WatchedFile[]): string[] {
+  return fileOwners(queue, watches).map((o) => o.path);
 }
 
 /** Trailing path segment, for the "watching X" line. */

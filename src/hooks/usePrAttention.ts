@@ -9,7 +9,7 @@
  * are active by definition - closed PRs have nothing left to resolve.
  */
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { commands, type PullRequest } from "../bindings";
 import { isResolved } from "../lib/threadStatus";
 import { unwrap } from "../lib/ipc";
@@ -103,15 +103,39 @@ export function usePrAttention(org: string, project: string): number {
   // failed refetch keeps the old `data` and would resume scanning with the
   // stale id on the very next thread refresh - so `isError` gates it too.
   // The existing retry interval on `me` (above) recovers from that state.
+  //
+  // Only the PRs whose own threads changed are scanned. A thread query
+  // settling re-renders this hook with EVERY PR's threads, and scanning
+  // them all each time made one poll cycle PRs x threads. `scanned` holds
+  // the `dataUpdatedAt` each PR was last scanned at, for one organisation
+  // and one signed-in id; either changing scans everything afresh. It is
+  // rebuilt from the current list on every pass, so a PR that has left the
+  // list is forgotten rather than kept for the rest of the session.
+  const scanned = useRef<{ who: string; at: Map<string, number> }>({ who: "", at: new Map() });
   const threadStamp = threads.map((t) => t.dataUpdatedAt).join("|");
   useEffect(() => {
     if (!myId || me.isFetching || me.isError) return;
-    const found = prs.flatMap((pr, i) =>
-      prMentions(pr, threads[i]?.data ?? [], myId).map((m) => ({
+    const who = `${org}|${myId}`;
+    const before = scanned.current.who === who ? scanned.current.at : new Map<string, number>();
+    const at = new Map<string, number>();
+    const found = prs.flatMap((pr, i) => {
+      const t = threads[i];
+      const key = `${pr.repo}:${pr.id}`;
+      const last = before.get(key);
+      if (!t?.data) {
+        if (last !== undefined) at.set(key, last);
+        return [];
+      }
+      at.set(key, t.dataUpdatedAt);
+      if (last === t.dataUpdatedAt) return [];
+      return prMentions(pr, t.data, myId).map((m) => ({
         notification: prNotification(org, project, m),
         created: m.createdDate,
-      })),
-    );
+      }));
+    });
+    scanned.current = { who, at };
+    // Called even with nothing found: the organisation's first check is
+    // what sets its first-run baseline (mentions.ts).
     announceMentions(noteMentions(org, found));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadStamp, myId, me.isFetching, me.isError, me.dataUpdatedAt, org, project]);

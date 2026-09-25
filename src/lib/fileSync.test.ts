@@ -6,6 +6,7 @@ import {
   changedSteps,
   countBy,
   fileName,
+  fileOwners,
   loadWatches,
   ownerPaths,
   withoutFileCases,
@@ -447,4 +448,19 @@ test("an id-stamped row claims a file's title slot only when it is that file's c
   ]);
   // Dropping A's watch must not take B's row down with it.
   expect(withoutFileCases(queue, [fileA], [[fileB]])).toEqual(queue);
+});
+
+/// The write-back tells Rust which same-titled file entry each row is -
+/// the app's own pairing (exact rows first), not the queue's order.
+test("a row's file occurrence follows the app's pairing, not queue order", () => {
+  const first = tc("X", { steps: [{ action: "A.", expected: "" }] });
+  const second = tc("X", { steps: [{ action: "B.", expected: "" }] });
+  const w = { path: "C:/d/x.json", stamp: "s", snapshot: [first, second] };
+  // Re-sorted: the second entry's row sits first in the queue.
+  expect(fileOwners([second, first], [w])).toEqual([
+    { path: "C:/d/x.json", occurrence: 2 },
+    { path: "C:/d/x.json", occurrence: 1 },
+  ]);
+  // A hand-typed row belongs to no file.
+  expect(fileOwners([tc("Typed")], [w])).toEqual([{ path: "", occurrence: null }]);
 });

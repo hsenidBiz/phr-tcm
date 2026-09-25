@@ -14,7 +14,7 @@ import {
   workItemNotification,
   type FoundMention,
 } from "./mentions";
-import { resetForTests, type AppNotification } from "./notifications";
+import { forgetAllNotifications, markSeen, raise, resetForTests, type AppNotification } from "./notifications";
 
 // The toast/OS-notification rule itself is `announce`'s job and is tested
 // against the real thing in assignedAlerts.test.ts; here it is a plain
@@ -240,4 +240,26 @@ test("several new mentions make one announcement, not one each", () => {
 test("nothing new, nothing announced", () => {
   announceMentions([]);
   expect(announce).not.toHaveBeenCalled();
+});
+
+/// A different account signing in wipes the bell and the first-run
+/// baselines. Every key the real writers use must go, whatever it is
+/// called, so a renamed key cannot slip past the wipe.
+test("the account wipe removes every key the bell and the mention baseline wrote", () => {
+  const before = new Set(Object.keys(localStorage));
+  raise("acme", [{ id: "assigned:1", kind: "assigned", title: "t", body: "" }]);
+  markSeen("acme", ["mention:wi:9:9"]);
+  noteMentions("acme", [
+    {
+      notification: { id: "mention:wi:1:2", kind: "mention", title: "t", body: "" },
+      created: new Date().toISOString(),
+    },
+  ]);
+  const written = Object.keys(localStorage).filter((k) => !before.has(k));
+  // The list, the seen set and the baseline, at least.
+  expect(written.length).toBeGreaterThanOrEqual(3);
+
+  forgetAllNotifications();
+  forgetMentionBaselines();
+  expect(Object.keys(localStorage).filter((k) => written.includes(k))).toEqual([]);
 });

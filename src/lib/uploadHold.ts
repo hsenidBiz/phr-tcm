@@ -51,6 +51,12 @@ export type UploadHold = {
    * same upload, or one that was there all along. Optional on input so a
    * hold stored before this field existed still loads (as an empty list). */
   ids?: number[];
+  /** Each held row's content (`holdSignature`), aligned with `titles`. The
+   * row that was sent is marked by its content first, so of two drafts
+   * sharing a title it is the one that was actually held, wherever the
+   * queue has moved it. Absent on a hold stored before this field existed,
+   * which then marks by title alone, as it always did. */
+  sigs?: string[];
 };
 
 const holdKey = (org: string, pbiId: number) => `tcm-v2-upload-hold:${org}/${pbiId}`;
@@ -94,9 +100,18 @@ function parseHold(raw: string): UploadHold | null {
       (v.ids === undefined || (Array.isArray(v.ids) && v.ids.every((n: unknown) => Number.isInteger(n))))
     ) {
       const ids: number[] = v.ids ?? [];
-      return v.ambiguous !== undefined
-        ? { since: v.since, titles: v.titles, ambiguous: v.ambiguous, ids }
-        : { since: v.since, titles: v.titles, ids };
+      // Signatures that do not line up with the titles are dropped, not
+      // trusted: the hold then marks by title, which is never worse than
+      // before signatures existed.
+      const sigsOk =
+        Array.isArray(v.sigs) &&
+        v.sigs.length === v.titles.length &&
+        v.sigs.every((s: unknown) => typeof s === "string");
+      const hold: UploadHold =
+        v.ambiguous !== undefined
+          ? { since: v.since, titles: v.titles, ambiguous: v.ambiguous, ids }
+          : { since: v.since, titles: v.titles, ids };
+      return sigsOk ? { ...hold, sigs: v.sigs } : hold;
     }
   } catch {
     // not a hold
@@ -129,25 +144,43 @@ export function saveHold(org: string, pbiId: number, hold: UploadHold | null): v
   for (const l of listeners) l();
 }
 
+/** A held row's content, as the hold remembers it: title, steps (Shared
+ * Steps references included), preconditions, module and tags. */
+export function holdSignature(tc: TestCase): string {
+  return JSON.stringify([
+    tc.title.trim(),
+    tc.steps.map((s) => [s.action, s.expected, s.shared ?? null]),
+    tc.preconditions,
+    tc.module_value,
+    tc.tags,
+  ]);
+}
+
 /** The hold a finished submit leaves: every "unknown" result, named by the
- * title of the row that was SENT at its index. Null when there are none.
- * `preExisting` is the ids of the PBI's test cases linked before the upload
- * began; they and every id a result reported go into `ids`. */
+ * title and the content of the row that was SENT at its index. Null when
+ * there are none. `preExisting` is the ids of the PBI's test cases linked
+ * before the upload began; they and every id a result reported go into
+ * `ids`. */
 export function holdFromResults(
   results: Pick<SubmitItemResult, "index" | "action" | "id">[],
   sent: TestCase[],
   since: string,
   preExisting: number[] = [],
 ): UploadHold | null {
-  const titles = results
+  const held = results
     .filter((r) => r.action === "unknown")
-    .map((r) => sent[r.index]?.title)
-    .filter((t): t is string => t != null);
-  if (titles.length === 0) return null;
+    .map((r) => sent[r.index])
+    .filter((c): c is TestCase => c != null);
+  if (held.length === 0) return null;
   const reported = results
     .filter((r) => (r.action === "created" || r.action === "updated") && r.id != null)
     .map((r) => r.id as number);
-  return { since, titles, ids: [...new Set([...preExisting, ...reported])] };
+  return {
+    since,
+    titles: held.map((c) => c.title),
+    ids: [...new Set([...preExisting, ...reported])],
+    sigs: held.map(holdSignature),
+  };
 }
 
 /** What a Check tells Rust to leave out before it pairs anything: the
@@ -158,36 +191,69 @@ export function checkExcludeIds(hold: UploadHold, queue: TestCase[]): number[] {
   return [...new Set([...(hold.ids ?? []), ...inQueue])];
 }
 
-/** Which of `queue`'s create rows are named by `titles`: first come first
- * marked, as many per title as `titles` names. Shared by `heldRows` and
- * `ambiguousRows`, which apply it to different title lists. */
-function rowsNamedBy(queue: TestCase[], titles: string[]): boolean[] {
-  const left = new Map<string, number>();
-  for (const t of titles) left.set(t.trim(), (left.get(t.trim()) ?? 0) + 1);
-  return queue.map((tc) => {
-    if (tc.update_id != null) return false;
-    const k = tc.title.trim();
-    const n = left.get(k) ?? 0;
-    if (n === 0) return false;
-    left.set(k, n - 1);
-    return true;
-  });
+function countOf(list: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const k of list) out.set(k, (out.get(k) ?? 0) + 1);
+  return out;
 }
 
-/** Which queue rows are held: create rows only, first come first marked,
- * as many per title as the hold names. */
+function take(left: Map<string, number>, k: string): boolean {
+  const n = left.get(k) ?? 0;
+  if (n === 0) return false;
+  left.set(k, n - 1);
+  return true;
+}
+
+/** Which queue rows are held: create rows only, as many per title as the
+ * hold names. The rows whose content is exactly what was sent are marked
+ * first - of two drafts sharing a title, the one that was held, wherever
+ * it now sits. Then first come first marked by title, for a held row
+ * edited since and for a hold stored before signatures existed. The same
+ * order the file sync pairs rows in (fileSync.fileOwnedKeys). */
 export function heldRows(queue: TestCase[], hold: UploadHold | null): boolean[] {
   if (!hold) return queue.map(() => false);
-  return rowsNamedBy(queue, hold.titles);
+  const titlesLeft = countOf(hold.titles.map((t) => t.trim()));
+  const sigsLeft = countOf(hold.sigs && hold.sigs.length === hold.titles.length ? hold.sigs : []);
+  const out = queue.map(() => false);
+  queue.forEach((tc, i) => {
+    if (tc.update_id != null || sigsLeft.size === 0) return;
+    const sig = holdSignature(tc);
+    const title = tc.title.trim();
+    if ((sigsLeft.get(sig) ?? 0) === 0 || (titlesLeft.get(title) ?? 0) === 0) return;
+    take(sigsLeft, sig);
+    take(titlesLeft, title);
+    out[i] = true;
+  });
+  queue.forEach((tc, i) => {
+    if (out[i] || tc.update_id != null) return;
+    if (take(titlesLeft, tc.title.trim())) out[i] = true;
+  });
+  return out;
 }
 
 /** Which of the held rows are held because their title is ambiguous in
  * Azure DevOps (more matches there than rows checked), not merely unknown -
  * so the row should say that instead of the generic "check before
- * uploading again". */
+ * uploading again". Always a subset of `heldRows`. */
 export function ambiguousRows(queue: TestCase[], hold: UploadHold | null): boolean[] {
   if (!hold || !hold.ambiguous || hold.ambiguous.length === 0) return queue.map(() => false);
-  return rowsNamedBy(queue, hold.ambiguous);
+  const held = heldRows(queue, hold);
+  const left = countOf(hold.ambiguous.map((t) => t.trim()));
+  return queue.map((tc, i) => held[i] && take(left, tc.title.trim()));
+}
+
+/** What is left of a hold after a Check: the rows whose title the answer
+ * still calls ambiguous, each with its own signature, and the hold's ids
+ * plus what this Check claimed. Null when nothing is left. */
+export function narrowHold(h: UploadHold, ambiguous: string[], claimed: number[]): UploadHold | null {
+  const still = new Set(ambiguous.map((t) => t.trim()));
+  const keep = h.titles.map((_, i) => i).filter((i) => still.has(h.titles[i].trim()));
+  if (keep.length === 0) return null;
+  const titles = keep.map((i) => h.titles[i]);
+  const ids = [...new Set([...(h.ids ?? []), ...claimed])];
+  const sigs = h.sigs && h.sigs.length === h.titles.length ? keep.map((i) => h.sigs![i]) : undefined;
+  const narrowed: UploadHold = { since: h.since, titles, ambiguous: titles, ids };
+  return sigs ? { ...narrowed, sigs } : narrowed;
 }
 
 /** What a Check found, as "created" results indexed into `queue`. The

@@ -6,10 +6,16 @@ import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile, { specEntryFor } from "./ImportFile";
 import { Toaster } from "../components/ui/toaster";
+import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  // Write-back serialisation lives at module scope on purpose (a write-back
+  // can outlive the component that started it), so one test's write to
+  // CASE_PATH must not leak its last-known snapshot into the next test
+  // that reuses the same path with completely different cases.
+  resetFileWriteQueueForTests();
 });
 
 const pbi = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" };
@@ -900,7 +906,7 @@ test("the app's own id write-back after a submit does not re-import the file", a
     // file's fingerprint moves on.
     if (cmd === "save_draft_cases") {
       onDisk = after;
-      return "stamp-2";
+      return { stamp: "stamp-2", cases: after };
     }
     if (cmd === "submit_queue") {
       const a = args as { queue: Array<{ title: string; update_id: number | null }> };
@@ -963,7 +969,7 @@ test("after an upload the rows stay, and a later file edit updates them in place
     if (cmd === "test_case_field_values") return [];
     if (cmd === "save_draft_cases") {
       onDisk = stamped;
-      return "stamp-2";
+      return { stamp: "stamp-2", cases: stamped };
     }
     if (cmd === "submit_queue") {
       const a = args as { queue: Array<{ title: string }> };

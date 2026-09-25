@@ -42,10 +42,107 @@
   var busyCount = 0;
   function busyStart() { busyCount++; }
   function busyEnd() { if (busyCount > 0) busyCount--; }
-  window.tcmNotes = { makeQueue: makeQueue, busy: function () { return busyCount; } };
+  // A save the app never answers - it hung, or its listener stalled - must
+  // still end: until it does the box counts as busy, and the page's live
+  // update (cases-page.js) waits for busy() to reach 0 before it swaps.
+  var NOTE_TIMEOUT_MS = 10000;
+  function postNote(payload) {
+    return new Promise(function (ok, fail) {
+      var done = false;
+      var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        if (ctl) ctl.abort();
+        var e = new Error('the app did not answer');
+        e.name = 'TimeoutError';
+        fail(e);
+      }, NOTE_TIMEOUT_MS);
+      fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+        signal: ctl ? ctl.signal : undefined
+      }).then(function (r) { return r.json(); }).then(
+        function (v) { if (done) return; done = true; clearTimeout(timer); ok(v); },
+        function (e) { if (done) return; done = true; clearTimeout(timer); fail(e); }
+      );
+    });
+  }
+  // The identities live in the #tc-data JSON block INSIDE the swappable
+  // content, so a live swap brings fresh boxes and fresh identities along
+  // together - a comment box must never address the title a case had when
+  // the tab was opened. Read per call, so they are always current: before a
+  // swap for boxKey at failure time, after one for boxKey at restore time.
+  function identities() {
+    var el = document.getElementById('tc-data');
+    if (!el) return { cases: [], files: [] };
+    try { return JSON.parse(el.textContent) || { cases: [], files: [] }; }
+    catch (e) { return { cases: [], files: [] }; }
+  }
+
+  // A save that did not succeed - timed out, the app was closed, or the app
+  // refused it - leaves the box's text and status here, keyed by identity,
+  // and cleared the moment a save from that box succeeds. A live swap
+  // (cases-page.js) calls restoreUnsaved right after it adopts fresh markup,
+  // so the fresh copy's OLDER text - and the fact that nothing told the
+  // reviewer their edit did not land - can never silently replace what is
+  // still sitting unsaved in the box. Freeing the box from busy() as soon as
+  // a save ends (rather than only once it succeeds) is what made this
+  // reachable: before, a save that never finished held busy() up forever,
+  // so a swap could not happen at all.
+  //
+  // The key must be stable across a swap, not positional: `data-case`/
+  // `data-file` are this RENDER's slot/index, and a case inserted, removed
+  // or reordered gives the same slot to a different case. Keying by index
+  // alone once misfiled a failed comment onto whatever case now sits in
+  // that slot - and a retry from there saved it into the wrong case's JSON.
+  // `data-ado` (a work item id) is already stable and needs no lookup.
+  var failedByKey = {};
+  function boxKey(box) {
+    if (box.dataset.ado != null) return 'ado:' + box.dataset.ado;
+    if (box.dataset.case != null) {
+      var c = identities().cases[Number(box.dataset.case)];
+      // path + the occurrence key the app already tracks (e.g. "t:login#2")
+      // - the identity a comment is actually saved against (see `wire`'s
+      // case payload below), and the one thing that does not move.
+      return c ? 'case:' + (c.path || '') + '\n' + (c.key || '') : null;
+    }
+    if (box.dataset.file != null) {
+      var f = identities().files[Number(box.dataset.file)];
+      return f ? 'file:' + (f.path || '') : null;
+    }
+    return null;
+  }
+  // Restores any carried failure onto the box that still has its identity,
+  // and drops any entry whose case or file is no longer in the fresh copy -
+  // one that matches nothing must never be shown under a different box.
+  function restoreUnsaved(root) {
+    var present = {};
+    Array.prototype.forEach.call((root || document).querySelectorAll('[data-ado],[data-case],[data-file]'), function (box) {
+      var key = boxKey(box);
+      if (!key) return;
+      present[key] = true;
+      var f = failedByKey[key];
+      if (!f) return;
+      box.value = f.value;
+      var status = document.getElementById(box.dataset.status);
+      if (status) { status.className = f.className; status.textContent = f.text; }
+    });
+    for (var key2 in failedByKey) {
+      if (Object.prototype.hasOwnProperty.call(failedByKey, key2) && !present[key2]) delete failedByKey[key2];
+    }
+  }
+  window.tcmNotes = {
+    makeQueue: makeQueue,
+    busy: function () { return busyCount; },
+    timeoutMs: NOTE_TIMEOUT_MS,
+    restoreUnsaved: restoreUnsaved
+  };
 
   function wire(box, status, build) {
     var timer = null;
+    var key = boxKey(box);
     // Whether THIS box currently holds the one busy-count unit it is
     // allowed to hold - typing again while already dirty (armed, in
     // flight, or queued - see makeQueue) must not double-count it.
@@ -53,26 +150,26 @@
     function settle() {
       if (dirty) { dirty = false; busyEnd(); }
     }
-    var save = makeQueue(function (payload) {
-      return fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      }).then(function (r) { return r.json(); });
-    }, function (r, err) {
+    var save = makeQueue(postNote, function (r, err) {
       // The report callback fires only for the newest save once nothing is
       // queued behind it (see makeQueue's `finish`) - exactly when this box
       // stops being dirty, saved or not.
       settle();
       if (err) {
         status.className = 'note-status bad';
-        status.textContent = 'Not saved — the app is closed';
+        status.textContent = err.name === 'TimeoutError'
+          ? 'Not saved - the app did not answer'
+          : 'Not saved - the app is closed';
       } else if (r && r.ok) {
         status.className = 'note-status';
         status.textContent = 'Saved ✓';
       } else {
         status.className = 'note-status bad';
-        status.textContent = 'Not saved — ' + ((r && r.error) || 'the app refused it');
+        status.textContent = 'Not saved - ' +((r && r.error) || 'the app refused it');
+      }
+      if (key) {
+        if (r && r.ok) delete failedByKey[key];
+        else failedByKey[key] = { value: box.value, className: status.className, text: status.textContent };
       }
     });
     box.addEventListener('input', function () {
@@ -82,17 +179,6 @@
       clearTimeout(timer);
       timer = setTimeout(function () { save(build(box.value)); }, 600);
     });
-  }
-
-  // The identities live in the #tc-data JSON block INSIDE the swappable
-  // content, so a live swap brings fresh boxes and fresh identities along
-  // together - a comment box must never address the title a case had when
-  // the tab was opened. Read per save, so they are always current.
-  function identities() {
-    var el = document.getElementById('tc-data');
-    if (!el) return { cases: [], files: [] };
-    try { return JSON.parse(el.textContent) || { cases: [], files: [] }; }
-    catch (e) { return { cases: [], files: [] }; }
   }
 
   // Re-runnable: the live update calls this again after swapping fresh

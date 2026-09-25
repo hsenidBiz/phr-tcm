@@ -1,10 +1,11 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "../lib/toast";
-import { commands, type TestCaseFull } from "../bindings";
+import { commands, type Step, type TestCaseFull } from "../bindings";
 import { blobToB64 } from "../lib/blob";
 import { unwrapStr } from "../lib/ipc";
+import { sharedStepQueryKey, sharedStepText } from "../lib/sharedSteps";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
 import { Modal } from "./ui/modal";
@@ -29,11 +30,18 @@ export default function BugDialog({
   onClose: () => void;
   onFiled: (bugId: number) => void;
 }) {
+  const qc = useQueryClient();
+  // A Shared Steps reference has no text of its own: it is named, with its
+  // title when a screen has already read it.
+  const stepLine = (s: Step, i: number) =>
+    s.shared != null
+      ? `${i + 1}. ${sharedStepText(s.shared, qc.getQueryData<string>(sharedStepQueryKey(org, s.shared)))}`
+      : `${i + 1}. ${s.action}${s.expected ? ` -> expected: ${s.expected}` : ""}`;
   const defaultRepro = [
     `Test case #${testCase.id}: ${testCase.title}`,
     "",
     "Steps:",
-    ...testCase.steps.map((s, i) => `${i + 1}. ${s.action}${s.expected ? ` -> expected: ${s.expected}` : ""}`),
+    ...testCase.steps.map(stepLine),
   ].join("\n");
 
   const [title, setTitle] = useState(`Bug: ${testCase.title}`);

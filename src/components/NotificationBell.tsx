@@ -120,7 +120,8 @@ export default function NotificationBell({
         <div
           role="dialog"
           aria-label="Notifications"
-          className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-surface shadow-2xl"
+          data-origin="top-right"
+          className="t-dropdown absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-surface shadow-2xl"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-muted">Notifications</span>

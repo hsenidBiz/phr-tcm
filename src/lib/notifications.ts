@@ -43,7 +43,7 @@ export type AppNotification = {
 
 /** Newest `LIST_CAP` kept in the list; `KNOWN_CAP` ids remembered as seen. */
 export const LIST_CAP = 50;
-const KNOWN_CAP = 500;
+export const KNOWN_CAP = 500;
 
 const listKey = (org: string) => `tcm-v2-notifications:${org}`;
 const knownKey = (org: string) => `tcm-v2-notifications-known:${org}`;
@@ -85,8 +85,20 @@ function known(org: string): string[] {
   }
 }
 
+/** Remember `ids` as seen, most recently reported first. An id already
+ * remembered moves to the front instead of being added twice, so a source
+ * that re-reports its state on every check keeps its ids fresh. The cap
+ * then evicts only what nothing has reported for longest, and a mention the
+ * current check still returns cannot fall out and be raised again. A single
+ * report larger than the cap keeps all of it. Writes nothing when the
+ * order would not change. */
 function remember(org: string, ids: string[]): void {
-  const next = [...ids, ...known(org)].slice(0, KNOWN_CAP);
+  const front = [...new Set(ids)];
+  if (front.length === 0) return;
+  const cur = known(org);
+  const inFront = new Set(front);
+  const next = [...front, ...cur.filter((id) => !inFront.has(id))].slice(0, Math.max(KNOWN_CAP, front.length));
+  if (next.length === cur.length && next.every((id, i) => id === cur[i])) return;
   try {
     localStorage.setItem(knownKey(org), JSON.stringify(next));
   } catch {
@@ -111,7 +123,8 @@ export function unreadCount(list: AppNotification[]): number {
 }
 
 /** Add what is new. Ids already raised - listed or since dismissed - are
- * skipped, so callers can report the whole current state every time. */
+ * skipped, so callers can report the whole current state every time. Every
+ * reported id, new or not, is refreshed in the seen set (see remember). */
 export function raise(
   org: string,
   items: Array<Omit<AppNotification, "at" | "read">>,
@@ -119,25 +132,23 @@ export function raise(
   if (!org || items.length === 0) return [];
   const seen = new Set([...known(org), ...load(org).map((n) => n.id)]);
   const fresh = items.filter((i) => !seen.has(i.id));
+  remember(
+    org,
+    items.map((i) => i.id),
+  );
   if (fresh.length === 0) return [];
   const at = new Date().toISOString();
   const added = fresh.map((i) => ({ ...i, at, read: false }));
-  remember(
-    org,
-    added.map((n) => n.id),
-  );
   save(org, [...added, ...load(org)].slice(0, LIST_CAP));
   return added;
 }
 
 /** Record ids as seen without listing them - a source's backlog on its
  * first run. raise() skips them from then on, exactly like a dismissed
- * notification. */
+ * notification. Reporting them again keeps them fresh (see remember). */
 export function markSeen(org: string, ids: string[]): void {
   if (!org || ids.length === 0) return;
-  const seen = new Set([...known(org), ...load(org).map((n) => n.id)]);
-  const unseen = [...new Set(ids)].filter((id) => !seen.has(id));
-  if (unseen.length > 0) remember(org, unseen);
+  remember(org, ids);
 }
 
 /** Opening the bell: the badge goes, the items stay. */
@@ -257,11 +268,12 @@ export function resetForTests(): void {
  * re-sign-in path mounts it).
  */
 export function forgetAllNotifications(): void {
+  // The prefixes come from the key helpers themselves (an empty org), so a
+  // key renamed there cannot slip past this wipe.
+  const prefixes = [listKey(""), knownKey("")];
   try {
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("tcm-v2-notifications:") || k.startsWith("tcm-v2-notifications-known:")) {
-        localStorage.removeItem(k);
-      }
+      if (prefixes.some((p) => k.startsWith(p))) localStorage.removeItem(k);
     }
   } catch {
     // storage unavailable - nothing was stored to leak

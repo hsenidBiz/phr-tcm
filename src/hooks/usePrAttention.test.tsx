@@ -5,10 +5,18 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { prMentions } from "../lib/mentions";
 import { resetForTests } from "../lib/notifications";
 import { usePrAttention } from "./usePrAttention";
 
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn() } }));
+
+// The real scan, counted: the tests below need to know HOW MANY PRs were
+// scanned, not just what the scan raised.
+vi.mock("../lib/mentions", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../lib/mentions")>();
+  return { ...real, prMentions: vi.fn(real.prMentions) };
+});
 
 // announce() (the shared toast/OS-notification funnel, in the real,
 // unmocked assignedAlerts module) checks document.hasFocus() itself to
@@ -249,4 +257,70 @@ test("the mention scan holds a new comment back until an in-flight identity refe
     resolveSecondUser?.({ id: "me-guid", display_name: "Avin" });
   });
   await waitFor(() => expect(ids()).toContain("mention:pr:web:1:30:6"));
+});
+
+/// A thread query settling re-renders the hook with EVERY PR's threads.
+/// Scanning them all each time made one poll cycle PRs x threads; a refresh
+/// of one PR's threads scans that PR only.
+test("a thread refresh rescans that PR's threads only, not every PR's", async () => {
+  vi.mocked(prMentions).mockClear();
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") return { id: "me-guid", display_name: "Avin" };
+    if (cmd === "pr_overview") return { mine: [pr(1), pr(2), pr(3)], awaiting: [] };
+    if (cmd === "pr_threads") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const scanned = () => vi.mocked(prMentions).mock.calls.map((c) => c[0].id);
+  await waitFor(() => expect([...scanned()].sort()).toEqual([1, 2, 3]));
+
+  vi.mocked(prMentions).mockClear();
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-threads", "acme", "Web", "web", 2] });
+  });
+  // react-query's notify of the refetched observer lands on the next
+  // macrotask, after this act() block's own microtasks have already run -
+  // waitFor's real-timer polling is what catches it.
+  await waitFor(() => expect(scanned()).toEqual([2]));
+});
+
+/// What was scanned is kept only for the PRs in the current list, so it
+/// cannot grow with every PR seen in a session. A PR that leaves the list
+/// and comes back is simply scanned again; the store dedupes what it finds.
+test("a PR that leaves the list and comes back is scanned again", async () => {
+  vi.mocked(prMentions).mockClear();
+  let listed = [pr(1), pr(2)];
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") return { id: "me-guid", display_name: "Avin" };
+    if (cmd === "pr_overview") return { mine: listed, awaiting: [] };
+    if (cmd === "pr_threads") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project="Web" />
+    </QueryClientProvider>,
+  );
+  const scanned = () => vi.mocked(prMentions).mock.calls.map((c) => c[0].id);
+  await waitFor(() => expect([...scanned()].sort()).toEqual([1, 2]));
+
+  // #2 leaves the list... (the refetched observer notifies on a later
+  // macrotask, so give it a few before moving on)
+  listed = [pr(1)];
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-overview", "acme", "Web"] });
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
+  // ...and comes back, its threads still cached from before.
+  vi.mocked(prMentions).mockClear();
+  listed = [pr(1), pr(2)];
+  await act(async () => {
+    await qc.refetchQueries({ queryKey: ["pr-overview", "acme", "Web"] });
+  });
+  await waitFor(() => expect(scanned()).toEqual([2]));
 });

@@ -6,9 +6,10 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../lib/toast";
 import type { TestCase } from "../bindings";
-import type { WatchedFile } from "../lib/fileSync";
+import { patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
 import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
+import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
 import QueueSection from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
@@ -36,6 +37,11 @@ afterEach(() => {
   // with it.
   const p = submitPhaseSnapshot();
   if (p) submitFinished(p.run);
+  // Same reasoning: write-back serialisation lives at module scope (a
+  // write-back can outlive the component that started it), so one test's
+  // fake path must not leak its queued chain or last-known snapshot into
+  // the next test that happens to reuse it.
+  resetFileWriteQueueForTests();
 });
 
 function makeCase(overrides: Partial<TestCase> = {}): TestCase {
@@ -318,9 +324,10 @@ test("a fresh mount shows a submit already in flight", async () => {
 /// it, and a stop control that a fresh mount cannot show would be a stop
 /// control missing exactly when someone came back to use it.
 test("an upload in flight shows the sweeping bar first, then the count, and no Stop", async () => {
-  const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
+  const { submitStarted, submitUploading, submitProgressed, submitFinished } = await import("../lib/submitRun");
   baseMocks();
   const run = submitStarted("acme", 42, 10)!;
+  submitUploading(run);
   try {
     renderQueue([makeCase()]);
     // Before the first batch answers: the suite is being resolved and the
@@ -340,6 +347,62 @@ test("an upload in flight shows the sweeping bar first, then the count, and no S
   } finally {
     submitFinished(run);
   }
+});
+
+/// Every queued update already matches Azure DevOps. The pre-flight read
+/// finds nothing to write and the submit ends there - so nothing on screen
+/// may say "Processing" while it looks.
+test("an upload with nothing to change says Checking while it looks, never Processing", async () => {
+  const gate: { open?: (v: unknown) => void } = {};
+  let submits = 0;
+  const base = {
+    title: "Login works",
+    tags: "smoke",
+    automation_status: "Not Automated",
+    steps: [{ action: "Open page", expected: "Page shown" }],
+    step_ids: ["2"],
+    module_value: "",
+    preconditions: "",
+  };
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") {
+      // The queue's own diff read answers at once; the upload's pre-flight
+      // read (made while a submit is running) is held open.
+      if (submitPhaseSnapshot() == null) return [{ id: 201, ...base }];
+      return new Promise((resolve) => {
+        gate.open = resolve;
+      });
+    }
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 201 })]);
+  expect(await screen.findByText(/nothing will change/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Confirm & update 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(gate.open).toBeDefined());
+  expect(screen.getByRole("progressbar", { name: "Checking what changed" })).toBeInTheDocument();
+  expect(screen.getAllByText("Checking").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
+
+  await act(async () => {
+    gate.open?.([{ id: 201, ...base }]);
+  });
+  await waitFor(() => expect(submitPhaseSnapshot()).toBeNull());
+  expect(submits).toBe(0);
+  expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
 });
 
 /// And a submit for a DIFFERENT scope stays invisible - PBI 7's progress
@@ -390,6 +453,15 @@ type SentEdits = { path: string; edits: Array<{ before: TestCase; after: TestCas
 /** The titles the file will hold for the queue's rows (removed rows drop out). */
 const keptTitles = (p: SentEdits) =>
   p.edits.flatMap((e) => (e.after ? [e.after.title] : []));
+/** What `save_draft_cases` returns: its new fingerprint, and the cases now
+ * in the file. These tests never re-sort or write twice, so "the rows this
+ * write kept" (queue order) is as good a stand-in for "file order" as any -
+ * unlike the fix-round-1 tests below, nothing here depends on the two
+ * differing. */
+const saveResult = (p: SentEdits, stamp = "stamp-2") => ({
+  stamp,
+  cases: p.edits.flatMap((e) => (e.after ? [e.after] : [])),
+});
 
 test("bulk remove updates the queue AND the owning .json file", async () => {
   const a = makeCase({ title: "From file A" });
@@ -410,7 +482,7 @@ test("bulk remove updates the queue AND the owning .json file", async () => {
         titles: keptTitles(p),
         edits: p.edits.map((e) => [e.before.title, e.after?.title ?? null]),
       });
-      return "stamp-2";
+      return saveResult(p);
     }
     return undefined;
   });
@@ -458,7 +530,7 @@ test("bulk edit applies to the selection and leaves unselected rows alone", asyn
       for (const e of p.edits) {
         if (e.after) saved.push({ title: e.after.title, status: e.after.automation_status });
       }
-      return "stamp-2";
+      return saveResult(p);
     }
     return undefined;
   });
@@ -497,8 +569,9 @@ test("power rename scoped to the selection writes the file back", async () => {
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      saved.push({ titles: keptTitles(args as SentEdits) });
-      return "stamp-2";
+      const p = args as SentEdits;
+      saved.push({ titles: keptTitles(p) });
+      return saveResult(p);
     }
     return undefined;
   });
@@ -614,7 +687,7 @@ test("single Edit save writes the change through to the owning file", async () =
     if (cmd === "save_draft_cases") {
       const p = args as SentEdits;
       saved.push({ path: p.path, titles: keptTitles(p) });
-      return "stamp-2";
+      return saveResult(p);
     }
     return undefined;
   });
@@ -651,7 +724,7 @@ test("a rename write-back tells the file which case it was", async () => {
     if (cmd === "save_draft_cases") {
       const p = args as SentEdits;
       saved.push(p.edits.map((e) => ({ before: e.before.title, after: e.after?.title ?? null })));
-      return "stamp-2";
+      return saveResult(p);
     }
     return undefined;
   });
@@ -1752,7 +1825,7 @@ test("removing one row writes the owning file back, so the case cannot return", 
     if (cmd === "save_draft_cases") {
       const p = args as SentEdits;
       saved.push({ path: p.path, titles: keptTitles(p) });
-      return "stamp-2";
+      return saveResult(p);
     }
     return undefined;
   });
@@ -1835,7 +1908,7 @@ test("a submit that finishes after a remount moves the watch forward where it is
         finish = r;
       });
     }
-    if (cmd === "save_draft_cases") return "stamp-2";
+    if (cmd === "save_draft_cases") return { stamp: "stamp-2", cases: [] };
     return undefined;
   });
   const first: string[] = [];
@@ -1991,4 +2064,647 @@ test("a second submit is refused the instant it starts, before its own pre-fligh
   expect(secondIdsCalls).toBe(callsBeforeSubmit);
 
   releaseFirstPreflight([]);
+});
+
+/// A double-click on Remove: the second click lands before the first has
+/// re-rendered, still carrying the same index - which by then names the
+/// NEXT row. Only the row that was clicked goes.
+test("a double-click on Remove removes that one row, not the next one too", async () => {
+  baseMocks();
+  renderQueue([makeCase({ title: "Alpha case" }), makeCase({ title: "Beta case" })]);
+  const remove = (await screen.findAllByRole("button", { name: "Remove" }))[0];
+  act(() => {
+    fireEvent.click(remove);
+    fireEvent.click(remove);
+  });
+  expect(screen.queryByText("Alpha case")).not.toBeInTheDocument();
+  expect(screen.getByText("Beta case")).toBeInTheDocument();
+});
+
+// ---- After a write, the watch snapshot
+// ---- must be what Rust says is now in the FILE, in FILE order - not a
+// ---- queue-order slice of the rows the write touched. The backend below
+// ---- applies the same claim-by-occurrence-then-title rule Rust's
+// ---- apply_draft_edits uses, so a wrong occurrence shows up here the same
+// ---- way it would in a real file: an edit silently landing on the wrong
+// ---- twin, or the wrong twin being deleted. -------------------------------
+
+type FakeEdit = { before: TestCase; after: TestCase | null; occurrence: number | null };
+
+/// This fake matches export.rs on the two rules that decide which entry a
+/// row lands on - occurrence counts id-less entries only, and an id claims
+/// its entry before any occurrence is even considered - so a test using an
+/// `update_id` row is not trusting a rule Rust doesn't actually have. Two
+/// smaller differences remain, and don't matter for what these tests check:
+/// - "unchanged" is decided with `JSON.stringify`, not Rust's `PartialEq`.
+///   Every case built by these tests is a plain object literal compared
+///   against another built the same way, so key order - the one thing
+///   `JSON.stringify` can get wrong that `PartialEq` wouldn't - never
+///   differs between the two sides of a comparison here.
+/// - `save` returns the queue's own `after` objects as `cases`, not a
+///   re-parse of written JSON text. The round-trip Rust actually does is
+///   covered separately, by a Rust test
+///   (`an_after_case_with_every_field_set_round_trips_through_a_write`).
+function fakeDraftBackend(initial: TestCase[], opts: { manualReplies?: boolean } = {}) {
+  let file = [...initial];
+  let n = 0;
+  const sameTitle = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const pending: Array<() => void> = [];
+  const claimById = (claimed: boolean[], id: number) => file.findIndex((f, k) => !claimed[k] && f.update_id === id);
+  return {
+    get file() {
+      return file;
+    },
+    /** How many `save` calls are waiting on `releaseNext` - only moves
+     * when `manualReplies` is set. */
+    get pendingCount() {
+      return pending.length;
+    },
+    /** Lets the OLDEST still-waiting `save` call return, in the order it
+     * was made - the order a real single Rust process answers two
+     * overlapping IPC calls in. */
+    releaseNext() {
+      pending.shift()?.();
+    },
+    /** `save_draft_comment`: sets the comment on the entry carrying `id`
+     * and returns the file's new stamp. */
+    saveComment(id: number, text: string) {
+      file = file.map((f) => (f.update_id === id ? { ...f, comment: text } : f));
+      n += 1;
+      return `s${n}`;
+    },
+    save(edits: FakeEdit[]) {
+      const claimed = file.map(() => false);
+      const slot: (number | null)[] = edits.map(() => null);
+      // By id first, exactly like Rust's `claim`/`claim_named`: an id is
+      // exact evidence and always outranks an occurrence guess.
+      edits.forEach((e, i) => {
+        if (e.before.update_id == null) return;
+        const k = claimById(claimed, e.before.update_id);
+        if (k >= 0) {
+          claimed[k] = true;
+          slot[i] = k;
+        }
+      });
+      // Named occurrence next, counting only ID-LESS entries sharing the
+      // title - exactly Rust's claim_named (`update_id.is_none()`).
+      edits.forEach((e, i) => {
+        if (slot[i] != null || e.occurrence == null) return;
+        const matches = file.flatMap((f, k) =>
+          f.update_id == null && sameTitle(f.title, e.before.title) ? [k] : [],
+        );
+        const k = matches[e.occurrence - 1];
+        if (k != null && !claimed[k]) {
+          claimed[k] = true;
+          slot[i] = k;
+        }
+      });
+      // Then the plain first-unclaimed rule: by id if the row has one,
+      // else the first unclaimed id-less entry sharing its title.
+      edits.forEach((e, i) => {
+        if (slot[i] != null) return;
+        const k =
+          e.before.update_id != null
+            ? claimById(claimed, e.before.update_id)
+            : file.findIndex(
+                (f, idx) => !claimed[idx] && f.update_id == null && sameTitle(f.title, e.before.title),
+              );
+        if (k >= 0) {
+          claimed[k] = true;
+          slot[i] = k;
+        }
+      });
+      const fate: (TestCase | null | undefined)[] = file.map(() => undefined);
+      edits.forEach((e, i) => {
+        const k = slot[i];
+        if (k == null) return;
+        const unchanged = e.after != null && JSON.stringify(e.after) === JSON.stringify(e.before);
+        if (!unchanged) fate[k] = e.after;
+      });
+      file = file.flatMap((f, k) => (fate[k] === undefined ? [f] : fate[k] ? [fate[k]!] : []));
+      n += 1;
+      const result = { stamp: `s${n}`, cases: file };
+      if (!opts.manualReplies) return result;
+      return new Promise((resolve) => {
+        pending.push(() => resolve(result));
+      });
+    },
+  };
+}
+
+/** Owns both the queue and the watch state, so a write-back's returned
+ * snapshot (`onWatchPatched`) actually feeds the NEXT write-back - the same
+ * loop `ImportFile.tsx` runs, and the one the queue-order bug hid inside.
+ * `setWatches` persists through `saveWatches`, exactly as `ImportFile.tsx`'s
+ * own wrapper does - the post-upload write-back path reads storage fresh
+ * (`loadWatches`), so a test whose watches never reach storage would never
+ * exercise it. `exposeSync` hands the test a way to move the queue and the
+ * watches on from OUTSIDE this module's write-back chain entirely - an
+ * outside sync (an assistant's own edit, picked up by the file watcher). */
+function WatchHarness({
+  initial,
+  initialWatches,
+  org = "acme",
+  pbiId = 42,
+  exposeSync,
+}: {
+  initial: TestCase[];
+  initialWatches: WatchedFile[];
+  org?: string;
+  pbiId?: number;
+  exposeSync?: (sync: (queue: TestCase[], watches: WatchedFile[]) => void) => void;
+}) {
+  const [queue, setQueue] = useState<TestCase[]>(initial);
+  const [watches, setWatchesState] = useState<WatchedFile[]>(initialWatches);
+  const setWatches = (next: WatchedFile[] | ((prev: WatchedFile[]) => WatchedFile[])) => {
+    setWatchesState((prev) => {
+      const list = typeof next === "function" ? next(prev) : next;
+      saveWatches(org, pbiId, list);
+      return list;
+    });
+  };
+  exposeSync?.((nextQueue, nextWatches) => {
+    setQueue(nextQueue);
+    setWatches(nextWatches);
+  });
+  return (
+    <QueueSection
+      org={org}
+      project="Web"
+      pbiId={pbiId}
+      queue={queue}
+      setQueue={setQueue}
+      watches={watches}
+      onWatchPatched={(path, fields) => setWatches((prev) => patchWatch(prev, path, fields))}
+    />
+  );
+}
+
+function renderWatchHarness(
+  initial: TestCase[],
+  initialWatches: WatchedFile[],
+  extra?: { exposeSync?: (sync: (queue: TestCase[], watches: WatchedFile[]) => void) => void },
+) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <WatchHarness initial={initial} initialWatches={initialWatches} exposeSync={extra?.exposeSync} />
+    </QueryClientProvider>,
+  );
+}
+
+const mockDraftBackend = (backend: ReturnType<typeof fakeDraftBackend>) =>
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    return undefined;
+  });
+
+const stepText = (tc: TestCase) => [tc.steps[0].action, tc.steps[0].expected];
+
+/// A file `[A, B, C]`, all titled "X". The
+/// queue is re-sorted to `[C, B, A]`. Removing the middle row, then editing
+/// the last one, must land on A and C's own entries - not trade them.
+test("a second write-back after a re-sort still lands its edit on the row's own file entry", async () => {
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([A, B, C]);
+  mockDraftBackend(backend);
+
+  // Already re-sorted: the queue is [C, B, A], the file is [A, B, C].
+  renderWatchHarness([C, B, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
+
+  // Remove the middle row (B).
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  await waitFor(() => expect(backend.file).toHaveLength(2));
+  expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open A.", "Open C."]);
+
+  // Edit the last row - still A, now at queue index 1 (the queue is [C, A]).
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "A, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  // The file ends as [A', C], with C intact - not [A, A'] with C silently gone.
+  await waitFor(() =>
+    expect(backend.file.map(stepText)).toEqual([
+      ["Open A.", "A, edited."],
+      ["Open C.", ""],
+    ]),
+  );
+});
+
+/// Same setup, but the second action is a Remove instead of an edit: it
+/// must delete the row's own twin, not the other one.
+test("a Remove as the second action after a re-sort deletes the right twin", async () => {
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([A, B, C]);
+  mockDraftBackend(backend);
+
+  renderWatchHarness([C, B, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
+
+  // Remove the middle row (B).
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  await waitFor(() => expect(backend.file).toHaveLength(2));
+
+  // Remove the last row - still A, now at queue index 1 (the queue is [C, A]).
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+
+  // A goes; C - its twin - survives.
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open C."]));
+});
+
+/// A file entry no queue row owns (an assistant's addition the queue never
+/// synced in) must survive a write AND keep counting toward later
+/// occurrences - dropping it from the snapshot would make a later
+/// same-titled row's occurrence one too low.
+test("a file entry no row owns survives a write and does not shift later occurrences", async () => {
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const U = makeCase({ title: "X", steps: [{ action: "Open U.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([A, U, C]);
+  mockDraftBackend(backend);
+
+  // The queue only ever knew about A and C - U sits in the file untouched.
+  renderWatchHarness([C, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, U, C] }]);
+
+  // Edit A (queue index 1).
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "A, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() =>
+    expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open A.", "Open U.", "Open C."]),
+  );
+
+  // Edit C (queue index 0). If U had dropped out of the snapshot, C would
+  // be miscounted as occurrence 2 instead of 3, and this edit would land
+  // on U's entry instead.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[0]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "C, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() =>
+    expect(backend.file.map(stepText)).toEqual([
+      ["Open A.", "A, edited."],
+      ["Open U.", ""],
+      ["Open C.", "C, edited."],
+    ]),
+  );
+});
+
+// ---- No re-sort needed. Two write-backs to the SAME file -
+// ---- Remove, then the next row's Remove landing before the first write
+// ---- has replied - must not both build their occurrences from the
+// ---- snapshot the FIRST write has not replaced yet, or Rust deletes the
+// ---- wrong twin. Serialised per file (`runOnFileChain`), each write reads
+// ---- what the one before it on that path actually returned
+// ---- (`freshWatches`/`noteWritten`), not a snapshot captured before it. --
+
+/// File, snapshot and queue all `[A,B,C]`,
+/// every title "X". Remove A, then remove C - now at queue index 1 - before
+/// A's write has replied. The file must end with B; so must the queue.
+test("two quick Removes on the same file are serialised, each built from the last write's own result", async () => {
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([A, B, C], { manualReplies: true });
+  mockDraftBackend(backend);
+
+  renderWatchHarness([A, B, C], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
+
+  // Remove A. The queue re-renders to [B, C] right away; A's write is sent
+  // but its reply is held back.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[0]);
+  await waitFor(() => expect(backend.pendingCount).toBe(1));
+
+  // Remove C - now at queue index 1 - before A's write has replied.
+  // Ordinary rapid use: each row's own Remove button lands under the
+  // cursor as the row above it disappears.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+
+  // Serialised: C's write has not been SENT yet - it is queued behind A's,
+  // which has not replied. A synchronous check here would be weak (the
+  // chained task itself starts on a microtask, so it would read 1 either
+  // way): give any UNSERIALISED dispatch several real ticks to happen -
+  // unserialised, C's write would already have gone out by now, making
+  // this 2.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(backend.pendingCount).toBe(1);
+  backend.releaseNext();
+
+  // A's write lands; C's is now sent, built fresh against what A's write
+  // actually left in the file ([B, C]) - not the original [A, B, C].
+  await waitFor(() => expect(backend.pendingCount).toBe(1));
+  backend.releaseNext();
+
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open B."]));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  expect(await screen.findByDisplayValue("Open B.")).toBeInTheDocument();
+});
+
+/// A stored note filling an id row's empty comment is patched into the
+/// file too. That patch replaces the watch's snapshot for the WHOLE file,
+/// so it must not put back a case list from before a Remove that finished
+/// while the patch was in flight: the id-less twins in the same file would
+/// then be paired with the wrong entries by the next write.
+test("a note patched into the file mid-Remove does not put the removed twin back into the snapshot", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "77": "Note for R" }));
+  const R = makeCase({ update_id: 77, title: "R", steps: [{ action: "Open R.", expected: "" }] });
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([R, A, B, C]);
+  let releaseComment: (() => void) | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "save_draft_comment") {
+      const a = args as { id: number; text: string };
+      return new Promise((resolve) => {
+        releaseComment = () => resolve(backend.saveComment(a.id, a.text));
+      });
+    }
+    return undefined;
+  });
+
+  renderWatchHarness([R, A, B, C], [{ path: "C:/d/n.json", stamp: "s0", snapshot: [R, A, B, C] }]);
+
+  // The note fills R's card, and its file patch is sent but held back.
+  expect(await screen.findByText("Note for R")).toBeInTheDocument();
+  await waitFor(() => expect(releaseComment).not.toBeNull());
+
+  // Remove A while the note's patch is still in flight.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  await new Promise((r) => setTimeout(r, 20));
+  act(() => releaseComment!());
+
+  await waitFor(() =>
+    expect(backend.file.map((c) => [c.steps[0].action, c.comment ?? ""])).toEqual([
+      ["Open R.", "Note for R"],
+      ["Open B.", ""],
+      ["Open C.", ""],
+    ]),
+  );
+
+  // Edit B - queue index 1 now that A is gone.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "B, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  // B's own entry takes the edit and C survives - not [R, B, B'].
+  await waitFor(() =>
+    expect(backend.file.map(stepText)).toEqual([
+      ["Open R.", ""],
+      ["Open B.", "B, edited."],
+      ["Open C.", ""],
+    ]),
+  );
+});
+
+// ---- The remembered
+// ---- snapshot (`draftWriteQueue.ts`) must serve ONLY the writes queued
+// ---- back to back on a file - never a write that comes along later, after
+// ---- something else has moved the file on. Kept past that, an outside
+// ---- sync (an assistant's own edit, a review-page comment, a spec or
+// ---- run-order save) would leave every write after it pairing against an
+// ---- older copy of the file: an edit of the newly-synced row would be
+// ---- silently dropped, and an upload's new id never stamped into the file
+// ---- it actually lives in - a future duplicate. --------------------------
+
+/// Write X, then an outside sync adds N (to the file, the watch AND the
+/// queue - the way a real file-watcher sync does), then edit N. The edit
+/// must land in the file, not be silently skipped because a stale
+/// remembered snapshot from the FIRST write still says N is unowned.
+test("an edit of a row an outside sync just added is not silently skipped", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+  mockDraftBackend(backend);
+
+  renderWatchHarness([X], [{ path: "C:/d/x7.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X, and let the write-back fully finish - the chain drains, and a
+  // remembered snapshot that outlived it would (wrongly) still be sitting
+  // there for every write after this one.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open X."]));
+
+  // An outside sync lands: an assistant added N. This moves the file, the
+  // watch's snapshot AND stamp, and the queue - entirely outside this
+  // module's write-back chain, exactly like `ImportFile.tsx`'s own
+  // `syncFromFile` flow.
+  const editedX = backend.file[0];
+  const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+  backend.file.push(N);
+  act(() => {
+    sync!([editedX, N], [{ path: "C:/d/x7.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+  });
+
+  // Edit N.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "N, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() =>
+    expect(backend.file.map((c) => c.steps[0].expected)).toEqual(["X, edited.", "N, edited."]),
+  );
+});
+
+/// Same setup, but the second action is an upload instead of an edit: N's
+/// new work item id must be written back into the file it actually lives
+/// in, or re-importing that file creates N a second time in Azure DevOps.
+test("an upload of a row an outside sync just added still gets its new id stamped into the file", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      return a.queue.map((tc, index) => ({
+        index,
+        title: tc.title,
+        action: "created",
+        id: tc.title === "N" ? 901 : 900,
+        error: null,
+      }));
+    }
+    return undefined;
+  });
+
+  renderWatchHarness([X], [{ path: "C:/d/x8.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X, and let the write-back fully finish - the chain drains.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open X."]));
+
+  // An outside sync adds N - to the file, the watch AND the queue.
+  const editedX = backend.file[0];
+  const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+  backend.file.push(N);
+  act(() => {
+    sync!([editedX, N], [{ path: "C:/d/x8.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+  });
+
+  // Upload both.
+  fireEvent.click(await screen.findByRole("button", { name: /Review 2 test cases/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 2/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+
+  await waitFor(() => expect(backend.file.find((c) => c.title === "N")?.update_id).toBe(901));
+});
+
+// ---- Storage is a fallback for the post-upload id stamp, never its only
+// ---- source: `saveWatches` swallows a failed write by design, so a stamp
+// ---- that paired rows against storage alone found no owning file (or a
+// ---- stale one) and silently skipped the new ids - while the orphan check,
+// ---- reading the live watches, saw every row owned and warned about
+// ---- nothing. Re-importing the file then created the cases again. --------
+
+const mockUploadBackend = (backend: ReturnType<typeof fakeDraftBackend>) =>
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      return a.queue.map((tc, index) => ({
+        index,
+        title: tc.title,
+        action: "created",
+        id: tc.title === "N" ? 901 : 900,
+        error: null,
+      }));
+    }
+    return undefined;
+  });
+
+const uploadAll = async (count: number) => {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`Review ${count} test case`) }));
+  const go = await screen.findByRole("button", { name: new RegExp(`Yes — create ${count}`) });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+};
+
+/// Storage fills up after an earlier write succeeded: it still holds the
+/// watch as it was BEFORE an outside sync added N. The live watches know
+/// better, and N's new id must land in the file.
+test("an upload still stamps new ids into the file when storage writes start failing", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+  mockUploadBackend(backend);
+
+  renderWatchHarness([X], [{ path: "C:/d/x9.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X: its write-back lands, and storage records the watch at [X'].
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].expected)).toEqual(["X, edited."]));
+
+  // From here on every storage write hits the quota.
+  const quota = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+  });
+  try {
+    // An outside sync adds N. It reaches the live watches, not storage.
+    const editedX = backend.file[0];
+    const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+    backend.file.push(N);
+    act(() => {
+      sync!([editedX, N], [{ path: "C:/d/x9.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+    });
+
+    await uploadAll(2);
+
+    await waitFor(() => expect(backend.file.find((c) => c.title === "N")?.update_id).toBe(901));
+    expect(backend.file.find((c) => c.title === "X")?.update_id).toBe(900);
+  } finally {
+    quota.mockRestore();
+  }
+});
+
+/// Storage is not there at all (disabled, or a locked-down profile): every
+/// read and write throws. The live watches are the only record of the
+/// file, and the upload's new id must still reach it.
+test("an upload still stamps new ids into the file when storage is unavailable", async () => {
+  const fail = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
+  const spies = [
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(fail),
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(fail),
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(fail),
+  ];
+  try {
+    const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+    const backend = fakeDraftBackend([X]);
+    mockUploadBackend(backend);
+
+    renderWatchHarness([X], [{ path: "C:/d/x10.json", stamp: "s0", snapshot: [X] }]);
+
+    await uploadAll(1);
+
+    await waitFor(() => expect(backend.file[0].update_id).toBe(900));
+  } finally {
+    for (const s of spies) s.mockRestore();
+  }
 });

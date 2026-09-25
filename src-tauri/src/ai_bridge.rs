@@ -118,10 +118,9 @@ pub fn bridge_may_write(path: &str, working_dir: Option<&str>, watched: &[String
     let Some(root) = working_dir.map(str::trim).filter(|s| !s.is_empty()) else {
         return false;
     };
-    match std::fs::canonicalize(std::path::Path::new(root).join(".test-cases")) {
-        Ok(dir) => file.starts_with(&dir),
-        Err(_) => false,
-    }
+    // The one containment rule (workspace::is_inside), the same one the
+    // intake and the merge route apply to their output paths.
+    crate::workspace::is_inside(&crate::workspace::cases_dir(std::path::Path::new(root)), &file)
 }
 
 /// The refusal for an in-place write outside what the app owns.

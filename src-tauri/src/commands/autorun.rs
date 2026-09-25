@@ -118,10 +118,16 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
 /// Kill the process and drop its throwaway profile. Shared with
 /// `autorun_replay`, whose `RealBrowsers` closes one of these after every
 /// case (and on the way out of a failed open) so a background browser can
-/// never outlive the run that started it.
+/// never outlive the run that started it. It waits for the process to be
+/// gone first: a browser still shutting down holds files in its profile,
+/// and removing the folder under it fails.
 pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
     let _ = browser.child.kill();
-    let _ = std::fs::remove_dir_all(&browser.profile_dir);
+    let _ = browser.child.wait();
+    if let Err(e) = std::fs::remove_dir_all(&browser.profile_dir) {
+        let name = browser.profile_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        crate::applog::info(format!("auto-run: could not remove browser profile {name}: {e}"));
+    }
 }
 
 fn close_session(s: Session) {
@@ -136,6 +142,28 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
         crate::applog::info("Auto-run browser closed");
     }
     Ok(())
+}
+
+/// Auto Run's browsers go with the app. A recording - or a Start, a check or
+/// a Try still going - is ended the way Cancel ends it, which closes the
+/// recording browser; then the supervised browser is closed. Each takes its
+/// throwaway profile with it (`close_browser`). Called from the app's exit
+/// hook in lib.rs and from an update restart, both of which bound it.
+///
+/// A Try or a check after Stop only sees the cancel at its next 250 ms poll
+/// (`CANCEL_POLL`), and its claim is dropped only once its own browser is
+/// already closed - so waiting here for the recorder to be let go is what
+/// makes "the browser is gone" true for the caller, not just "a cancel was
+/// asked for".
+pub async fn close_autorun_browsers() {
+    let _ = crate::commands::autorun_record::auto_run_record_cancel().await;
+    while crate::commands::autorun_record::recording_is_going() {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    if let Some(s) = SESSION.lock().await.take() {
+        close_session(s);
+        crate::applog::info("Auto-run browser closed as the app exits");
+    }
 }
 
 /// Run one step's actions in order and report every outcome. Actions after

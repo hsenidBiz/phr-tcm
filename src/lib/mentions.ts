@@ -40,9 +40,11 @@ const enc = encodeURIComponent;
  * account's own first-run window (or, in-memory-only, admit a month of the
  * previous account's mentions). */
 export function forgetMentionBaselines(): void {
+  // From the key helper itself, so a rename cannot slip past the wipe.
+  const prefix = baselineKey("");
   try {
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("tcm-v2-mentions-baseline:")) localStorage.removeItem(k);
+      if (k.startsWith(prefix)) localStorage.removeItem(k);
     }
   } catch {
     // storage unavailable - nothing was stored to leak

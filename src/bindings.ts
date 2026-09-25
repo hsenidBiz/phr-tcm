@@ -137,6 +137,11 @@ export const commands = {
 	/**
 	 *  Download the pending update and restart into it, streaming
 	 *  `UpdateProgress` so the banner can show how much is left.
+	 * 
+	 *  Velopack's `apply_updates_and_restart` ends in `std::process::exit`,
+	 *  which skips the tao event loop entirely - `close_autorun_on_exit`
+	 *  (lib.rs) never runs. Auto Run's browsers are closed here instead,
+	 *  before the restart, under the same bound as the exit hook.
 	 */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	/**
@@ -208,6 +213,13 @@ export const commands = {
 	 */
 	updateWorkItem: (organization: string, project: string, id: number, patches: FieldPatch[]) => typedError<null, AdoError>(__TAURI_INVOKE("update_work_item", { organization, project, id, patches })),
 	activityValues: (organization: string, project: string, wiType: string) => typedError<string[], AdoError>(__TAURI_INVOKE("activity_values", { organization, project, wiType })),
+	/**
+	 *  The states a work item type has on this project's process. For an item
+	 *  the board did not load as a card - a swimlane's parent, or one a
+	 *  notification opened - whose drawer would otherwise offer no state to
+	 *  pick. Read only.
+	 */
+	workItemTypeStates: (organization: string, project: string, workItemType: string) => typedError<StateInfo[], AdoError>(__TAURI_INVOKE("work_item_type_states", { organization, project, workItemType })),
 	workItemComments: (organization: string, project: string, id: number) => typedError<WorkComment[], AdoError>(__TAURI_INVOKE("work_item_comments", { organization, project, id })),
 	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
 	updateComment: (organization: string, project: string, id: number, commentId: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("update_comment", { organization, project, id, commentId, text })),
@@ -512,15 +524,13 @@ export const commands = {
 	 *  Write a queue edit back into the draft file its cases came from, so the
 	 *  file says what the queue says. `edits` holds one entry per queue row the
 	 *  file owns, IN QUEUE ORDER: the row before the edit (how the file finds
-	 *  its own copy, since a rename changes the title) and after it (`None` when
-	 *  the edit removed it). Order matters: the Nth same-titled row claims the
-	 *  Nth same-titled entry. The file is patched (`apply_draft_edits`): cases
-	 *  it holds that the queue never showed, keys the app does not model, and
-	 *  the author's spellings all survive. Returns the file's new fingerprint so
-	 *  the caller can move its watch snapshot forward - the watcher stays silent
-	 *  about our own write, so nothing else would.
+	 *  its own copy, since a rename changes the title), after it (`None` when
+	 *  the edit removed it), and which same-titled entry it is
+	 *  (`DraftEdit.occurrence`). The file is patched (`apply_draft_edits`):
+	 *  cases it holds that the queue never showed, keys the app does not model,
+	 *  and the author's spellings all survive.
 	 */
-	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
+	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<DraftSaveResult_Serialize, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
 	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
@@ -1221,34 +1231,45 @@ export type DraftCommentSaved = {
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit = DraftEdit_Serialize | DraftEdit_Deserialize;
 
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit_Deserialize = {
 	before: TestCase_Deserialize,
 	after: TestCase_Deserialize | null,
+	occurrence?: number | null,
 };
 
 /**
  *  One queue row's part in a draft write-back (`save_draft_cases`): the row
  *  as it was BEFORE the edit (how the file finds its own copy - a rename
- *  changes the title) and what it is now, or `None` when the edit removed
- *  it. A write-back sends one per owned row, in queue order, so the Nth
- *  same-titled row claims the Nth same-titled entry in the file.
+ *  changes the title), what it is now (`None` when the edit removed it), and
+ *  which of the file's id-less entries with that title the app paired the
+ *  row with (`occurrence`, 1 = the first in the file). The app pairs exact
+ *  rows first (fileSync.ts), so after a re-sort the Nth row with a title is
+ *  not always the Nth entry. Without `occurrence` a row claims the first
+ *  unclaimed same-titled entry, in queue order.
  */
 export type DraftEdit_Serialize = {
 	before: TestCase_Serialize,
 	after: TestCase_Serialize | null,
+	occurrence?: number | null,
 };
 
 /**
@@ -1269,6 +1290,45 @@ export type DraftGeneralCommentSaved = {
 	path: string,
 	stamp: string,
 	text: string,
+};
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult = DraftSaveResult_Serialize | DraftSaveResult_Deserialize;
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult_Deserialize = {
+	stamp: string,
+	cases: TestCase_Deserialize[],
+};
+
+/**
+ *  What a write-back actually did: the file's new fingerprint, and a fresh
+ *  parse of the text just written, in FILE order - EVERY case now there,
+ *  including ones no queue row owns (an assistant's addition). This is
+ *  what the caller must store as its watch snapshot. A queue-order slice of
+ *  only the rows it sent stops matching the file the moment a re-sort makes
+ *  queue order and file order disagree, and the NEXT write then counts a
+ *  same-titled twin's position wrong.
+ */
+export type DraftSaveResult_Serialize = {
+	stamp: string,
+	cases: TestCase_Serialize[],
 };
 
 export type EnsuredSuite = {
@@ -1511,6 +1571,11 @@ export type ModuleRecordResult = {
 export type ModuleTryResult = {
 	ok: boolean,
 	detail: string,
+	/**
+	 *  The Try was cancelled - by this dialog or any other - so it says
+	 *  nothing about the path. The dialog shows it as stopped, not failed.
+	 */
+	cancelled: boolean,
 };
 
 /**
@@ -1755,11 +1820,18 @@ export type Project = {
 
 /**
  *  What the screen knows about a case that the run file does not: the
- *  case's real Azure DevOps step ids, in document order.
+ *  case's real Azure DevOps step ids, in document order, and which of its
+ *  rows are Shared Steps references.
  */
 export type PublishCase = {
 	case_id: number,
 	step_ids: string[],
+	/**
+	 *  The case's Shared Steps rows, by position (1-based). A Shared Steps
+	 *  row's step id is "", the same as a step with no id, so the ids alone
+	 *  cannot tell them apart. Absent: no such rows are known.
+	 */
+	shared_steps?: number[],
 };
 
 export type PublishReport = {

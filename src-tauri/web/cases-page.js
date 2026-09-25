@@ -352,16 +352,29 @@
       wireMarks();
       if (window.__tcmWireNotes) window.__tcmWireNotes();
       if (window.__tcmWireSpecs) window.__tcmWireSpecs();
+      // A save that did not succeed - timed out, the app was closed, or it
+      // was refused - must survive this: the fresh copy just adopted carries
+      // the file's OLDER text and no status at all, which would otherwise
+      // silently overwrite what the reviewer typed and erase what they were
+      // told about it.
+      if (window.tcmNotes && window.tcmNotes.restoreUnsaved) window.tcmNotes.restoreUnsaved(document);
       window.scrollTo(0, y);
       return true;
     }
 
-    setInterval(function () {
+    // How long until the next ask. A closed app answers nothing, and every
+    // refused ask is an error line in the browser's console - so each
+    // failure doubles the wait, up to a minute, and the first answer brings
+    // it back to 4 s.
+    var POLL_MS = 4000, POLL_MAX_MS = 60000, wait = POLL_MS;
+    function schedule() { setTimeout(poll, wait); }
+    function poll() {
       var s = staleBanner();
-      if (document.hidden || (s && s.classList.contains('show'))) { return; }
+      if (document.hidden || (s && s.classList.contains('show'))) { schedule(); return; }
       fetch(base + '/version?' + qs)
         .then(function (r) { return r.json(); })
         .then(function (v) {
+          wait = POLL_MS;
           // null means the app did not recognise this page; that is not
           // staleness and must not be reported as it.
           if (typeof v.revision !== 'number' || v.revision === rev) { return; }
@@ -377,7 +390,10 @@
           if (ae && ae.tagName === 'TEXTAREA') { return; }
           if (window.tcmNotes && window.tcmNotes.busy() > 0) { return; }
           var target = v.revision;
-          fetch(base + '/report?' + qs)
+          // Returned into the chain: without it, the next poll was armed
+          // while a slow /report was still in flight, and could start a
+          // second fetch and swap for the very same revision.
+          return fetch(base + '/report?' + qs)
             .then(function (r) {
               if (!r.ok) { throw new Error('no report'); }
               return r.text();
@@ -387,7 +403,9 @@
             })
             .catch(banner);
         })
-        .catch(function () { /* app closed, or no listener - stay quiet */ });
-    }, 4000);
+        .catch(function () { wait = Math.min(wait * 2, POLL_MAX_MS); })
+        .then(schedule);
+    }
+    schedule();
   }
 })();

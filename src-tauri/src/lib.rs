@@ -133,6 +133,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::work_item_detail,
             board::update_work_item,
             board::activity_values,
+            board::work_item_type_states,
             board::work_item_comments,
             board::add_comment,
             board::update_comment,
@@ -281,6 +282,17 @@ fn ms_since_launch() -> u128 {
     LAUNCHED.get().map_or(0, |t| t.elapsed().as_millis())
 }
 
+/// Auto Run's browsers go with the app (`close_autorun_browsers`). Bounded,
+/// so a browser that will not die cannot hold the app's exit.
+fn close_autorun_on_exit() {
+    tauri::async_runtime::block_on(async {
+        let closing = commands::autorun::close_autorun_browsers();
+        if tokio::time::timeout(std::time::Duration::from_secs(3), closing).await.is_err() {
+            applog::warn("Auto Run's browsers were still closing when the app exited");
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     LAUNCHED.get_or_init(std::time::Instant::now);
@@ -380,6 +392,11 @@ pub fn run() {
             }));
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                close_autorun_on_exit();
+            }
+        });
 }

@@ -48,11 +48,18 @@ export function Modal({
   onClose,
   className,
   children,
+  labelledBy,
+  label,
 }: {
   onClose: () => void;
   /** Panel classes (width, max-height, padding, layout). */
   className?: string;
   children: ReactNode;
+  /** The id of the element that names this dialog - usually its heading.
+   * A dialog with no name is announced as just "dialog". */
+  labelledBy?: string;
+  /** The dialog's name, when nothing on it says it. */
+  label?: string;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
@@ -110,6 +117,8 @@ export function Modal({
           ref={panel}
           role="dialog"
           aria-modal="true"
+          aria-labelledby={labelledBy}
+          aria-label={labelledBy ? undefined : label}
           tabIndex={-1}
           className={cn(
             // Scales up from centre as it opens (see "Motion" in index.css).

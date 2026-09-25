@@ -192,7 +192,14 @@ pub struct ModuleRecordResult {
 pub struct ModuleTryResult {
     pub ok: bool,
     pub detail: String,
+    /// The Try was cancelled - by this dialog or any other - so it says
+    /// nothing about the path. The dialog shows it as stopped, not failed.
+    pub cancelled: bool,
 }
+
+/// Said by a Try that was cancelled. A Try only checks a saved path, so
+/// nothing was saved or lost - unlike a recording's `recorder::CANCELLED`.
+pub const TRY_CANCELLED: &str = "the check was cancelled - the saved path was not changed";
 
 fn now_iso() -> String {
     crate::commands::queue::iso_utc((crate::autorun::sessions::now_ms() / 1000) as i64)
@@ -275,8 +282,12 @@ const CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 /// it stands, and with it anything it borrowed a browser through - every
 /// step of a check is bounded, but together they can take minutes, and the
 /// person asked to stop now. The Cancel is used up, so it cannot also end
-/// the next recording.
-pub async fn unless_cancelled<T>(work: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+/// the next recording. `cancelled` is what a cancel says: a recording's
+/// check and a Try say different things.
+pub async fn unless_cancelled<T>(
+    work: impl std::future::Future<Output = Result<T, String>>,
+    cancelled: &'static str,
+) -> Result<T, String> {
     let cancel_asked = async {
         loop {
             if CANCEL_PENDING.swap(false, Ordering::SeqCst) {
@@ -289,7 +300,7 @@ pub async fn unless_cancelled<T>(work: impl std::future::Future<Output = Result<
         out = work => out,
         () = cancel_asked => {
             crate::applog::info("Auto-run module path check cancelled");
-            Err(recorder::CANCELLED.to_string())
+            Err(cancelled.to_string())
         }
     }
 }
@@ -305,17 +316,14 @@ async fn check_in_fresh_browser(
     account: &str,
     which: Browser,
     path: &ModulePath,
+    cancelled: &'static str,
 ) -> Result<String, String> {
     let (recipe, who) = signin::prepare(root, organization, project, account)?;
     let (mut cdp, browser) = open_browser(which, false).await?;
-    let out = unless_cancelled(nav::check_path(
-        &mut cdp,
-        root,
-        &recipe,
-        &who,
-        path,
-        &super::autorun_replay::replay_timing(false),
-    ))
+    let out = unless_cancelled(
+        nav::check_path(&mut cdp, root, &recipe, &who, path, &super::autorun_replay::replay_timing(false)),
+        cancelled,
+    )
     .await;
     drop(cdp);
     // `Owned`: the check's browser is killed here whichever way it ended.
@@ -394,7 +402,7 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
         Err(failure) => return Ok(ModuleRecordResult { saved: false, module, failure }),
     };
     let root = super::autorun::root(&app)?;
-    match check_in_fresh_browser(&root, &organization, &project, &account, which, &path).await {
+    match check_in_fresh_browser(&root, &organization, &project, &account, which, &path, recorder::CANCELLED).await {
         Ok(_) => {
             let clicks = path.clicks.len();
             nav::put_path(&root, &organization, &project, path)?;
@@ -456,10 +464,9 @@ pub async fn auto_run_try_module_path(
     let root = super::autorun::root(&app)?;
     let nav_file = nav::load_nav(&root, &organization, &project)?;
     let path = nav::find_path(&nav_file, &module).cloned().ok_or_else(|| nav::no_path(&module))?;
-    Ok(
-        match check_in_fresh_browser(&root, &organization, &project, &account, Browser::from_name(&browser_name), &path).await {
-            Ok(arrived) => ModuleTryResult { ok: true, detail: format!("reached {arrived}") },
-            Err(detail) => ModuleTryResult { ok: false, detail },
-        },
-    )
+    let which = Browser::from_name(&browser_name);
+    Ok(match check_in_fresh_browser(&root, &organization, &project, &account, which, &path, TRY_CANCELLED).await {
+        Ok(arrived) => ModuleTryResult { ok: true, cancelled: false, detail: format!("reached {arrived}") },
+        Err(detail) => ModuleTryResult { ok: false, cancelled: detail == TRY_CANCELLED, detail },
+    })
 }

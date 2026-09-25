@@ -123,6 +123,11 @@ struct Node {
 struct Doc {
     /// Byte range of the root's opening tag.
     root_open: (usize, usize),
+    /// Whether the root element is `<steps>`. Only then is it edited in
+    /// place: the writer closes the document with `</steps>`.
+    root_is_steps: bool,
+    /// Where the root's closing tag starts; `None` for a self-closing root.
+    root_close: Option<usize>,
     /// The root's `last` attribute (0 when absent or unreadable).
     last: i32,
     /// The highest step/compref id anywhere, nested ones included - they
@@ -162,6 +167,8 @@ fn tokenize(xml: &str) -> Option<Doc> {
     reader.config_mut().trim_text(false);
     let mut depth = 0usize;
     let mut root_open = None;
+    let mut root_is_steps = false;
+    let mut root_close = None;
     let mut last = 0;
     let mut max_id = 0;
     let mut nodes = vec![];
@@ -177,6 +184,7 @@ fn tokenize(xml: &str) -> Option<Doc> {
                 note_id(&e, &mut max_id);
                 if depth == 1 {
                     root_open = Some((before, after));
+                    root_is_steps = e.name().as_ref() == b"steps";
                     last = attr(&e, b"last").trim().parse().unwrap_or(0);
                 } else if depth == 2 {
                     open = node_kind(&e).map(|kind| node_at(kind, &e, before, after));
@@ -186,6 +194,7 @@ fn tokenize(xml: &str) -> Option<Doc> {
                 note_id(&e, &mut max_id);
                 if depth == 0 {
                     root_open = Some((before, after));
+                    root_is_steps = e.name().as_ref() == b"steps";
                 } else if depth == 1 {
                     if let Some(kind) = node_kind(&e) {
                         nodes.push(node_at(kind, &e, before, after));
@@ -193,6 +202,9 @@ fn tokenize(xml: &str) -> Option<Doc> {
                 }
             }
             Event::End(_) => {
+                if depth == 1 {
+                    root_close = Some(before);
+                }
                 if depth == 2 {
                     if let Some(mut n) = open.take() {
                         n.end = after;
@@ -207,7 +219,7 @@ fn tokenize(xml: &str) -> Option<Doc> {
     if depth != 0 {
         return None;
     }
-    Some(Doc { root_open: root_open?, last, max_id, nodes })
+    Some(Doc { root_open: root_open?, root_is_steps, root_close, last, max_id, nodes })
 }
 
 /// The `<step>` and `<compref>` children of the root, in document order.
@@ -255,6 +267,10 @@ pub fn merge_steps_xml(original: &str, steps: &[Step]) -> Option<String> {
 /// back to a build. A fresh compref is never written for reference 0.
 fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
     let doc = tokenize(original)?;
+    // Only a `<steps>` document is edited in place. Anything else would be
+    // closed with `</steps>` below and stop being XML at all; the caller
+    // builds it from the steps instead.
+    let close = doc.root_close.filter(|_| doc.root_is_steps)?;
     let old = parse_steps_xml(original);
     let lines_up = old.len() == doc.nodes.len()
         && old
@@ -371,7 +387,9 @@ fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
     }
     let (root_start, root_end) = doc.root_open;
     let root = with_attr(&original[root_start..root_end], "last", &next.to_string());
-    Some(format!("{root}{body}</steps>"))
+    // What sits outside the root - an XML prolog, a comment - is the
+    // original's and stays where it was, before and after.
+    Some(format!("{}{root}{body}{}", &original[..root_start], &original[close..]))
 }
 
 /// `open` (an opening tag, `<x ...>` or `<x .../>`) with attribute `name`
