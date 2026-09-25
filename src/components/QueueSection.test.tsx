@@ -2471,3 +2471,111 @@ test("an upload of a row an outside sync just added still gets its new id stampe
 
   await waitFor(() => expect(backend.file.find((c) => c.title === "N")?.update_id).toBe(901));
 });
+
+// ---- Storage is a fallback for the post-upload id stamp, never its only
+// ---- source: `saveWatches` swallows a failed write by design, so a stamp
+// ---- that paired rows against storage alone found no owning file (or a
+// ---- stale one) and silently skipped the new ids - while the orphan check,
+// ---- reading the live watches, saw every row owned and warned about
+// ---- nothing. Re-importing the file then created the cases again. --------
+
+const mockUploadBackend = (backend: ReturnType<typeof fakeDraftBackend>) =>
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") return backend.save((args as { edits: FakeEdit[] }).edits);
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      return a.queue.map((tc, index) => ({
+        index,
+        title: tc.title,
+        action: "created",
+        id: tc.title === "N" ? 901 : 900,
+        error: null,
+      }));
+    }
+    return undefined;
+  });
+
+const uploadAll = async (count: number) => {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`Review ${count} test case`) }));
+  const go = await screen.findByRole("button", { name: new RegExp(`Yes — create ${count}`) });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+};
+
+/// Storage fills up after an earlier write succeeded: it still holds the
+/// watch as it was BEFORE an outside sync added N. The live watches know
+/// better, and N's new id must land in the file.
+test("an upload still stamps new ids into the file when storage writes start failing", async () => {
+  const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+  const backend = fakeDraftBackend([X]);
+  let sync: ((queue: TestCase[], watches: WatchedFile[]) => void) | null = null;
+  mockUploadBackend(backend);
+
+  renderWatchHarness([X], [{ path: "C:/d/x9.json", stamp: "s0", snapshot: [X] }], {
+    exposeSync: (fn) => {
+      sync = fn;
+    },
+  });
+
+  // Edit X: its write-back lands, and storage records the watch at [X'].
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
+    target: { value: "X, edited." },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].expected)).toEqual(["X, edited."]));
+
+  // From here on every storage write hits the quota.
+  const quota = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+  });
+  try {
+    // An outside sync adds N. It reaches the live watches, not storage.
+    const editedX = backend.file[0];
+    const N = makeCase({ title: "N", steps: [{ action: "Open N.", expected: "" }] });
+    backend.file.push(N);
+    act(() => {
+      sync!([editedX, N], [{ path: "C:/d/x9.json", stamp: "outside-1", snapshot: [editedX, N] }]);
+    });
+
+    await uploadAll(2);
+
+    await waitFor(() => expect(backend.file.find((c) => c.title === "N")?.update_id).toBe(901));
+    expect(backend.file.find((c) => c.title === "X")?.update_id).toBe(900);
+  } finally {
+    quota.mockRestore();
+  }
+});
+
+/// Storage is not there at all (disabled, or a locked-down profile): every
+/// read and write throws. The live watches are the only record of the
+/// file, and the upload's new id must still reach it.
+test("an upload still stamps new ids into the file when storage is unavailable", async () => {
+  const fail = () => {
+    throw new DOMException("The operation is insecure.", "SecurityError");
+  };
+  const spies = [
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(fail),
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(fail),
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(fail),
+  ];
+  try {
+    const X = makeCase({ title: "X", steps: [{ action: "Open X.", expected: "" }] });
+    const backend = fakeDraftBackend([X]);
+    mockUploadBackend(backend);
+
+    renderWatchHarness([X], [{ path: "C:/d/x10.json", stamp: "s0", snapshot: [X] }]);
+
+    await uploadAll(1);
+
+    await waitFor(() => expect(backend.file[0].update_id).toBe(900));
+  } finally {
+    for (const s of spies) s.mockRestore();
+  }
+});

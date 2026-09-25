@@ -82,12 +82,18 @@ export function submitFinished(run: number): void {
  *
  * `patchWatch` is the mounted screen's own watch-list update, for the same
  * reason: the mount that STARTED a submit may be gone by the time it
- * finishes, and its callback would update a screen nobody is looking at. */
+ * finishes, and its callback would update a screen nobody is looking at.
+ *
+ * `watches` reads that screen's watch list as it is NOW. Storage is only a
+ * copy of it, and a copy that can silently fall behind: a failed storage
+ * write is swallowed by design, so a finish that paired rows against
+ * storage alone could miss the file a row lives in. */
 type QueueWriter = {
   org: string;
   pbiId: number;
   setQueue: (updater: (q: TestCase[]) => TestCase[]) => void;
   patchWatch?: (path: string, fields: Partial<WatchedFile>) => void;
+  watches?: () => WatchedFile[];
 };
 
 let writer: QueueWriter | null = null;

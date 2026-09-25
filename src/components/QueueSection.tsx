@@ -197,7 +197,8 @@ export default function QueueSection({
   const { prefs } = useFieldRefs(org, project);
   // Freshest known watches: kept in step with the prop on every render (so
   // an outside sync is seen), and ALSO updated the instant one of THIS
-  // component's own writes lands (`writeBackOwned`) - without waiting for
+  // component's own writes lands (`writeBackOwned`, and the post-upload id
+  // stamp through the registered `patchWatch`) - without waiting for
   // that write's result to travel all the way back through the parent's
   // state and down through props again first. A write chained right behind
   // another on the same file must see the first one's result the moment it
@@ -259,7 +260,11 @@ export default function QueueSection({
         org,
         pbiId,
         setQueue: (updater) => setQueue(updater),
-        patchWatch: (path, fields) => watchPatched.current?.(path, fields),
+        patchWatch: (path, fields) => {
+          watchesRef.current = patchWatch(watchesRef.current, path, fields);
+          watchPatched.current?.(path, fields);
+        },
+        watches: () => watchesRef.current,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
@@ -1045,8 +1050,19 @@ export default function QueueSection({
     // block survives because merge_cases_into_draft keeps every top-level
     // key it does not own.
     const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
+    // The watch list as it is at the moment of asking: the screen showing
+    // this queue, if one is mounted, and storage only when none is (or it
+    // watches nothing). Storage alone is not enough - a failed storage
+    // write is swallowed, so it can hold nothing, or a list from before an
+    // outside sync, and a row whose file it misses would silently go
+    // unstamped. The orphan check and every stamp write read THIS, so they
+    // always agree on which file owns a row.
+    const currentWatches = (): WatchedFile[] => {
+      const live = queueWriterFor(org, sentFor)?.watches?.() ?? [];
+      return live.length > 0 ? live : loadWatches(org, sentFor);
+    };
     void (async () => {
-      const known = watches.length > 0 ? watches : loadWatches(org, sentFor);
+      const known = currentWatches();
       // One pairing pass serves both the orphan check below and the stamp
       // write-back after it, instead of computing it twice.
       const owned = known.length > 0 ? fileOwners(prevQueue, known) : prevQueue.map(() => null);
@@ -1075,13 +1091,12 @@ export default function QueueSection({
         for (const path of new Set(owners.filter((p): p is string => !!p))) {
           try {
             await runOnFileChain(path, async () => {
-              // Storage, not the closed-over `known`: this callback can run
-              // well after it was captured, and reading storage fresh -
-              // the same thing `saveWatches` below writes to,
-              // synchronously - is what lets `freshWatches`' stamp check
-              // tell a write still queued behind another apart from one
-              // that is not.
-              const freshOwned = fileOwners(prevQueue, freshWatches(loadWatches(org, sentFor)));
+              // Read fresh, not the closed-over `known`: this callback can
+              // run well after it was captured. Both sources are patched
+              // synchronously below the moment a write lands, which is
+              // what lets `freshWatches`' stamp check tell a write still
+              // queued behind another apart from one that is not.
+              const freshOwned = fileOwners(prevQueue, freshWatches(currentWatches()));
               const files = stampFileSlices(
                 prevQueue,
                 freshOwned.map((o) => o.path),
