@@ -186,6 +186,19 @@ test("the backup description does not name Auto Run", async () => {
   expect(heading.closest("section")!.textContent).not.toMatch(/Auto Run/);
 });
 
+/// Database logins live in Windows Credential Manager, which the backup
+/// never reads - the description has to say so, or a person moving
+/// machines expects them to arrive.
+test("the backup description says database logins are not included", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const heading = await screen.findByRole("heading", { name: "Backup & transfer" });
+  const text = heading.closest("section")!.textContent ?? "";
+  expect(text).toMatch(/database logins stay on this computer/i);
+  expect(text).not.toMatch(/—/);
+});
+
 /// The folder opens from Rust. The frontend used to call the opener plugin
 /// itself, and the webview's `opener:default` permission does not include
 /// open_path - so the plugin refused and the button only ever showed the

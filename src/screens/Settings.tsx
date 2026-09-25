@@ -538,7 +538,8 @@ export default function Settings({ org, project }: { org: string; project: strin
           Moving to a new computer? Export your settings and local data -
           theme, default tags, drafts and cached lists - to a single file,
           then import it on the other machine. Your Microsoft sign-in is
-          never included; you simply sign in again there.
+          never included; you simply sign in again there. Database logins
+          stay on this computer and are not included either.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
