@@ -125,14 +125,14 @@ test("a queue that starts EMPTY still gets the floating button once it fills", a
   const floating = document.querySelector("[data-sticky-action]") as HTMLElement;
   expect(floating.className).toContain("opacity-0");
 
-  // Scrolled past the real row: the copy comes up, saying the same thing.
+  // Scrolled past the real row: the copy comes up, saying the same thing -
+  // but stays aria-hidden even shown, since it duplicates a control that
+  // is already in the page and never actually leaves the accessibility
+  // tree (the real row is only scrolled off screen).
   io.report(false);
   expect(floating.className).toContain("opacity-100");
   expect(floating).toHaveTextContent("Review 2 test cases");
-  // Shown, so it is reachable by name for assistive tech too - aria-hidden
-  // (and its own accessible name going along with it) only applies while
-  // it stands down.
-  expect(floating).not.toHaveAttribute("aria-hidden");
+  expect(floating).toHaveAttribute("aria-hidden");
 
   // And back down again when the real row returns.
   io.report(true);

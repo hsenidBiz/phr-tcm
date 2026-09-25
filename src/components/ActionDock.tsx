@@ -17,6 +17,14 @@
  * or differently-wired version of the same actions (Import File's floating
  * button arms a confirmation instead of submitting outright) while still
  * sharing one row of markup for the common case.
+ *
+ * The floating copy is ALWAYS `aria-hidden` - never just while visually
+ * hidden. It duplicates controls that are already in the page (the
+ * in-place row is only scrolled off screen, it never leaves the
+ * accessibility tree), so exposing it too would make a screen-reader user
+ * meet every action twice. `inert` still tracks visual hidden-ness, so the
+ * copy is also unclickable and untabbable while it is out of the way -
+ * sighted mouse users are the only audience for the visible state.
  */
 import { type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -28,6 +36,7 @@ export default function ActionDock({
   label,
   active,
   stack,
+  surface,
   className,
   rowProps,
   rowRef,
@@ -36,12 +45,20 @@ export default function ActionDock({
    * screen, again as a floating copy bottom-right. A function so the copy can
    * be rendered with tabIndex -1. */
   children: (floating: boolean) => ReactNode;
-  /** Accessible name of the floating region, e.g. "Order actions for Suite A". */
+  /** Identifies the floating copy for tooling and tests (an `aria-label` -
+   * the copy is always aria-hidden, so this never reaches a screen reader,
+   * but it still helps a sighted-magnifier user or a test tell docks
+   * apart), e.g. "Order actions for Suite A". */
   label: string;
   /** Show the floating copy only while this is true (e.g. a selection exists). */
   active?: boolean;
   /** Stack several docks on one screen: 0 = lowest. */
   stack?: number;
+  /** Wraps the floating copy in the surface pill
+   * (`rounded-full border border-border bg-surface p-2.5 shadow-2xl`) that
+   * Suite Management's and Run Tests' floating bars use. Import File's
+   * floating button has never had one and stays bare - omit it there. */
+  surface?: boolean;
   /** Extra classes for the in-place row. */
   className?: string;
   /** Forwarded to the in-place row (tour anchors like data-tour). */
@@ -71,15 +88,16 @@ export default function ActionDock({
       </div>
       {createPortal(
         <div
-          role="region"
-          aria-label={label}
           data-sticky-action
-          aria-hidden={hidden ? "true" : undefined}
-          // Matches aria-hidden: a hidden copy must not be reachable by Tab
-          // either, even though its buttons already carry tabIndex={-1}.
+          aria-label={label}
+          aria-hidden="true"
+          // Matches the visual state: a hidden copy must not be reachable
+          // by Tab or the pointer either, even though its buttons already
+          // carry tabIndex={-1}.
           inert={hidden ? true : undefined}
           className={cn(
             "fixed right-6 z-40 flex items-center gap-2 transition-all duration-200",
+            surface && "rounded-full border border-border bg-surface p-2.5 shadow-2xl",
             hidden
               ? "pointer-events-none translate-y-3 opacity-0"
               : "translate-y-0 opacity-100",

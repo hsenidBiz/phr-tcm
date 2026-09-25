@@ -203,6 +203,10 @@ export default function SuiteCases({
           rowRef={toolbarRef}
           stack={rank ?? 0}
           active={rank != null}
+          // Matches the pill this bar wore before ActionDock existed (and
+          // Run Tests' selection bar still does) - readable floating over a
+          // scrolling list of cases.
+          surface
         >
           {(floating) => (
             <>

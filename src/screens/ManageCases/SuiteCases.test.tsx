@@ -136,7 +136,17 @@ function stubScroll() {
   };
 }
 
-const floatingBar = () => screen.queryByRole("region", { name: /order actions for/i });
+/** The floating copy is always in the DOM once mounted (fix round 1,
+ * Important 2 - it is always `aria-hidden`, so `getByRole` can never find
+ * it), and only visually hidden the rest of the time. "Showing" means
+ * found by its `data-sticky-action` + `aria-label`, AND not carrying the
+ * hidden state's `opacity-0`. */
+const floatingBar = () => {
+  const el = [...document.querySelectorAll("[data-sticky-action]")].find(
+    (e) => e.getAttribute("aria-label") === "Order actions for Regression",
+  ) as HTMLElement | undefined;
+  return el && !el.className.includes("opacity-0") ? el : null;
+};
 
 async function list() {
   const l = await screen.findByRole("list", { name: "Test cases in Regression" });
@@ -237,9 +247,15 @@ test("an unsaved order does not float a second bar while the toolbar is on scree
 
     // Scroll past the toolbar: the bar takes over, naming its suite.
     scroll.toolbar(false);
-    const bar = await screen.findByRole("region", { name: "Order actions for Regression" });
-    expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
-    expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
+    const bar = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
+    // Its buttons are always aria-hidden (fix round 1, Important 2), so
+    // `hidden: true` reinstates them into the search - they are not
+    // themselves aria-hidden, only their ancestor is.
+    expect(within(bar).getByRole("button", { name: "Apply order", hidden: true })).toBeEnabled();
+    expect(within(bar).getByRole("button", { name: "Reset", hidden: true })).toBeEnabled();
 
     // Past the whole suite: the unsaved order keeps it up.
     scroll.list(l, false);
@@ -252,7 +268,8 @@ test("an unsaved order does not float a second bar while the toolbar is on scree
 
     // A clean suite scrolled right away has no bar at all.
     scroll.toolbar(false);
-    fireEvent.click(within(await screen.findByRole("region", { name: /order actions for/i })).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(floatingBar()).not.toBeNull());
+    fireEvent.click(within(floatingBar()!).getByRole("button", { name: "Reset", hidden: true }));
     await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
   } finally {
     scroll.restore();
@@ -529,10 +546,17 @@ test("the floating order bar is pinned to the app window, not the page", async (
     mount();
     await list();
     scroll.toolbar(false);
-    const bar = await screen.findByRole("region", { name: /order actions for/i });
+    const bar = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
     expect(bar.parentElement).toBe(document.body);
     expect(bar.className).toMatch(/\bfixed\b/);
     expect(bar.className).toMatch(/\bright-6\b/);
+    // Readable over a scrolling list of cases (fix round 1, Important 1) -
+    // the pill this bar wore before ActionDock existed.
+    expect(bar.className).toContain("rounded-full");
+    expect(bar.className).toContain("bg-surface");
   } finally {
     scroll.restore();
   }
@@ -552,10 +576,13 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
 
     // The toolbar scrolls off the top while the cases are still in view.
     scroll.toolbar(false);
-    const floating = await screen.findByRole("region", { name: "Order actions for Regression" });
-    expect(within(floating).getByRole("button", { name: "Apply order" })).toBeDisabled(); // nothing to save yet
-    expect(within(floating).getByRole("button", { name: "Reset" })).toBeDisabled();
-    expect(within(floating).getByRole("button", { name: "Apply order from files" })).toBeEnabled();
+    const floating = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
+    expect(within(floating).getByRole("button", { name: "Apply order", hidden: true })).toBeDisabled(); // nothing to save yet
+    expect(within(floating).getByRole("button", { name: "Reset", hidden: true })).toBeDisabled();
+    expect(within(floating).getByRole("button", { name: "Apply order from files", hidden: true })).toBeEnabled();
 
     // Scrolling back up to the toolbar sends it away again.
     scroll.toolbar(true);

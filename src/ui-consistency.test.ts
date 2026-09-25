@@ -132,17 +132,35 @@ describe("action placement", () => {
   // else that does `fixed` + `right-` by hand is either this pattern
   // reimplemented (drift risk: two floating-button behaviors instead of
   // one) or something that was never meant to float there.
+  //
+  // This is a per-line text tripwire, not real CSS analysis: a `cn()` call
+  // that splits `fixed` and `right-6` across two string arguments, or a
+  // computed `style={{ right: ... }}`, produces the exact same floating
+  // element and escapes it completely. It catches today's copy-pasted
+  // spelling of the pattern, not the pattern itself.
   test("no fixed + right- floating element outside ActionDock", () => {
-    const allow = new Set([
-      "components/ActionDock.tsx", // the one approved implementation
-      // Run Tests' selection bar (Run N in runner / Clear selection) is the
-      // same bottom-right floating-actions idea, predating ActionDock and
-      // out of scope for this pass (Task 4: Import File, Suite Management,
-      // Update Test Cases only). Left as a known follow-up.
-      "screens/RunPanel/index.tsx",
-    ]);
     const re = /\bfixed\b[^\n]*\bright-|\bright-\S*[^\n]*\bfixed\b/;
-    expect(violations(re, allow)).toEqual([]);
+    // Run Tests' selection bar (Run N in runner / Clear selection) is the
+    // same bottom-right floating-actions idea, predating ActionDock and out
+    // of scope for this pass (Task 4: Import File, Suite Management, Update
+    // Test Cases only). Allowed by this EXACT class string, not its whole
+    // file, so a genuinely new `fixed`+`right-` anywhere else in RunPanel -
+    // or a change to this one's classes - still fails.
+    const knownRunPanelClasses =
+      "fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl";
+
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      if (file === "components/ActionDock.tsx") continue; // the one approved implementation
+      text.split("\n").forEach((line, i) => {
+        if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) return;
+        const m = line.match(re);
+        if (!m) return;
+        if (file === "screens/RunPanel/index.tsx" && line.includes(knownRunPanelClasses)) return;
+        hits.push(`${file}:${i + 1}  ${m[0]}`);
+      });
+    }
+    expect(hits).toEqual([]);
   });
 });
 

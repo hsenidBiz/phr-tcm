@@ -285,7 +285,9 @@ export default function ExistingCases({
 
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
-          <ActionDock label="Selection actions">
+          {/* surface: readable floating over a scrolling list of cases,
+              matching Suite Management's bar and Run Tests' selection bar. */}
+          <ActionDock label="Selection actions" surface>
             {(floating) => (
               <>
                 <span className="font-medium text-accent">{selected.size} selected</span>

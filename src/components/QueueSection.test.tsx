@@ -1247,10 +1247,11 @@ test("a floating copy of the main button appears once the real one scrolls away"
     expect(el).not.toBeNull();
     return el as HTMLElement;
   });
-  // Same words as the real control. Shown, so it is reachable by name for
-  // assistive tech too - aria-hidden only applies while it stands down.
+  // Same words as the real control, and out of the reading order - it
+  // duplicates a control that is already in the page, so it stays
+  // aria-hidden even while shown.
   expect(floating).toHaveTextContent("Review 2 test cases");
-  expect(floating).not.toHaveAttribute("aria-hidden");
+  expect(floating).toHaveAttribute("aria-hidden");
 
   // It does exactly what the real button does: the same review, with the
   // PBI stage armed and the duplicate check already run.

@@ -1,13 +1,49 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import ExistingCases from "./ExistingCases";
 
+const realIntersectionObserver = globalThis.IntersectionObserver;
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  globalThis.IntersectionObserver = realIntersectionObserver;
 });
+
+/** jsdom's own IntersectionObserver stand-in is a no-op that never calls
+ * anything back, so proving ActionDock's floating copy actually shows once
+ * scrolled past needs a hand-driven one, same as QueueSection.floating.test.tsx
+ * and SuiteCases.test.tsx's stubScroll. */
+function stubObserver() {
+  const watched: { el: Element; cb: (e: { isIntersecting: boolean }[]) => void }[] = [];
+  globalThis.IntersectionObserver = class {
+    cb: (e: { isIntersecting: boolean }[]) => void;
+    constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+      this.cb = cb;
+    }
+    observe(el: Element) {
+      watched.push({ el, cb: this.cb });
+    }
+    unobserve(el: Element) {
+      const i = watched.findIndex((w) => w.el === el);
+      if (i >= 0) watched.splice(i, 1);
+    }
+    disconnect() {
+      for (let i = watched.length - 1; i >= 0; i--) if (watched[i].cb === this.cb) watched.splice(i, 1);
+    }
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  return {
+    report(isIntersecting: boolean) {
+      act(() => {
+        for (const w of [...watched]) w.cb([{ isIntersecting }]);
+      });
+    },
+  };
+}
 
 function renderCases() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -359,18 +395,42 @@ test("a selection puts its actions in a named dock, count included", async () =>
   });
   renderCases();
 
-  expect(screen.queryByRole("region", { name: "Selection actions" })).not.toBeInTheDocument();
+  expect(document.querySelector("[data-sticky-action]")).toBeNull();
 
   fireEvent.click(await screen.findByText("Valid login"));
-  // Not `getByRole(..., { name })`: an aria-hidden node's OWN accessible
-  // name computes as empty regardless of the `hidden` query option (that
-  // option only reinstates hidden elements into the search, it does not
-  // change name computation) - jsdom never fires the IntersectionObserver
-  // here, so the floating copy stays aria-hidden. The aria-label attribute
-  // itself, and its still-nameable children, are unaffected.
+  // ActionDock's floating copy is always in the DOM once mounted and
+  // always aria-hidden - never found by role/name - so it is located by
+  // its data-sticky-action marker and aria-label attribute instead, the
+  // way its consumers do.
   const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
   expect(dock).not.toBeNull();
   expect(dock.getAttribute("aria-label")).toBe("Selection actions");
+  expect(dock).toHaveAttribute("aria-hidden", "true");
+  expect(within(dock).getByText("1 selected")).toBeInTheDocument();
+  expect(within(dock).getByRole("button", { name: "Bulk edit", hidden: true })).toBeInTheDocument();
+});
+
+/// jsdom never fires a real IntersectionObserver, so the test above alone
+/// cannot tell whether the floating copy ever actually SHOWS - it always
+/// reads hidden by default. Driving the observer by hand proves it does.
+test("the selection dock floats, holding the count and its buttons, once scrolled past", async () => {
+  const io = stubObserver();
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
+  });
+  renderCases();
+
+  fireEvent.click(await screen.findByText("Valid login"));
+  const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
+  expect(dock).not.toBeNull();
+  // Assumed on screen until told otherwise, so the copy starts hidden.
+  expect(dock.className).toContain("opacity-0");
+
+  // Scrolled past the in-place bar: the floating copy comes up.
+  io.report(false);
+  expect(dock.className).not.toContain("opacity-0");
+  expect(dock.className).toContain("opacity-100");
   expect(within(dock).getByText("1 selected")).toBeInTheDocument();
   expect(within(dock).getByRole("button", { name: "Bulk edit", hidden: true })).toBeInTheDocument();
 });
