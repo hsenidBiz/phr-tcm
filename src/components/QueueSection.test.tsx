@@ -9,6 +9,7 @@ import type { TestCase } from "../bindings";
 import { patchWatch, type WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
 import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
+import { resetFileWriteQueueForTests } from "../lib/draftWriteQueue";
 import QueueSection from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
@@ -36,6 +37,11 @@ afterEach(() => {
   // with it.
   const p = submitPhaseSnapshot();
   if (p) submitFinished(p.run);
+  // Same reasoning: write-back serialisation lives at module scope (a
+  // write-back can outlive the component that started it), so one test's
+  // fake path must not leak its queued chain or last-known snapshot into
+  // the next test that happens to reuse it.
+  resetFileWriteQueueForTests();
 });
 
 function makeCase(overrides: Partial<TestCase> = {}): TestCase {
@@ -2028,31 +2034,78 @@ test("a double-click on Remove removes that one row, not the next one too", asyn
 
 type FakeEdit = { before: TestCase; after: TestCase | null; occurrence: number | null };
 
-function fakeDraftBackend(initial: TestCase[]) {
+/// Fix round 2 (review "The test double"): this fake now matches export.rs
+/// on the two gaps that mattered - occurrence counts id-less entries only,
+/// and an id claims its entry before any occurrence is even considered -
+/// so a test using an `update_id` row is no longer trusting a rule Rust
+/// doesn't actually have. Two smaller gaps are left, and don't need
+/// closing for what these tests check:
+/// - "unchanged" is decided with `JSON.stringify`, not Rust's `PartialEq`.
+///   Every case built by these tests is a plain object literal compared
+///   against another built the same way, so key order - the one thing
+///   `JSON.stringify` can get wrong that `PartialEq` wouldn't - never
+///   differs between the two sides of a comparison here.
+/// - `save` returns the queue's own `after` objects as `cases`, not a
+///   re-parse of written JSON text. The round-trip Rust actually does is
+///   covered separately, by a Rust test
+///   (`an_after_case_with_every_field_set_round_trips_through_a_write`).
+function fakeDraftBackend(initial: TestCase[], opts: { manualReplies?: boolean } = {}) {
   let file = [...initial];
   let n = 0;
   const sameTitle = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const pending: Array<() => void> = [];
+  const claimById = (claimed: boolean[], id: number) => file.findIndex((f, k) => !claimed[k] && f.update_id === id);
   return {
     get file() {
       return file;
     },
+    /** How many `save` calls are waiting on `releaseNext` - only moves
+     * when `manualReplies` is set. */
+    get pendingCount() {
+      return pending.length;
+    },
+    /** Lets the OLDEST still-waiting `save` call return, in the order it
+     * was made - the order a real single Rust process answers two
+     * overlapping IPC calls in. */
+    releaseNext() {
+      pending.shift()?.();
+    },
     save(edits: FakeEdit[]) {
       const claimed = file.map(() => false);
       const slot: (number | null)[] = edits.map(() => null);
-      // Named occurrence claims first, exactly like Rust's claim_named.
+      // By id first, exactly like Rust's `claim`/`claim_named`: an id is
+      // exact evidence and always outranks an occurrence guess.
       edits.forEach((e, i) => {
-        if (e.occurrence == null) return;
-        const matches = file.flatMap((f, k) => (sameTitle(f.title, e.before.title) ? [k] : []));
+        if (e.before.update_id == null) return;
+        const k = claimById(claimed, e.before.update_id);
+        if (k >= 0) {
+          claimed[k] = true;
+          slot[i] = k;
+        }
+      });
+      // Named occurrence next, counting only ID-LESS entries sharing the
+      // title - exactly Rust's claim_named (`update_id.is_none()`).
+      edits.forEach((e, i) => {
+        if (slot[i] != null || e.occurrence == null) return;
+        const matches = file.flatMap((f, k) =>
+          f.update_id == null && sameTitle(f.title, e.before.title) ? [k] : [],
+        );
         const k = matches[e.occurrence - 1];
         if (k != null && !claimed[k]) {
           claimed[k] = true;
           slot[i] = k;
         }
       });
-      // Then the plain first-unclaimed-by-title fallback.
+      // Then the plain first-unclaimed rule: by id if the row has one,
+      // else the first unclaimed id-less entry sharing its title.
       edits.forEach((e, i) => {
         if (slot[i] != null) return;
-        const k = file.findIndex((f, idx) => !claimed[idx] && sameTitle(f.title, e.before.title));
+        const k =
+          e.before.update_id != null
+            ? claimById(claimed, e.before.update_id)
+            : file.findIndex(
+                (f, idx) => !claimed[idx] && f.update_id == null && sameTitle(f.title, e.before.title),
+              );
         if (k >= 0) {
           claimed[k] = true;
           slot[i] = k;
@@ -2067,7 +2120,11 @@ function fakeDraftBackend(initial: TestCase[]) {
       });
       file = file.flatMap((f, k) => (fate[k] === undefined ? [f] : fate[k] ? [fate[k]!] : []));
       n += 1;
-      return { stamp: `s${n}`, cases: file };
+      const result = { stamp: `s${n}`, cases: file };
+      if (!opts.manualReplies) return result;
+      return new Promise((resolve) => {
+        pending.push(() => resolve(result));
+      });
     },
   };
 }
@@ -2210,4 +2267,50 @@ test("a file entry no row owns survives a write and does not shift later occurre
       ["Open C.", "C, edited."],
     ]),
   );
+});
+
+// ---- Fix round 2 (review: Minor #3 re-graded Important, a Task 5
+// ---- regression): no re-sort needed. Two write-backs to the SAME file -
+// ---- Remove, then the next row's Remove landing before the first write
+// ---- has replied - must not both build their occurrences from the
+// ---- snapshot the FIRST write has not replaced yet, or Rust deletes the
+// ---- wrong twin. Serialised per file (`runOnFileChain`), each write reads
+// ---- what the one before it on that path actually returned
+// ---- (`freshWatches`/`noteWritten`), not a snapshot captured before it. --
+
+/// The reviewer's exact replay: file, snapshot and queue all `[A,B,C]`,
+/// every title "X". Remove A, then remove C - now at queue index 1 - before
+/// A's write has replied. The file must end with B; so must the queue.
+test("two quick Removes on the same file are serialised, each built from the last write's own result", async () => {
+  const A = makeCase({ title: "X", steps: [{ action: "Open A.", expected: "" }] });
+  const B = makeCase({ title: "X", steps: [{ action: "Open B.", expected: "" }] });
+  const C = makeCase({ title: "X", steps: [{ action: "Open C.", expected: "" }] });
+  const backend = fakeDraftBackend([A, B, C], { manualReplies: true });
+  mockDraftBackend(backend);
+
+  renderWatchHarness([A, B, C], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
+
+  // Remove A. The queue re-renders to [B, C] right away; A's write is sent
+  // but its reply is held back.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[0]);
+  await waitFor(() => expect(backend.pendingCount).toBe(1));
+
+  // Remove C - now at queue index 1 - before A's write has replied.
+  // Ordinary rapid use: each row's own Remove button lands under the
+  // cursor as the row above it disappears.
+  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+
+  // Serialised: C's write has not been SENT yet - it is queued behind A's,
+  // which has not replied.
+  expect(backend.pendingCount).toBe(1);
+  backend.releaseNext();
+
+  // A's write lands; C's is now sent, built fresh against what A's write
+  // actually left in the file ([B, C]) - not the original [A, B, C].
+  await waitFor(() => expect(backend.pendingCount).toBe(1));
+  backend.releaseNext();
+
+  await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open B."]));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  expect(await screen.findByDisplayValue("Open B.")).toBeInTheDocument();
 });

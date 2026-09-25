@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::import_parser::{apply_draft_edits, merge_cases_into_draft, parse_json_text};
-use v2_lib::model::{DraftEdit, TestCase};
+use v2_lib::model::{CaseFinding, DraftEdit, TestCase};
 use v2_lib::steps_xml::Step;
 
 fn edit(before: TestCase, after: Option<TestCase>) -> DraftEdit {
@@ -475,6 +475,50 @@ fn a_second_write_counts_occurrences_against_the_first_writes_real_file_order() 
     assert_eq!(doc["test_cases"].as_array().unwrap().len(), 2, "C must not be dropped: {out}");
     assert_eq!(doc["test_cases"][0]["steps"][0]["expected"], "A, edited.", "{out}");
     assert_eq!(doc["test_cases"][1]["steps"][0]["action"], "Open C.", "{out}");
+}
+
+/// Fix round 2 (review New #3): the write-back's own round trip -
+/// `apply_draft_edits` then a fresh `parse_json_text` of what it just
+/// wrote - is what a caller relies on to recognise its own row afterwards
+/// (`claimRows`' exact-match pass, fileSync.ts). A field that does not
+/// survive this round trip identically would silently drop that row to the
+/// weaker title-only pairing, and occurrence tracking would go wrong again
+/// for a same-titled twin. This pins every modelled field at once, so a
+/// future field that breaks the round trip fails here first.
+#[test]
+fn an_after_case_with_every_field_set_round_trips_through_a_write() {
+    let original = TestCase {
+        title: "Every field".into(),
+        steps: vec![
+            Step { action: "Open.".into(), expected: "It opens.".into(), shared: None },
+            Step { action: String::new(), expected: String::new(), shared: Some(501) },
+        ],
+        tags: "smoke;regression".into(),
+        automation_status: "Planned".into(),
+        module_value: "Checkout".into(),
+        preconditions: "Signed in.".into(),
+        update_id: Some(777),
+        comment: "reviewer note".into(),
+        reviewer_notes: "from Spec.md 4.2".into(),
+        area: "Checkout / Pay / Card".into(),
+        spec_order: Some(3),
+        tester_order: Some(1),
+        findings: vec![CaseFinding {
+            kind: "spec".into(),
+            subject: "Spec.md#4.2".into(),
+            title: "Ambiguous rounding".into(),
+            detail: "Rounds half up; the spec doesn't say.".into(),
+        }],
+        source: Default::default(),
+    };
+    // No entry in the (empty) file matches `TestCase::default()`, so this
+    // is exactly the "brand new case" path: it lands in `unmatched`.
+    let out = apply_draft_edits("[]", &[edit(TestCase::default(), Some(original.clone()))]).unwrap();
+    let parsed = parse_json_text(&out).unwrap().cases;
+    assert_eq!(parsed.len(), 1, "{out}");
+    // `TestCase`'s `PartialEq` ignores `source` (provenance, not content),
+    // so this compares every field the app actually models.
+    assert_eq!(parsed[0], original, "{out}");
 }
 
 #[test]

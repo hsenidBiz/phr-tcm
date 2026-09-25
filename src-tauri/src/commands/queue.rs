@@ -473,7 +473,25 @@ pub fn save_draft_cases(
     let old = import_parser::read_json_text(std::path::Path::new(&path))?;
     let out = import_parser::apply_draft_edits(&old, &edits)?;
     let stamp = crate::filewatch::write_watched(&watch_state(&app), &path, &out)?;
-    let cases = import_parser::parse_json_text(&out).map(|p| p.cases).unwrap_or_default();
+    // The write already landed - `out` came from `apply_draft_edits`, which
+    // only ever produces valid JSON. If re-parsing it somehow fails anyway,
+    // an error (not an empty case list) is the only safe answer: an empty
+    // `cases` would silently become the caller's new watch snapshot, and
+    // every row in the file would look unowned from then on. An error
+    // instead leaves the caller's existing snapshot exactly as it was,
+    // same as any other failed write.
+    let cases = match import_parser::parse_json_text(&out) {
+        Ok(p) => p.cases,
+        Err(e) => {
+            crate::applog::error(format!(
+                "save_draft_cases: wrote {path} but could not re-parse it afterwards: {e}"
+            ));
+            return Err(format!(
+                "the file was written, but could not be read back afterwards ({e}). \
+                 Its case list here may be out of date - close and reopen it to check."
+            ));
+        }
+    };
     Ok(DraftSaveResult { stamp, cases })
 }
 

@@ -45,6 +45,7 @@ import {
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
+import { freshWatches, noteWritten, runOnFileChain } from "../lib/draftWriteQueue";
 import { cacheKeys, cacheRemove } from "../lib/cache";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
@@ -1057,37 +1058,48 @@ export default function QueueSection({
         );
       }
       if (known.length > 0) {
-        const files = stampFileSlices(
-          prevQueue,
-          owners,
-          sent,
-          outcomes,
-          owned.map((o) => o?.occurrence ?? null),
-        );
-        for (const [path, f] of files) {
-          if (!f.changed) continue;
-          const r = await commands.saveDraftCases(path, f.edits);
-          if (r.status === "error") {
-            toast.warning(
-              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
-                `Importing it again would create duplicates - fix the file before re-importing.`,
-              { duration: 20000 },
+        // Same rule as `writeBackOwned`: one write at a time per file, each
+        // one recomputing its own pairing against whatever the write ahead
+        // of it on that path actually returned - not against `known`,
+        // which this whole callback can be holding well after it was
+        // captured (a submit takes as long as the upload does).
+        for (const path of new Set(owners.filter((p): p is string => !!p))) {
+          await runOnFileChain(path, async () => {
+            const freshOwned = fileOwners(prevQueue, freshWatches(known));
+            const files = stampFileSlices(
+              prevQueue,
+              freshOwned.map((o) => o.path),
+              sent,
+              outcomes,
+              freshOwned.map((o) => o.occurrence),
             );
-            continue;
-          }
-          // Storage always: the mount that started this submit may be gone,
-          // and a setter on an unmounted screen never runs its persist step.
-          // Then the screen showing this queue NOW, if any - not this
-          // closure's own callback, which may belong to that gone mount.
-          //
-          // The snapshot is what Rust says is now IN THE FILE, in file
-          // order - not `f.slice` (the rows this write touched, in queue
-          // order). A queue-order slice stops matching the file the moment
-          // a re-sort makes the two disagree, and the next write then
-          // counts a same-titled twin's position wrong.
-          const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
-          saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
-          queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
+            const f = files.get(path);
+            if (!f || !f.changed) return;
+            const r = await commands.saveDraftCases(path, f.edits);
+            if (r.status === "error") {
+              toast.warning(
+                `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
+                  `Importing it again would create duplicates - fix the file before re-importing.`,
+                { duration: 20000 },
+              );
+              return;
+            }
+            // Storage always: the mount that started this submit may be
+            // gone, and a setter on an unmounted screen never runs its
+            // persist step. Then the screen showing this queue NOW, if
+            // any - not this closure's own callback, which may belong to
+            // that gone mount.
+            //
+            // The snapshot is what Rust says is now IN THE FILE, in file
+            // order - not a queue-order slice of the rows this write
+            // touched. Recorded here, before this task's own promise
+            // resolves, so a write queued behind it on the same path is
+            // built from what THIS write actually did.
+            noteWritten(path, r.data.cases);
+            const fields = { stamp: r.data.stamp, snapshot: r.data.cases };
+            saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
+            queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
+          });
         }
       }
       // And the same comment now shows on the case where it LIVES: the
@@ -1201,46 +1213,59 @@ export default function QueueSection({
    * keys and a rename is exactly the operation that breaks that match.
    * Only files owning a changed case are written; each write returns the
    * file's new fingerprint, and the watch snapshot moves forward with it
-   * so the watcher stays silent about our own write. */
+   * so the watcher stays silent about our own write.
+   *
+   * One touched file at a time, through `runOnFileChain`: two write-backs
+   * on the SAME file - a Remove followed by the next row's Remove landing
+   * before the first one's IPC round trip has returned - must not both
+   * build their `occurrence`s from the snapshot this render started with.
+   * Each file's own task recomputes ownership right before it runs, against
+   * `freshWatches` (this module's `watches` plus whatever the last write on
+   * that path actually returned), so the SECOND write is paired against
+   * what the FIRST one really did to the file, not against a guess made
+   * before the first one had a chance to run. */
   const writeBackOwned = async (
     prev: TestCase[],
     next: (TestCase | null)[],
     changed: Set<number>,
   ) => {
     if (watches.length === 0) return;
-    const owners = fileOwners(prev, watches);
-    // Per file: one edit per owned row IN QUEUE ORDER - the row BEFORE the
-    // edit (how the file finds its own copy - a rename changes the title),
-    // after it (null = removed), and which same-titled entry of the file
-    // the app paired it with, so Rust writes where the app thinks it does.
-    // The file keeps everything else it holds.
-    const files = new Map<string, { edits: DraftEdit[]; touched: boolean }>();
-    prev.forEach((before, i) => {
-      const { path: p, occurrence } = owners[i];
-      if (!p) return;
-      const f = files.get(p) ?? { edits: [], touched: false };
-      f.edits.push({ before, after: next[i], occurrence });
-      if (changed.has(i)) f.touched = true;
-      files.set(p, f);
-    });
-    for (const [path, f] of files) {
-      if (!f.touched) continue;
-      const r = await commands.saveDraftCases(path, f.edits);
-      if (r.status === "error") {
-        // The queue HAS changed - saying so beats pretending nothing did.
-        toast.warning(
-          `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
-            `The file still has the old values.`,
-          { duration: 15000 },
-        );
-      } else {
+    // Only used to find which files are touched - not for occurrences.
+    // Ownership itself (WHICH file a row belongs to) does not shift when
+    // an unrelated row elsewhere in the same file is removed, so today's
+    // `watches` is fine for that; each path's own task below recomputes
+    // the occurrences that actually matter, fresh, from whatever the
+    // chain ahead of it has by then returned.
+    const paths = new Set(fileOwners(prev, watches).flatMap((o) => (o.path ? [o.path] : [])));
+    for (const path of paths) {
+      await runOnFileChain(path, async () => {
+        const owners = fileOwners(prev, freshWatches(watches));
+        const edits: DraftEdit[] = [];
+        let touched = false;
+        prev.forEach((before, i) => {
+          const o = owners[i];
+          if (!o || o.path !== path) return;
+          edits.push({ before, after: next[i], occurrence: o.occurrence });
+          if (changed.has(i)) touched = true;
+        });
+        if (!touched) return;
+        const r = await commands.saveDraftCases(path, edits);
+        if (r.status === "error") {
+          // The queue HAS changed - saying so beats pretending nothing did.
+          toast.warning(
+            `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
+              `The file still has the old values.`,
+            { duration: 15000 },
+          );
+          return;
+        }
         // The snapshot is what Rust says is now IN THE FILE, in file
         // order - not a queue-order slice of the rows this write touched.
-        // That stops matching the file the moment a re-sort makes queue
-        // order and file order disagree, and the next write then counts a
-        // same-titled twin's position wrong.
+        // Recorded here, before this chained task's promise resolves, so
+        // the NEXT task queued for this path (if any) is built from it.
+        noteWritten(path, r.data.cases);
         onWatchPatched?.(path, { stamp: r.data.stamp, snapshot: r.data.cases });
-      }
+      });
     }
   };
 
