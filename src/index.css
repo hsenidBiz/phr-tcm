@@ -869,33 +869,166 @@ table {
   opacity: 1;
 }
 
-/* Hover life: each glyph does its own small thing - the eye blinks, the
-   update arrow spins, the import file rises. Once per hover entry, short
-   enough to finish before the click lands, and gone entirely for anyone
-   who asked the OS for less motion. transform-only, so nothing reflows. */
-@keyframes ico-blink { 0%, 100% { transform: scaleY(1); } 45% { transform: scaleY(0.12); } 70% { transform: scaleY(1); } }
+/* Hover life for the rows that keep a lucide icon: the update arrow spins,
+   the Work Manager glyphs nudge. Once per hover entry, short enough to
+   finish before the click lands, and gone entirely for anyone who asked the
+   OS for less motion. transform-only, so nothing reflows. The test-case
+   rows animate a PART of their glyph instead - see "Sidebar glyph motion"
+   below. */
 @keyframes ico-spin { to { transform: rotate(-360deg); } }
-@keyframes ico-write { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-12deg) translateY(-1px); } 70% { transform: rotate(6deg); } }
-@keyframes ico-rise { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3px); } }
 @keyframes ico-pop { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.18); } }
-@keyframes ico-sway { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-9deg); } 75% { transform: rotate(9deg); } }
 @keyframes ico-pull { 0%, 100% { transform: translateY(0); } 35% { transform: translateY(2px); } 70% { transform: translateY(-2px); } }
 @keyframes ico-shuffle { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-2px); } 70% { transform: translateX(2px); } }
 
-.group:hover .nav-ico-manual { animation: ico-write 0.45s ease; }
-.group:hover .nav-ico-import { animation: ico-rise 0.45s ease; }
 .group:hover .nav-ico-edit { animation: ico-spin 0.55s ease; }
-.group:hover .nav-ico-view { animation: ico-blink 0.5s ease; }
-.group:hover .nav-ico-run { animation: ico-pop 0.4s ease; }
-.group:hover .nav-ico-autorun { animation: ico-sway 0.5s ease; }
-.group:hover .nav-ico-suites { animation: ico-sway 0.5s ease; }
-.group:hover .nav-ico-ai { animation: ico-sway 0.5s ease; }
-.group:hover .nav-ico-manage { animation: ico-shuffle 0.5s ease; }
 .group:hover .nav-ico-prs { animation: ico-pull 0.5s ease; }
 .group:hover .nav-ico-board { animation: ico-shuffle 0.5s ease; }
 .group:hover .nav-ico-create { animation: ico-pop 0.4s ease; }
 @media (prefers-reduced-motion: reduce) {
   .group:hover [class*="nav-ico-"] { animation: none; }
+}
+
+/* ── Sidebar glyph motion ────────────────────────────────────────────────
+   The glyphs in components/navGlyphs.tsx: the same pictures as the lucide
+   icons they replaced, split into parts so one part can move while the
+   rest holds still. Every animation starts on hover entry, runs once and
+   ends on the glyph's resting look. The parts that only exist mid-animation
+   (trail lines, the radar wedge, the pulse, the digits) are invisible at
+   rest. --ng-hi is the highlight: the theme accent, or the text colour on
+   the selected row, whose glyph is already the accent. */
+.nav-glyph { --ng-hi: var(--color-accent-text); }
+.nav-glyph.nav-ico-on { --ng-hi: var(--color-text); }
+.nav-glyph * { transform-box: view-box; }
+/* Past the right edge while the pen writes; the row has room for it. */
+.nav-glyph.ng-manual { overflow: visible; }
+.nav-glyph .ng-trails,
+.nav-glyph .ng-wedge,
+.nav-glyph .ng-pulse,
+.nav-glyph .ng-code { opacity: 0; }
+/* The selected row's rule (.nav-ico-on path) strokes every path and fills
+   none; these two keep their own paint. */
+.nav-glyph .ng-fill { fill: currentColor; stroke: none; }
+.nav-glyph .ng-pulse { stroke: var(--ng-hi); stroke-dasharray: 0.28 2; }
+.nav-glyph .ng-code text {
+  font: 700 5px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  fill: currentColor;
+  stroke: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Manual Entry: in from the right at half size, tip on the line's start,
+     writes it left to right, lifts away, and the pen settles back. */
+  .group:hover .ng-manual .ng-pen { animation: ng-pen 1.2s linear; transform-origin: 0 0; }
+  .group:hover .ng-manual .ng-line { animation: ng-write 1.2s linear; }
+  @keyframes ng-pen {
+    0% { transform: translate(22px, 10.1px) scale(0.5); opacity: 0; }
+    16%, 22% { transform: translate(11.9px, 10.1px) scale(0.5); opacity: 1; }
+    64% { transform: translate(19.9px, 10.1px) scale(0.5); opacity: 1; }
+    74% { transform: translate(21.5px, 7.5px) scale(0.5); opacity: 0; }
+    75% { transform: translate(1.8px, 1.8px) scale(0.85); opacity: 0; }
+    100% { transform: translate(0, 0) scale(1); opacity: 1; }
+  }
+  @keyframes ng-write {
+    0%, 22% { stroke-dasharray: 1 2; stroke-dashoffset: 1.1; }
+    64%, 100% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  }
+
+  /* Import File: the arrow lifts, then the file shoots up out of its box
+     with trail lines under it, and pops back in. */
+  .group:hover .ng-import .ng-arrow { animation: ng-arrow-lift 1.1s ease; }
+  .group:hover .ng-import .ng-file { animation: ng-file-rise 1.1s; transform-origin: 12px 12px; }
+  .group:hover .ng-import .ng-trails { animation: ng-trails 1.1s; }
+  @keyframes ng-arrow-lift {
+    0%, 100% { transform: translateY(0); }
+    18%, 26% { transform: translateY(-2.5px); }
+  }
+  @keyframes ng-file-rise {
+    0%, 22% { transform: translateY(0) scale(1); opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.5); }
+    52% { transform: translateY(-30px) scale(1); opacity: 1; }
+    53% { transform: translateY(0) scale(0.4); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.4, 0.64, 1); }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  @keyframes ng-trails {
+    0%, 24% { opacity: 0; }
+    32%, 44% { opacity: 0.85; }
+    52%, 100% { opacity: 0; }
+  }
+
+  /* View Test Cases: the upper lid turns down about the eye's midline onto
+     the lower lid (the corners sit on that line, so they never move), and
+     the pupil's clip edge rides down with it. */
+  .group:hover .ng-view .ng-lid { animation: ng-lid 0.8s ease-in-out; transform-origin: 12px 12px; }
+  .group:hover .ng-view .ng-lidclip { animation: ng-lidclip 0.8s ease-in-out; }
+  @keyframes ng-lid {
+    0%, 100% { transform: scaleY(1); }
+    38%, 56% { transform: scaleY(-1); }
+  }
+  @keyframes ng-lidclip {
+    0%, 100% { transform: translateY(0); }
+    38%, 56% { transform: translateY(15.5px); }
+  }
+
+  /* Run Tests: the play button slides out through the box's right side,
+     then pops back in. */
+  .group:hover .ng-run .ng-play { animation: ng-play 0.9s; transform-origin: 12.5px 12px; }
+  @keyframes ng-play {
+    0% { transform: translateX(0) scale(1); opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.6); }
+    40% { transform: translateX(12px) scale(1); opacity: 1; }
+    41% { transform: translateX(0) scale(0.2); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.5, 0.64, 1); }
+    100% { transform: translateX(0) scale(1); opacity: 1; }
+  }
+
+  /* Auto Run: one sweep. The arm starts pointing up-right, so it passes
+     the lower blip a little over a third of the way round and the upper
+     left one at about three quarters. */
+  .group:hover .ng-autorun .ng-sweep { animation: ng-sweep 1.1s linear; transform-origin: 12px 12px; }
+  .group:hover .ng-autorun .ng-wedge { animation: ng-wedge 1.1s linear; }
+  .group:hover .ng-autorun .ng-blip-b { animation: ng-blip 1.1s linear; }
+  .group:hover .ng-autorun .ng-blip-a { animation: ng-blip-late 1.1s linear; }
+  @keyframes ng-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes ng-wedge { 0% { opacity: 0; } 10%, 85% { opacity: 0.35; } 100% { opacity: 0; } }
+  @keyframes ng-blip { 0%, 34% { stroke-width: 2; } 40% { stroke-width: 4.5; } 60%, 100% { stroke-width: 2; } }
+  @keyframes ng-blip-late { 0%, 70% { stroke-width: 2; } 76% { stroke-width: 4.5; } 94%, 100% { stroke-width: 2; } }
+
+  /* Search Suites: a short bright segment runs from the root out to both
+     folders at once, and each folder lights as it arrives. */
+  .group:hover .ng-suites .ng-pulse { animation: ng-pulse 1s cubic-bezier(0.4, 0, 0.6, 1); }
+  .group:hover .ng-suites .ng-folder { animation: ng-folder 1s ease; }
+  @keyframes ng-pulse {
+    0% { stroke-dashoffset: 0.28; opacity: 1; }
+    75% { stroke-dashoffset: -1; opacity: 1; }
+    76%, 100% { stroke-dashoffset: -1; opacity: 0; }
+  }
+  @keyframes ng-folder {
+    0%, 62% { stroke: currentColor; }
+    76% { stroke: var(--ng-hi); }
+    100% { stroke: currentColor; }
+  }
+
+  /* Suite Management: each row lights and draws in turn, top to bottom.
+     `backwards` holds a row blank until its turn, so the light reads as
+     travelling down the list. */
+  .group:hover .ng-manage .ng-row { animation: ng-row 0.55s ease-out backwards; }
+  .group:hover .ng-manage .ng-row-2 { animation-delay: 0.2s; }
+  .group:hover .ng-manage .ng-row-3 { animation-delay: 0.4s; }
+  @keyframes ng-row {
+    0% { stroke: var(--ng-hi); stroke-dasharray: 1 2; stroke-dashoffset: 1.1; }
+    60% { stroke: var(--ng-hi); stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+    100% { stroke: currentColor; stroke-dasharray: 1 2; stroke-dashoffset: 0; }
+  }
+
+  /* AI Bridge: two rows of digits stream right to left across the face,
+     flipping between two patterns as they go; the eyes step aside for them. */
+  .group:hover .ng-ai .ng-code { animation: ng-code 1.4s; }
+  .group:hover .ng-ai .ng-eyes { animation: ng-eyes 1.4s; }
+  .group:hover .ng-ai .ng-bits { animation: ng-stream 1.4s linear; }
+  .group:hover .ng-ai .ng-bits-2 { animation-duration: 1.2s; animation-delay: 0.1s; }
+  .group:hover .ng-ai .ng-bits-a { animation: ng-flip 0.28s steps(1, end) 5; }
+  .group:hover .ng-ai .ng-bits-b { animation: ng-flip 0.28s steps(1, end) 5 reverse; }
+  @keyframes ng-code { 0%, 100% { opacity: 0; } 8%, 88% { opacity: 1; } }
+  @keyframes ng-eyes { 0%, 100% { opacity: 1; } 8%, 88% { opacity: 0; } }
+  @keyframes ng-stream { from { transform: translateX(0); } to { transform: translateX(-38px); } }
+  @keyframes ng-flip { 0% { opacity: 1; } 50% { opacity: 0; } }
 }
 
 /* Tooltip entrance: a short fade with a hair of travel, so it reads as

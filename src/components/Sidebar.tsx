@@ -1,20 +1,16 @@
+import { ChevronsLeft, ChevronsRight, FilePlus2, GitPullRequest, KanbanSquare, RotateCcw } from "lucide-react";
+import { useSyncExternalStore, type ComponentType } from "react";
 import {
-  Bot,
-  ChevronsLeft,
-  ChevronsRight,
-  Eye,
-  FilePlus2,
-  FileUp,
-  FolderTree,
-  GitPullRequest,
-  KanbanSquare,
-  ListOrdered,
-  PenLine,
-  Radar,
-  RotateCcw,
-  SquarePlay,
-} from "lucide-react";
-import { useSyncExternalStore } from "react";
+  GlyphAi,
+  GlyphAutoRun,
+  GlyphImport,
+  GlyphManage,
+  GlyphManual,
+  GlyphRun,
+  GlyphSuites,
+  GlyphView,
+  type GlyphProps,
+} from "./navGlyphs";
 import { Tooltip } from "./ui/tooltip";
 import {
   COLLAPSE_KEY,
@@ -34,7 +30,9 @@ export type WorkSection = "prs" | "board" | "create";
 type Item<T extends string> = {
   id: T;
   label: string;
-  icon: typeof PenLine;
+  /** A lucide icon, or one of navGlyphs' own when its hover animation moves
+   * a part of the picture rather than the whole of it. */
+  icon: ComponentType<GlyphProps>;
   /** The icon's own colour, so the rail is scannable by hue when it is
    * collapsed to icons alone. The selected row's tinted background stays
    * the theme accent - only the glyph is coloured. */
@@ -45,20 +43,20 @@ type Item<T extends string> = {
 };
 
 export const CASE_ITEMS: Item<Section>[] = [
-  { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
-  { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
+  { id: "manual", label: "Manual Entry", icon: GlyphManual, tone: "nav-ico nav-ico-manual" },
+  { id: "import", label: "Import File", icon: GlyphImport, tone: "nav-ico nav-ico-import" },
   // A circular arrow, not a second pencil: Manual Entry already owns the
   // pencil, and two pencils in one rail are indistinguishable at 16px.
   { id: "edit", label: "Update Test Cases", icon: RotateCcw, tone: "nav-ico nav-ico-edit" },
-  { id: "view", label: "View Test Cases", icon: Eye, tone: "nav-ico nav-ico-view" },
-  { id: "run", label: "Run Tests", icon: SquarePlay, tone: "nav-ico nav-ico-run" },
+  { id: "view", label: "View Test Cases", icon: GlyphView, tone: "nav-ico nav-ico-view" },
+  { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: Radar, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
-  { id: "suites", label: "Search Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
+  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
+  { id: "suites", label: "Search Suites", icon: GlyphSuites, tone: "nav-ico nav-ico-suites" },
   // An ordered list, because ordering is the first thing this screen does.
-  { id: "manage", label: "Suite Management", icon: ListOrdered, tone: "nav-ico nav-ico-manage" },
-  { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
+  { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage" },
+  { id: "ai", label: "AI Bridge", icon: GlyphAi, tone: "nav-ico nav-ico-ai" },
 ];
 
 /** The rows the rail shows: CASE_ITEMS, with Auto Run only where it is
