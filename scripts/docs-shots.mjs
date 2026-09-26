@@ -198,6 +198,29 @@ async function place(target, locate, size) {
   return { box };
 }
 
+/** Waits until the shot's controls stop moving: two readings of every box,
+ *  STILL_GAP_MS apart, that agree. Content that arrives late (the app log,
+ *  sample answers on a delay) or an entry animation still running would
+ *  otherwise leave the picture and the measured boxes describing two
+ *  different moments - and the two theme passes caught at different ones.
+ *  Gives up after STILL_TRIES readings and lets the drift check judge. */
+const STILL_GAP_MS = 150;
+const STILL_TRIES = 20;
+async function untilStill(target, controls, size) {
+  const read = async () =>
+    JSON.stringify(await Promise.all(controls.map(async (c) => {
+      const r = await place(target, c.locate, size).catch(() => ({}));
+      return r.box ? roundBox(r.box) : null;
+    })));
+  let last = await read();
+  for (let i = 0; i < STILL_TRIES; i++) {
+    await sleep(STILL_GAP_MS);
+    const now = await read();
+    if (now === last) return;
+    last = now;
+  }
+}
+
 /** The leftover settings snapshot, if an earlier run was interrupted. */
 function readBackup() {
   if (!existsSync(BACKUP)) return null;
@@ -492,6 +515,7 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
       // reacts to it.
       await target.mouse.move(2, 2).catch(() => {});
       await settle(target);
+      await untilStill(target, controls, size);
       guard();
       if (staging) {
         const dir = join(staging, pass.dir);
