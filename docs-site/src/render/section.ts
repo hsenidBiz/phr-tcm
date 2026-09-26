@@ -9,6 +9,7 @@ import { shotSize, type Control, type ControlGroup, type Screen, type Shot, type
 import { h, rich } from "./dom";
 import { icon } from "./icons";
 import { figureMaxHeight, figureWidth, planScreen, stageFlow, type Region, type Stage } from "./plan";
+import { pairHover, watchOverview } from "./overview-labels";
 import { placeholder, renderShot, type ShotView } from "./shot";
 import { currentTheme, shotSrc, type Theme } from "./theme";
 import type { ViewerContent } from "./viewer";
@@ -210,38 +211,44 @@ export function releaseStages() {
   onWindowResize = null;
 }
 
-/** Shot px above a region its label needs (half a label at the smallest overview scale). */
-const REGION_LABEL_ROOM = 40;
-
-/** A grouped screen's map: the whole shot with an outlined, labelled area
- *  per group, each a link to its subsection. No numbered markers. */
+/** A grouped screen's map: the whole shot with an outlined area per group.
+ *  Each area's label sits outside the shot (overview-labels.ts), with a
+ *  leader to its outline, so no label covers what it names; the labels are
+ *  the links to the subsections, and an area is a mouse shortcut to the
+ *  same place. No numbered markers. */
 function overview(screen: Screen, shot: Shot, regions: Region[], has: boolean, theme: Theme): HTMLElement {
   const size = shotSize(shot);
   const media = has
     ? h("img", { "data-shot": shot.id, src: shotSrc(theme, shot.id), alt: shot.alt, width: size.w, height: size.h, loading: "lazy", decoding: "async" })
     : placeholder(shot.alt);
-  const links = regions.map(({ group, box }) => {
-    // A region on the right half has its label at its right end, so the label runs into the shot, not off it.
-    const end = box.x + box.w / 2 > size.w * 0.55;
-    // Near the top of the shot a label on the top edge would be cut by the frame: it goes inside.
-    const top = box.y < REGION_LABEL_ROOM;
-    const a = h("a", { class: `region${end ? " is-end" : ""}${top ? " is-top" : ""}`, href: `#${controlAnchor(screen.id, group.id)}` }, h("span", { class: "region-label" }, group.title));
+  const above = h("div", { class: "ov-strip" });
+  const below = h("div", { class: "ov-strip is-below" });
+  const areas = regions.map(({ group, box }) => {
+    const href = `#${controlAnchor(screen.id, group.id)}`;
+    // A part in the lower half is labelled below the shot, nearer to it.
+    const strip = box.y + box.h / 2 > size.h / 2 ? below : above;
+    strip.appendChild(h("a", { class: "ov-label", href, "data-g": group.id }, group.title));
+    const a = h("a", { class: "region", href, "data-g": group.id, tabindex: "-1", "aria-hidden": "true" });
     Object.assign(a.style, { left: pct(box.x, size.w), top: pct(box.y, size.h), width: pct(box.w, size.w), height: pct(box.h, size.h) });
     return a;
   });
-  const frame = h(
-    "div",
-    { class: size.w < 1440 ? "frame is-narrow" : "frame" },
-    media,
-    h("nav", { class: "regions", "aria-label": `Parts of ${shot.alt}` }, ...links),
-  );
+  const frame = h("div", { class: size.w < 1440 ? "frame is-narrow" : "frame" }, media, h("div", { class: "regions" }, ...areas));
   frame.style.setProperty("--shot-w", String(size.w));
   frame.style.setProperty("--shot-h", String(size.h));
   frame.style.setProperty("--fig-w", String(size.w));
+  const ov = h(
+    "nav",
+    { class: "ov", "aria-label": `Parts of ${shot.alt}` },
+    above.childElementCount ? above : null,
+    frame,
+    below.childElementCount ? below : null,
+  );
+  pairHover(ov);
+  watchOverview(ov);
   return h(
     "figure",
     { class: "shot overview", "data-overview": shot.id },
-    frame,
+    ov,
     h("figcaption", { class: "overview-caption" }, icon("section", 14), h("span", {}, "Pick a part of the screen to go to its section.")),
   );
 }

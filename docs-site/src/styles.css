@@ -565,29 +565,36 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
   position: absolute; border-radius: 12px;
   border: 1.5px solid var(--accent-line);
   background: color-mix(in srgb, var(--accent) 5%, transparent);
-  text-decoration: none;
   transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
-.region:hover, .region:focus-visible {
-  outline: none; border-color: var(--accent);
+.region.is-hot {
+  z-index: 1; border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
   box-shadow: 0 0 0 3px var(--accent-soft), 0 0 32px -6px var(--accent-glow);
 }
-/* On the region's top edge, so it covers as little of the screen as it can. */
-.region-label {
-  position: absolute; left: 10px; top: 0; transform: translateY(-50%);
-  /* no wider than its region (so labels never run into each other), whole on hover or focus */
-  max-width: max(calc(100% - 20px), 7em);
-  padding: 0.2em 0.8em; border-radius: 999px;
-  font-size: clamp(10px, 0.87cqw, 12.5px); font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  color: var(--on-accent); background: var(--accent);
-  box-shadow: 0 0 0 1.5px var(--surface), 0 6px 16px -6px var(--accent-glow);
+/* The labels sit outside the shot (overview-labels.ts): above it, or below
+   it for a part in the lower half. Until they are laid out they are a
+   wrapped row, which reads fine on its own. */
+.ov { position: relative; display: block; }
+.ov-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ov-strip.is-below { margin: 12px 0 0; }
+.ov[data-laid] .ov-strip { display: block; position: relative; margin: 0; }
+.ov[data-laid] .ov-label { position: absolute; }
+.ov-label {
+  display: inline-block; max-width: 100%;
+  padding: 0.25em 0.85em; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--on-accent); background: var(--accent); text-decoration: none;
+  box-shadow: 0 6px 16px -6px var(--accent-glow);
+  transition: box-shadow 0.2s, transform 0.2s var(--ease-out);
 }
-.region.is-end .region-label { left: auto; right: 10px; }
-/* a region at the top of the shot has its label inside, where the frame cannot cut it */
-.region.is-top .region-label { top: 6px; transform: none; }
-.region:hover, .region:focus-visible { z-index: 1; }
-.region:hover .region-label, .region:focus-visible .region-label { max-width: none; }
+.ov-label.is-hot, .ov-label:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft), 0 8px 20px -6px var(--accent-glow); }
+.ov-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ov-leaders { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 2; }
+.ov-leader path { stroke: var(--accent-line); stroke-width: 1.5; fill: none; transition: stroke 0.2s; }
+.ov-leader circle { fill: var(--accent-line); transition: fill 0.2s; }
+.ov-leader.is-hot path { stroke: var(--accent); }
+.ov-leader.is-hot circle { fill: var(--accent); }
 .overview-caption { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
 .overview-caption svg { color: var(--accent-text); flex: none; }
 

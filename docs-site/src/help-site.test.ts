@@ -626,14 +626,22 @@ describe("grouped screens", () => {
     mount(grouped);
     const overview = document.querySelector('#gamma figure[data-overview="gamma-main"]')!;
     expect(overview.querySelector(".marker")).toBeNull();
-    const links = [...overview.querySelectorAll<HTMLAnchorElement>("a.region")];
-    expect(links.map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
+    // The labels are the links, outside the shot; the outlined parts are
+    // mouse shortcuts to the same places, out of the tab order.
+    const labels = [...overview.querySelectorAll<HTMLAnchorElement>("a.ov-label")];
+    expect(labels.map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
       ["#gamma/top-card", "The top card"],
       ["#gamma/bottom-card", "The bottom card"],
     ]);
+    for (const a of labels) expect(a.closest(".frame")).toBeNull();
+    const parts = [...overview.querySelectorAll<HTMLAnchorElement>("a.region")];
+    expect(parts.map((a) => [a.getAttribute("href"), a.textContent, a.getAttribute("tabindex"), a.getAttribute("aria-hidden")])).toEqual([
+      ["#gamma/top-card", "", "-1", "true"],
+      ["#gamma/bottom-card", "", "-1", "true"],
+    ]);
     // the union of the group's boxes, padded by 10: 90..290 x 90..140 of 1440 x 900
-    expect(links[0].style.left).toBe("6.25%");
-    expect(links[0].style.width).toBe("13.8889%");
+    expect(parts[0].style.left).toBe("6.25%");
+    expect(parts[0].style.width).toBe("13.8889%");
   });
 
   test("then one subsection per group: a heading at #screen/group, a zoomed crop, markers numbered within the group", () => {
@@ -960,14 +968,26 @@ describe("full-screen view, continued", () => {
 });
 
 describe("overview labels", () => {
-  test("a region at the very top of the shot has its label inside it, where the frame cannot cut it", () => {
-    const top: SiteContent = {
-      ...grouped,
-      positions: { ...grouped.positions, "gamma-main": main({ ...grouped.positions["gamma-main"].controls, a: { x: 100, y: 4, w: 80, h: 30 } }) },
-    };
-    mount(top);
-    const [first, second] = [...document.querySelectorAll<HTMLElement>('figure[data-overview="gamma-main"] a.region')];
-    expect(first.classList.contains("is-top")).toBe(true);
-    expect(second.classList.contains("is-top")).toBe(false);
+  test("a part in the upper half is labelled above the shot, one in the lower half below it", () => {
+    mount(grouped); // the top card's controls sit at y 100, the bottom card's at 700
+    const strip = (g: string) => document.querySelector(`figure[data-overview="gamma-main"] a.ov-label[data-g="${g}"]`)!.closest(".ov-strip")!;
+    expect(strip("top-card").classList.contains("is-below")).toBe(false);
+    expect(strip("bottom-card").classList.contains("is-below")).toBe(true);
+    // Above, then the shot, then below.
+    const ov = document.querySelector('figure[data-overview="gamma-main"] .ov')!;
+    expect([...ov.children].map((c) => c.className)).toEqual(["ov-strip", "frame", "ov-strip is-below"]);
+  });
+
+  test("pointing at a label lights its part, and pointing at a part lights its label", () => {
+    mount(grouped);
+    const fig = document.querySelector('figure[data-overview="gamma-main"]')!;
+    const label = fig.querySelector<HTMLElement>('a.ov-label[data-g="top-card"]')!;
+    const part = fig.querySelector<HTMLElement>('a.region[data-g="top-card"]')!;
+    label.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(part.classList.contains("is-hot")).toBe(true);
+    label.dispatchEvent(new MouseEvent("mouseleave"));
+    part.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(label.classList.contains("is-hot")).toBe(true);
+    expect(fig.querySelector('a.region[data-g="bottom-card"]')!.classList.contains("is-hot")).toBe(false);
   });
 });
