@@ -303,6 +303,16 @@ export const roundBox = (box) => ({
   h: Math.round(box.height),
 });
 
+/** How far a control may sit from where the first pass measured it, in
+ *  shot px, before the passes count as different pictures. Sub-pixel text
+ *  rounding moves a box by one; anything the eye would see is more. */
+export const DRIFT_PX = 2;
+
+/** The largest distance any edge of `b` sits from the same edge of `a`. */
+export function boxDrift(a, b) {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.x + a.w - (b.x + b.w)), Math.abs(a.y + a.h - (b.y + b.h)));
+}
+
 /** A marker is drawn at the control, so its centre must be in the shot. */
 export function boxInShot(box, size = MAIN_SIZE) {
   const cx = box.x + box.width / 2;

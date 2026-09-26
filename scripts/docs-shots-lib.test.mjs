@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  boxDrift,
   boxInShot,
+  DRIFT_PX,
   formatAge,
   formatMissing,
   KEYS,
@@ -353,5 +355,22 @@ describe("restoreInOrder", () => {
         },
       }),
     ).rejects.toThrow("could not put back: k");
+  });
+});
+
+describe("boxDrift", () => {
+  const a = { x: 981, y: 122, w: 20, h: 20 };
+  test("a box measured again in the same place has not moved", () => {
+    expect(boxDrift(a, { ...a })).toBe(0);
+  });
+  test("rounding a pixel either way stays within the allowance", () => {
+    expect(boxDrift(a, { x: 982, y: 121, w: 20, h: 21 })).toBeLessThanOrEqual(DRIFT_PX);
+  });
+  test("a row pushed along by a shorter word is caught", () => {
+    // "just now" in one theme, "2m ago" in the other.
+    expect(boxDrift(a, { ...a, x: 976 })).toBeGreaterThan(DRIFT_PX);
+  });
+  test("a box that only grew is caught by its far edge", () => {
+    expect(boxDrift(a, { ...a, w: 26 })).toBe(6);
   });
 });

@@ -14,6 +14,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest } from "../bindings";
+import { isCaptureMode } from "../dev/capture";
 
 export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments" | "mention";
 
@@ -137,7 +138,11 @@ export function raise(
     items.map((i) => i.id),
   );
   if (fresh.length === 0) return [];
-  const at = new Date().toISOString();
+  // The help site's screenshots take a few minutes across two themes: "just
+  // now" in the first and "2m ago" in the second moved everything after the
+  // time on the line, off the spots measured in the first. Three hours ago
+  // reads "3h ago" through the whole run.
+  const at = new Date(Date.now() - (isCaptureMode() ? 3 * 3600_000 : 0)).toISOString();
   const added = fresh.map((i) => ({ ...i, at, read: false }));
   save(org, [...added, ...load(org)].slice(0, LIST_CAP));
   return added;

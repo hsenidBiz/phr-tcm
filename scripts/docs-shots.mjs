@@ -39,6 +39,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import {
   CDP_URL,
+  DRIFT_PX,
   KEYS,
   MAIN_SIZE,
   NO_SIGN_IN_NOTICE,
@@ -48,6 +49,7 @@ import {
   START_APP_HINT,
   START_APP_MESSAGE,
   USAGE,
+  boxDrift,
   boxInShot,
   formatMissing,
   locatorFor,
@@ -507,8 +509,22 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
         }
         placed++;
         // Layout is the same in both themes: record from the first pass,
-        // and only check that the others find the control too.
-        if (passIndex === 0) positions[shot.id].controls[control.id] = roundBox(r.box);
+        // and hold the others to it. A box that moved between passes means
+        // the shots differ (a "just now" that became "2m ago" once moved a
+        // whole row), and the markers would be off in one theme.
+        const box = roundBox(r.box);
+        if (passIndex === 0) positions[shot.id].controls[control.id] = box;
+        else {
+          const first = positions[shot.id]?.controls[control.id];
+          if (first && boxDrift(first, box) > DRIFT_PX) {
+            missing.push({
+              shot: shot.id,
+              control: control.id,
+              locate: control.locate,
+              reason: `moved between passes: ${JSON.stringify(first)} in ${passes[0].dir}, ${JSON.stringify(box)} in ${pass.dir}`,
+            });
+          }
+        }
       }
       console.log(`  ${shot.id}  ${placed}/${controls.length} controls`);
     }
