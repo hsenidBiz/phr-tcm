@@ -266,6 +266,20 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+/// The selection's Run button sits at the right end of the filter row,
+/// directly above the list it acts on - not up beside Set execution order.
+test("the Run in runner button sits in the filter row above the list", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Valid login"));
+  const run = screen.getByRole("button", { name: /Run 1 in runner/ });
+  expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
+  expect(
+    screen.getByRole("button", { name: /Set execution order/ }).parentElement,
+  ).not.toContainElement(run);
+});
+
 /// Re-testing after a fix goes filter -> select -> run, on purpose: the
 /// dedicated re-run button lasted one release before it came out again.
 /// One path into a selective run is easier to trust than two, so this

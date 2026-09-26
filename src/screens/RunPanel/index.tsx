@@ -470,37 +470,6 @@ export default function RunPanel({
               <IconSetOrder aria-hidden />
               Set execution order
             </Button>
-            {/* The selection's actions, in place beside the list they act
-                on, floating bottom-right once this row scrolls away - the
-                same dock Update Test Cases' selection uses. `suite.data`
-                is what openRunner needs for the plan id. */}
-            {suite.data && selected.size > 0 && (
-              <ActionDock label="Run selection" surface className="ml-auto">
-                {(floating) => (
-                  <>
-                    {/* No "N selected" text - the count is already in the
-                        button's own label. */}
-                    <Button
-                      size="sm"
-                      tabIndex={floating ? -1 : undefined}
-                      onClick={() => openRunner(visibleCaseOrder().filter((id) => selected.has(id)))}
-                    >
-                      <IconRun aria-hidden />
-                      Run {selected.size} in runner
-                    </Button>
-                    <button
-                      aria-label="Clear selection"
-                      title="Clear selection"
-                      tabIndex={floating ? -1 : undefined}
-                      className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
-                      onClick={() => setSelected(new Set())}
-                    >
-                      <X size={14} />
-                    </button>
-                  </>
-                )}
-              </ActionDock>
-            )}
           </div>
           {order.note && <p className="text-xs text-warning">{order.note}</p>}
         </div>
@@ -531,7 +500,7 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Input
             aria-label="Filter points"
             className="w-56 px-2 py-1.5"
@@ -563,6 +532,37 @@ export default function RunPanel({
             >
               Select all
             </Button>
+          )}
+          {/* The selection's actions, at the right end of the row directly
+              above the list they act on, floating bottom-right once this
+              row scrolls away - the same dock Update Test Cases' selection
+              uses. `suite.data` is what openRunner needs for the plan id. */}
+          {suite.data && selected.size > 0 && (
+            <ActionDock label="Run selection" surface className="ml-auto">
+              {(floating) => (
+                <>
+                  {/* No "N selected" text - the count is already in the
+                      button's own label. */}
+                  <Button
+                    size="sm"
+                    tabIndex={floating ? -1 : undefined}
+                    onClick={() => openRunner(visibleCaseOrder().filter((id) => selected.has(id)))}
+                  >
+                    <IconRun aria-hidden />
+                    Run {selected.size} in runner
+                  </Button>
+                  <button
+                    aria-label="Clear selection"
+                    title="Clear selection"
+                    tabIndex={floating ? -1 : undefined}
+                    className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
+                    onClick={() => setSelected(new Set())}
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              )}
+            </ActionDock>
           )}
         </div>
       )}
