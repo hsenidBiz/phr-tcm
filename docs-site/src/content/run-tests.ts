@@ -416,14 +416,6 @@ export const runTests: Screen = {
       does: "Keeps the runner on top of other windows, or lets them cover it. The next run opens the way you left it.",
     },
     {
-      id: "runner-close",
-      shot: RUNNER,
-      group: "work-through",
-      locate: { role: "button", name: "Close runner" },
-      name: "Close (x)",
-      does: "Closes the runner. Results already recorded stay recorded; a run that was not finished stays In Progress in Azure DevOps.",
-    },
-    {
       id: "runner-title",
       shot: RUNNER,
       group: "work-through",
@@ -612,6 +604,7 @@ export const runTests: Screen = {
     },
   ],
   tips: [
+    "Results you record are kept as you go; a run you leave without pressing **Finish** stays In Progress in Azure DevOps.",
     "A run is opened in Azure DevOps with the first result you record and stays open until **Finish**, so closing the runner never loses a result you moved past.",
     "Offline, the runner keeps your marks and sends them when the connection comes back.",
     "The list colours each row by its last outcome, and the runner's results show here as you record them.",

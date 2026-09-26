@@ -425,14 +425,6 @@ export const importFile: Screen = {
       name: "Cancel",
       does: "Closes the editor and drops the changes.",
     },
-    {
-      id: "editor-close",
-      shot: EDIT,
-      group: "edit-case",
-      locate: { role: "button", name: `Close the editor for ${FIRST}` },
-      name: "Close",
-      does: "While the editor is open, the row's **Edit** reads **Close** and closes it the same way.",
-    },
 
     // --- Bulk actions -----------------------------------------------------------
     {

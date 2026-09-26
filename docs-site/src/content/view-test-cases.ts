@@ -184,13 +184,6 @@ export const viewTestCases: Screen = {
 
     // --- The comment window ---------------------------------------------------
     {
-      id: "comment-close",
-      shot: COMMENT,
-      locate: { role: "button", name: "Close comment" },
-      name: "Close (x)",
-      does: "Closes the window. [[Esc]] does the same.",
-    },
-    {
       id: "comment-text",
       shot: COMMENT,
       locate: { text: "Check the error wording once the new copy lands." },

@@ -148,14 +148,6 @@ export const gettingStarted: Screen = {
       name: "Ctrl+K for commands",
       does: "A reminder that [[Ctrl+K]] opens the command palette from anywhere.",
     },
-    {
-      id: "close-sidebar",
-      shot: SHELL,
-      group: "move-around",
-      locate: { role: "button", name: "Close sidebar" },
-      name: "Close",
-      does: "Folds the sidebar to a strip of icons, so the screen gets more room. Hover an icon to see its name; the same button opens the sidebar again.",
-    },
 
     // --- Choosing a PBI ---------------------------------------------------
     {
@@ -322,6 +314,7 @@ export const gettingStarted: Screen = {
     },
   ],
   tips: [
+    "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
     "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens, and [[Ctrl+Shift+M]] switches to Work Manager and back.",
     "The organisation, project, PBI and the screen you were on are remembered, so the app opens where you left it.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",

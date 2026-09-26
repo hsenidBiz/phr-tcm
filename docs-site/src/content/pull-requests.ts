@@ -268,14 +268,6 @@ export const pullRequests: Screen = {
 
     // --- Pipeline history ------------------------------------------------------------------
     {
-      id: "close-history",
-      shot: PIPELINE,
-      group: "pipeline",
-      locate: { role: "button", name: "Close pipeline history" },
-      name: "Close",
-      does: "Closes the pipeline history. The line under the title says how many runs there were and how far the change got, such as the last environment it reached.",
-    },
-    {
       id: "search-steps",
       shot: PIPELINE,
       group: "pipeline",
@@ -320,14 +312,6 @@ export const pullRequests: Screen = {
 
     // --- A step's log ---------------------------------------------------------------------
     {
-      id: "close-log",
-      shot: LOG,
-      group: "pipeline",
-      locate: { role: "button", name: "Close log" },
-      name: "Close",
-      does: "Closes the log. The log of a step that is still running keeps filling in while it is open.",
-    },
-    {
       id: "copy-log",
       shot: LOG,
       group: "pipeline",
@@ -337,6 +321,8 @@ export const pullRequests: Screen = {
     },
   ],
   tips: [
+    "The log of a step that is still running keeps filling in while it is open.",
+    "In the pipeline history, the line under the title says how many runs there were and how far the change got, such as the last environment it reached.",
     "Clicking a pull request in the notification bell opens this page with that pull request open. If no list here holds it, a message says what to tick to see it.",
   ],
   howTo: [

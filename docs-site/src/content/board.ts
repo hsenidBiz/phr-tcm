@@ -280,14 +280,6 @@ export const board: Screen = {
       does: "Opens the work item in your browser.",
     },
     {
-      id: "close-details",
-      shot: ITEM,
-      group: "item-head",
-      locate: { role: "button", name: "Close details" },
-      name: "Close (x)",
-      does: "Closes the work item. [[Esc]] does the same. Changes you have not saved are dropped; clicking outside the window does not close it.",
-    },
-    {
       id: "title",
       shot: ITEM,
       group: "item-head",
@@ -400,14 +392,6 @@ export const board: Screen = {
       does: "The work item's area and iteration. They are shown, not changed, here.",
     },
     {
-      id: "close",
-      shot: ITEM,
-      group: "item-side",
-      locate: { role: "button", name: "Close" },
-      name: "Close",
-      does: "Closes the work item without saving.",
-    },
-    {
       id: "save",
       shot: ITEM,
       group: "item-side",
@@ -472,6 +456,7 @@ export const board: Screen = {
     },
   ],
   tips: [
+    "Changes you have not saved are dropped when a work item closes, and clicking outside the work item does not close it.",
     "Clicking a work item in the notification bell opens the board with that work item open.",
     "Work items are created on **New Work Item**, not on the board.",
   ],
