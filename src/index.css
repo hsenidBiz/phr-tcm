@@ -6,7 +6,15 @@
 @layer reset, astryx-base, astryx-theme;
 @import "@astryxdesign/core/reset.css";
 @import "@astryxdesign/core/astryx.css";
-@import "tailwindcss";
+/* Tailwind reads only the app's own source for class names. Left to find
+   them itself it walks every file in the project that git does not ignore,
+   and a stray build folder of 384,000 files once held `tauri dev` on the
+   loading screen for over four minutes while it was read (and scanned by
+   the antivirus) on every cold start. */
+@import "tailwindcss" source("../src");
+@source "../index.html";
+/* XiodUI's components carry their own Tailwind classes. */
+@source "../node_modules/xiod-ui/dist";
 @import "@fontsource/fira-sans/400.css";
 @import "@fontsource/fira-sans/500.css";
 @import "@fontsource/fira-sans/600.css";
