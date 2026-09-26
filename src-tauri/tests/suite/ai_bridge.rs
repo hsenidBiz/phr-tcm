@@ -2201,7 +2201,7 @@ dbo\tLeaveRequest\t160\n\
         assert_eq!(calls.len(), 2, "the ranking, then the details - never a trip per table");
         let rank = calls[0].last().unwrap().clone();
         let detail = calls[1].last().unwrap().clone();
-        // PeoplesHR first, as the PHR X DB server searches.
+        // PeoplesHR first: the HR databases also hold PeoplesHRDAP copies.
         assert!(rank.contains("TABLE_SCHEMA = N'PeoplesHR'"), "{rank}");
         assert!(detail.contains("(N'dbo', N'LeaveRequest', 160)"), "{detail}");
         // Whatever else they are, both statements are reads.

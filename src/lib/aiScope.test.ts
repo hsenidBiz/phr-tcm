@@ -1,12 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
 import {
+  dropRetiredAiSwitches,
   globalAllowedSnapshot,
   loadGlobalAllowed,
   loadScope,
-  loadShowPhrx,
   saveGlobalAllowed,
   saveScope,
-  saveShowPhrx,
   scopeSnapshot,
   subscribeAiScope,
 } from "./aiScope";
@@ -35,19 +34,21 @@ test("the scope choice defaults to the repository and only accepts the two value
   expect(loadScope()).toBe("project");
 });
 
-test("the PHR X option is off by default and only ON is stored", () => {
-  localStorage.clear();
-  expect(loadShowPhrx()).toBe(false);
-  saveShowPhrx(true);
-  expect(localStorage.getItem("tcm-v2-ai-show-phrx")).toBe("on");
-  expect(loadShowPhrx()).toBe(true);
-  saveShowPhrx(false);
-  expect(localStorage.getItem("tcm-v2-ai-show-phrx")).toBeNull();
-  expect(loadShowPhrx()).toBe(false);
-});
-
-test("the old show-db key no longer switches anything on", () => {
-  localStorage.clear();
+/// The AI Bridge switches earlier versions kept are gone from the app; their
+/// stored choices are dropped at start, and nothing current goes with them.
+test("retired switches are dropped and the current choices are kept", () => {
   localStorage.setItem("tcm-v2-ai-show-db", "on");
-  expect(loadShowPhrx()).toBe(false);
+  saveGlobalAllowed(true);
+  saveScope("global");
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+
+  dropRetiredAiSwitches();
+
+  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
+  expect(loadGlobalAllowed()).toBe(true);
+  expect(loadScope()).toBe("global");
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read");
+  // Idempotent: a second start finds nothing to do.
+  dropRetiredAiSwitches();
+  expect(localStorage.length).toBe(3);
 });

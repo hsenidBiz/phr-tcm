@@ -9,7 +9,6 @@ import type {
   CaseHistory,
   ConnectedUser,
   DbDatabase,
-  DbServerDefaults,
   DetectedTool,
   EnsuredSuite,
   Mention,
@@ -290,14 +289,6 @@ export const TOUR_DATABASES: DbDatabase[] = [
     customised: false,
   },
 ];
-
-// The AI Bridge screen's own default config - the PHR X server settings a
-// never-configured card starts from. Obviously sample: no real host or credential.
-export const TOUR_DB_DEFAULTS: DbServerDefaults = {
-  exe_path: "C:\\Program Files\\Test Case Manager\\PeoplesHR.DBMCPServer.exe",
-  db_type: "mssql",
-  schema_filter: "dbo",
-};
 
 export const TOUR_BRIDGE: BridgeStatus = {
   port: 51999,

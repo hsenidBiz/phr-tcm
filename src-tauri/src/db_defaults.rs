@@ -1,8 +1,7 @@
-//! The database MCP server's SHIPPED defaults - the values the AI Bridge
-//! form starts from on a machine that has never configured it, plus the
-//! named presets its dropdown offers. A person's own saved config always
-//! wins; no preset is chosen for them, and registering still takes an
-//! explicit click.
+//! The database tools' SHIPPED defaults: the schema a lookup searches
+//! first, plus the named presets the Company database card's dropdown
+//! offers. A person's own saved login always wins, and no preset is chosen
+//! for them.
 //!
 //! Shipping credentials in a public binary is a deliberate owner call,
 //! same as storing the connection string locally (see lib/dbServer.ts):
@@ -10,8 +9,7 @@
 //! own sign-in, and device locked - a string extracted from the installer
 //! is not a usable credential anywhere else.
 
-pub const DEFAULT_EXE_PATH: &str = "";
-pub const DEFAULT_DB_TYPE: &str = "mssql";
+/// The schema a lookup ranks first - see `db::query::run_lookup`.
 pub const DEFAULT_SCHEMA_FILTER: &str = "PeoplesHR";
 
 /// One shipped environment: a stable id, a label for the dropdown and the full

@@ -2,8 +2,8 @@
 //! find the right table by describing it rather than by guessing names.
 //!
 //! Two SELECTs, each through the same guard every other statement passes:
-//! `lookup_sql` ranks the tables in ONE scan of `INFORMATION_SCHEMA.COLUMNS`
-//! (the way the PHR X DB server searches), and `detail_sql` then reads the
+//! `lookup_sql` ranks the tables in ONE scan of `INFORMATION_SCHEMA.COLUMNS`,
+//! and `detail_sql` then reads the
 //! matching columns, foreign keys and row counts for the picked tables only,
 //! named as constants.
 //!

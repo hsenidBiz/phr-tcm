@@ -17,7 +17,7 @@ import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../tour/tourState";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
-import { loadGlobalAllowed, saveGlobalAllowed, loadShowPhrx, saveShowPhrx } from "../lib/aiScope";
+import { loadGlobalAllowed, saveGlobalAllowed } from "../lib/aiScope";
 import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
@@ -93,7 +93,6 @@ export default function Settings({ org, project }: { org: string; project: strin
   // Machine-wide AI tool registration is opt-in; the AI Bridge tab reads
   // the same store and offers the choice only while this is on.
   const [globalAllowed, setGlobalAllowed] = useState(loadGlobalAllowed);
-  const [showPhrx, setShowPhrx] = useState(loadShowPhrx);
   // Reporting a bug in the APP itself (bugs in the test cases go to
   // Azure DevOps from the runner). Nothing is posted from here - the
   // reporter reviews the prefilled issue and presses the button, which
@@ -387,17 +386,6 @@ export default function Settings({ org, project }: { org: string; project: strin
             ariaLabel="Allow registering AI tools machine-wide"
           />
           Allow registering AI tools machine-wide
-        </label>
-        <label className="flex items-center gap-2 text-sm text-text">
-          <Switch
-            checked={showPhrx}
-            onCheckedChange={(on) => {
-              saveShowPhrx(on);
-              setShowPhrx(on);
-            }}
-            ariaLabel="Offer the PHR X database server on the AI Bridge tab"
-          />
-          Offer the PHR X database server on the AI Bridge tab
         </label>
       </section>
 

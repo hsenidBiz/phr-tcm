@@ -197,7 +197,6 @@ test("in capture mode, the AI Bridge, the board and pull requests start from the
   const left = {
     "tcm-v2-ai-global-allowed": "on",
     "tcm-v2-ai-scope": "global",
-    "tcm-v2-ai-show-phrx": "on",
     "tcm-v2-mcp-disabled": '["get_run_failures"]',
     "tcm-v2-db-mcp": '{"exe_path":"C:\\\\real\\\\server.exe","db_type":"mssql","schema_filter":""}',
     "tcm-v2-db-writes": "1",
@@ -228,7 +227,6 @@ test("in capture mode the AI Bridge shows sample tools and databases, never this
   expect(tools.map((t) => t.registered_servers)).toEqual([["tcm-testcases"], []]);
   expect(tools.every((t) => t.scope === "project")).toBe(true);
   expect(await commands.dbDatabases()).toEqual(CAPTURE_DATABASES);
-  expect(await commands.dbServerDefaults()).toEqual({ exe_path: "", db_type: "mssql", schema_filter: "" });
 
   // The open thread's reply carries a screenshot, and commentImages answers it.
   const threads = (await commands.prThreads("Contoso", "Customer Portal", "portal-web", 501)) as {

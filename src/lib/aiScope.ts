@@ -67,33 +67,23 @@ export function scopeSnapshot(): RegistrationScope {
   return loadScope();
 }
 
-const SHOW_PHRX_KEY = "tcm-v2-ai-show-phrx";
+/** Earlier versions kept AI Bridge switches under this prefix - one showed
+ * the whole database card, a later one a separate database server's
+ * settings. Neither switch exists any more, and no current key starts this
+ * way. */
+const RETIRED_SWITCH_PREFIX = "tcm-v2-ai-show-";
 
-/** Whether the AI Bridge tab offers registering the separate PHR X DB server.
- * Off by default: the app's own database tools replaced it. Only the ON
- * choice is stored. A new key rather than the old show-db one, whose
- * default was on and hid the whole database card, connection included. */
-export function loadShowPhrx(): boolean {
+/** Drops every retired switch, so an old choice does not linger in storage.
+ * Quiet and idempotent: App calls it once at start. */
+export function dropRetiredAiSwitches(): void {
   try {
-    return localStorage.getItem(SHOW_PHRX_KEY) === "on";
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(RETIRED_SWITCH_PREFIX)) stale.push(key);
+    }
+    for (const key of stale) localStorage.removeItem(key);
   } catch {
-    return false;
+    // storage unavailable -> nothing was stored to drop either
   }
 }
-
-export function saveShowPhrx(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(SHOW_PHRX_KEY, "on");
-    else localStorage.removeItem(SHOW_PHRX_KEY);
-  } catch {
-    // storage unavailable -> nothing is remembered
-  }
-  notify();
-}
-
-export function showPhrxSnapshot(): boolean {
-  return loadShowPhrx();
-}
-
-/** Same listener set as the scope values above - reuse it under its own name. */
-export const subscribeShowPhrx = subscribeAiScope;

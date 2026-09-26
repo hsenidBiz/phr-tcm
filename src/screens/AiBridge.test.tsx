@@ -159,7 +159,6 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
-    if (cmd === "db_server_defaults") return null;
     return [];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -230,15 +229,15 @@ const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_s
 const DATABASES = [
   {
     id: "dev-read", label: "Dev - read only", shipped: true, server: "sgdev01db02.cloud", port: null,
-    database: "phrx", user: "sgdev01db02_readonly", trust_cert: true, has_password: true, customised: false,
+    database: "hrmmain", user: "sgdev01db02_readonly", trust_cert: true, has_password: true, customised: false,
   },
   {
     id: "dev-login", label: "Dev - dev login", shipped: true, server: "sgdev01db01.cloud", port: null,
-    database: "phrx", user: "sgdev01db01_devlogin", trust_cert: true, has_password: true, customised: false,
+    database: "hrmmain", user: "sgdev01db01_devlogin", trust_cert: true, has_password: true, customised: false,
   },
   {
     id: "qa-read", label: "QA - read only", shipped: true, server: "sgqa01db01.cloud", port: null,
-    database: "phrx", user: "sgqa01db01_readonly", trust_cert: true, has_password: true, customised: false,
+    database: "hrmmain", user: "sgqa01db01_readonly", trust_cert: true, has_password: true, customised: false,
   },
   {
     id: "own", label: "Your own database", shipped: false, server: "", port: null,
@@ -330,89 +329,6 @@ test("with no database chosen there is no login to manage", async () => {
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByRole("button", { name: "Manage credentials" })).toBeDisabled();
-});
-
-test("the database server cannot be registered until it is configured", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  dbMocks();
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  expect(
-    await screen.findByText(/Choose a database and fill in the server path/),
-  ).toBeInTheDocument();
-});
-
-/// The registration names the database by id; Rust resolves its login.
-/// Nothing the webview sends carries a connection string.
-test("registering the database server sends the chosen database's id", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  localStorage.setItem("tcm-v2-db-selected", "qa-read");
-  let sent: unknown;
-  dbMocks((cmd, args) => {
-    if (cmd === "register_db_server") {
-      sent = args;
-      return null;
-    }
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  fireEvent.change(await screen.findByLabelText("Database server path"), {
-    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
-  });
-  fireEvent.change(screen.getByLabelText("Schema filter"), { target: { value: "dbo,hr" } });
-
-  // Kept locally so another editor can be registered without retyping.
-  const stored = localStorage.getItem("tcm-v2-db-mcp") as string;
-  expect(stored).toContain("PeoplesHR.DBMCPServer.exe");
-  expect(JSON.parse(stored)).not.toHaveProperty("connection_string");
-
-  // Two Register buttons now: ours and the database server's.
-  const buttons = await screen.findAllByRole("button", { name: "Register" });
-  fireEvent.click(buttons[buttons.length - 1]);
-
-  await waitFor(() => expect(sent).toBeTruthy());
-  const payload = sent as { id: string; config: Record<string, string> };
-  expect(payload.id).toBe("vscode");
-  expect(payload.config).toEqual({
-    exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
-    db_type: "mssql",
-    schema_filter: "dbo,hr",
-    db_id: "qa-read",
-  });
-});
-
-/// Shipped defaults fill a NEVER-CONFIGURED form only: a fresh machine
-/// sees them, a machine with its own saved config keeps it, and nothing
-/// registers or persists from the prefill alone.
-test("shipped DB defaults prefill only a never-configured form", async () => {
-  const DEFAULTS = {
-    exe_path: "D:\\Phr-Database-McpServer",
-    db_type: "mssql",
-    schema_filter: "PeoplesHR",
-  };
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  dbMocks((cmd) => {
-    if (cmd === "db_server_defaults") return DEFAULTS;
-  });
-  const first = renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  // Fresh machine: the form shows the shipped values...
-  await waitFor(() =>
-    expect(screen.getByLabelText("Database server path")).toHaveValue(DEFAULTS.exe_path),
-  );
-  // ...without persisting them - prefill is not configuration.
-  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
-  first.unmount();
-
-  // A machine with its OWN config never has it overwritten.
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({ exe_path: "C:\\mine\\server.exe", db_type: "mssql", schema_filter: "" }),
-  );
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  await waitFor(() =>
-    expect(screen.getByLabelText("Database server path")).toHaveValue("C:\\mine\\server.exe"),
-  );
 });
 
 // ------------------------------------------------- working repository gate
@@ -614,52 +530,6 @@ test("Register passes the working repository and the disabled tools along", asyn
   );
 });
 
-// ------------------------------------------- the registration warning
-
-/// The registration worked, but the login it carries is somewhere git can
-/// carry it away. That is the one thing on this tab worth reading, so it
-/// replaces the success toast rather than sitting in a log.
-test("a warning from register_db_server is shown instead of the success toast", async () => {
-  const warning =
-    "The connection string is in .cursor/mcp.json, which git is tracking in this repository";
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  localStorage.setItem("tcm-v2-db-selected", "dev-read");
-  dbMocks((cmd) => {
-    if (cmd === "register_db_server") return warning;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  render(<Toaster />);
-
-  fireEvent.change(await screen.findByLabelText("Database server path"), {
-    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
-  });
-
-  const buttons = await screen.findAllByRole("button", { name: "Register" });
-  fireEvent.click(buttons[buttons.length - 1]);
-
-  expect(await screen.findByText(/git is tracking in this repository/)).toBeInTheDocument();
-  expect(screen.queryByText("Database server registered.")).not.toBeInTheDocument();
-});
-
-test("no warning means the plain success toast", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  localStorage.setItem("tcm-v2-db-selected", "dev-read");
-  dbMocks((cmd) => {
-    if (cmd === "register_db_server") return null;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  render(<Toaster />);
-
-  fireEvent.change(await screen.findByLabelText("Database server path"), {
-    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
-  });
-
-  const buttons = await screen.findAllByRole("button", { name: "Register" });
-  fireEvent.click(buttons[buttons.length - 1]);
-
-  expect(await screen.findByText("Database server registered.")).toBeInTheDocument();
-});
-
 // ------------------------------------------- leftover global registrations
 
 test("a leftover global registration is surfaced and can be retired", async () => {
@@ -707,28 +577,6 @@ test("a tool with nothing left globally is not offered the retire button", async
   ).not.toBeInTheDocument();
 });
 
-/// The database list carries the same scope label as the list above it:
-/// which config a login is about to go into is exactly what a person needs
-/// to know before clicking Register.
-test("the database server list labels each row's scope too", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  localStorage.setItem("tcm-v2-db-selected", "dev-read");
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({ exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe", db_type: "mssql", schema_filter: "" }),
-  );
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools")
-      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
-    if (cmd === "db_databases") return DATABASES;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  // Once in the tools list, once in the database list.
-  await waitFor(() => expect(screen.getAllByText("in this repo")).toHaveLength(2));
-});
-
 test("a tool with no project config is labelled global", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -742,80 +590,10 @@ test("a tool with no project config is labelled global", async () => {
   expect(screen.getByText("global")).toBeInTheDocument();
 });
 
-/// Choosing a different database must reach the FILE, not just the card:
-/// every tool the database server is already registered in gets
-/// re-registered with the new id, and the toast tells the user the one
-/// thing left to do - restart the coding session that read the old file at
-/// startup. Tools without the server registered are left alone.
-test("choosing a database re-registers the DB server where it is registered, then says to restart", async () => {
-  // The PHR X option is on: this is the case where syncing a leftover
-  // registration's config is exactly what should happen.
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  const registered: Array<{ id: string; dbId: string }> = [];
-  mockIPC((cmd, args) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools")
-      return [
-        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
-        { id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "global" },
-      ];
-    if (cmd === "db_databases") return DATABASES;
-    if (cmd === "register_db_server") {
-      const a = args as { id: string; config: { db_id: string } };
-      registered.push({ id: a.id, dbId: a.config.db_id });
-      return null;
-    }
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  render(<Toaster />);
-
-  // The tool list has to be in before the pick, or there is nothing to sync.
-  await screen.findAllByText("VS Code");
-  fireEvent.click(await screen.findByRole("combobox", { name: "Database" }));
-  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
-
-  await waitFor(() => expect(registered).toHaveLength(1));
-  expect(registered[0]).toEqual({ id: "vscode", dbId: "qa-read" });
-  expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
-});
-
-/// With the PHR X option off, choosing a database must never re-register
-/// the separate server, even where a leftover registration still exists
-/// and a stored config still carries its exe_path - that would silently
-/// refresh a login copy the leftover notice tells people to remove.
-test("with the PHR X option off, choosing a database does not sync a leftover PHR X registration", async () => {
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({ exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe", db_type: "mssql", schema_filter: "PeoplesHR" }),
-  );
-  let registerCalled = false;
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools")
-      return [
-        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
-      ];
-    if (cmd === "db_databases") return DATABASES;
-    if (cmd === "register_db_server") {
-      registerCalled = true;
-      return null;
-    }
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  await screen.findByText(/still registered with the tools below/);
-  fireEvent.click(await screen.findByRole("combobox", { name: "Database" }));
-  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
-
-  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
-  expect(registerCalled).toBe(false);
-});
-
 test("the tool list offers only the switchable tools, by their human names", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
-    if (cmd === "db_server_defaults") return null;
     return [];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -849,7 +627,6 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
-    if (cmd === "db_server_defaults") return null;
     if (cmd === "register_ai_tool") {
       seen = args;
       return null;
@@ -882,58 +659,136 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
 
 // --------------------------------------------- the database tools' switches
 
-/// The card is about the database the app's OWN tools use now, and it is
-/// always there - registering the separate PHR X server is opt-in from
-/// Settings, off by default.
-test("the database is always shown; the PHR X option is not, by default", async () => {
-  dbMocks(); // none has phr-db-mcp registered
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByText("Company database")).toBeInTheDocument();
-  expect(await screen.findByRole("combobox", { name: "Database" })).toBeInTheDocument();
-  expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
-  expect(screen.queryByText(/no longer needed for lookups/)).not.toBeInTheDocument();
-  // Nothing is registered, so there is no leftover to remove either.
-  expect(screen.queryByText(/still registered with the tools below/)).not.toBeInTheDocument();
-  // The Forget paragraph's clause about unregistering only makes sense
-  // when there is a PHR X part to point at.
-  expect(screen.queryByText(/Unregister above to remove them/)).not.toBeInTheDocument();
-});
-
-test("switched on in Settings, the PHR X option appears as before", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
+/// The card is about the database the app's OWN tools use, and nothing
+/// else: no second server to point at, and no switch in Settings to bring
+/// one back.
+test("the database card offers no separate database server", async () => {
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByLabelText("Database server path")).toBeInTheDocument();
-  expect(screen.getByText(/no longer needed for lookups/)).toBeInTheDocument();
-  localStorage.clear();
+  expect(await screen.findByRole("combobox", { name: "Database" })).toBeInTheDocument();
+  const card = dbCard();
+  for (const gone of ["Database server path", "Database type", "Schema filter"]) {
+    expect(screen.queryByLabelText(gone)).not.toBeInTheDocument();
+  }
+  expect(within(card).queryByRole("button", { name: /register/i })).not.toBeInTheDocument();
+  expect(card.textContent).not.toMatch(/MCP server|DBMCPServer|Unregister/);
+  expect(within(card).getByText(/Logins are kept in Windows Credential Manager/)).toHaveTextContent(
+    "Logins are kept in Windows Credential Manager and the other settings on this machine. Forget them.",
+  );
 });
 
-test("with the option off, a tool that still has PHR X registered can unregister it", async () => {
-  const calls: string[] = [];
+// ------------------------------------- the old database server's leftovers
+
+type Removal = { id: string; workingDir: string | null; global: boolean };
+
+/// Every command and log line the quiet cleanup produces, from one mock.
+function legacyMocks(tools: unknown[], removal: (args: Removal) => unknown = () => null) {
+  const removed: Removal[] = [];
+  const logged: string[] = [];
+  let scans = 0;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools")
-      return [
-        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases", "phr-db-mcp"], scope: "project" },
-        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm-testcases"], scope: "project" },
-      ];
+    if (cmd === "detect_ai_tools") {
+      scans += 1;
+      return tools;
+    }
     if (cmd === "db_databases") return DATABASES;
-    if (cmd === "unregister_db_server") { calls.push((args as { id: string }).id); return null; }
+    if (cmd === "log_ui") {
+      logged.push((args as { message: string }).message);
+      return null;
+    }
+    if (cmd === "remove_legacy_db_server") {
+      const a = args as Removal;
+      removed.push({ id: a.id, workingDir: a.workingDir, global: a.global });
+      return removal(a);
+    }
   });
+  return { removed, logged, scans: () => scans };
+}
+
+/// An earlier version could register a separate database server with a
+/// tool. The tab removes that entry by itself - only from the tools that
+/// still list it, through the repository config the scan read - logs it,
+/// and says nothing about it anywhere on screen.
+test("a tool still carrying the old database server has it removed quietly", async () => {
+  const { removed, logged } = legacyMocks([
+    { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases", "phr-db-mcp"], scope: "project" },
+    { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm-testcases"], scope: "project" },
+    { id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" },
+  ]);
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  await screen.findByText(/still registered with the tools below/);
-  // No executable path configured, and still the row is there to remove it.
-  expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /^Register$/ })).not.toBeInTheDocument();
-  // The Forget paragraph now has something to point at.
-  expect(screen.getByText(/Unregister above to remove them/)).toBeInTheDocument();
-  // The accessible name says which tool, so it is unambiguous even next to
-  // the "Connect your AI tools" list above, where both tools also show an
-  // Unregister button for the unrelated tcm-testcases server.
-  fireEvent.click(
-    screen.getByRole("button", { name: "Unregister the PHR X server from Claude Code" }),
+  render(<Toaster />);
+
+  await waitFor(() => expect(removed).toEqual([{ id: "claude-code", workingDir: "D:\\repo", global: false }]));
+  await waitFor(() =>
+    expect(logged).toContain("AI tools: removed the old database server from claude-code (project config)"),
   );
-  await waitFor(() => expect(calls).toEqual(["claude-code"]));
+  // Our own server is still shown as registered, on both tools that have it.
+  expect(screen.getAllByText("Registered ✓")).toHaveLength(2);
+  // Nothing on screen names the old server - no notice, no button, no toast,
+  // not even an accessible name or a tooltip.
+  expect(document.body.textContent).not.toMatch(/phr|old database server|still registered/i);
+  for (const el of document.querySelectorAll("[aria-label], [title]")) {
+    expect(`${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("title") ?? ""}`).not.toMatch(/phr/i);
+  }
+  expect(removed).toHaveLength(1);
+});
+
+/// A failed removal is logged and left for the next scan: never retried in
+/// a loop, and never shown. A new scan (Rescan) tries once more - once.
+test("a failed removal is logged once per scan and never loops", async () => {
+  const { removed, logged, scans } = legacyMocks(
+    [{ id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "project" }],
+    () => {
+      throw "failed to read D:\\repo\\.vscode\\mcp.json: access denied";
+    },
+  );
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+
+  await waitFor(() => expect(logged.some((m) => m.startsWith("AI tools: could not remove"))).toBe(true));
+  // Give a loop every chance to show itself.
+  await new Promise((r) => setTimeout(r, 300));
+  expect(removed).toHaveLength(1);
+  expect(scans()).toBe(1);
+  expect(document.body.textContent).not.toMatch(/phr|could not remove|access denied/i);
+
+  fireEvent.click(screen.getByRole("button", { name: /Rescan/ }));
+  await waitFor(() => expect(scans()).toBe(2));
+  await waitFor(() => expect(removed).toHaveLength(2));
+  await new Promise((r) => setTimeout(r, 300));
+  expect(removed).toHaveLength(2);
+});
+
+/// The same leftover in the machine-wide config while the row reads the
+/// repository's is removed from there - and it alone does not make the row
+/// say "also registered globally", which is about our own server.
+test("the old server's machine-wide copy is removed from the global config, unannounced", async () => {
+  const { removed } = legacyMocks([
+    {
+      id: "cursor", name: "Cursor", installed: true,
+      registered_servers: ["tcm-testcases"], scope: "project",
+      global_registered_servers: ["phr-db-mcp"],
+    },
+  ]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(removed).toEqual([{ id: "cursor", workingDir: null, global: true }]));
+  expect(screen.queryByText("also registered globally")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retire global copies" })).not.toBeInTheDocument();
+});
+
+/// A tool that is not installed is not touched: the cleanup follows the
+/// installed tools the tab lists.
+test("nothing is removed from a tool that is not installed", async () => {
+  const { removed, scans } = legacyMocks([
+    { id: "windsurf", name: "Windsurf", installed: false, registered_servers: ["phr-db-mcp"], scope: "global" },
+  ]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("No supported AI tools detected on this machine.");
+  await waitFor(() => expect(scans()).toBe(1));
+  await new Promise((r) => setTimeout(r, 100));
+  expect(removed).toEqual([]);
 });
 
 /// Off by default, and unmovable on a database the backend would refuse

@@ -5,10 +5,10 @@
 use v2_lib::ai_tools::{
     atomic_write, atomic_write_with, claude_cli_candidates, command_dir, command_files, command_files_for, command_files_in,
     command_markdown, config_for, detect, detect_in, merge_entry, project_command_dir,
-    remove_entry, resolve_db_command, tcm_server, McpServer, COMMAND_MARKER, COMMANDS,
-    DB_SERVER, TCM_SERVER, TOOL_SPECS,
+    remove_entry, tcm_server, McpServer, COMMAND_MARKER, COMMANDS, LEGACY_DB_SERVER, TCM_SERVER,
+    TOOL_SPECS,
 };
-use v2_lib::commands::ai_tools::{mcp_add_args, mcp_add_command, project_relative, project_root};
+use v2_lib::commands::ai_tools::{mcp_add_args, mcp_add_command, project_root, remove_legacy_db_server};
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
 /// dependency of this project). Unique per-call via time + an atomic
@@ -343,50 +343,48 @@ fn detect_uses_on_path_probe_for_path_based_tools() {
 }
 
 
-// ---------------------------------------------------------------- db server
+// ------------------------------------------------ servers with environment
 
-fn db_server() -> McpServer {
+/// Somebody else's server, the shape a config entry with environment takes.
+fn env_server() -> McpServer {
     let mut env = std::collections::BTreeMap::new();
-    env.insert("DB_TYPE".to_string(), "mssql".to_string());
-    env.insert(
-        "CONNECTION_STRING".to_string(),
-        "Server=db,1433;Database=HR;User Id=sa;Password=p@ss;TrustServerCertificate=True;".to_string(),
-    );
-    env.insert("SCHEMA_FILTER".to_string(), "dbo,hr".to_string());
+    env.insert("API_URL".to_string(), "https://example.test/api".to_string());
+    env.insert("MODE".to_string(), "read-only".to_string());
     McpServer {
-        name: DB_SERVER.to_string(),
-        command: "C:/tools/PeoplesHR.DBMCPServer.exe".to_string(),
+        name: "another-server".to_string(),
+        command: "C:/tools/other.exe".to_string(),
         args: vec![],
         env,
     }
 }
 
-/// The company server is configured entirely through env vars, so those
-/// have to survive into the config verbatim.
+/// A server configured through env vars has them survive into the config
+/// verbatim.
 #[test]
-fn the_db_server_writes_its_environment() {
-    let out = merge_entry("{}", "mcpServers", &db_server()).unwrap();
+fn a_server_with_environment_writes_it_verbatim() {
+    let out = merge_entry("{}", "mcpServers", &env_server()).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    let entry = &v["mcpServers"][DB_SERVER];
-    assert_eq!(entry["command"], "C:/tools/PeoplesHR.DBMCPServer.exe");
-    assert_eq!(entry["env"]["DB_TYPE"], "mssql");
-    assert!(entry["env"]["CONNECTION_STRING"].as_str().unwrap().contains("Password=p@ss"));
-    assert_eq!(entry["env"]["SCHEMA_FILTER"], "dbo,hr");
+    let entry = &v["mcpServers"]["another-server"];
+    assert_eq!(entry["command"], "C:/tools/other.exe");
+    assert_eq!(entry["env"]["API_URL"], "https://example.test/api");
+    assert_eq!(entry["env"]["MODE"], "read-only");
 }
 
-/// Both servers coexist: registering one must never disturb the other.
+/// Removing the old database server's entry leaves ours untouched.
 #[test]
-fn both_servers_live_side_by_side() {
+fn removing_the_legacy_entry_leaves_ours_alone() {
+    let legacy = McpServer {
+        name: LEGACY_DB_SERVER.to_string(),
+        command: "db.exe".to_string(),
+        args: vec![],
+        env: Default::default(),
+    };
     let ours = merge_entry("{}", "mcpServers", &tcm_server("C:/app/v2.exe")).unwrap();
-    let both = merge_entry(&ours, "mcpServers", &db_server()).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&both).unwrap();
-    assert_eq!(v["mcpServers"][TCM_SERVER]["args"][0], "--mcp");
-    assert_eq!(v["mcpServers"][DB_SERVER]["env"]["DB_TYPE"], "mssql");
+    let both = merge_entry(&ours, "mcpServers", &legacy).unwrap();
 
-    // Removing the database server leaves ours untouched.
-    let left = remove_entry(&both, "mcpServers", DB_SERVER).unwrap().unwrap();
+    let left = remove_entry(&both, "mcpServers", LEGACY_DB_SERVER).unwrap().unwrap();
     let v: serde_json::Value = serde_json::from_str(&left).unwrap();
-    assert!(v["mcpServers"][DB_SERVER].is_null());
+    assert!(v["mcpServers"][LEGACY_DB_SERVER].is_null());
     assert_eq!(v["mcpServers"][TCM_SERVER]["command"], "C:/app/v2.exe");
 }
 
@@ -402,13 +400,13 @@ fn a_server_without_environment_omits_the_key_entirely() {
 /// VS Code's schema wants an explicit transport; the other tools infer it.
 #[test]
 fn vs_code_entries_declare_the_stdio_transport() {
-    let vscode = merge_entry("{}", "servers", &db_server()).unwrap();
+    let vscode = merge_entry("{}", "servers", &env_server()).unwrap();
     let v: serde_json::Value = serde_json::from_str(&vscode).unwrap();
-    assert_eq!(v["servers"][DB_SERVER]["type"], "stdio");
+    assert_eq!(v["servers"]["another-server"]["type"], "stdio");
 
-    let other = merge_entry("{}", "mcpServers", &db_server()).unwrap();
+    let other = merge_entry("{}", "mcpServers", &env_server()).unwrap();
     let v: serde_json::Value = serde_json::from_str(&other).unwrap();
-    assert!(v["mcpServers"][DB_SERVER].get("type").is_none());
+    assert!(v["mcpServers"]["another-server"].get("type").is_none());
 }
 
 #[test]
@@ -434,74 +432,6 @@ fn detect_reports_each_managed_server_separately() {
         !cursor.registered_servers.iter().any(|s| s == "somebody-elses"),
         "only servers this app manages are reported"
     );
-}
-
-// ---- resolve_db_command: only a real invocation may reach a config ------
-
-#[test]
-fn a_picked_exe_registers_as_itself() {
-    let dir = TempDir::new();
-    let exe = dir.path().join("PeoplesHR.DBMCPServer.exe");
-    std::fs::write(&exe, "x").unwrap();
-    let (command, args) = resolve_db_command(&exe).unwrap();
-    assert_eq!(command, exe.to_string_lossy());
-    assert!(args.is_empty());
-}
-
-#[test]
-fn a_picked_dll_runs_through_dotnet() {
-    let dir = TempDir::new();
-    let dll = dir.path().join("PeoplesHR.DBMCPServer.dll");
-    std::fs::write(&dll, "x").unwrap();
-    let (command, args) = resolve_db_command(&dll).unwrap();
-    assert_eq!(command, "dotnet");
-    assert_eq!(args, vec![dll.to_string_lossy().to_string()]);
-}
-
-/// The incident layout: the repo folder was picked, and a directory was
-/// registered as `command` - unlaunchable, so the server never started.
-/// The folder must resolve to the BUILT exe, past the obj\ intermediate
-/// apphost and the test host.
-#[test]
-fn a_picked_folder_resolves_to_the_built_exe_only() {
-    let dir = TempDir::new();
-    let bin = dir
-        .path()
-        .join("src")
-        .join("PeoplesHR.DBMCPServer")
-        .join("bin")
-        .join("Debug")
-        .join("net10.0");
-    std::fs::create_dir_all(&bin).unwrap();
-    let real = bin.join("PeoplesHR.DBMCPServer.exe");
-    std::fs::write(&real, "x").unwrap();
-    let obj = dir.path().join("src/PeoplesHR.DBMCPServer/obj/Debug/net10.0");
-    std::fs::create_dir_all(&obj).unwrap();
-    std::fs::write(obj.join("apphost.exe"), "decoy").unwrap();
-    let tests = dir.path().join("src/PeoplesHR.DBMCPServer.Tests/bin/Debug/net10.0");
-    std::fs::create_dir_all(&tests).unwrap();
-    std::fs::write(tests.join("testhost.exe"), "decoy").unwrap();
-
-    let (command, args) = resolve_db_command(dir.path()).unwrap();
-    assert_eq!(command, real.to_string_lossy());
-    assert!(args.is_empty());
-}
-
-#[test]
-fn an_unbuilt_folder_is_refused_with_the_build_instruction() {
-    let dir = TempDir::new();
-    std::fs::create_dir_all(dir.path().join("src/PeoplesHR.DBMCPServer")).unwrap();
-    let err = resolve_db_command(dir.path()).unwrap_err();
-    assert!(err.contains("dotnet build"), "error must say how to fix it: {err}");
-}
-
-#[test]
-fn a_source_file_pick_is_refused_with_guidance() {
-    let dir = TempDir::new();
-    let proj = dir.path().join("PeoplesHR.DBMCPServer.csproj");
-    std::fs::write(&proj, "<Project/>").unwrap();
-    let err = resolve_db_command(&proj).unwrap_err();
-    assert!(err.contains("pick the built server executable"), "{err}");
 }
 
 // ---------------------------------------------------------- per-repo scope
@@ -545,7 +475,11 @@ fn detect_reads_the_repo_config_when_a_working_dir_is_given() {
     let tools = detect_in(&home_str, &appdata_str, &on_path, Some(repo_str.as_str()));
     let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
     assert_eq!(cc.scope, "project");
-    assert_eq!(cc.registered_servers, vec![DB_SERVER], "the repo has the DB server, not ours");
+    assert_eq!(
+        cc.registered_servers,
+        vec![LEGACY_DB_SERVER],
+        "the repo has the old database server's entry, not ours - reported so it can be removed"
+    );
     let cd = tools.iter().find(|t| t.id == "claude-desktop").unwrap();
     assert_eq!(cd.scope, "global", "no project config exists for Claude Desktop");
 }
@@ -893,26 +827,27 @@ fn a_failed_temp_write_leaves_no_temp_file() {
     assert!(!target.exists());
 }
 
-/// The regression that broke the database server: env pairs BEFORE the
-/// name feed the CLI's variadic `-e`, which then eats the name. Pin
+/// The regression that once broke a registration with environment: env
+/// pairs BEFORE the name feed the CLI's variadic `-e`, which then eats the
+/// name. Pin
 /// name-first, `--` before the binary, and every env pair in between.
 #[test]
 fn mcp_add_puts_the_name_before_the_env_pairs() {
     let mut env = std::collections::BTreeMap::new();
-    env.insert("DB_TYPE".to_string(), "mssql".to_string());
+    env.insert("MODE".to_string(), "read-only".to_string());
     env.insert(
         "CONNECTION_STRING".to_string(),
-        "Server=tcp:db,1433;Database=PHRX;User Id=ro".to_string(),
+        "Server=tcp:db,1433;Database=HR;User Id=ro".to_string(),
     );
     let server = McpServer {
-        name: "phr-db-mcp".to_string(),
-        command: r"C:	ools\PeoplesHR.DBMCPServer.exe".to_string(),
+        name: "another-server".to_string(),
+        command: r"C:\tools\other.exe".to_string(),
         args: vec![],
         env,
     };
     let args = mcp_add_args(&server, "project");
 
-    let name_at = args.iter().position(|a| a == "phr-db-mcp").unwrap();
+    let name_at = args.iter().position(|a| a == "another-server").unwrap();
     let first_env = args.iter().position(|a| a == "-e").unwrap();
     let dashes = args.iter().position(|a| a == "--").unwrap();
     let cmd_at = args.iter().position(|a| a.ends_with(".exe")).unwrap();
@@ -951,18 +886,6 @@ fn a_repo_registration_asks_for_project_scope() {
     assert_eq!(&args[2..4], ["--scope", "project"]);
 }
 
-/// The path handed to `exclude_locally` for a non-Claude tool's
-/// project config (e.g. Cursor's `.cursor/mcp.json`) - forward-slashed
-/// regardless of platform, and None for anything not under the root.
-#[test]
-fn project_relative_forward_slashes_a_path_under_the_root() {
-    assert_eq!(
-        project_relative(r"D:\repo", std::path::Path::new(r"D:\repo\.cursor\mcp.json")),
-        Some(".cursor/mcp.json".to_string())
-    );
-    assert_eq!(project_relative(r"D:\repo", std::path::Path::new(r"D:\elsewhere\mcp.json")), None);
-}
-
 /// The machine-wide choice is explicit: it sends every tool to its
 /// global config even with a repository set, and without it a tool
 /// that registers per repository still refuses to go anywhere else.
@@ -992,7 +915,7 @@ fn cmd_metacharacters_in_an_env_value_reach_the_cli_literally() {
         "CONNECTION_STRING".to_string(),
         "Server=db;Password=a&b|c^d<e>f(g)%PATH%&echo pwned>pwned.txt".to_string(),
     );
-    let server = McpServer { name: "phr-db-mcp".into(), command: "db.exe".into(), args: vec![], env };
+    let server = McpServer { name: "another-server".into(), command: "db.exe".into(), args: vec![], env };
     let status = mcp_add_command(&probe, &server, "user", Some(dir.path())).status().unwrap();
     assert!(status.success());
     let seen = std::fs::read_to_string(&out).unwrap();
@@ -1015,15 +938,81 @@ fn the_cli_is_run_directly_not_through_cmd() {
     assert_eq!(args, mcp_add_args(&server, "user"));
 }
 
-/// A machine that never chose a database has none chosen: the shipped
-/// defaults fill the PHR X server's own settings and name no database, so
-/// nothing can prefill one.
+// ------------------------------------------ the old database server's leftovers
+
+/// The quiet cleanup the AI Bridge tab runs: the old database server's
+/// entry leaves the repository's config, and nothing else in it moves - not
+/// our own server, not somebody else's, not the file's other keys.
 #[test]
-fn the_shipped_server_defaults_name_no_database() {
-    let json = serde_json::to_value(v2_lib::commands::ai_tools::db_server_defaults()).unwrap();
-    let keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(keys.len(), 3, "{keys:?}");
-    for k in ["exe_path", "db_type", "schema_filter"] {
-        assert!(keys.contains(&k), "{keys:?}");
+fn removing_the_legacy_db_server_takes_only_its_entry() {
+    let repo = TempDir::new();
+    let cursor = repo.path().join(".cursor").join("mcp.json");
+    std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+    std::fs::write(
+        &cursor,
+        serde_json::json!({
+            "mcpServers": {
+                "tcm-testcases": { "command": "v2.exe", "args": ["--mcp"] },
+                "phr-db-mcp": { "command": "db.exe", "env": { "CONNECTION_STRING": "Server=db;Password=p" } },
+                "somebody-elses": { "command": "other.exe" }
+            },
+            "theirSetting": true
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let vscode = repo.path().join(".vscode").join("mcp.json");
+    std::fs::create_dir_all(vscode.parent().unwrap()).unwrap();
+    std::fs::write(
+        &vscode,
+        serde_json::json!({
+            "servers": {
+                "phr-db-mcp": { "type": "stdio", "command": "db.exe" },
+                "tcm-testcases": { "type": "stdio", "command": "v2.exe" }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let root = repo.path().to_string_lossy().to_string();
+
+    remove_legacy_db_server("cursor".into(), Some(root.clone()), false).unwrap();
+    remove_legacy_db_server("vscode".into(), Some(root.clone()), false).unwrap();
+
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert!(v["mcpServers"][LEGACY_DB_SERVER].is_null(), "{v}");
+    assert_eq!(v["mcpServers"][TCM_SERVER]["command"], "v2.exe");
+    assert_eq!(v["mcpServers"]["somebody-elses"]["command"], "other.exe");
+    assert_eq!(v["theirSetting"], true);
+
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&vscode).unwrap()).unwrap();
+    assert!(v["servers"][LEGACY_DB_SERVER].is_null(), "{v}");
+    assert_eq!(v["servers"][TCM_SERVER]["command"], "v2.exe");
+
+    // Detection then has nothing left to clean, so the tab never asks again.
+    let tools = detect_in("", "", &|_| false, Some(root.as_str()));
+    for t in tools.iter().filter(|t| t.id == "cursor" || t.id == "vscode") {
+        assert_eq!(t.registered_servers, vec![TCM_SERVER], "{t:?}");
     }
+}
+
+/// Already gone - or never there - is the state asked for, not a failure.
+#[test]
+fn removing_the_legacy_db_server_where_there_is_none_is_a_no_op() {
+    let repo = TempDir::new();
+    let root = repo.path().to_string_lossy().to_string();
+    remove_legacy_db_server("cursor".into(), Some(root.clone()), false).unwrap();
+    assert!(!repo.path().join(".cursor").exists(), "nothing is created to remove nothing");
+
+    let cursor = repo.path().join(".cursor").join("mcp.json");
+    std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+    let only_ours = r#"{"mcpServers":{"tcm-testcases":{"command":"v2.exe"}}}"#;
+    std::fs::write(&cursor, only_ours).unwrap();
+    remove_legacy_db_server("cursor".into(), Some(root), false).unwrap();
+    assert_eq!(std::fs::read_to_string(&cursor).unwrap(), only_ours, "a file without it is left as it was");
+}
+
+#[test]
+fn removing_the_legacy_db_server_refuses_an_unknown_tool() {
+    assert!(remove_legacy_db_server("not-a-tool".into(), None, false).is_err());
 }

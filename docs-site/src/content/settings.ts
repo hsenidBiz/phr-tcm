@@ -26,8 +26,8 @@ export const settings: Screen = {
     { id: MAIN, route: [OPEN], alt: "Settings: appearance and request rate on the left, the changelog, backup and updates on the right" },
     {
       id: MORE,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" } }],
-      alt: "Settings scrolled down to How To Use, the interface tour and the AI tools options",
+      route: [OPEN, { scrollTo: { role: "switch", name: "Allow registering AI tools machine-wide" } }],
+      alt: "Settings scrolled down to How To Use, the interface tour and the AI tools option",
     },
     { id: LOGS, route: [OPEN, { click: { role: "button", name: "Logs" } }, { waitFor: { role: "button", name: "Copy log" } }], alt: "The app log in place of the changelog" },
     {
@@ -41,7 +41,7 @@ export const settings: Screen = {
     { id: "rate", title: "Azure DevOps request rate", summary: "How fast the app may call Azure DevOps." },
     { id: "changelog-logs", title: "Changelog, logs and bug reports", summary: "What changed in each version, the app's own log, and a way to report a problem." },
     { id: "backup-updates", title: "Backup and updates", summary: "Move your settings to another computer, and check for a new version." },
-    { id: "help-and-options", title: "Help, the tour and AI tools options", summary: "Further down: this guide, the interface tour, and two switches for AI Bridge." },
+    { id: "help-and-options", title: "Help, the tour and AI tools options", summary: "Further down: this guide, the interface tour, and a switch for AI Bridge." },
   ],
   controls: [
     // --- Appearance and request rate ------------------------------------------
@@ -168,14 +168,6 @@ export const settings: Screen = {
       name: "Allow registering AI tools machine-wide",
       does:
         "For a computer that does not work from a repository: the AI Bridge tab then offers **Register in: This repository** or **Machine-wide**. Writing test cases still needs a repository.",
-    },
-    {
-      id: "offer-phrx",
-      shot: MORE,
-      group: "help-and-options",
-      locate: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" },
-      name: "Offer the PHR X database server",
-      does: "Shows the settings for registering the company's own database server on the AI Bridge tab. Most people no longer need it.",
     },
 
     // --- The app log ------------------------------------------------------------------
