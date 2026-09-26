@@ -75,15 +75,26 @@ const outcomeBadge: Record<string, string> = {
   notapplicable: "bg-surface-2 text-muted",
 };
 
-// Pre-selection identity for the verdict segments: a small dot says which
-// colour each verdict turns without painting five loud buttons. (The dot
-// hides on the selected segment - its background carries the colour then.)
-const outcomeDot: Record<string, string> = {
-  Passed: "bg-success",
-  Failed: "bg-danger",
-  Paused: "bg-muted",
-  Blocked: "bg-warning",
-  NotApplicable: "bg-faint",
+// Pre-selection identity for the verdict segments: each unset button is
+// outlined in the colour it turns, instead of painting five loud buttons
+// (it was a small dot beside the word, which read as decoration). Hover
+// tints it a little.
+const outcomeEdge: Record<string, string> = {
+  Passed: "border-success/70 hover:bg-success/10",
+  Failed: "border-danger/70 hover:bg-danger/10",
+  Paused: "border-muted/60 hover:bg-muted/10",
+  Blocked: "border-warning/70 hover:bg-warning/10",
+  NotApplicable: "border-border-strong hover:bg-surface-2",
+};
+
+// The previous run's verdict: a soft fill in its colour, short of the solid
+// one a mark gets, so "last time" never reads as "marked now".
+const outcomeLast: Record<string, string> = {
+  Passed: "bg-success/15 text-text",
+  Failed: "bg-danger/15 text-text",
+  Paused: "bg-muted/15 text-text",
+  Blocked: "bg-warning/15 text-text",
+  NotApplicable: "bg-surface-2 text-text",
 };
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i;
@@ -1176,9 +1187,11 @@ export default function RunnerWindow() {
                 key={o}
                 title={wasLastOutcome ? `${outcomeLabel(o)} - the previous run's result` : undefined}
                 className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold",
+                  "flex items-center justify-center rounded-md border py-2 text-xs font-semibold transition-colors",
                   o === "Passed" || o === "Failed" ? "flex-[2]" : "flex-1",
-                  st.outcome === o ? outcomeBtn[o] : "border border-border text-muted hover:text-text",
+                  st.outcome === o
+                    ? cn("border-transparent", outcomeBtn[o])
+                    : cn("text-muted hover:text-text", outcomeEdge[o], wasLastOutcome && outcomeLast[o]),
                 )}
                 onClick={() =>
                   // Click again to un-mark: an unmarked case is simply not
@@ -1191,19 +1204,8 @@ export default function RunnerWindow() {
                   )
                 }
               >
-                {st.outcome !== o && (
-                  // The previous run's verdict pulses instead of arriving
-                  // pre-selected, so recording the same result again is one
-                  // ordinary click away.
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "size-1.5 rounded-full",
-                      outcomeDot[o],
-                      wasLastOutcome && "size-2 animate-pulse",
-                    )}
-                  />
-                )}
+                {/* The previous run's verdict is shown, never pre-applied:
+                    recording the same result again is one ordinary click. */}
                 {outcomeLabel(o)}
               </button>
               );
