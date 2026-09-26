@@ -249,12 +249,28 @@ kbd {
 }
 .nav-scrim { display: none; }
 /* a screen's subsections, listed while it is the one being read */
+/* A screen's subsections: open while it is the one being read (data-open),
+   and also on hover or keyboard focus so a reader can jump straight into
+   one. Hover waits a moment before opening, so sweeping the pointer down
+   the list does not unfold every screen it crosses and push the rest
+   around; focus and the reading position open at once. Collapsed lists are
+   hidden, so their links are out of the tab order. --n is the link count. */
 .nav-sub {
-  list-style: none; display: none; gap: 1px;
-  margin: 3px 0 8px 13px; padding: 0 0 0 9px;
+  list-style: none; display: grid; gap: 1px;
+  margin: 0 0 0 13px; padding: 0 0 0 9px;
   border-left: 1px solid var(--border-strong);
+  max-height: 0; overflow: hidden; opacity: 0; visibility: hidden;
+  transition: max-height 0.22s var(--ease-out) 0.1s, opacity 0.16s 0.1s, margin 0.22s var(--ease-out) 0.1s, visibility 0s 0.32s;
 }
-li[data-open] > .nav-sub { display: grid; }
+li[data-open] > .nav-sub,
+li:hover > .nav-sub,
+li:focus-within > .nav-sub {
+  max-height: calc(var(--n, 6) * 48px + 12px); opacity: 1; visibility: visible;
+  margin: 3px 0 8px 13px;
+  transition-delay: 0.2s, 0.2s, 0.2s, 0s;
+}
+li[data-open] > .nav-sub,
+li:focus-within > .nav-sub { transition-delay: 0s; }
 .nav-sublink {
   display: block; padding: 4px 10px; border-radius: 7px;
   font-size: 13px; line-height: 1.45; color: var(--faint); text-decoration: none;

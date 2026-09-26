@@ -1,7 +1,8 @@
 // The sticky, grouped table of contents, with scroll-spy: the link for the
 // section under the reading line is marked aria-current. A screen split
 // into subsections lists them under its link while it is the one being
-// read (data-open), with the subsection under the reading line marked too.
+// read (data-open), with the subsection under the reading line marked too;
+// hovering or focusing a screen's link opens its list as well (styles.css).
 
 import { GROUPS, type SiteContent } from "../types";
 import { h } from "./dom";
@@ -40,7 +41,7 @@ export function renderSidebar(content: SiteContent): HTMLElement {
               s.groups?.length
                 ? h(
                     "ul",
-                    { class: "nav-sub" },
+                    { class: "nav-sub", style: `--n: ${s.groups.length}` },
                     ...s.groups.map((g) =>
                       h("li", {}, h("a", { href: `#${s.id}/${g.id}`, class: "nav-sublink", "data-spy-sub": `${s.id}/${g.id}` }, g.title)),
                     ),
