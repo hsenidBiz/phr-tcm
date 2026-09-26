@@ -128,9 +128,9 @@ describe("runStep", () => {
 
 describe("storage plans", () => {
   test("a pass turns capture mode on, sets the theme and pins the look", () => {
-    expect(passStorage("slate")).toEqual({
-      set: { [KEYS.capture]: "on", [KEYS.themeId]: "slate" },
-      remove: [KEYS.themeLegacy, KEYS.accent, KEYS.sidebar],
+    expect(passStorage("graphite")).toEqual({
+      set: { [KEYS.capture]: "on", [KEYS.themeId]: "graphite", [KEYS.accent]: "violet" },
+      remove: [KEYS.themeLegacy, KEYS.sidebar],
     });
   });
 
