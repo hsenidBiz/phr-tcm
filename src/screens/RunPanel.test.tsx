@@ -333,7 +333,7 @@ test("the runner opens only from a selection", async () => {
   expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
 });
 
-/// The selection's actions sit in place beside Set execution order (the
+/// The selection's actions sit in place at the end of the filter row (the
 /// keyboard path) and float bottom-right only once that row scrolls away -
 /// the shared ActionDock, not a bar that floats whether or not the real
 /// buttons are already in view.
@@ -361,11 +361,9 @@ test("the selection's actions sit in the toolbar and float once it scrolls away"
     expect(document.querySelector("[data-sticky-action]")).toBeNull();
 
     fireEvent.click(screen.getByText("Valid login"));
-    // In place: in the same row as Set execution order.
+    // In place: in the filter row, directly above the list.
     const run = screen.getByRole("button", { name: /Run 1 in runner/ });
-    expect(run.closest("div.flex")?.parentElement).toContainElement(
-      screen.getByRole("button", { name: /Set execution order/ }),
-    );
+    expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
 
     // Assumed on screen until told otherwise, so the floating copy starts hidden.
     const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
