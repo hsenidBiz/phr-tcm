@@ -337,22 +337,6 @@ li[data-open] > .nav-sub { display: grid; }
 }
 .hero-visual:hover .window { transform: rotateX(0deg) scale(1); }
 [data-motion="full"] .window { animation: rise 1.1s var(--ease-out) backwards 0.1s; }
-.window-bar {
-  display: flex; align-items: center; gap: 9px;
-  height: 36px; padding: 0 0 0 12px;
-  background: linear-gradient(180deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 60%, var(--surface)));
-  border-bottom: 1px solid var(--border);
-}
-.window-icon { width: 16px; height: 16px; border-radius: 4px; }
-.window-title { font-size: 12.5px; font-weight: 500; color: var(--muted); }
-.window-controls { margin-left: auto; display: flex; height: 100%; }
-.window-controls i { position: relative; width: 44px; height: 100%; }
-.window-controls i::before, .window-controls i::after { content: ""; position: absolute; left: 50%; top: 50%; background: var(--faint); }
-.wc-min::before { width: 10px; height: 1px; transform: translate(-50%, 0); }
-.wc-max::before { width: 9px; height: 9px; background: transparent !important; border: 1px solid var(--faint); transform: translate(-50%, -50%); }
-.wc-close::before, .wc-close::after { width: 12px; height: 1px; }
-.wc-close::before { transform: translate(-50%, -50%) rotate(45deg); }
-.wc-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
 .window-body { position: relative; aspect-ratio: 1440 / 900; }
 .window-body img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
