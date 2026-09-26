@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.30",
+    date: "2026-09-26",
+    items: [
+      "New: Settings has a How To Use button. It opens a guide to every screen and button in your browser, with screenshots you can point at, search and short recipes for common tasks. It works offline.",
+      "The Company database card on the AI Bridge screen is simpler: pick a database, then use Manage credentials to enter its login and test the connection before you save. Logins are now kept in Windows Credential Manager, and a login you saved before moves there by itself. Backups never include them.",
+      "Buttons that act on a screen now sit in one place: scroll past them on Import File, Suite Management, Update Test Cases or Run Tests and they float at the bottom right of the window.",
+      "Run in runner now sits at the right end of the filter row on Run Tests, just above the list.",
+      "Opening a large group of test cases is smooth from the first row to the last.",
+      "Images in work item comments and pull request threads now show, or say Image unavailable when they cannot be loaded.",
+      "In the Pull Requests repository picker, the repositories you ticked are listed first.",
+      "Info messages are blue, so they no longer look like a success.",
+      "The Logs panel in Settings slides in, How it works on the AI Bridge screen is now called AI Tools Breakdown, the share link box takes one row, and an empty Recent JSON Imports box no longer shows.",
+    ],
+  },
+  {
     version: "1.25.29",
     date: "2026-09-25",
     items: [
