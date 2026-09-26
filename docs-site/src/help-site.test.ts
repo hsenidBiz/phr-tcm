@@ -737,7 +737,7 @@ describe("page width and stage flow", () => {
     expect(site.dataset.layout).toBe("wide");
   });
 
-  test("a stage puts its list beside the figure when both fit its width, else below", () => {
+  test("a stage draws its figure no taller than the window allows, and puts its list beside it when both fit, else below", () => {
     const observers: { cb: () => void; el: Element }[] = [];
     vi.stubGlobal(
       "ResizeObserver",
@@ -761,10 +761,26 @@ describe("page width and stage flow", () => {
         Object.defineProperty(stage, "clientWidth", { value: w, configurable: true });
         observers.filter((o) => o.el === stage).forEach((o) => o.cb());
       };
-      resize(1868); // 1440 + 28 + 340 fits
+      // jsdom's window is 768 tall: a figure may be 768 - 116 = 652 tall,
+      // so the 1440 x 900 shot is drawn 1043 wide.
+      expect(stage.style.getPropertyValue("--fig-w")).toBe("1043");
+      resize(1868);
       expect(stage.dataset.flow).toBe("beside");
-      resize(1440);
+      resize(1300); // 1043 + 28 + 340 does not fit
       expect(stage.dataset.flow).toBe("below");
+      // a taller window lets the shot reach its own size
+      const tall = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", { value: 1100, configurable: true });
+      try {
+        window.dispatchEvent(new Event("resize"));
+        expect(stage.style.getPropertyValue("--fig-w")).toBe("1440");
+        resize(1868); // 1440 + 28 + 340 fits
+        expect(stage.dataset.flow).toBe("beside");
+        resize(1440);
+        expect(stage.dataset.flow).toBe("below");
+      } finally {
+        Object.defineProperty(window, "innerHeight", { value: tall, configurable: true });
+      }
     } finally {
       vi.unstubAllGlobals();
       vi.stubGlobal("IntersectionObserver", quietObserver);
@@ -869,5 +885,80 @@ describe("full-screen view", () => {
   test("a shot with no image yet has no expand button", () => {
     mount();
     expect(document.querySelector('figure[data-shot="beta-main"] .shot-expand')).toBeNull();
+  });
+});
+
+describe("full-screen view, continued", () => {
+  const viewer = () => document.querySelector<HTMLElement>(".viewer")!;
+  const dialog = () => viewer().querySelector<HTMLElement>('[role="dialog"]')!;
+  const open = () => document.querySelector<HTMLButtonElement>('#alpha figure[data-shot="alpha-main"] .shot-expand')!.click();
+
+  test("Escape still closes it after a click on the shot left focus on the page body", () => {
+    mount();
+    open();
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    key(document.body, { key: "Escape" });
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("a click on the shot or the list focuses the dialog, never the page", () => {
+    mount();
+    open();
+    expect(dialog().getAttribute("tabindex")).toBe("-1");
+  });
+
+  test("a click on the empty space around the shot closes it", () => {
+    mount();
+    open();
+    viewer().querySelector<HTMLElement>(".viewer-stage")!.click();
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("the page behind is inert while it is open, and not after", () => {
+    mount();
+    const shell = document.querySelector<HTMLElement>(".shell")!;
+    const topbar = document.querySelector<HTMLElement>(".topbar")!;
+    open();
+    expect(shell.hasAttribute("inert")).toBe(true);
+    expect(topbar.hasAttribute("inert")).toBe(true);
+    expect(viewer().hasAttribute("inert")).toBe(false);
+    key(document.body, { key: "Escape" });
+    expect(shell.hasAttribute("inert")).toBe(false);
+    expect(topbar.hasAttribute("inert")).toBe(false);
+  });
+
+  test("a hash change (the Back button, a link) closes it", () => {
+    mount();
+    open();
+    history.replaceState(null, "", "#beta");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("a group's crop opens as that crop, named for its group", () => {
+    mount(grouped);
+    const btn = document.querySelector<HTMLButtonElement>('[id="gamma/top-card"] .shot-expand')!;
+    expect(btn.getAttribute("aria-label")).toBe("Open The top card full screen");
+    expect(document.querySelector('[id="gamma/top-card"] ol.controls')?.getAttribute("aria-label")).toBe("Controls in The top card");
+    btn.click();
+    const frame = dialog().querySelector<HTMLElement>(".frame")!;
+    expect(frame.classList.contains("is-crop")).toBe(true);
+    expect([frame.style.getPropertyValue("--shot-w"), frame.style.getPropertyValue("--shot-h")]).toEqual(["576", "144"]);
+    expect([...dialog().querySelectorAll<HTMLElement>(".marker")].map((m) => `${m.dataset.control}:${m.textContent}`)).toEqual(["a:1", "b:2"]);
+    expect(dialog().querySelector(".viewer-context")?.textContent).toBe("Gamma Screen · The top card");
+  });
+});
+
+describe("overview labels", () => {
+  test("a region at the very top of the shot has its label inside it, where the frame cannot cut it", () => {
+    const top: SiteContent = {
+      ...grouped,
+      positions: { ...grouped.positions, "gamma-main": main({ ...grouped.positions["gamma-main"].controls, a: { x: 100, y: 4, w: 80, h: 30 } }) },
+    };
+    mount(top);
+    const [first, second] = [...document.querySelectorAll<HTMLElement>('figure[data-overview="gamma-main"] a.region')];
+    expect(first.classList.contains("is-top")).toBe(true);
+    expect(second.classList.contains("is-top")).toBe(false);
   });
 });

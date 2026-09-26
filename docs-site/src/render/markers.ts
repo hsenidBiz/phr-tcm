@@ -8,13 +8,22 @@
 // one that cannot have any corner is moved to the nearest free spot around
 // it, and gets a thin leader line back to its control's corner.
 
-import type { Box, Size } from "../types";
+import { shotSize, type Box, type Control, type ShotPositions, type Size } from "../types";
+import type { Stage } from "./plan";
 
 /** A marker's diameter, in shot pixels. The stylesheet draws it at this
- *  size scaled with the shot (within a readable min and max). */
+ *  size scaled with the shot, never smaller than MARKER_MIN_PX. */
 export const MARKER_SIZE = 24;
 /** The least room between two markers, in shot pixels. */
 export const MARKER_GAP = 4;
+/** The smallest a marker is ever drawn (CSS px; styles.css .marker --size). */
+export const MARKER_MIN_PX = 12;
+/** Below this render scale (CSS px per shot px) the MARKER_MIN_PX floor is
+ *  wider than the room layoutMarkers keeps, and markers could touch. The
+ *  smallest desktop figure is a whole 1440 shot in a 1024 px window: the
+ *  654 px content column is a scale of 0.454; the full-screen view keeps
+ *  its stage at least that wide (a narrower list panel on small windows). */
+export const MIN_RENDER_SCALE = MARKER_MIN_PX / (MARKER_SIZE + MARKER_GAP);
 /** A marker further than this (shot px) from its natural spot is joined to
  *  its control's corner by a leader line. */
 export const LEADER_AFTER = MARKER_SIZE / 2;
@@ -146,3 +155,33 @@ export function layoutMarkers(
 
 const sameBox = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 const round = (n: number) => Math.round(n * 100) / 100;
+
+/** A stage's markers, as the page draws them: each placed control's box in
+ *  the stage's view pixels (the whole shot, or its crop) and its spot. The
+ *  other controls on the shot are obstacles. Controls without a box have
+ *  no marker (their list row still documents them). */
+export function stageMarkers(
+  stage: Pick<Stage, "shot" | "view" | "controls">,
+  placed: ShotPositions | undefined,
+): { control: Control; n: number; box: Box; spot: MarkerSpot }[] {
+  const size = shotSize(stage.shot);
+  const view = stage.view;
+  // Boxes are in the pixels they were measured at: the shot's size, unless
+  // positions.json is stale (validate.ts positionsProblems reports that).
+  const at = placed?.size ?? size;
+  const sx = size.w / at.w;
+  const sy = size.h / at.h;
+  const toView = (b: Box): Box => ({ x: b.x * sx - view.x, y: b.y * sy - view.y, w: b.w * sx, h: b.h * sy });
+  const inView = (b: Box) => b.x < view.w && b.y < view.h && b.x + b.w > 0 && b.y + b.h > 0;
+  const obstacles = Object.values(placed?.controls ?? {}).map(toView).filter(inView);
+  const marked = stage.controls.flatMap(({ control, n }) => {
+    const b = placed?.controls?.[control.id];
+    return b ? [{ control, n, box: toView(b) }] : [];
+  });
+  const spots = layoutMarkers(
+    marked.map((m) => m.box),
+    { w: view.w, h: view.h },
+    { obstacles },
+  );
+  return marked.map((m, i) => ({ ...m, spot: spots[i] }));
+}

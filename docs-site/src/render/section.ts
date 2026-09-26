@@ -8,7 +8,7 @@
 import { shotSize, type Control, type ControlGroup, type Screen, type Shot, type SiteContent } from "../types";
 import { h, rich } from "./dom";
 import { icon } from "./icons";
-import { figureWidth, planScreen, stageFlow, type Region, type Stage } from "./plan";
+import { figureMaxHeight, figureWidth, planScreen, stageFlow, type Region, type Stage } from "./plan";
 import { placeholder, renderShot, type ShotView } from "./shot";
 import { currentTheme, shotSrc, type Theme } from "./theme";
 import type { ViewerContent } from "./viewer";
@@ -65,6 +65,9 @@ export function renderSection(screen: Screen, content: SiteContent, env: Section
   function stageEl(stage: Stage, label: string | null, group: ControlGroup | null): HTMLElement {
     const { shot } = stage;
     const rows = new Map<string, HTMLButtonElement>();
+    // On a grouped screen the same shot appears once per group: name the
+    // figure by its group (and its shot, when the group has several).
+    const name = group ? (label ? `${group.title}, ${shot.alt}` : group.title) : shot.alt;
 
     const view = renderShot({
       shot,
@@ -82,10 +85,11 @@ export function renderSection(screen: Screen, content: SiteContent, env: Section
         if (ref) env.onRowClick(ref);
       },
       onExpand: (from) => env.openViewer(() => viewerContent(screen, content, env, stage, group), from),
+      name,
     });
     views.push(view);
 
-    const list = h("ol", { class: "controls", "aria-label": `Controls on ${shot.alt}` });
+    const list = h("ol", { class: "controls", "aria-label": group ? `Controls in ${name}` : `Controls on ${shot.alt}` });
     for (const { control, n } of stage.controls) {
       const row = controlRow(control, n, view.has(control.id), controlAnchor(screen.id, control.id));
       rows.set(control.id, row);
@@ -107,9 +111,7 @@ export function renderSection(screen: Screen, content: SiteContent, env: Section
       view.figure,
       listed ? list : null,
     );
-    const fig = figureWidth(stage);
-    el.style.setProperty("--fig-w", String(fig));
-    if (listed) watchFlow(el, fig);
+    watchFlow(el, stage, listed);
     return el;
   }
 
@@ -177,17 +179,39 @@ export function renderSection(screen: Screen, content: SiteContent, env: Section
   return { section, controls: refs, views, subsections };
 }
 
-/** Keeps a stage's data-flow in step with its width: the list beside the
- *  figure when both fit, below it (in two columns when there is room) when
- *  they do not. */
-function watchFlow(stage: HTMLElement, figure: number) {
+/** Keeps a stage in step with its width and the window's height: how wide
+ *  its figure is drawn (--fig-w: capped so it fits on screen), and whether
+ *  the list goes beside the figure (both fit) or below it (in two columns
+ *  when there is room). */
+const flowSyncs = new Set<() => void>();
+let onWindowResize: (() => void) | null = null;
+function watchFlow(el: HTMLElement, stage: Stage, listed: boolean) {
   const sync = () => {
-    const next = stageFlow(stage.clientWidth, figure);
-    if (stage.dataset.flow !== next) stage.dataset.flow = next;
+    const fig = figureWidth(stage, figureMaxHeight(window.innerHeight));
+    el.style.setProperty("--fig-w", String(fig));
+    const next = listed ? stageFlow(el.clientWidth, fig) : "below";
+    if (el.dataset.flow !== next) el.dataset.flow = next;
   };
   sync();
-  if (typeof ResizeObserver !== "undefined") new ResizeObserver(sync).observe(stage);
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(sync).observe(el);
+  // One listener for every stage: a window resized only in height changes
+  // the cap without resizing any stage.
+  flowSyncs.add(sync);
+  if (!onWindowResize) {
+    onWindowResize = () => flowSyncs.forEach((s) => s());
+    window.addEventListener("resize", onWindowResize);
+  }
 }
+
+/** Forgets every stage (the page is being torn down). */
+export function releaseStages() {
+  flowSyncs.clear();
+  if (onWindowResize) window.removeEventListener("resize", onWindowResize);
+  onWindowResize = null;
+}
+
+/** Shot px above a region its label needs (half a label at the smallest overview scale). */
+const REGION_LABEL_ROOM = 40;
 
 /** A grouped screen's map: the whole shot with an outlined, labelled area
  *  per group, each a link to its subsection. No numbered markers. */
@@ -199,7 +223,9 @@ function overview(screen: Screen, shot: Shot, regions: Region[], has: boolean, t
   const links = regions.map(({ group, box }) => {
     // A region on the right half has its label at its right end, so the label runs into the shot, not off it.
     const end = box.x + box.w / 2 > size.w * 0.55;
-    const a = h("a", { class: end ? "region is-end" : "region", href: `#${controlAnchor(screen.id, group.id)}` }, h("span", { class: "region-label" }, group.title));
+    // Near the top of the shot a label on the top edge would be cut by the frame: it goes inside.
+    const top = box.y < REGION_LABEL_ROOM;
+    const a = h("a", { class: `region${end ? " is-end" : ""}${top ? " is-top" : ""}`, href: `#${controlAnchor(screen.id, group.id)}` }, h("span", { class: "region-label" }, group.title));
     Object.assign(a.style, { left: pct(box.x, size.w), top: pct(box.y, size.h), width: pct(box.w, size.w), height: pct(box.h, size.h) });
     return a;
   });

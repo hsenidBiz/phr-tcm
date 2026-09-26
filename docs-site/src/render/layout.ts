@@ -7,7 +7,7 @@ import { h, reducedMotion, rich } from "./dom";
 import { icon } from "./icons";
 import { PRODUCT, renderHero } from "./hero";
 import { createPalette, searchButton } from "./search";
-import { renderSection, type ControlRef } from "./section";
+import { releaseStages, renderSection, type ControlRef } from "./section";
 import type { ShotView } from "./shot";
 import { renderSidebar, scrollSpy } from "./sidebar";
 import { applyTheme, initialTheme, themeToggle } from "./theme";
@@ -109,6 +109,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
     viewer.el,
   );
   root.replaceChildren(site);
+  viewer.setBackground([...site.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c !== viewer.el));
   applyTheme(theme, root);
 
   // ---- contents drawer (narrow windows) -------------------------------
@@ -201,6 +202,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
       /* a stray "%" (e.g. #50%) is not an escape; use the id as written */
     }
     const el = id ? document.getElementById(id) : null;
+    viewer.close(); // a link or a hash change always lands on the page
     setNav(false);
     if (!el || !root.contains(el)) return;
     if (opts.push) {
@@ -306,6 +308,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   return {
     destroy() {
       viewer.close();
+      releaseStages();
       cleanups.forEach((c) => c());
       timers.forEach((t) => clearTimeout(t));
       document.documentElement.classList.remove("palette-open", "viewer-open");

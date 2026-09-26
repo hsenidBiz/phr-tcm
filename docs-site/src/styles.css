@@ -52,6 +52,10 @@
      holds a whole shot at its own size (1440). Wide (data-layout, set from
      a (min-width: 2240px) query) adds room for the control list beside it. */
   --shell-max: 1810px;
+  /* The tallest a figure is drawn inline, so a spotlighted control is
+     always on screen: its own 900 px at most, and the window less the top
+     bar and some room. plan.ts figureMaxHeight is the same rule. */
+  --fig-max-h: max(240px, min(900px, 100vh - 116px));
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -409,7 +413,8 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
    and the image should not shrink for it.) */
 .frame {
   position: relative; container-type: inline-size;
-  width: 100%; max-width: calc(var(--fig-w, 1440) * 1px + 2px); margin-inline: auto;
+  width: 100%; margin-inline: auto;
+  max-width: min(calc(var(--fig-w, 1440) * 1px + 2px), calc(var(--fig-max-h) * var(--shot-w, 1440) / var(--shot-h, 900) + 2px));
   aspect-ratio: var(--shot-w, 1440) / var(--shot-h, 900); overflow: hidden;
   border-radius: var(--radius); background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -444,14 +449,15 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
    of the frame's width) within a readable range, and never cut by the
    frame's edge. */
 .marker {
-  --size: clamp(16px, calc(var(--d, 1.6667) * 1cqw), 26px);
+  /* 12 px floor: markers.ts MARKER_MIN_PX / MIN_RENDER_SCALE */
+  --size: clamp(12px, calc(var(--d, 1.6667) * 1cqw), 26px);
   position: absolute; z-index: 2;
   left: clamp(calc(var(--size) / 2), var(--x), calc(100% - var(--size) / 2));
   top: clamp(calc(var(--size) / 2), var(--y), calc(100% - var(--size) / 2));
   width: var(--size); height: var(--size);
   translate: -50% -50%;
   display: grid; place-items: center;
-  font-size: max(10px, calc(var(--size) * 0.5)); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
+  font-size: max(9px, calc(var(--size) * 0.5)); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
   color: var(--on-accent); background: var(--accent);
   border-radius: 50%;
   box-shadow: 0 0 0 1.5px var(--surface), 0 4px 12px -3px var(--accent-glow);
@@ -542,7 +548,6 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 /* ---------- a grouped screen: the overview, then its subsections ---------- */
 .overviews { display: grid; gap: 24px; margin-top: 36px; }
 .overviews.is-multi { grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); align-items: start; }
-.overview .frame { max-width: calc(var(--fig-w, 1440) * 1px + 2px); }
 .regions { position: absolute; inset: 0; }
 .region {
   position: absolute; border-radius: 12px;
@@ -559,12 +564,18 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 /* On the region's top edge, so it covers as little of the screen as it can. */
 .region-label {
   position: absolute; left: 10px; top: 0; transform: translateY(-50%);
-  padding: 3px 10px; border-radius: 999px;
-  font-size: 12.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* no wider than its region (so labels never run into each other), whole on hover or focus */
+  max-width: max(calc(100% - 20px), 7em);
+  padding: 0.2em 0.8em; border-radius: 999px;
+  font-size: clamp(10px, 0.87cqw, 12.5px); font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--on-accent); background: var(--accent);
   box-shadow: 0 0 0 1.5px var(--surface), 0 6px 16px -6px var(--accent-glow);
 }
 .region.is-end .region-label { left: auto; right: 10px; }
+/* a region at the top of the shot has its label inside, where the frame cannot cut it */
+.region.is-top .region-label { top: 6px; transform: none; }
+.region:hover, .region:focus-visible { z-index: 1; }
+.region:hover .region-label, .region:focus-visible .region-label { max-width: none; }
 .overview-caption { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
 .overview-caption svg { color: var(--accent); flex: none; }
 
@@ -593,6 +604,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .viewer-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
 .viewer-body.has-list { grid-template-columns: minmax(0, 1fr) 340px; }
+.viewer-dialog:focus { outline: none; }
 /* The shot as large as the stage allows, keeping its shape. Shots are
    captured at 1x, so on a big screen this enlarges them - on purpose. */
 .viewer-stage { container-type: size; display: grid; place-items: center; min-width: 0; min-height: 0; padding: 20px; }
@@ -601,7 +613,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
   width: min(100cqw, calc(100cqh * var(--shot-w) / var(--shot-h)));
   max-width: none; margin: 0;
 }
-.viewer-stage .marker { --size: clamp(16px, calc(var(--d, 1.6667) * 1cqw), 34px); }
+.viewer-stage .marker { --size: clamp(12px, calc(var(--d, 1.6667) * 1cqw), 34px); }
 .viewer-stage .caption { max-width: min(380px, 60%); }
 .viewer-side { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px; border-left: 1px solid var(--border); scrollbar-width: thin; }
 .controls.is-compact { gap: 2px; }
@@ -611,6 +623,8 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .controls.is-compact .row-tip { display: none; }
 [data-motion="full"] .viewer:not([hidden]) .viewer-dialog { animation: pop 0.24s var(--ease-out); }
 [data-motion="full"] .viewer:not([hidden]) .viewer-backdrop { animation: fade 0.2s ease; }
+/* a smaller window keeps the shot's stage wide enough for the markers (markers.ts MIN_RENDER_SCALE) */
+@media (max-width: 1300px) { .viewer-body.has-list { grid-template-columns: minmax(0, 1fr) 280px; } }
 @media (max-width: 900px) {
   .viewer-dialog { inset: 8px; }
   .viewer-body.has-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 36%); }

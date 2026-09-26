@@ -12,7 +12,7 @@
 import { SHOT_HEIGHT, SHOT_WIDTH, shotSize, type Box, type Control, type Shot, type ShotPositions, type Size } from "../types";
 import { h, plain, rich } from "./dom";
 import { icon } from "./icons";
-import { layoutMarkers, MARKER_SIZE } from "./markers";
+import { MARKER_SIZE, stageMarkers } from "./markers";
 import { figureWidth } from "./plan";
 import { shotSrc, type Theme } from "./theme";
 
@@ -40,8 +40,6 @@ export type ShotView = {
 
 const pct = (n: number, of: number) => `${+((n / of) * 100).toFixed(4)}%`;
 
-const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-
 export function renderShot(opts: {
   shot: Shot;
   controls: { control: Control; n: number }[];
@@ -56,24 +54,13 @@ export function renderShot(opts: {
   onMarkerClick: (controlId: string) => void;
   /** Given for an inline figure: opens it full screen (its corner button, or a click on the image). */
   onExpand?: (from: HTMLButtonElement) => void;
+  /** What the expand button names (default: the shot's alt text). */
+  name?: string;
 }): ShotView {
   const { shot, controls, placed, available, theme, motion } = opts;
   const size = shotSize(shot);
   const view = opts.view ?? { x: 0, y: 0, ...size };
   const cropped = view.x > 0 || view.y > 0 || view.w < size.w || view.h < size.h;
-  // Boxes are in the pixels they were measured at (the shot's size, unless
-  // positions.json is stale); from here on everything is in view pixels.
-  const at = placed?.size ?? size;
-  const toView = (b: Box): Box => {
-    const sx = size.w / at.w;
-    const sy = size.h / at.h;
-    return { x: b.x * sx - view.x, y: b.y * sy - view.y, w: b.w * sx, h: b.h * sy };
-  };
-  const frameBox: Box = { x: 0, y: 0, w: view.w, h: view.h };
-  const obstacles = Object.values(placed?.controls ?? {})
-    .map(toView)
-    .filter((b) => overlaps(b, frameBox));
-
   const media = available
     ? h("img", {
         "data-shot": shot.id,
@@ -106,21 +93,12 @@ export function renderShot(opts: {
   const layer = h("div", { class: "annotations" }, spot);
   layer.appendChild(leaders);
 
-  const withBox = controls.flatMap(({ control, n }) => {
-    const b = placed?.controls?.[control.id];
-    return b ? [{ control, n, box: toView(b) }] : []; // no position yet: the list row still documents it
-  });
-  const spots = layoutMarkers(
-    withBox.map((m) => m.box),
-    { w: view.w, h: view.h },
-    { obstacles },
-  );
+  const marked = stageMarkers({ shot, view, controls }, placed);
   // The marker's size as a share of the frame's width, so it scales with the shot.
   const d = +((MARKER_SIZE / view.w) * 100).toFixed(4);
 
   const markers = new Map<string, { el: HTMLElement; line: SVGGElement | null; box: Box; control: Control; n: number }>();
-  withBox.forEach(({ control, n, box }, i) => {
-    const s = spots[i];
+  marked.forEach(({ control, n, box, spot: s }) => {
     const el = h(
       "span",
       {
@@ -178,7 +156,7 @@ export function renderShot(opts: {
     const open = opts.onExpand;
     const button = h(
       "button",
-      { type: "button", class: "shot-expand", "aria-label": `Open ${shot.alt} full screen`, title: "Full screen" },
+      { type: "button", class: "shot-expand", "aria-label": `Open ${opts.name ?? shot.alt} full screen`, title: "Full screen" },
       icon("expand", 16),
     );
     button.addEventListener("click", () => open(button));

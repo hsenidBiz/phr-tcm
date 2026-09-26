@@ -56,10 +56,11 @@ export function union(boxes: Box[]): Box {
 
 /** Room left around a group's controls in its crop (shot px). */
 export const CROP_PAD = 48;
-/** A crop is at least this share of the shot's width... */
+/** A group wider than tall gets a crop at least this share of the shot's
+ *  width, and never a thin sliver (height : width). A tall group keeps a
+ *  tall, narrow crop: the height cap (figureWidth) keeps it on screen, and
+ *  its list fits beside it. */
 const CROP_MIN_W = 0.4;
-/** ...never much taller than wide, nor a thin sliver (height : width). */
-const CROP_MAX_TALL = 1;
 const CROP_MIN_TALL = 0.25;
 /** A crop this close to the whole shot (share of each side) shows the whole shot. */
 const CROP_WHOLE = 0.9;
@@ -73,17 +74,20 @@ function span(start: number, len: number, want: number, max: number): [number, n
 
 /**
  * The part of a shot of size `shot` a group's figure shows: its controls'
- * boxes with CROP_PAD around them, at least CROP_MIN_W of the shot wide,
- * between CROP_MIN_TALL and CROP_MAX_TALL as tall as wide, kept inside the
- * shot. Null when that is (nearly) the whole shot anyway.
+ * boxes with CROP_PAD around them, kept inside the shot. A group wider than
+ * tall is widened to CROP_MIN_W of the shot and made at least CROP_MIN_TALL
+ * as tall as wide; a tall one stays as narrow as its controls. Null when
+ * that is (nearly) the whole shot anyway.
  */
 export function cropFor(boxes: Box[], shot: Size): Box | null {
   if (!boxes.length) return null;
   const u = union(boxes);
-  let w = Math.max(u.w + 2 * CROP_PAD, shot.w * CROP_MIN_W);
+  let w = u.w + 2 * CROP_PAD;
   let h = u.h + 2 * CROP_PAD;
-  if (h > w * CROP_MAX_TALL) w = h / CROP_MAX_TALL;
-  if (h < w * CROP_MIN_TALL) h = w * CROP_MIN_TALL;
+  if (w >= h) {
+    w = Math.max(w, shot.w * CROP_MIN_W);
+    h = Math.max(h, w * CROP_MIN_TALL);
+  }
   const [x, cw] = span(u.x - CROP_PAD, u.w + 2 * CROP_PAD, w, shot.w);
   const [y, ch] = span(u.y - CROP_PAD, u.h + 2 * CROP_PAD, h, shot.h);
   if (cw >= shot.w * CROP_WHOLE && ch >= shot.h * CROP_WHOLE) return null;
@@ -101,6 +105,9 @@ export function regionFor(boxes: Box[], shot: Size): Box {
 
 const whole = (shot: Shot): Box => ({ x: 0, y: 0, ...shotSize(shot) });
 
+/** Boxes are used in shot pixels as they are: positions.json is measured at
+ *  each shot's own size (validate.ts positionsProblems reports any entry
+ *  that is not). */
 export function planScreen(screen: Screen, positions: Positions): ScreenPlan {
   const onShot = (shot: Shot, controls: Control[]) => {
     const boxes = positions[shot.id]?.controls;
@@ -147,12 +154,25 @@ export function planScreen(screen: Screen, positions: Positions): ScreenPlan {
 }
 
 /** How wide (CSS px) a figure may be drawn inline: a whole shot at most at
- *  its own size (shots are captured at 1x, so never enlarged); a crop
- *  zoomed up to CROP_ZOOM - that is what a crop is for - but never wider
- *  than a whole main-window shot would be. */
-export const CROP_ZOOM = 1.5;
-export const figureWidth = (stage: Pick<Stage, "view" | "cropped">): number =>
-  stage.cropped ? Math.round(Math.min(stage.view.w * CROP_ZOOM, Math.max(stage.view.w, SHOT_WIDTH))) : stage.view.w;
+ *  its own size (shots are captured at 1x); a crop zoomed a little, up to
+ *  CROP_ZOOM, but never wider than a whole main-window shot; and never so
+ *  wide that it is taller than `maxHeight` (see figureMaxHeight), so the
+ *  control being spotlighted is always on screen. */
+export const CROP_ZOOM = 1.25;
+export function figureWidth(stage: Pick<Stage, "view" | "cropped">, maxHeight = Infinity): number {
+  const { w, h } = stage.view;
+  const zoomed = stage.cropped ? Math.min(w * CROP_ZOOM, Math.max(w, SHOT_WIDTH)) : w;
+  return Math.round(Math.min(zoomed, (w * maxHeight) / h));
+}
+
+/** The tallest a figure is drawn inline (CSS px) in a window `viewport` px
+ *  tall: its own size at most (900), and the window less the top bar and
+ *  some room. The stylesheet's --fig-max-h is the same rule. */
+export const FIGURE_MAX_H = 900;
+export const FIGURE_V_ROOM = 116;
+export const FIGURE_MIN_H = 240;
+export const figureMaxHeight = (viewport: number): number =>
+  Math.max(FIGURE_MIN_H, Math.min(FIGURE_MAX_H, viewport - FIGURE_V_ROOM));
 
 /** The control list's narrowest comfortable width beside a figure, and the gap. */
 export const LIST_MIN = 340;
