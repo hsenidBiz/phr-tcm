@@ -62,8 +62,9 @@
   --color-accent-foreground: var(--xiod-accent);
   --color-destructive: var(--color-danger);
   --color-destructive-foreground: var(--color-danger);
-  --color-info: var(--xiod-accent);
-  --color-info-foreground: var(--xiod-accent);
+  /* Info is the app's own blue (index.css), not the accent: an info toast
+     in the accent read as a success in the green themes. */
+  --color-info-foreground: var(--color-info);
   --color-success-foreground: var(--color-success);
   --color-warning-foreground: var(--color-warning);
   --color-input: var(--color-border);
@@ -96,6 +97,10 @@
 [data-slot="toast-viewport"] > [data-type="warning"] {
   background-color: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
   border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+}
+[data-slot="toast-viewport"] > [data-type="info"] {
+  background-color: color-mix(in srgb, var(--color-info) 12%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-info) 45%, var(--color-border));
 }
 
 /* 5c. Base UI's ToastPortal mounts the viewport into <body> once, at app

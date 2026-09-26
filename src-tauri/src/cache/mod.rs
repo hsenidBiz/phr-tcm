@@ -1,6 +1,6 @@
 //! The Rust side's one cache. Anything that needs to remember data
 //! between calls - or between launches - uses this instead of a map of
-//! its own (tests/cache.rs catches the common form: a map held in a
+//! its own (tests/suite/cache.rs catches the common form: a map held in a
 //! static).
 //!
 //! It lives below both consumers on purpose: the UI's commands and the AI

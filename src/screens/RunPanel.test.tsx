@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { toast } from "../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
 import { writeSuiteSeed } from "../lib/suiteSeed";
@@ -266,6 +266,20 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+/// The selection's Run button sits at the right end of the filter row,
+/// directly above the list it acts on - not up beside Set execution order.
+test("the Run in runner button sits in the filter row above the list", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Valid login"));
+  const run = screen.getByRole("button", { name: /Run 1 in runner/ });
+  expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
+  expect(
+    screen.getByRole("button", { name: /Set execution order/ }).parentElement,
+  ).not.toContainElement(run);
+});
+
 /// Re-testing after a fix goes filter -> select -> run, on purpose: the
 /// dedicated re-run button lasted one release before it came out again.
 /// One path into a selective run is easier to trust than two, so this
@@ -317,6 +331,53 @@ test("the runner opens only from a selection", async () => {
 
   fireEvent.click(screen.getByText("Valid login"));
   expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+});
+
+/// The selection's actions sit in place at the end of the filter row (the
+/// keyboard path) and float bottom-right only once that row scrolls away -
+/// the shared ActionDock, not a bar that floats whether or not the real
+/// buttons are already in view.
+test("the selection's actions sit in the toolbar and float once it scrolls away", async () => {
+  const watched: ((e: { isIntersecting: boolean }[]) => void)[] = [];
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      cb: (e: { isIntersecting: boolean }[]) => void;
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+        this.cb = cb;
+      }
+      observe() {
+        watched.push(this.cb);
+      }
+      disconnect() {
+        watched.splice(watched.indexOf(this.cb), 1);
+      }
+    },
+  );
+  try {
+    mockAll();
+    renderPanel();
+    await screen.findByText("Valid login");
+    expect(document.querySelector("[data-sticky-action]")).toBeNull();
+
+    fireEvent.click(screen.getByText("Valid login"));
+    // In place: in the filter row, directly above the list.
+    const run = screen.getByRole("button", { name: /Run 1 in runner/ });
+    expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
+
+    // Assumed on screen until told otherwise, so the floating copy starts hidden.
+    const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
+    expect(dock).toHaveAttribute("aria-label", "Run selection");
+    expect(dock.className).toContain("opacity-0");
+
+    act(() => watched.forEach((cb) => cb([{ isIntersecting: false }])));
+    expect(dock.className).toContain("opacity-100");
+    expect(dock.className).toContain("bg-surface"); // the surface pill it always had
+    fireEvent.click(within(dock).getByRole("button", { name: "Clear selection", hidden: true }));
+    expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 /** The header checkbox is the one selection indicator - dash for partial,
@@ -537,7 +598,9 @@ test("Select all button (ungrouped) and Ctrl+A both select every case", async ()
   fireEvent.click(screen.getByRole("button", { name: "Select all" }));
   expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByLabelText("Clear selection"));
+  // By role, not label: the dock's floating copy carries the same label,
+  // but it is aria-hidden, so only the in-place button matches a role query.
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
   expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "a", ctrlKey: true });

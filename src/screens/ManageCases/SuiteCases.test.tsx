@@ -121,9 +121,13 @@ function stubScroll() {
       for (const w of watched.filter((x) => match(x.el))) w.cb([{ isIntersecting }]);
     });
   return {
-    /** The suite's own toolbar scrolls out of view, or back into it. */
+    /** The suite's own order-actions row (the ActionDock's in-place row,
+     * which ActionDock and this screen both watch) scrolls out of view, or
+     * back into it. Matched by "Apply order" rather than the "Group by
+     * title" switch: the view controls now sit outside the dock, so the
+     * switch is no longer inside the watched element. */
     toolbar: (onScreen: boolean) =>
-      report((el) => within(el as HTMLElement).queryByRole("switch", { name: "Group by title" }) != null, onScreen),
+      report((el) => within(el as HTMLElement).queryByRole("button", { name: "Apply order" }) != null, onScreen),
     /** The suite's case list scrolls out of view, or back into it. */
     list: (l: HTMLElement, onScreen: boolean) => report((el) => el.contains(l), onScreen),
     restore: () => {
@@ -132,7 +136,17 @@ function stubScroll() {
   };
 }
 
-const floatingBar = () => screen.queryByRole("region", { name: /order actions for/i });
+/** The floating copy is always in the DOM once mounted (fix round 1,
+ * Important 2 - it is always `aria-hidden`, so `getByRole` can never find
+ * it), and only visually hidden the rest of the time. "Showing" means
+ * found by its `data-sticky-action` + `aria-label`, AND not carrying the
+ * hidden state's `opacity-0`. */
+const floatingBar = () => {
+  const el = [...document.querySelectorAll("[data-sticky-action]")].find(
+    (e) => e.getAttribute("aria-label") === "Order actions for Regression",
+  ) as HTMLElement | undefined;
+  return el && !el.className.includes("opacity-0") ? el : null;
+};
 
 async function list() {
   const l = await screen.findByRole("list", { name: "Test cases in Regression" });
@@ -233,9 +247,15 @@ test("an unsaved order does not float a second bar while the toolbar is on scree
 
     // Scroll past the toolbar: the bar takes over, naming its suite.
     scroll.toolbar(false);
-    const bar = await screen.findByRole("region", { name: "Order actions for Regression" });
-    expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
-    expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
+    const bar = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
+    // Its buttons are always aria-hidden (fix round 1, Important 2), so
+    // `hidden: true` reinstates them into the search - they are not
+    // themselves aria-hidden, only their ancestor is.
+    expect(within(bar).getByRole("button", { name: "Apply order", hidden: true })).toBeEnabled();
+    expect(within(bar).getByRole("button", { name: "Reset", hidden: true })).toBeEnabled();
 
     // Past the whole suite: the unsaved order keeps it up.
     scroll.list(l, false);
@@ -248,7 +268,8 @@ test("an unsaved order does not float a second bar while the toolbar is on scree
 
     // A clean suite scrolled right away has no bar at all.
     scroll.toolbar(false);
-    fireEvent.click(within(await screen.findByRole("region", { name: /order actions for/i })).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(floatingBar()).not.toBeNull());
+    fireEvent.click(within(floatingBar()!).getByRole("button", { name: "Reset", hidden: true }));
     await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
   } finally {
     scroll.restore();
@@ -525,10 +546,17 @@ test("the floating order bar is pinned to the app window, not the page", async (
     mount();
     await list();
     scroll.toolbar(false);
-    const bar = await screen.findByRole("region", { name: /order actions for/i });
+    const bar = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
     expect(bar.parentElement).toBe(document.body);
     expect(bar.className).toMatch(/\bfixed\b/);
     expect(bar.className).toMatch(/\bright-6\b/);
+    // Readable over a scrolling list of cases (fix round 1, Important 1) -
+    // the pill this bar wore before ActionDock existed.
+    expect(bar.className).toContain("rounded-full");
+    expect(bar.className).toContain("bg-surface");
   } finally {
     scroll.restore();
   }
@@ -548,10 +576,13 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
 
     // The toolbar scrolls off the top while the cases are still in view.
     scroll.toolbar(false);
-    const floating = await screen.findByRole("region", { name: "Order actions for Regression" });
-    expect(within(floating).getByRole("button", { name: "Apply order" })).toBeDisabled(); // nothing to save yet
-    expect(within(floating).getByRole("button", { name: "Reset" })).toBeDisabled();
-    expect(within(floating).getByRole("button", { name: "Apply order from files" })).toBeEnabled();
+    const floating = await waitFor(() => {
+      expect(floatingBar()).not.toBeNull();
+      return floatingBar()!;
+    });
+    expect(within(floating).getByRole("button", { name: "Apply order", hidden: true })).toBeDisabled(); // nothing to save yet
+    expect(within(floating).getByRole("button", { name: "Reset", hidden: true })).toBeDisabled();
+    expect(within(floating).getByRole("button", { name: "Apply order from files", hidden: true })).toBeEnabled();
 
     // Scrolling back up to the toolbar sends it away again.
     scroll.toolbar(true);
@@ -565,6 +596,26 @@ test("scrolling past the toolbar while the cases are in view floats all three ac
   } finally {
     scroll.restore();
   }
+});
+
+/// The owner's standing rule: actions on the thing (the order) live in the
+/// right-aligned dock; view controls (grouping) stay out of it, on the left.
+test("the order actions sit in a right-aligned dock, separate from the view controls", async () => {
+  localStorage.setItem("tcm-v2-group-manage", "on");
+  mount();
+  await list();
+
+  const dock = screen.getByRole("button", { name: "Apply order" }).closest(".justify-end") as HTMLElement;
+  expect(dock).not.toBeNull();
+  expect(within(dock).getByRole("button", { name: "Reset" })).toBeInTheDocument();
+  expect(within(dock).getByRole("button", { name: "Apply order from files" })).toBeInTheDocument();
+
+  // The view controls - grouping, A-Z, expand/collapse - are outside it,
+  // but still on the page.
+  expect(within(dock).queryByRole("switch", { name: "Group by title" })).toBeNull();
+  expect(within(dock).queryByRole("button", { name: "A-Z groups" })).toBeNull();
+  expect(screen.getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "A-Z groups" })).toBeInTheDocument();
 });
 
 // ---- Run order (execution-order-modal design §6) ----

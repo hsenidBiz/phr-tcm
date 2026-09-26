@@ -11,15 +11,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, MessageSquare, RotateCcw } from "lucide-react";
+import { useLayoutEffect, useState } from "react";
 import { toast } from "../lib/toast";
 import { Markdown } from "@astryxdesign/core/Markdown";
-import { commands, type PrThread } from "../bindings";
+import { commands, type InlineImage, type PrThread } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { Skeleton } from "./ui/skeleton";
 import { cn } from "../lib/cn";
 import { relativeTime } from "../lib/history";
 import { unwrap } from "../lib/ipc";
 import { isResolved } from "../lib/threadStatus";
+import { attachmentUrls, markUnavailableImages, swapInlineImages, toBlobImages } from "../lib/inlineImages";
 
 /** What Azure DevOps calls it, in words a reader recognises. */
 function statusLabel(status: string): string {
@@ -43,10 +45,14 @@ function Thread({
   thread,
   onSetStatus,
   busy,
+  withImages,
 }: {
   thread: PrThread;
   onSetStatus: (status: string) => void;
   busy: boolean;
+  /** Swaps attachment URLs in a comment's markdown for the downloaded
+   * image, or an "unavailable" note once the fetch has settled. */
+  withImages: (md: string) => string;
 }) {
   const resolved = isResolved(thread.status);
   const where = thread.file_path
@@ -104,7 +110,7 @@ function Thread({
                   return false;
                 }}
               >
-                {c.content}
+                {withImages(c.content)}
               </Markdown>
             </AstryxIsland>
           </div>
@@ -176,6 +182,51 @@ export default function PrThreads({
     onError: (e) => toast.error(`Could not update the thread: ${e.message}`),
   });
 
+  // Attachment images in a comment get 401 as a plain markdown image - the
+  // WebView sends no bearer header. Held in memory for this open view only
+  // (react-query, not the disk cache - the downloaded bytes are large).
+  // The cache holds data: URIs, the same shape CommentsPanel's identically
+  // keyed query holds - the two never disagree on what a cached entry
+  // looks like because there is only one shape.
+  const commentTexts = (threads.data ?? []).flatMap((t) => t.comments.map((c) => c.content));
+  const imageUrls = attachmentUrls(commentTexts);
+  const images = useQuery({
+    queryKey: ["comment-images", org, imageUrls],
+    queryFn: () => unwrap(commands.commentImages(org, commentTexts)),
+    enabled: imageUrls.length > 0,
+    staleTime: Infinity,
+  });
+  // Astryx's Markdown island refuses a data: image src outright, so - only
+  // here, not in the shared cache above - each one becomes a blob: object
+  // URL. Minted and revoked in ONE effect, keyed on the query data: a batch
+  // minted anywhere else (a useMemo) outlives StrictMode's rehearsal
+  // cleanup, which revokes it while the memo keeps handing it out - every
+  // image of a cached PR broken on reopen. Layout rather than passive, so
+  // the batch is in state before the frame that would show the raw URL.
+  // Each batch is tagged with the data it was minted from; until the tag
+  // matches the current data the new batch is not ready yet.
+  const [blob, setBlob] = useState<{ src: InlineImage[] | undefined; imgs: InlineImage[] }>({
+    src: undefined,
+    imgs: [],
+  });
+  useLayoutEffect(() => {
+    const imgs = toBlobImages(images.data ?? []);
+    setBlob({ src: images.data, imgs });
+    return () => {
+      for (const img of imgs) URL.revokeObjectURL(img.data);
+    };
+  }, [images.data]);
+  const minted = blob.src === images.data;
+  /** Swap in what came back; anything still unswapped once the fetch has
+   * settled becomes the unavailable note. While still loading - or while
+   * this data's batch is still being minted - the text is left unchanged,
+   * so an image that is on its way never flashes as unavailable. */
+  const withImages = (md: string) => {
+    if (!minted) return md;
+    const swapped = swapInlineImages(md, blob.imgs);
+    return images.isPending ? swapped : markUnavailableImages(swapped, "md");
+  };
+
   if (!enabled) return null;
 
   const all = threads.data ?? [];
@@ -215,6 +266,7 @@ export default function PrThreads({
               thread={t}
               busy={setStatus.isPending}
               onSetStatus={(status) => setStatus.mutate({ threadId: t.id, status })}
+              withImages={withImages}
             />
           ))}
         </div>

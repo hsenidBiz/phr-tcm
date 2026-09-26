@@ -451,7 +451,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         </div>
 
         {rightPanel === "logs" ? (
-          <>
+          <div key={rightPanel} className="t-panel-in space-y-3">
             <p className="text-sm text-muted">
               What the app has been doing - include this when reporting a bug.
               Daily files are kept for a week.
@@ -501,10 +501,9 @@ export default function Settings({ org, project }: { org: string; project: strin
                 shownLogs.map((l, i) => <LogLine key={i} at={l.at} level={l.level} message={l.message} />)
               )}
             </div>
-          </>
+          </div>
         ) : (
-          <>
-        <div className="space-y-4 rounded-md border border-border p-3">
+          <div key={rightPanel} className="t-panel-in space-y-4 rounded-md border border-border p-3">
           {CHANGELOG.slice(0, 1).map((e) => (
             <ChangelogVersion key={e.version} entry={e} />
           ))}
@@ -529,8 +528,7 @@ export default function Settings({ org, project }: { org: string; project: strin
               {allChanges ? "Show less" : `Show more (${CHANGELOG.length - 1} earlier versions)`}
             </Button>
           )}
-        </div>
-          </>
+          </div>
         )}
       </section>
 
@@ -538,9 +536,10 @@ export default function Settings({ org, project }: { org: string; project: strin
         <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
         <p className="text-sm text-muted">
           Moving to a new computer? Export your settings and local data -
-          theme, default tags, drafts, cached lists, Auto Run scripts - to a
-          single file, then import it on the other machine. Your Microsoft
-          sign-in is never included; you simply sign in again there.
+          theme, default tags, drafts and cached lists - to a single file,
+          then import it on the other machine. Your Microsoft sign-in is
+          never included; you simply sign in again there. Database logins
+          stay on this computer and are not included either.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button

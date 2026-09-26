@@ -41,6 +41,17 @@ args, and a test binary that links tauri dies at startup without them
 (`STATUS_ENTRYPOINT_NOT_FOUND`). See the note at the top of
 `tests/bindings.rs`.
 
+**They are all ONE binary**: `src-tauri/tests/suite/`, one module per
+file, declared in `suite/main.rs`. A new test file goes in that folder
+and gets a `mod` line there - never a new file directly under `tests/`,
+which would be one more full link of the crate plus Tauri. Only
+`tests/bindings.rs` stays separate (it is the generator). One module's
+tests: `cargo test --test suite <module>::`. One binary is one process,
+so a test that sets or reads process-wide state (a static, an env var,
+the log tail, the pacer) takes its lock from `suite/serial.rs`, and one
+that must move the working directory runs in a child copy of the binary
+(see `suite/updater.rs`).
+
 `src/bindings.ts` is **generated** by `cargo test --test bindings` from the
 Rust command signatures via tauri-specta. Never hand-edit it; change the
 Rust and regenerate.
@@ -108,7 +119,7 @@ v1 and went with it. The suites above are the gate.
   that survives a restart, `session_fresh/session_put` for memory-only
   values; every key and TTL in `cache/keys.rs`. Both wipe themselves when a
   different account signs in. `src/lib/cache.test.ts` and
-  `tests/cache.rs` catch the common ways of adding a private cache - they
+  `tests/suite/cache.rs` catch the common ways of adding a private cache - they
   are a tripwire, not proof.
 - **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
@@ -118,7 +129,7 @@ v1 and went with it. The suites above are the gate.
   a transport error's `to_string()` to the user: log the raw error
   (`applog`, which is what a bug report ships) and return one of the
   sentences in `ado/transport.rs` via `network_error`. Each says what to
-  try and points at Settings → Logs. `tests/ado_network.rs` enforces it.
+  try and points at Settings → Logs. `tests/suite/ado_network.rs` enforces it.
 - **Seeing an error state** is what `src/dev/faults.ts` is for: the dev
   panel's "Force a failure" arms the next command - or every command - to
   come back as a chosen `AdoError`. It patches the bindings rather than

@@ -17,6 +17,7 @@ export default function MultiSelect({
   allLabel = "All",
   ariaLabel,
   className,
+  checkedFirst = false,
 }: {
   options: string[];
   selected: string[];
@@ -24,6 +25,10 @@ export default function MultiSelect({
   allLabel?: string;
   ariaLabel?: string;
   className?: string;
+  /** Snapshot the option order (checked first, in `options` order, then
+   * the rest) the moment the panel opens, rather than live - otherwise an
+   * option a person just ticked would jump out from under the pointer. */
+  checkedFirst?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -37,6 +42,44 @@ export default function MultiSelect({
     if (!open) setQuery("");
   }, [open, options.length]);
 
+  // The checked-first order is a snapshot taken when the panel OPENS, not
+  // recomputed on every render - toggling a row while open must not move
+  // it out from under the pointer. Deliberately depends on `open` alone;
+  // `options`/`selected`/`checkedFirst` are read fresh at the moment this
+  // runs, from whichever render happened to trigger it.
+  const [order, setOrder] = useState(options);
+  useEffect(() => {
+    if (!open || !checkedFirst) return;
+    setOrder([...options.filter((o) => selected.includes(o)), ...options.filter((o) => !selected.includes(o))]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // `options` can itself change while the panel stays open - PrPanel's repo
+  // list is still loading when a person opens it, so the snapshot above may
+  // have caught only "Your Pull Requests". A later options change must not
+  // just replace the snapshot with the raw list (that would drop the
+  // checked-first grouping and reflow everything already on screen): rows
+  // already shown keep their place, and newly-arrived ones join whichever
+  // group - checked or unchecked - they belong in, in `options` order
+  // within that group. Keyed on the options' own content, not identity, so
+  // a caller passing a fresh array literal every render does not retrigger
+  // this on every keystroke elsewhere on the page.
+  const optionsKey = options.join("\u0001");
+  useEffect(() => {
+    if (!open || !checkedFirst) return;
+    setOrder((prev) => {
+      const stillHere = prev.filter((o) => options.includes(o));
+      const arrived = options.filter((o) => !prev.includes(o));
+      return [
+        ...stillHere.filter((o) => selected.includes(o)),
+        ...arrived.filter((o) => selected.includes(o)),
+        ...stillHere.filter((o) => !selected.includes(o)),
+        ...arrived.filter((o) => !selected.includes(o)),
+      ];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionsKey]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -45,6 +88,11 @@ export default function MultiSelect({
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  // Only the checked-first order is a snapshot worth holding; without it
+  // the rows are simply `options`, read in the same render that brings them
+  // - a copy in state would show the old list for a commit first.
+  const shown = checkedFirst ? order : options;
 
   const summary =
     selected.length === 0
@@ -111,8 +159,8 @@ export default function MultiSelect({
             </div>
           )}
           <ul className="max-h-64 overflow-y-auto p-1">
-            {options.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
-            {options
+            {shown.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
+            {shown
               .filter((opt) => !query.trim() || opt.toLowerCase().includes(query.trim().toLowerCase()))
               .map((opt) => (
                 <li key={opt}>
@@ -122,9 +170,9 @@ export default function MultiSelect({
                   </label>
                 </li>
               ))}
-            {options.length > 0 &&
+            {shown.length > 0 &&
               query.trim() &&
-              !options.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
+              !shown.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
                 <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
               )}
           </ul>

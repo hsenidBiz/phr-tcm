@@ -12,6 +12,7 @@ import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
+import ActionDock from "../../components/ActionDock";
 import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
@@ -499,7 +500,7 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Input
             aria-label="Filter points"
             className="w-56 px-2 py-1.5"
@@ -531,6 +532,37 @@ export default function RunPanel({
             >
               Select all
             </Button>
+          )}
+          {/* The selection's actions, at the right end of the row directly
+              above the list they act on, floating bottom-right once this
+              row scrolls away - the same dock Update Test Cases' selection
+              uses. `suite.data` is what openRunner needs for the plan id. */}
+          {suite.data && selected.size > 0 && (
+            <ActionDock label="Run selection" surface className="ml-auto">
+              {(floating) => (
+                <>
+                  {/* No "N selected" text - the count is already in the
+                      button's own label. */}
+                  <Button
+                    size="sm"
+                    tabIndex={floating ? -1 : undefined}
+                    onClick={() => openRunner(visibleCaseOrder().filter((id) => selected.has(id)))}
+                  >
+                    <IconRun aria-hidden />
+                    Run {selected.size} in runner
+                  </Button>
+                  <button
+                    aria-label="Clear selection"
+                    title="Clear selection"
+                    tabIndex={floating ? -1 : undefined}
+                    className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
+                    onClick={() => setSelected(new Set())}
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              )}
+            </ActionDock>
           )}
         </div>
       )}
@@ -676,20 +708,14 @@ export default function RunPanel({
         </div>
       )}
 
-      {/* Floating action bar, PORTALLED to <body> - and that is the whole
-          reason it works. This screen renders inside AnimatedContent, whose
-          GSAP transform becomes the containing block for any `fixed`
-          descendant, so `bottom-6 right-6` pinned the bar to the bottom of
-          the SCROLLABLE REGION rather than the viewport: pick some cases
-          near the top of a long suite and the button to run them was
-          somewhere below the fold, which is the opposite of a floating
-          action bar. Same trap as ui/modal.tsx, CommentModal and
-          WorkItemDrawer. Rendering at <body> makes `fixed` mean the
-          viewport again, so it stays put while the table scrolls. */}
       {/* Sticky Close all for open previews, bottom LEFT - the selection
-          bar owns the right corner, so the two can show together without
-          covering each other. Portalled for the same AnimatedContent
-          reason as the bar below. */}
+          dock owns the right corner, so the two can show together without
+          covering each other. PORTALLED to <body>: this screen renders
+          inside AnimatedContent, whose GSAP transform becomes the
+          containing block for any `fixed` descendant, so without the
+          portal `bottom-6` would pin to the bottom of the SCROLLABLE REGION
+          rather than the viewport. Same trap as ui/modal.tsx and
+          ActionDock. */}
       {collapsible > 0 &&
         createPortal(
           /* Left offset clears the sidebar at its CURRENT width - parked at
@@ -710,30 +736,6 @@ export default function RunPanel({
               <IconCollapseAll aria-hidden />
               Collapse all ({collapsible})
             </Button>
-          </div>,
-          document.body,
-        )}
-
-      {suite.data &&
-        selected.size > 0 &&
-        createPortal(
-          // p-2.5: at p-1.5 the button sat nearly flush with the pill's
-          // edge and the pill read as a tight outline, not a surface.
-          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl">
-            {/* No "N selected" text - the count is already in the button's
-                own label. */}
-            <Button size="sm" onClick={() => openRunner(visibleCaseOrder().filter((id) => selected.has(id)))}>
-              <IconRun aria-hidden />
-              Run {selected.size} in runner
-            </Button>
-            <button
-              aria-label="Clear selection"
-              title="Clear selection"
-              className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
-              onClick={() => setSelected(new Set())}
-            >
-              <X size={14} />
-            </button>
           </div>,
           document.body,
         )}

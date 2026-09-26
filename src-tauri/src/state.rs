@@ -77,7 +77,7 @@ fn keep(state: &Mutex<auth::AuthState>, sent: &str, fresh: auth::TokenSet) -> Re
 }
 
 /// `get_fresh_token` with the state and the refresh call passed in - the
-/// seam tests/auth.rs drives without a Tauri app.
+/// seam tests/suite/auth.rs drives without a Tauri app.
 pub async fn fresh_token_with<F, Fut>(
     state: &Mutex<auth::AuthState>,
     refresh: F,

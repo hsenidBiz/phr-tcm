@@ -3,7 +3,15 @@ import { cn } from "../../lib/cn";
 import { leaveExitGhost, reducedMotion } from "../../lib/exitGhost";
 
 /** --motion-ease-smooth-out in index.css. */
-const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+export const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+/**
+ * The grow for a fold taller than TALL_PX. EASE covers ~96% of the distance
+ * in half the time, which suits a detail but left a window-tall group
+ * crawling through its whole second half. This one keeps moving to the end.
+ */
+export const EASE_TALL = "cubic-bezier(0.33, 0, 0.2, 1)";
+const TALL_PX = 400;
 
 /** The longest a fold may take. Also how long the clip may stay on if the
  * animation never reports its end. */
@@ -31,6 +39,33 @@ export function visibleSpan(el: HTMLElement): number {
 
 const canAnimate = (el: HTMLElement | null): el is HTMLElement =>
   el != null && typeof el.animate === "function";
+
+/**
+ * Mark the long-list rows (`.cv-row`) a grow of `span` pixels can bring on
+ * screen, so index.css renders them before the grow starts. A growing fold
+ * clips its content, and a clipped `content-visibility: auto` row counts as
+ * off screen: a large group rendered its rows a band at a time as the clip
+ * edge moved, stalling the grow, then the rest at once when the clip came
+ * off. Only rows within the span and one more window below it are marked -
+ * the margin covers rows whose real height outgrows the estimate they were
+ * measured at. The hundreds further down a big group stay skipped: the grow
+ * never shows them, and rendering them all would cost the opening frame.
+ */
+function revealRows(panel: HTMLElement, span: number): HTMLElement[] {
+  const top = panel.getBoundingClientRect().top;
+  const reach = span + window.innerHeight;
+  const marked: HTMLElement[] = [];
+  // Document order is top-to-bottom order here, so the first row past the
+  // reach ends the walk and a long group costs no more than a short one.
+  for (const row of panel.querySelectorAll<HTMLElement>(".cv-row")) {
+    if (row.getBoundingClientRect().top - top >= reach) break;
+    marked.push(row);
+  }
+  // Marked only after every read: a mark changes style, and marking inside
+  // the loop would force a fresh layout for each row measured after it.
+  for (const row of marked) row.dataset.unfolding = "";
+  return marked;
+}
 
 /**
  * True once `ready` has been true for a commit - for `animateIn`, so a
@@ -128,6 +163,12 @@ function Panel({
   // Overflow is clipped only WHILE the height moves: a settled panel must
   // let a dropdown inside it paint past its box.
   const [entering, setEntering] = useState(() => animateIn && !reducedMotion());
+  // The long-list rows rendered up front for this grow (see revealRows).
+  const revealed = useRef<HTMLElement[]>([]);
+  const unreveal = () => {
+    for (const r of revealed.current) delete r.dataset.unfolding;
+    revealed.current = [];
+  };
 
   // The grow: from nothing to the part of the content that is on screen.
   // Measured before paint, so the full height never flashes first.
@@ -140,24 +181,34 @@ function Panel({
       setEntering(false);
       return;
     }
+    revealed.current = revealRows(node, span);
     const ms = foldMs(span);
-    const grow = node.animate([{ height: "0px" }, { height: `${span}px` }], { duration: ms, easing: EASE });
+    const easing = span > TALL_PX ? EASE_TALL : EASE;
+    const grow = node.animate([{ height: "0px" }, { height: `${span}px` }], { duration: ms, easing });
     const inner = node.firstElementChild as HTMLElement | null;
     const fade = inner?.animate(
       [
         { opacity: 0, filter: "blur(2px)" },
         { opacity: 1, filter: "blur(0px)" },
       ],
-      { duration: ms, easing: EASE },
+      { duration: ms, easing },
     );
     grow.onfinish = () => setEntering(false);
     return () => {
       grow.cancel();
       fade?.cancel();
+      unreveal();
     };
     // Once, on mount: this is the opening, not a response to later renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Grown, by the animation's end or the timer below: the rows go back to
+  // being skipped off screen.
+  useEffect(() => {
+    if (!entering) unreveal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entering]);
 
   // The clip also comes off on a timer, because a panel inside a row
   // content-visibility has skipped may never finish its animation. Without

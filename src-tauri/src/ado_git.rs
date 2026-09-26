@@ -7,7 +7,7 @@
 //! otherwise send you to the browser for. Voting, completing and
 //! abandoning stay in Azure DevOps deliberately.
 //!
-//! No DELETE, ever, and that half IS enforced: `tests/ado.rs` scans this
+//! No DELETE, ever, and that half IS enforced: `tests/suite/ado.rs` scans this
 //! file's source. The read-only half is not enforceable by a scan, so it
 //! is a claim in a comment - keep it true by hand.
 

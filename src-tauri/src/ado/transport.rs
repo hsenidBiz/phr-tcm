@@ -1,6 +1,6 @@
 //! HTTP transport for `AdoClient`: the only place requests are built and
 //! status codes become `AdoError`s. Verbs stop at GET / POST / PATCH —
-//! no DELETE (tests/ado.rs scans this file). The one place that does
+//! no DELETE (tests/suite/ado.rs scans this file). The one place that does
 //! delete is `recycle.rs`, which carries its own send for exactly that
 //! reason - so this funnel's verb allow-list stays as narrow as it was.
 //!
@@ -44,7 +44,7 @@ pub(crate) fn tidy(url: &str) -> String {
 /// it in a toast repeated the log at the one person who cannot use it.
 /// These say what to try instead and point at where the detail lives.
 ///
-/// Pinned by `tests/ado_network.rs` (the exact text, and the rule that no
+/// Pinned by `tests/suite/ado_network.rs` (the exact text, and the rule that no
 /// URL may appear here) and mirrored by `src/dev/faults.ts`, which
 /// replays them to simulate a failure. The test fails if the two drift.
 pub const NET_TIMEOUT: &str =

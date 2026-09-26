@@ -757,15 +757,12 @@ export default function ImportFile({
             onDismiss={() => dismissReport(r.path)}
           />
         ))}
-        <div className="space-y-1 border-t border-border/60 pt-3">
-          <p className="text-xs text-muted">
-            Paste a share link a teammate sent you. Links are one-time use -
-            once imported, the link expires.
-          </p>
+        <div className="border-t border-border/60 pt-3">
           <div className="flex gap-2">
             <Input
               aria-label="Share link"
-              placeholder="tcm-share:…"
+              placeholder="Paste a share link from a teammate"
+              title="Links are one-time use - once imported, the link expires."
               className="id-mono flex-1 py-1.5 text-xs"
               value={shareLink}
               onChange={(e) => setShareLink(e.target.value)}

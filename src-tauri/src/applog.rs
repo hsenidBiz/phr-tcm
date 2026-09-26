@@ -47,7 +47,7 @@ fn dir_cell() -> &'static Mutex<Option<PathBuf>> {
 }
 
 /// Days since the epoch -> (year, month, day). Howard Hinnant's civil_from_days.
-/// Public only so `tests/applog.rs` can pin it against known dates - every
+/// Public only so `tests/suite/applog.rs` can pin it against known dates - every
 /// other caller reads the live clock.
 pub fn civil(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;

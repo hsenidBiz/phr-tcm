@@ -1,7 +1,7 @@
 //! Azure DevOps REST client.
 //!
 //! SAFETY INVARIANT: this client exposes GET (and later POST/PATCH) only.
-//! Never add a DELETE method — enforced by tests/ado.rs, which scans every
+//! Never add a DELETE method — enforced by tests/suite/ado.rs, which scans every
 //! source file under src/ except ado/deletion.rs.
 //!
 //! Layout: this file owns the client type, its constructors and the wire
@@ -211,7 +211,7 @@ pub fn http_client() -> reqwest::Client {
                 .build()
                 .unwrap_or_else(|e| {
                     crate::applog::error(format!("could not build the HTTP client with deadlines: {e}"));
-                    // Not `Client::new()`: tests/ado_network.rs scans for it.
+                    // Not `Client::new()`: tests/suite/ado_network.rs scans for it.
                     reqwest::ClientBuilder::new().build().unwrap_or_default()
                 })
         })

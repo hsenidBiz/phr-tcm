@@ -8,7 +8,7 @@
 //! never revoked - "replacing" it is an upload of the new file plus ONE
 //! PATCH that adds the new relation and removes the old one(s). The old
 //! blob stays in Azure DevOps unreferenced; this app never deletes
-//! anything there (scanned by tests/ado.rs - no DELETE anywhere).
+//! anything there (scanned by tests/suite/ado.rs - no DELETE anywhere).
 
 use crate::ado::{AdoClient, AdoError};
 use serde::{Deserialize, Serialize};

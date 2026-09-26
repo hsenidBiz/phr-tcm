@@ -404,6 +404,23 @@ test("a spent share link shows the one-time-use explanation", async () => {
   expect(await screen.findByText(/already been used/)).toBeInTheDocument();
 });
 
+/// The one-time-use explanation used to sit in its own paragraph above the
+/// row; it now lives on the input's title, and the input plus its button
+/// are the row's only two children.
+test("the share row is one line, with the one-time-use note on the input's title", () => {
+  mockIPC(() => undefined);
+  renderScreen();
+
+  expect(screen.queryByText(/one-time use/)).not.toBeInTheDocument();
+  const input = screen.getByLabelText("Share link");
+  expect(input).toHaveAttribute("placeholder", "Paste a share link from a teammate");
+  expect(input.getAttribute("title")).toContain("one-time use");
+
+  const button = screen.getByRole("button", { name: "Import shared" });
+  expect(input.parentElement).toBe(button.parentElement);
+  expect(input.parentElement).toHaveClass("flex");
+});
+
 // ---------------------------------------------------------------------
 // Watched import file: an assistant edits the JSON on disk and the queue
 // follows. fileSync.test.ts owns the reconciliation rules and the Rust

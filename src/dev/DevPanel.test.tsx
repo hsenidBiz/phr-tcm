@@ -48,6 +48,36 @@ test("each toast button raises its own kind", () => {
   }
 });
 
+/// Picking a failure kind only chooses what "Fail next/every call" will
+/// arm. In the red "on" fill a picked kind read as a failure that could not
+/// be switched off, so red is kept for what is actually armed.
+test("a picked failure kind is not shown as on; only arming is", () => {
+  openPanel();
+  const timeout = screen.getByRole("button", { name: "Timeout" });
+  expect(timeout).toHaveAttribute("aria-pressed", "true");
+  expect(timeout.className).not.toMatch(/bg-danger/);
+  expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+
+  const every = screen.getByRole("button", { name: "Fail every call" });
+  fireEvent.click(every);
+  expect(every.className).toMatch(/bg-danger/);
+  fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+  expect(screen.getByRole("button", { name: "Fail every call" }).className).not.toMatch(/bg-danger/);
+});
+
+test("the open panel is wide and two columns; the collapsed strip stays narrow", () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DevPanel org="acme" project="Web" pbi={null} section="manual" workMode={false} onShowSignIn={() => {}} />
+    </QueryClientProvider>,
+  );
+  const strip = screen.getByLabelText("Drag the dev panel").parentElement!;
+  expect(strip.className).toMatch(/\bw-72\b/);
+  fireEvent.click(screen.getByRole("button", { name: "Expand dev panel" }));
+  expect(strip.className).not.toMatch(/\bw-72\b/);
+  expect(screen.getByText("Demo data").closest(".columns-2")).not.toBeNull();
+});
+
 test("the action toast carries an Undo, and the sticky one stays until dismissed", () => {
   openPanel();
   fireEvent.click(screen.getByRole("button", { name: "Toast: With action" }));

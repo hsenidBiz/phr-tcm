@@ -1,6 +1,6 @@
 //! The ONLY file in this client permitted to issue a DELETE.
 //!
-//! Everywhere else the rule still holds absolutely - `tests/ado.rs` scans
+//! Everywhere else the rule still holds absolutely - `tests/suite/ado.rs` scans
 //! every other source file and fails the build if `.delete(` or
 //! `Method::DELETE` appears in one. This file is the single, deliberate
 //! exception, carved out so the thing a reviewer has to audit is one small

@@ -65,7 +65,7 @@ test("every stand-in command is answered locally", async () => {
 
   // A few shapes worth pinning down explicitly.
   await expect(commands.detectAiTools(null)).resolves.toHaveLength(3);
-  await expect(commands.dbServerPresets()).resolves.toHaveLength(1);
+  await expect(commands.dbDatabases()).resolves.toHaveLength(1);
   await expect(
     commands.fetchBoard(TOUR_ORG, TOUR_PROJECT, null, null, false),
   ).resolves.toMatchObject({ status: "ok" });

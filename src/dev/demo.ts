@@ -821,6 +821,39 @@ function applyPatches() {
         ],
         warnings: [],
       }),
+
+    // Commands added after the demo store. Unpatched, each one went to the
+    // real backend, which has no sign-in in demo mode, came back
+    // Unauthorized and raised "Session expired" on the screens that load
+    // them (Run Tests, Suite Management, the drawer, comments, pull
+    // requests). demoCoverage.test.ts fails on the next one left out.
+    workItemTypeStates: () =>
+      ok([
+        { name: "To Do", color: "b2b2b2", category: "Proposed" },
+        { name: "In Progress", color: "007acc", category: "InProgress" },
+        { name: "Done", color: "339933", category: "Completed" },
+      ]),
+    commentImages: () => ok([]),
+    prDescription: () => ok("A demo pull request - there is no description in the demo data."),
+    getRunOrder: () => ok({ state: "none" as const }),
+    saveRunOrder: (_o: string, _p: string, _pbi: number, cases: { id: number; group?: string | null }[]) =>
+      ok({
+        format: "tcm-run-order",
+        version: 1,
+        saved_by: auth.account,
+        saved_at: new Date().toISOString(),
+        cases: cases.map((c) => ({ id: c.id, group: c.group ?? null })),
+      }),
+    listSuiteEntries: () => ok([]),
+    reorderSuiteCases: (_o: string, _p: string, _s: number, caseIds: number[]) => ok(caseIds),
+    canCreateTestSuites: () => ok(true),
+    createStaticSuite: (_o: string, _p: string, _plan: number, parent: number, name: string) =>
+      ok({ id: 9000 + Math.floor(Math.random() * 1000), name, suite_type: "staticTestSuite", requirement_id: null, parent_id: parent }),
+    addCasesToSuite: (_o: string, _p: string, _plan: number, _s: number, caseIds: number[]) => ok(caseIds),
+    relinkTestCases: (_o: string, _p: string, ids: number[]) => ok(ids.map((id) => ({ id, moved: true, error: null }))),
+    resetTestPoints: () => ok(null),
+    autoRunPublish: () => ok({ status: "refused" as const, why: "Publishing is off in demo data." }),
+
     buildLog: () =>
       ok(
         [

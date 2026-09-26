@@ -146,6 +146,59 @@ test("the right column switches from the changelog to the app log", async () => 
   expect(screen.getByRole("button", { name: "Copy log" })).toBeInTheDocument();
 });
 
+/// Switching between Changelog and Logs plays an entrance on whichever
+/// panel is now showing - keyed on the panel so each switch replays it,
+/// rather than reusing the same DOM node across a swap.
+test("switching panels plays an entrance animation, replayed on each switch", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  await screen.findByRole("button", { name: /Show more/ });
+  const changelogPanel = document.querySelector(".t-panel-in")!;
+  expect(changelogPanel).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+  await screen.findByRole("button", { name: "Copy log" });
+  const logsPanel = document.querySelector(".t-panel-in")!;
+  expect(logsPanel).toBeInTheDocument();
+  expect(logsPanel).not.toBe(changelogPanel);
+
+  fireEvent.click(screen.getByRole("button", { name: "Changelog" }));
+  await screen.findByRole("button", { name: /Show more/ });
+  const changelogAgain = document.querySelector(".t-panel-in")!;
+  // A fresh node each switch - React remounts on the key change rather than
+  // reusing the earlier changelog panel, so the animation replays.
+  expect(changelogAgain).not.toBe(changelogPanel);
+});
+
+/// The backup file used to carry every hidden dev tool by name; that has no
+/// place in copy a user reads.
+test("the backup description does not name Auto Run", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const heading = await screen.findByRole("heading", { name: "Backup & transfer" });
+  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Run/);
+});
+
+/// Database logins live in Windows Credential Manager, which the backup
+/// never reads - the description has to say so, or a person moving
+/// machines expects them to arrive.
+test("the backup description says database logins are not included", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const heading = await screen.findByRole("heading", { name: "Backup & transfer" });
+  const text = heading.closest("section")!.textContent ?? "";
+  expect(text).toMatch(/database logins stay on this computer/i);
+  expect(text).not.toMatch(/—/);
+});
+
 /// The folder opens from Rust. The frontend used to call the opener plugin
 /// itself, and the webview's `opener:default` permission does not include
 /// open_path - so the plugin refused and the button only ever showed the

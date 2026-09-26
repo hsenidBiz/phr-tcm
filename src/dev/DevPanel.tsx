@@ -6,6 +6,7 @@ import { commands, type PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../tour/tourState";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { cn } from "../lib/cn";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { clearSuiteSeed } from "../lib/suiteSeed";
@@ -172,7 +173,9 @@ export default function DevPanel({
     clamp();
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
-  }, []);
+    // Again on open/close: the open panel is much wider than the strip, and
+    // one dragged near the right edge would otherwise open half off-screen.
+  }, [open]);
 
   const appKeys = () =>
     Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).filter((k) =>
@@ -190,7 +193,12 @@ export default function DevPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-50 w-72 rounded-lg border border-warning/60 bg-surface text-xs shadow-2xl"
+      // Wide and two columns when open - one tall column ran off the bottom
+      // of the window. The collapsed strip stays narrow.
+      className={cn(
+        "fixed z-50 rounded-lg border border-warning/60 bg-surface text-xs shadow-2xl",
+        open ? "w-[44rem] max-w-[calc(100vw-2rem)]" : "w-72",
+      )}
       style={pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 16 }}
     >
       {/* The whole strip drags; only the chevron toggles open/closed. */}
@@ -216,7 +224,7 @@ export default function DevPanel({
       </div>
 
       {open && (
-        <div className="space-y-3 border-t border-border p-3">
+        <div className="columns-2 gap-5 border-t border-border p-3 [&>*]:mb-3 [&>*]:break-inside-avoid">
           <div className="space-y-1">
             <p className="font-semibold text-text">Demo data</p>
             <p className="text-muted">
@@ -260,14 +268,19 @@ export default function DevPanel({
                 ? `ARMED - ${armedLabel} on ${fault.armed.mode === "once" ? "the next command" : "every command"}.`
                 : fault.fired
                   ? "Fired - the next command failed. Arm another to repeat."
-                  : "Make commands come back as an error, so failure states are seen instead of imagined."}
+                  : "Make commands come back as an error, so failure states are seen instead of imagined. Pick a failure, then arm it below."}
             </p>
+            {/* Picking a kind only chooses what the buttons below will arm,
+                so it wears the accent, not the red fill - red means "on",
+                and a picked-but-unarmed kind in red read as a failure that
+                could not be switched off. */}
             <div className="flex flex-wrap gap-1.5">
               {FAULTS.map((f) => (
                 <Button
                   key={f.id}
                   size="sm"
-                  variant={faultId === f.id ? "danger" : "outline"}
+                  variant="outline"
+                  className={cn(faultId === f.id && "border-accent text-accent")}
                   aria-pressed={faultId === f.id}
                   onClick={() => setFaultId(f.id)}
                 >

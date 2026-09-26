@@ -11,8 +11,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Rust / Tauri
-src-tauri/target/
+# Rust / Tauri - at any depth, so a copy of the project nested inside it
+# (an old checkout, a worktree) does not bring its build output into view
+**/src-tauri/target/
+
+# The folder the project lived in before it moved up a level. Nothing in
+# it is source; tools still open sessions there.
+/v2/
 
 # Velopack local staging (scripts/pack.ps1 writes it, release-v2.ps1 uploads it)
 Releases/

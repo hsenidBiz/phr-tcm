@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../components/ui/toaster";
 import AiBridge from "./AiBridge";
-import { dbConnectionSnapshot, subscribeDbSettings } from "../lib/dbServer";
+import { selectedDbSnapshot, subscribeDbSettings } from "../lib/dbServer";
 
 afterEach(() => {
   clearMocks();
@@ -113,7 +113,7 @@ test("Rescan re-runs detection and picks up a newly installed tool", async () =>
   expect(scans).toBe(2);
 });
 
-test("the how-it-works card names every MCP tool", async () => {
+test("the AI Tools Breakdown card names every MCP tool", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -121,7 +121,7 @@ test("the how-it-works card names every MCP tool", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  const card = (await screen.findByText("How it works")).closest("section")!;
+  const card = (await screen.findByText("AI Tools Breakdown")).closest("section")!;
   // The card explains what you can DECIDE. Every entry has a switch above
   // it, and the tools with no switch are not described here - a paragraph
   // about a control that does not exist is the thing this screen keeps
@@ -194,29 +194,134 @@ test("the tab still renders when the status query fails", async () => {
   expect(screen.queryByText("Status")).not.toBeInTheDocument();
 });
 
-// ------------------------------------------------- company database server
+// ------------------------------------------------- company database
 
 const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
 
-test("the database server cannot be registered until it is configured", async () => {
-  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+/// What `db_databases` answers: who signs in and whether a password is
+/// saved - never the password or a connection string.
+const DATABASES = [
+  {
+    id: "dev-read", label: "Dev - read only", shipped: true, server: "sgdev01db02.cloud", port: null,
+    database: "phrx", user: "sgdev01db02_readonly", trust_cert: true, has_password: true, customised: false,
+  },
+  {
+    id: "dev-login", label: "Dev - dev login", shipped: true, server: "sgdev01db01.cloud", port: null,
+    database: "phrx", user: "sgdev01db01_devlogin", trust_cert: true, has_password: true, customised: false,
+  },
+  {
+    id: "qa-read", label: "QA - read only", shipped: true, server: "sgqa01db01.cloud", port: null,
+    database: "phrx", user: "sgqa01db01_readonly", trust_cert: true, has_password: true, customised: false,
+  },
+  {
+    id: "own", label: "Your own database", shipped: false, server: "", port: null,
+    database: "", user: "", trust_cert: false, has_password: false, customised: false,
+  },
+];
+
+function dbMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_databases") return DATABASES;
+    return extra(cmd, args);
   });
+}
+
+function dbCard(): HTMLElement {
+  return screen.getByText("Company database").closest("section")!;
+}
+
+/// The card is which database, its login, and whether it may write. The
+/// login itself lives in Rust: nothing on the card can show or take one.
+test("the database card is a picker, a login line, Manage credentials and the write switch", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
+  const picker = await screen.findByRole("combobox", { name: "Database" });
+  await waitFor(() => expect(picker).toHaveTextContent("Dev - read only"));
+  const card = dbCard();
+  expect(within(card).getByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Manage credentials" })).toBeInTheDocument();
+  expect(within(card).getByRole("switch", { name: "Create, update and delete" })).toBeInTheDocument();
+
+  expect(within(card).queryByText("Edit as one string")).not.toBeInTheDocument();
+  expect(within(card).queryByText("CONNECTION_STRING")).not.toBeInTheDocument();
+  for (const gone of [
+    "Database host",
+    "Database port",
+    "Database name",
+    "Database user",
+    "Database password",
+    "Connection string",
+  ]) {
+    expect(screen.queryByLabelText(gone)).not.toBeInTheDocument();
+  }
+  expect(card.querySelector('input[type="password"]')).toBeNull();
+});
+
+test("a database with no login saved says so", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "own");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByText("No login saved")).toBeInTheDocument();
+});
+
+/// Choosing a database is what decides which one the tools run on, so it
+/// has to reach the store App pushes from.
+test("choosing a database stores its id and tells the bridge subscribers", async () => {
+  const told = vi.fn();
+  const stop = subscribeDbSettings(told);
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
+
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read");
+  expect(selectedDbSnapshot()).toBe("qa-read");
+  expect(told).toHaveBeenCalled();
+  expect(await screen.findByText("Signs in as sgqa01db01_readonly")).toBeInTheDocument();
+  stop();
+});
+
+test("Manage credentials opens the login of the chosen database", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const manage = await screen.findByRole("button", { name: "Manage credentials" });
+  await waitFor(() => expect(manage).not.toBeDisabled());
+  fireEvent.click(manage);
   expect(
-    await screen.findByText(/Fill in the executable and connection string/),
+    await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" }),
   ).toBeInTheDocument();
 });
 
-test("configuring the database server persists it and enables registration", async () => {
+test("with no database chosen there is no login to manage", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByRole("button", { name: "Manage credentials" })).toBeDisabled();
+});
+
+test("the database server cannot be registered until it is configured", async () => {
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(
+    await screen.findByText(/Choose a database and fill in the server path/),
+  ).toBeInTheDocument();
+});
+
+/// The registration names the database by id; Rust resolves its login.
+/// Nothing the webview sends carries a connection string.
+test("registering the database server sends the chosen database's id", async () => {
+  localStorage.setItem("tcm-v2-ai-show-phrx", "on");
+  localStorage.setItem("tcm-v2-db-selected", "qa-read");
   let sent: unknown;
-  mockIPC((cmd, args) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  dbMocks((cmd, args) => {
     if (cmd === "register_db_server") {
       sent = args;
       return null;
@@ -227,21 +332,12 @@ test("configuring the database server persists it and enables registration", asy
   fireEvent.change(await screen.findByLabelText("Database server path"), {
     target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
   });
-  // The connection string is BUILT from fields - nobody types the whole
-  // thing. The stored value is still the single string the server gets.
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
-  fireEvent.change(screen.getByLabelText("Database port"), { target: { value: "1433" } });
-  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
-  fireEvent.change(screen.getByLabelText("Database user"), { target: { value: "sa" } });
-  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "p@ss" } });
   fireEvent.change(screen.getByLabelText("Schema filter"), { target: { value: "dbo,hr" } });
 
   // Kept locally so another editor can be registered without retyping.
   const stored = localStorage.getItem("tcm-v2-db-mcp") as string;
   expect(stored).toContain("PeoplesHR.DBMCPServer.exe");
-  expect(JSON.parse(stored).connection_string).toBe(
-    "Server=db,1433;Database=HR;User Id=sa;Password=p@ss;TrustServerCertificate=True;",
-  );
+  expect(JSON.parse(stored)).not.toHaveProperty("connection_string");
 
   // Two Register buttons now: ours and the database server's.
   const buttons = await screen.findAllByRole("button", { name: "Register" });
@@ -250,166 +346,12 @@ test("configuring the database server persists it and enables registration", asy
   await waitFor(() => expect(sent).toBeTruthy());
   const payload = sent as { id: string; config: Record<string, string> };
   expect(payload.id).toBe("vscode");
-  expect(payload.config.db_type).toBe("mssql");
-  expect(payload.config.schema_filter).toBe("dbo,hr");
-  expect(payload.config.connection_string).toContain("Password=p@ss");
-});
-
-test("the password is not shown in plain text, in either editing mode", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  expect(payload.config).toEqual({
+    exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
+    db_type: "mssql",
+    schema_filter: "dbo,hr",
+    db_id: "qa-read",
   });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const pw = await screen.findByLabelText("Database password");
-  expect(pw).toHaveAttribute("type", "password");
-
-  // The raw single-string editor holds the password too, so it is masked
-  // just as it was before the builder existed.
-  fireEvent.click(screen.getByRole("checkbox", { name: "Edit connection string as text" }));
-  expect(screen.getByLabelText("Connection string")).toHaveAttribute("type", "password");
-});
-
-/// A string saved before this form existed appears already parsed into the
-/// fields - nobody re-enters a working configuration.
-test("a stored connection string pre-fills the builder fields", async () => {
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
-      db_type: "mssql",
-      connection_string:
-        "Server=phrx-db.internal,1433;Database=PHRX;User Id=reader;Password=old;TrustServerCertificate=True;",
-      schema_filter: "",
-    }),
-  );
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  expect(await screen.findByLabelText("Database host")).toHaveValue("phrx-db.internal");
-  expect(screen.getByLabelText("Database port")).toHaveValue("1433");
-  expect(screen.getByLabelText("Database name")).toHaveValue("PHRX");
-  expect(screen.getByLabelText("Database user")).toHaveValue("reader");
-
-  // Editing ONE field keeps the rest: change the password, the host stays.
-  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "new" } });
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
-  expect(stored.connection_string).toBe(
-    "Server=phrx-db.internal,1433;Database=PHRX;User Id=reader;Password=new;TrustServerCertificate=True;",
-  );
-});
-
-/// Picking a shipped environment fills the connection and the schema/type
-/// defaults, and persists like any other explicit edit - the dropdown is
-/// an act, unlike the silent first-run prefill below.
-test("picking a preset fills and persists the connection", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return [];
-    if (cmd === "db_server_presets")
-      return [
-        { label: "Dev — read only", connection_string: "Server=dev;Database=a;User Id=ro;" },
-        { label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" },
-      ];
-  });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  renderBridge(qc);
-
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("QA — read only"));
-
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
-  expect(stored.connection_string).toBe("Server=qa;Database=b;User Id=ro;");
-  expect(stored.db_type).toBe("mssql");
-  expect(stored.schema_filter).toBe("PeoplesHR");
-});
-
-const PRESETS = [
-  { label: "Dev — read only", connection_string: "Server=dev;Database=a;User Id=ro;" },
-  { label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" },
-];
-
-/// A server the app did not ship a preset for still needs a way in: picking
-/// "Your own database" clears the connection for typing, and once something
-/// is typed the picker keeps showing that choice rather than snapping back
-/// to blank.
-test("Your own database clears the connection for typing and stays selected for a hand-entered one", async () => {
-  // Seed a stored connection that MATCHES a preset, so picking "Your own
-  // database" has something real to clear - starting from empty would let
-  // the emptiness assertions below pass even if clearing never ran.
-  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
-    exe_path: "", db_type: "mssql", schema_filter: "PeoplesHR",
-    connection_string: PRESETS[0].connection_string,
-  }));
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-    if (cmd === "db_server_presets") return PRESETS;
-    if (cmd === "db_server_defaults") return null;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  expect(screen.getByLabelText("Database host")).toHaveValue("dev");
-  fireEvent.click(await screen.findByText("Your own database"));
-  expect(screen.getByLabelText("Database host")).toHaveValue("");
-  expect(screen.getByLabelText("Database name")).toHaveValue("");
-  expect(screen.getByLabelText("Database host")).toHaveFocus();
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
-  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "Payroll" } });
-  fireEvent.change(screen.getByLabelText("Database user"), { target: { value: "reader" } });
-  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "s3cret" } });
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!);
-  expect(stored.connection_string).toContain("sql.example.local");
-  expect(stored.connection_string).toContain("Payroll");
-  expect(screen.getByLabelText("Default connections")).toHaveTextContent("Your own database");
-  expect(screen.getByText(/Not listed\? Choose "Your own database"/)).toBeInTheDocument();
-  localStorage.clear();
-});
-
-test("a stored connection that matches no preset shows as Your own database", async () => {
-  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
-    exe_path: "", db_type: "mssql", schema_filter: "",
-    connection_string: "Server=sql.example.local;Database=Payroll;User Id=reader;Password=p;",
-  }));
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-    if (cmd === "db_server_presets") return PRESETS;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByLabelText("Default connections")).toHaveTextContent("Your own database");
-  localStorage.clear();
-});
-
-/// The themed Combobox calls onChange even for the option already selected.
-/// Picking "Your own database" while it already IS the current choice must
-/// not wipe out what was hand-typed there.
-test("picking Your own database again does not clear an already hand-entered connection", async () => {
-  const HAND =
-    "Server=sql.example.local;Database=Payroll;User Id=reader;Password=p;TrustServerCertificate=True;";
-  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({
-    exe_path: "", db_type: "mssql", schema_filter: "",
-    connection_string: HAND,
-  }));
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-    if (cmd === "db_server_presets") return PRESETS;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByLabelText("Default connections")).toHaveTextContent("Your own database");
-
-  // The trigger already reads "Your own database" - open the list and pick
-  // the OPTION with that name, not the trigger's own label text.
-  fireEvent.click(screen.getByLabelText("Default connections"));
-  fireEvent.click(await screen.findByRole("option", { name: "Your own database" }));
-
-  expect(JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!).connection_string).toBe(HAND);
-  expect(screen.getByLabelText("Database host")).toHaveValue("sql.example.local");
-  localStorage.clear();
 });
 
 /// Shipped defaults fill a NEVER-CONFIGURED form only: a fresh machine
@@ -417,19 +359,15 @@ test("picking Your own database again does not clear an already hand-entered con
 /// registers or persists from the prefill alone.
 test("shipped DB defaults prefill only a never-configured form", async () => {
   const DEFAULTS = {
-    exe_path: "D:\Phr-Database-McpServer",
+    exe_path: "D:\\Phr-Database-McpServer",
     db_type: "mssql",
-    connection_string: "Server=sgdev01db02.cloud;Database=phrx;User Id=ro;TrustServerCertificate=True;",
     schema_filter: "PeoplesHR",
   };
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
-    if (cmd === "detect_ai_tools") return [];
+  dbMocks((cmd) => {
     if (cmd === "db_server_defaults") return DEFAULTS;
   });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const first = renderBridge(qc);
+  const first = renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
   // Fresh machine: the form shows the shipped values...
   await waitFor(() =>
@@ -442,16 +380,11 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
   // A machine with its OWN config never has it overwritten.
   localStorage.setItem(
     "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "C:\mine\server.exe",
-      db_type: "mssql",
-      connection_string: "Server=mine;Database=own;",
-      schema_filter: "",
-    }),
+    JSON.stringify({ exe_path: "C:\\mine\\server.exe", db_type: "mssql", schema_filter: "" }),
   );
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Database server path")).toHaveValue("C:\mine\server.exe"),
+    expect(screen.getByLabelText("Database server path")).toHaveValue("C:\\mine\\server.exe"),
   );
 });
 
@@ -654,18 +587,17 @@ test("Register passes the working repository and the disabled tools along", asyn
   );
 });
 
-// ------------------------------------------- the connection-string warning
+// ------------------------------------------- the registration warning
 
-/// The registration worked, but the connection string is somewhere git can
+/// The registration worked, but the login it carries is somewhere git can
 /// carry it away. That is the one thing on this tab worth reading, so it
 /// replaces the success toast rather than sitting in a log.
 test("a warning from register_db_server is shown instead of the success toast", async () => {
   const warning =
     "The connection string is in .cursor/mcp.json, which git is tracking in this repository";
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks((cmd) => {
     if (cmd === "register_db_server") return warning;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -674,8 +606,6 @@ test("a warning from register_db_server is shown instead of the success toast", 
   fireEvent.change(await screen.findByLabelText("Database server path"), {
     target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
   });
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
-  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
 
   const buttons = await screen.findAllByRole("button", { name: "Register" });
   fireEvent.click(buttons[buttons.length - 1]);
@@ -686,9 +616,8 @@ test("a warning from register_db_server is shown instead of the success toast", 
 
 test("no warning means the plain success toast", async () => {
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks((cmd) => {
     if (cmd === "register_db_server") return null;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -697,8 +626,6 @@ test("no warning means the plain success toast", async () => {
   fireEvent.change(await screen.findByLabelText("Database server path"), {
     target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
   });
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
-  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
 
   const buttons = await screen.findAllByRole("button", { name: "Register" });
   fireEvent.click(buttons[buttons.length - 1]);
@@ -754,23 +681,20 @@ test("a tool with nothing left globally is not offered the retire button", async
 });
 
 /// The database list carries the same scope label as the list above it:
-/// which config a connection string is about to go into is exactly what a
-/// person needs to know before clicking Register.
+/// which config a login is about to go into is exactly what a person needs
+/// to know before clicking Register.
 test("the database server list labels each row's scope too", async () => {
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
   localStorage.setItem(
     "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
-      db_type: "mssql",
-      connection_string: "Server=db,1433;Database=HR;User Id=sa;Password=p;",
-      schema_filter: "",
-    }),
+    JSON.stringify({ exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe", db_type: "mssql", schema_filter: "" }),
   );
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+    if (cmd === "db_databases") return DATABASES;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
@@ -791,55 +715,51 @@ test("a tool with no project config is labelled global", async () => {
   expect(screen.getByText("global")).toBeInTheDocument();
 });
 
-/// Picking a different Default connection must reach the FILE, not just
-/// the form: every tool the database server is already registered in gets
-/// re-registered with the new string, and the toast tells the user the
-/// one thing left to do - restart the coding session that read the old
-/// file at startup. Tools without the server registered are left alone.
-test("picking a preset re-registers the DB server where it is registered, then says to restart", async () => {
+/// Choosing a different database must reach the FILE, not just the card:
+/// every tool the database server is already registered in gets
+/// re-registered with the new id, and the toast tells the user the one
+/// thing left to do - restart the coding session that read the old file at
+/// startup. Tools without the server registered are left alone.
+test("choosing a database re-registers the DB server where it is registered, then says to restart", async () => {
   // The PHR X option is on: this is the case where syncing a leftover
   // registration's config is exactly what should happen.
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  const registered: Array<{ id: string; conn: string }> = [];
+  const registered: Array<{ id: string; dbId: string }> = [];
   mockIPC((cmd, args) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
         { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
         { id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "global" },
       ];
-    if (cmd === "db_server_presets")
-      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
+    if (cmd === "db_databases") return DATABASES;
     if (cmd === "register_db_server") {
-      const a = args as { id: string; config: { connection_string: string } };
-      registered.push({ id: a.id, conn: a.config.connection_string });
+      const a = args as { id: string; config: { db_id: string } };
+      registered.push({ id: a.id, dbId: a.config.db_id });
       return null;
     }
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   render(<Toaster />);
 
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("QA — read only"));
+  // The tool list has to be in before the pick, or there is nothing to sync.
+  await screen.findAllByText("VS Code");
+  fireEvent.click(await screen.findByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
 
   await waitFor(() => expect(registered).toHaveLength(1));
-  expect(registered[0]).toEqual({ id: "vscode", conn: "Server=qa;Database=b;User Id=ro;" });
+  expect(registered[0]).toEqual({ id: "vscode", dbId: "qa-read" });
   expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
 });
 
-/// With the PHR X option off, picking a preset must never re-register the
-/// separate server, even where a leftover registration still exists and a
-/// stored config still carries its exe_path - that would silently refresh
-/// a password copy the leftover notice tells people to remove.
-test("with the PHR X option off, picking a preset does not sync a leftover PHR X registration", async () => {
+/// With the PHR X option off, choosing a database must never re-register
+/// the separate server, even where a leftover registration still exists
+/// and a stored config still carries its exe_path - that would silently
+/// refresh a login copy the leftover notice tells people to remove.
+test("with the PHR X option off, choosing a database does not sync a leftover PHR X registration", async () => {
   localStorage.setItem(
     "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
-      db_type: "mssql",
-      schema_filter: "PeoplesHR",
-      connection_string: "Server=dev;Database=a;User Id=ro;",
-    }),
+    JSON.stringify({ exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe", db_type: "mssql", schema_filter: "PeoplesHR" }),
   );
   let registerCalled = false;
   mockIPC((cmd) => {
@@ -848,8 +768,7 @@ test("with the PHR X option off, picking a preset does not sync a leftover PHR X
       return [
         { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
       ];
-    if (cmd === "db_server_presets")
-      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
+    if (cmd === "db_databases") return DATABASES;
     if (cmd === "register_db_server") {
       registerCalled = true;
       return null;
@@ -857,16 +776,11 @@ test("with the PHR X option off, picking a preset does not sync a leftover PHR X
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("QA — read only"));
+  await screen.findByText(/still registered with the tools below/);
+  fireEvent.click(await screen.findByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
 
-  // Give the form time to pick up the new connection before asserting the
-  // registration call that should never happen didn't.
-  await waitFor(() =>
-    expect(JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!).connection_string).toBe(
-      "Server=qa;Database=b;User Id=ro;",
-    ),
-  );
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
   expect(registerCalled).toBe(false);
 });
 
@@ -941,21 +855,14 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
 
 // --------------------------------------------- the database tools' switches
 
-/// The card is about the connection the app's OWN tools use now, and it is
+/// The card is about the database the app's OWN tools use now, and it is
 /// always there - registering the separate PHR X server is opt-in from
 /// Settings, off by default.
-test("the connection is always shown; the PHR X option is not, by default", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS; // none has phr-db-mcp registered
-    // Default connections only render once a preset shipped - without this
-    // the combobox is absent regardless of the PHR X option below.
-    if (cmd === "db_server_presets")
-      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
-  });
+test("the database is always shown; the PHR X option is not, by default", async () => {
+  dbMocks(); // none has phr-db-mcp registered
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByText("Company database")).toBeInTheDocument();
-  expect(await screen.findByLabelText("Default connections")).toBeInTheDocument();
+  expect(await screen.findByRole("combobox", { name: "Database" })).toBeInTheDocument();
   expect(screen.queryByLabelText("Database server path")).not.toBeInTheDocument();
   expect(screen.queryByText(/no longer needed for lookups/)).not.toBeInTheDocument();
   // Nothing is registered, so there is no leftover to remove either.
@@ -967,10 +874,7 @@ test("the connection is always shown; the PHR X option is not, by default", asyn
 
 test("switched on in Settings, the PHR X option appears as before", async () => {
   localStorage.setItem("tcm-v2-ai-show-phrx", "on");
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-  });
+  dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByLabelText("Database server path")).toBeInTheDocument();
   expect(screen.getByText(/no longer needed for lookups/)).toBeInTheDocument();
@@ -986,6 +890,7 @@ test("with the option off, a tool that still has PHR X registered can unregister
         { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases", "phr-db-mcp"], scope: "project" },
         { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm-testcases"], scope: "project" },
       ];
+    if (cmd === "db_databases") return DATABASES;
     if (cmd === "unregister_db_server") { calls.push((args as { id: string }).id); return null; }
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -1004,55 +909,33 @@ test("with the option off, a tool that still has PHR X registered can unregister
   await waitFor(() => expect(calls).toEqual(["claude-code"]));
 });
 
-/// Off by default, and unmovable on a connection the backend would refuse
+/// Off by default, and unmovable on a database the backend would refuse
 /// the write on anyway.
-test("creating, updating and deleting is off, and disabled on a read-only connection", async () => {
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "",
-      db_type: "mssql",
-      connection_string: "Server=dev;Database=a;User Id=sgdev01db02_readonly;Password=p;",
-      schema_filter: "",
-    }),
-  );
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-  });
+test("creating, updating and deleting is off, and disabled on a read-only database", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
+  await screen.findByText("Signs in as sgdev01db02_readonly");
+  const writes = screen.getByRole("switch", { name: "Create, update and delete" });
   expect(writes).toHaveAttribute("aria-checked", "false");
   expect(writes).toBeDisabled();
   // And the reason it cannot be moved is on screen, not implied.
-  expect(
-    screen.getByText(/Only on a dev login connection/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Only on a dev login database/)).toBeInTheDocument();
 
   fireEvent.click(writes);
   expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
 });
 
 /// On the dev login it moves, and the stored flag is what App pushes to
-/// the bridge beside the connection string.
+/// the bridge beside the database id.
 test("on the dev login the write switch turns on and is stored", async () => {
-  localStorage.setItem(
-    "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "",
-      db_type: "mssql",
-      connection_string: "Server=dev;Database=a;User Id=sgdev01db01_devlogin;Password=p;",
-      schema_filter: "",
-    }),
-  );
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-  });
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
+  await screen.findByText("Signs in as sgdev01db01_devlogin");
+  const writes = screen.getByRole("switch", { name: "Create, update and delete" });
   expect(writes).not.toBeDisabled();
   expect(writes).toHaveAttribute("aria-checked", "false");
 
@@ -1063,103 +946,30 @@ test("on the dev login the write switch turns on and is stored", async () => {
   ).toHaveAttribute("aria-checked", "true");
 });
 
-/// Choosing an environment is what decides which database the tools run
-/// on, so it has to reach the store App pushes from - the connection is
-/// persisted and the subscribers are told, in one act.
-test("picking a preset stores the connection and tells the bridge subscribers", async () => {
-  const told = vi.fn();
-  const stop = subscribeDbSettings(told);
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return [];
-    if (cmd === "db_server_presets")
-      return [
-        {
-          label: "Dev — dev login",
-          connection_string: "Server=dev;Database=b;User Id=sgdev01db01_devlogin;Password=p;",
-        },
-      ];
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("Dev — dev login"));
-
-  expect(dbConnectionSnapshot()).toBe(
-    "Server=dev;Database=b;User Id=sgdev01db01_devlogin;Password=p;",
-  );
-  expect(told).toHaveBeenCalled();
-  // And the write switch is now movable, because that connection may write.
-  expect(
-    await screen.findByRole("switch", { name: "Create, update and delete" }),
-  ).not.toBeDisabled();
-  stop();
-});
-
-/// Forgetting the settings takes permission to write with them. Leaving it
-/// standing would hand the next connection a decision nobody made about it.
-test("forgetting the database settings switches writes off too", async () => {
+/// Forgetting takes every saved login, the choice and permission to write
+/// with it. Leaving writes standing would hand the next database a
+/// decision nobody made about it.
+test("Forget them wipes the saved logins, the choice and the write switch", async () => {
   localStorage.setItem("tcm-v2-db-writes", "1");
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
   localStorage.setItem(
     "tcm-v2-db-mcp",
-    JSON.stringify({
-      exe_path: "",
-      db_type: "mssql",
-      connection_string: "Server=dev;Database=a;User Id=sgdev01db01_devlogin;Password=p;",
-      schema_filter: "",
-    }),
+    JSON.stringify({ exe_path: "C:/x.exe", db_type: "mssql", schema_filter: "" }),
   );
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  let forgot = 0;
+  dbMocks((cmd) => {
+    if (cmd === "forget_db_credentials") {
+      forgot += 1;
+      return null;
+    }
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
 
   fireEvent.click(await screen.findByText("Forget them"));
+  await waitFor(() => expect(forgot).toBe(1));
+  expect(await screen.findByText("Database settings forgotten.")).toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
   expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
-});
-
-/// The "Your own database" pick belongs to the form that held it -
-/// forgetting the form must not leave the picker claiming a choice over an
-/// empty, never-configured connection.
-test("forgetting the database settings also forgets a Your own database pick", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-    if (cmd === "db_server_presets") return PRESETS;
-    if (cmd === "db_server_defaults") return null;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("Your own database"));
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
-  expect(screen.getByLabelText("Default connections")).toHaveTextContent("Your own database");
-
-  fireEvent.click(screen.getByText("Forget them"));
-  expect(screen.getByLabelText("Default connections")).not.toHaveTextContent("Your own database");
-});
-
-/// Switching away from "Your own database" to a shipped preset must still
-/// work exactly as picking a preset always has.
-test("picking a preset after Your own database replaces the connection", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
-    if (cmd === "detect_ai_tools") return DB_TOOLS;
-    if (cmd === "db_server_presets") return PRESETS;
-    if (cmd === "db_server_defaults") return null;
-  });
-  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-
-  fireEvent.click(await screen.findByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("Your own database"));
-  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "sql.example.local" } });
-
-  fireEvent.click(screen.getByLabelText("Default connections"));
-  fireEvent.click(await screen.findByText("QA — read only"));
-
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
-  expect(stored.connection_string).toBe("Server=qa;Database=b;User Id=ro;");
-  expect(screen.getByLabelText("Default connections")).toHaveTextContent("QA — read only");
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
 });

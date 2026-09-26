@@ -8,6 +8,7 @@ import { unwrap } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { htmlToMd } from "../lib/richText";
+import { attachmentUrls, markUnavailableImages, swapInlineImages } from "../lib/inlineImages";
 import MarkdownField from "./MarkdownField";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/skeleton";
@@ -120,6 +121,32 @@ export default function CommentsPanel({
     retry: false,
   });
   const mine = (c: WorkComment) => Boolean(me.data?.id) && c.created_by_id === me.data!.id;
+
+  // Attachment images in a comment get 401 as a plain <img> - the WebView
+  // sends no bearer header. Held in memory for this open view only (data:
+  // URIs are large, so this is a react-query cache, not the disk one).
+  // Cached as data: URIs - PrThreads keys its own fetch identically
+  // (["comment-images", org, urls]) and, because both hold exactly this
+  // shape, the two never disagree about what a cached entry looks like;
+  // PrThreads converts to blob: URLs itself, only where the Markdown
+  // island needs one, never in the shared cache.
+  const commentTexts = (comments.data ?? []).map((c) => c.text_html);
+  const imageUrls = attachmentUrls(commentTexts);
+  const images = useQuery({
+    queryKey: ["comment-images", org, imageUrls],
+    queryFn: () => unwrap(commands.commentImages(org, commentTexts)),
+    enabled: imageUrls.length > 0,
+    staleTime: Infinity,
+  });
+  /** Swap in what came back; anything still unswapped once the fetch has
+   * settled (fetch failed, or the host guard refused it) becomes the
+   * unavailable note instead of a permanently broken image icon. While
+   * still loading, the text is left unchanged - the image appears when
+   * it is ready rather than flashing "unavailable" first. */
+  const withCommentImages = (html: string) => {
+    const swapped = swapInlineImages(html, images.data ?? []);
+    return images.isPending ? swapped : markUnavailableImages(swapped, "html");
+  };
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["wi-comments", org, project, itemId] });
 
@@ -236,7 +263,9 @@ export default function CommentsPanel({
                 // webview with IPC.
                 <div
                   className="md-preview text-sm text-text"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(htmlToMd(c.text_html)) }}
+                  dangerouslySetInnerHTML={{
+                    __html: withCommentImages(renderMarkdown(htmlToMd(c.text_html))),
+                  }}
                 />
               ) : (
                 // A row cached from before the HTML travelled: plain text.

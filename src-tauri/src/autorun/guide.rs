@@ -13,7 +13,7 @@
 
 /// Every `kind` the runner's executor understands, in the order the guide
 /// introduces them. Kept in step with `browser::actions::Action` by hand;
-/// `tests/autorun_guide.rs` fails if this drifts from what serde emits.
+/// `tests/suite/autorun_guide.rs` fails if this drifts from what serde emits.
 pub const ACTION_KINDS: &[&str] = &[
     "navigate",
     "click",

@@ -119,6 +119,23 @@ test("the app's CSP lets the window frame its own pages and nothing else", () =>
   }
 });
 
+// PR-thread images are swapped for blob: object URLs before they reach the
+// Markdown island (a plain data: URI is on Astryx's own block list) -
+// Chromium does not treat blob: as 'self', so without this the image is a
+// securitypolicyviolation in the real app even though nothing in jsdom
+// (which enforces no CSP at all) would ever catch that.
+test("the app's CSP allows a blob: image but no remote scheme", () => {
+  const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
+  for (const policy of [conf.app.security.csp, conf.app.security.devCsp] as string[]) {
+    const img = policy
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("img-src"));
+    expect(img).toBe("img-src 'self' data: blob:");
+    expect(img).not.toMatch(/https?:/);
+  }
+});
+
 // The BSD notice both licences require has to actually be in the notices
 // file, not just a filename check that the licences themselves are still
 // bundled - an edit to the notices file could otherwise quietly drop it.

@@ -125,6 +125,35 @@ describe("readability", () => {
   });
 });
 
+describe("action placement", () => {
+  // Owner's rule: actions on the thing live bottom-right, view controls
+  // (Collapse all) live bottom-left. ActionDock.tsx is the one approved
+  // place that builds a bottom-right floating action row - everything
+  // else that does `fixed` + `right-` by hand is either this pattern
+  // reimplemented (drift risk: two floating-button behaviors instead of
+  // one) or something that was never meant to float there.
+  //
+  // This is a per-line text tripwire, not real CSS analysis: a `cn()` call
+  // that splits `fixed` and `right-6` across two string arguments, or a
+  // computed `style={{ right: ... }}`, produces the exact same floating
+  // element and escapes it completely. It catches today's copy-pasted
+  // spelling of the pattern, not the pattern itself.
+  test("no fixed + right- floating element outside ActionDock", () => {
+    const re = /\bfixed\b[^\n]*\bright-|\bright-\S*[^\n]*\bfixed\b/;
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      if (file === "components/ActionDock.tsx") continue; // the one approved implementation
+      text.split("\n").forEach((line, i) => {
+        if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) return;
+        const m = line.match(re);
+        if (!m) return;
+        hits.push(`${file}:${i + 1}  ${m[0]}`);
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+});
+
 describe("button icons", () => {
   // An icon beside a label makes a button quicker to FIND. It must not
   // change what the button IS called: the label already names the action,

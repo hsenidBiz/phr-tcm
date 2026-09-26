@@ -27,7 +27,7 @@ import { describeAdoError } from "../lib/ipc";
  * `src-tauri/src/ado/transport.rs`.
  *
  * A copy, because the Rust constants cannot be imported here - but not an
- * unguarded one: `v2/src-tauri/tests/ado_network.rs` reads THIS FILE and
+ * unguarded one: `src-tauri/tests/suite/ado_network.rs` reads THIS FILE and
  * fails if any of the three drifts from the Rust it claims to reproduce.
  * Simulating a message that the app no longer sends would be worse than
  * having no simulator at all.

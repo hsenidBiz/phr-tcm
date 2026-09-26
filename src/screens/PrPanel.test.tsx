@@ -150,6 +150,33 @@ test("several repos each get their own section, and unticking removes one", asyn
   expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r2"]));
 });
 
+/// The picker orders checked options first (Your Pull Requests, then
+/// tracked repos, in repo-list order) so the ones already on screen are
+/// the ones easiest to find - snapshotted on open so ticking one mid-click
+/// does not shuffle the list under the pointer.
+test("the Repositories picker lists checked options first when it opens", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/Web", JSON.stringify(["r2"]));
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos")
+      return [
+        { id: "r1", name: "web" },
+        { id: "r2", name: "api" },
+      ];
+    if (cmd === "repo_pull_requests") return [];
+  });
+  renderPanel();
+  await screen.findByText("Awaiting your review");
+
+  const trigger = screen.getByLabelText("Repositories");
+  fireEvent.click(trigger);
+  const dropdown = trigger.parentElement!.querySelector(".t-dropdown")!;
+  const labels = [...dropdown.querySelectorAll("li")].map((li) => li.textContent);
+  // Your Pull Requests defaults on, and the tracked repo (api) is checked -
+  // both come before the untracked one (web).
+  expect(labels).toEqual(["Your Pull Requests", "api", "web"]);
+});
+
 test("a single-repo choice from before multi-select migrates silently", async () => {
   localStorage.setItem("tcm-v2-pr-repo:acme/Web", "r2");
   mockIPC((cmd, args) => {

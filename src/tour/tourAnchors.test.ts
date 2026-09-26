@@ -32,9 +32,12 @@ test("every anchor the script may ring exists in a screen", () => {
   const text = sources();
   for (const name of TOUR_ANCHORS) {
     // Sidebar rows build theirs as `data-tour={`nav-${id}`}`, so accept
-    // the literal or the sidebar's template.
+    // the literal or the sidebar's template. ActionDock callers thread
+    // theirs through as `rowProps={{ "data-tour": "..." }}` - an object
+    // property, not a JSX attribute - so accept that spelling too.
     const present =
       text.includes(`data-tour="${name}"`) ||
+      text.includes(`"data-tour": "${name}"`) ||
       (name.startsWith("nav-") && text.includes("data-tour={`nav-${id}`}"));
     expect(present, `no data-tour="${name}" anywhere in src/`).toBe(true);
   }

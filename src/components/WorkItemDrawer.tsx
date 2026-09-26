@@ -12,6 +12,7 @@ import { copyText } from "../lib/clipboard";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
+import { swapInlineImages } from "../lib/inlineImages";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
 import { useFocusTrap } from "./ui/focusTrap";
@@ -217,18 +218,10 @@ export default function WorkItemDrawer({
 
   /** Preview-only: swap authenticated attachment URLs for the data: URIs
    * Rust downloaded (a plain <img> gets 401). The markdown drafts keep the
-   * real URLs so saves round-trip them, not megabytes of base64. */
-  const withInlineImages = (html: string) => {
-    let out = html;
-    for (const img of detail.data?.inline_images ?? []) {
-      out = out
-        .split(img.url.replace(/&/g, "&amp;"))
-        .join(img.data)
-        .split(img.url)
-        .join(img.data);
-    }
-    return out;
-  };
+   * real URLs so saves round-trip them, not megabytes of base64. Shared
+   * with CommentsPanel and PrThreads, which need the same swap. */
+  const withInlineImages = (html: string) =>
+    swapInlineImages(html, detail.data?.inline_images ?? []);
   const renderMd = (md: string) =>
     withInlineImages(renderMarkdown(md || "*Nothing to preview*"));
 

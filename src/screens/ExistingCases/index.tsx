@@ -5,6 +5,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type TestCaseFull } from "../../bindings";
+import ActionDock from "../../components/ActionDock";
 import BulkEditDialog from "../../components/BulkEditDialog";
 import PowerRenameDialog, { type RenameTarget } from "../../components/PowerRenameDialog";
 import DeleteConfirm from "../../components/DeleteConfirm";
@@ -284,39 +285,63 @@ export default function ExistingCases({
 
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
-          <span className="font-medium text-accent">{selected.size} selected</span>
-          <Button size="sm" onClick={() => setBulkOpen(true)}>
-            <IconBulkEdit aria-hidden />
-            Bulk edit
-          </Button>
-          <Button size="sm" onClick={() => setRenameOpen(true)}>
-            <IconRename aria-hidden />
-            Rename
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
-            <IconExport aria-hidden />
-            Export JSON
-          </Button>
-          {canDelete.data === true && (
-            <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}>
-              <IconRemove aria-hidden />
-              Delete
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pbiId == null}
-            title="Move the selected test cases to a different PBI"
-            onClick={() => setRelinkOpen(true)}
-          >
-            <IconMoveToPbi aria-hidden />
-            Move to PBI
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-            <IconClear aria-hidden />
-            Clear
-          </Button>
+          {/* surface: readable floating over a scrolling list of cases,
+              matching Suite Management's bar and Run Tests' selection bar. */}
+          <ActionDock label="Selection actions" surface>
+            {(floating) => (
+              <>
+                <span className="font-medium text-accent">{selected.size} selected</span>
+                <Button size="sm" tabIndex={floating ? -1 : undefined} onClick={() => setBulkOpen(true)}>
+                  <IconBulkEdit aria-hidden />
+                  Bulk edit
+                </Button>
+                <Button size="sm" tabIndex={floating ? -1 : undefined} onClick={() => setRenameOpen(true)}>
+                  <IconRename aria-hidden />
+                  Rename
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  tabIndex={floating ? -1 : undefined}
+                  onClick={() => exportJson.mutate()}
+                >
+                  <IconExport aria-hidden />
+                  Export JSON
+                </Button>
+                {canDelete.data === true && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    tabIndex={floating ? -1 : undefined}
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <IconRemove aria-hidden />
+                    Delete
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  tabIndex={floating ? -1 : undefined}
+                  disabled={pbiId == null}
+                  title="Move the selected test cases to a different PBI"
+                  onClick={() => setRelinkOpen(true)}
+                >
+                  <IconMoveToPbi aria-hidden />
+                  Move to PBI
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  tabIndex={floating ? -1 : undefined}
+                  onClick={() => setSelected(new Set())}
+                >
+                  <IconClear aria-hidden />
+                  Clear
+                </Button>
+              </>
+            )}
+          </ActionDock>
           <span className="ml-auto text-xs text-faint">Ctrl+click to toggle · Shift+click for range</span>
         </div>
       )}

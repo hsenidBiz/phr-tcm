@@ -292,6 +292,27 @@ pub async fn avatar_b64(app: tauri::AppHandle, url: String) -> Option<String> {
     ado::AdoClient::new(token).get_avatar_b64(&url).await
 }
 
+/// Attachment images referenced from work item comments or PR review
+/// threads (`sources` is each comment's raw text, HTML or markdown) - the
+/// same downloader the detail drawer uses for a description's inline
+/// images, reused here because neither comments nor PR threads went
+/// through `get_work_item_detail`. `organization` is not needed to reach
+/// the attachment (its URL is already absolute) - it is here so the
+/// frontend has one to key its cache on, matching every other board
+/// command's shape.
+#[tauri::command]
+#[specta::specta]
+pub async fn comment_images(
+    app: tauri::AppHandle,
+    organization: String,
+    sources: Vec<String>,
+) -> Result<Vec<work_board::InlineImage>, ado::AdoError> {
+    let _ = &organization;
+    let token = get_fresh_token(&app).await?;
+    let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
+    Ok(ado::AdoClient::new(token).collect_comment_images(&refs).await)
+}
+
 #[derive(serde::Serialize, specta::Type)]
 pub struct CreatedItem {
     pub id: i32,

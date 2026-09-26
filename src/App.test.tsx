@@ -8,7 +8,7 @@ import { START_TOUR_EVENT } from "./tour/tourState";
 import { TOUR_ORG } from "./tour/tourData";
 import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
-import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
+import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
@@ -413,11 +413,24 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   expect(bridgeStarted).toBeGreaterThan(0);
 });
 
+/// Who each database signs in as - what `db_databases` answers. The login
+/// never reaches the webview, only the user name the write rule reads.
+const DB_VIEWS = [
+  {
+    id: "dev-read", label: "Dev - read only", shipped: true, server: "s", port: null, database: "d",
+    user: "sgdev01db02_readonly", trust_cert: true, has_password: true, customised: false,
+  },
+  {
+    id: "dev-login", label: "Dev - dev login", shipped: true, server: "s", port: null, database: "d",
+    user: "sgdev01db01_devlogin", trust_cert: true, has_password: true, customised: false,
+  },
+];
+
 /// The write switch is only half the permission - the Rust side also
-/// requires the connection's own user to be the dev login, and refuses a
+/// requires the database's own user to be the dev login, and refuses a
 /// write when either is missing. What reaches the assistant has to say so
 /// too: pushing the raw switch would claim writes are allowed on a
-/// read-only connection, which is not true.
+/// read-only database, which is not true.
 test("db_writes pushed to the bridge is the switch AND the dev login, not the raw switch", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   localStorage.setItem(
@@ -428,15 +441,11 @@ test("db_writes pushed to the bridge is the switch AND the dev login, not the ra
   // over org/project with its own sample data, which would confound this
   // test's later assertions with an unrelated effect.
   localStorage.setItem("tcm-v2-tour-done", "yes");
-  saveDbConfig({
-    exe_path: "sqlcmd",
-    db_type: "mssql",
-    connection_string: "Server=s;Database=d;User Id=sgdev01db01_readonly;Password=p;",
-    schema_filter: "",
-  });
-  saveDbWrites(true); // the switch is ON, but the connection is NOT the dev login
+  saveSelectedDb("dev-read");
+  saveDbWrites(true); // the switch is ON, but the database is NOT the dev login
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "db_databases") return DB_VIEWS;
     if (cmd === "set_bridge_context") {
       pushes.push(args as Record<string, unknown>);
       return null;
@@ -446,24 +455,21 @@ test("db_writes pushed to the bridge is the switch AND the dev login, not the ra
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
-  expect(pushes[pushes.length - 1]).toMatchObject({ dbWrites: false });
+  expect(pushes[pushes.length - 1]).toMatchObject({ dbId: "dev-read", dbWrites: false });
 
-  // The switch never moved - only the connection did, to the dev login.
+  // The switch never moved - only the database did, to the dev login.
   // The same switch state must now push true.
-  saveDbConfig({
-    exe_path: "sqlcmd",
-    db_type: "mssql",
-    connection_string: "Server=s;Database=d;User Id=sgdev01db01_devlogin;Password=p;",
-    schema_filter: "",
-  });
-  await vi.waitFor(() => expect(pushes[pushes.length - 1]).toMatchObject({ dbWrites: true }));
+  act(() => saveSelectedDb("dev-login"));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ dbId: "dev-login", dbWrites: true }),
+  );
 });
 
-/// A burst of connection-string keystrokes - what the AI Bridge form's
-/// fields send through `saveDbConfig` on every character, the password
-/// field included - used to push a `set_bridge_context` + `bridge_status`
-/// IPC pair per keystroke. App now debounces that push.
-test("connection-string edits are debounced into one bridge-context push", async () => {
+/// Choosing databases in quick succession is a burst of store changes, and
+/// each used to push a `set_bridge_context` + `bridge_status` IPC pair.
+/// App debounces that push - and what it pushes is the chosen database's
+/// ID. Rust resolves the login; a connection string must never cross here.
+test("database choices are debounced into one bridge-context push carrying the id", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   localStorage.setItem(
     "tcm-v2-prefs",
@@ -472,6 +478,7 @@ test("connection-string edits are debounced into one bridge-context push", async
   localStorage.setItem("tcm-v2-tour-done", "yes");
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "db_databases") return DB_VIEWS;
     if (cmd === "set_bridge_context") {
       pushes.push(args as Record<string, unknown>);
       return null;
@@ -481,16 +488,16 @@ test("connection-string edits are debounced into one bridge-context push", async
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  // Nothing chosen yet: the bridge is told "none", not an empty string.
+  expect(pushes[pushes.length - 1]).toMatchObject({ dbId: null });
   const afterSignIn = pushes.length;
 
   vi.useFakeTimers();
   try {
-    // Three rapid "keystrokes", each a saveDbConfig call the way editing a
-    // connection-string field makes one per character.
     act(() => {
-      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=s", schema_filter: "" });
-      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=sg", schema_filter: "" });
-      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=sgd", schema_filter: "" });
+      saveSelectedDb("dev-read");
+      saveSelectedDb("own");
+      saveSelectedDb("dev-read");
     });
     // Still inside the debounce window - nothing pushed for any of the
     // three yet.
@@ -499,12 +506,57 @@ test("connection-string edits are debounced into one bridge-context push", async
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
-    // Exactly one push for the whole burst, carrying the LAST value.
+    // Exactly one push for the whole burst, carrying the LAST choice.
     expect(pushes.length).toBe(afterSignIn + 1);
-    expect(pushes[pushes.length - 1]).toMatchObject({ dbConnectionString: "Server=sgd" });
+    const last = pushes[pushes.length - 1];
+    expect(last.dbId).toBe("dev-read");
+    expect(String(last.dbId)).not.toContain("=");
   } finally {
     vi.useRealTimers();
   }
+});
+
+/// A connection string saved before databases had ids moves into Rust at
+/// start, BEFORE the bridge is told anything - so the first push already
+/// names the database it became, and the string leaves the webview.
+test("a legacy connection string is migrated before the first bridge push", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  const imported: string[] = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "",
+      db_type: "mssql",
+      schema_filter: "",
+      connection_string: "Server=s;Database=d;User Id=sgdev01db02_readonly;Password=p;",
+    }),
+  );
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "db_databases") return DB_VIEWS;
+    if (cmd === "import_legacy_db_connection") {
+      imported.push((args as { connectionString: string }).connectionString);
+      // Slower than the push's 400ms debounce: an App that did not wait
+      // for the move would push "none" first.
+      return new Promise((resolve) => setTimeout(() => resolve("dev-read"), 700));
+    }
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  expect(imported).toHaveLength(1);
+  expect(pushes[0]).toMatchObject({ dbId: "dev-read" });
+  expect(localStorage.getItem("tcm-v2-db-mcp")).not.toContain("Password");
 });
 
 /// The last manual step in the AI loop. `begin_test_case_writing` already
