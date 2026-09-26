@@ -479,9 +479,10 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .marker.pulse::after {
   content: ""; position: absolute; inset: -2px; border-radius: 50%;
   border: 2px solid var(--accent); opacity: 0;
-  animation: pulse 2.8s var(--ease-out) infinite;
-  animation-delay: calc(var(--i, 0) * 160ms);
 }
+/* One marker at a time, in number order (pulse.ts moves the class; the
+   0.9s here is its PULSE_MS). */
+.marker.pulse.pulse-now::after { animation: pulse 0.9s var(--ease-out) 1; }
 .shot[data-active] .marker { opacity: 0.4; transform: scale(0.88); }
 .shot[data-active] .marker::after { animation: none; }
 .shot[data-active] .marker[data-active] { opacity: 1; transform: scale(1.18); z-index: 3; box-shadow: 0 0 0 2px var(--surface), 0 0 22px 2px var(--accent-glow); }

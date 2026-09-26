@@ -14,6 +14,7 @@ import { h, plain, rich } from "./dom";
 import { icon } from "./icons";
 import { MARKER_SIZE, stageMarkers } from "./markers";
 import { figureWidth } from "./plan";
+import { registerPulse } from "./pulse";
 import { shotSrc, type Theme } from "./theme";
 
 const MAIN: Size = { w: SHOT_WIDTH, h: SHOT_HEIGHT };
@@ -114,7 +115,6 @@ export function renderShot(opts: {
     el.style.setProperty("--x", pct(s.x, view.w));
     el.style.setProperty("--y", pct(s.y, view.h));
     el.style.setProperty("--d", String(d));
-    el.style.setProperty("--i", String(n));
     el.addEventListener("mouseenter", () => hover(control.id));
     el.addEventListener("mouseleave", () => hover(null));
     el.addEventListener("click", () => opts.onMarkerClick(control.id));
@@ -166,6 +166,12 @@ export function renderShot(opts: {
     expand = button;
   }
   const figure = h("figure", { class: available ? "shot" : "shot is-placeholder", "data-shot": shot.id }, frame);
+  if (motion) {
+    registerPulse(
+      figure,
+      [...markers.values()].sort((a, b) => a.n - b.n).map((m) => m.el),
+    );
+  }
 
   let hovered: string | null = null;
   let pinned: string | null = null;
