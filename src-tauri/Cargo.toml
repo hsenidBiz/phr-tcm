@@ -75,6 +75,10 @@ tauri-plugin-clipboard-manager = "2.3.2"
 notify = "8.2.0"
 tauri-plugin-notification = "2.3.3"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# Staging the bundled "How To Use" help site (src-tauri/help/) out to disk
+# so the opener plugin has a real filesystem path to hand the browser -
+# see help.rs.
+include_dir = "0.7"
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

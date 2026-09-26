@@ -1,8 +1,16 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { expect, test, vi } from "vitest";
-import { CORE_TOOLS, DEV_BUILD, DEV_ONLY_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
+import { afterEach, expect, test, vi } from "vitest";
+import { autoRunToolsOffered, autoRunToolsShown, CORE_TOOLS, DEV_BUILD, DEV_ONLY_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
+
+// The capture flag is a bare localStorage key this file's own tests set and
+// clear by hand (no shared afterEach existed here before); a test that
+// throws before its own removeItem would otherwise leak it into every test
+// that runs after it in the same file.
+afterEach(() => {
+  localStorage.removeItem("tcm-v2-dev-capture");
+});
 
 /**
  * The toggle list is a hand-written mirror of `mcp.rs`. If the two drift, a
@@ -245,6 +253,48 @@ test("every row label is human, with no identifier in it", () => {
     expect(row.label, `${row.key} label`).not.toMatch(/_/);
     expect(row.label[0]).toMatch(/[A-Z]/);
   }
+});
+
+/// Fix round 1 (Task 3): capture mode hides the Auto Run tools row and its
+/// tools even in this development build (DEV_BUILD is true by default under
+/// vitest) - the AI Tools tab is a documented, captured screen. Off, this
+/// build's ordinary behaviour (shown) is unchanged.
+///
+/// Fix round 2: display only. `autoRunToolsOffered()` itself must NOT go
+/// capture-aware (see the next test) - only the screen's own gate,
+/// `autoRunToolsShown()`, does.
+test("capture mode hides the Auto Run tools row and its tools, even in this development build", () => {
+  expect(DEV_BUILD, "this file's default env").toBe(true);
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+
+  expect(autoRunToolsShown()).toBe(false);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+  expect(visibleTools().some((t) => (DEV_ONLY_TOOLS as readonly string[]).includes(t.name))).toBe(false);
+
+  localStorage.removeItem("tcm-v2-dev-capture");
+  expect(autoRunToolsShown()).toBe(true);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
+});
+
+/// Fix round 2 (Task 3): capture mode must never reach anything persisted
+/// or sent to Rust. `autoRunToolsOffered()` - which loadDisabledTools() and
+/// snapshotKeyFor() key on, and which feeds AiBridge's `register` ->
+/// `commands.registerAiTool(..., loadDisabledTools(), ...)` -> real command
+/// files Rust writes to disk - stays true here exactly as it would with the
+/// flag off, so a Register click in capture mode cannot silently re-enable
+/// a scripts tool the person had actually disabled.
+test("capture mode does not affect autoRunToolsOffered() or what loadDisabledTools() keeps", () => {
+  expect(DEV_BUILD, "this file's default env").toBe(true);
+  localStorage.setItem(
+    "tcm-v2-mcp-disabled",
+    JSON.stringify([...DEV_ONLY_TOOLS, "get_tags"]),
+  );
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+
+  expect(autoRunToolsOffered()).toBe(true);
+  expect(loadDisabledTools().sort()).toEqual([...DEV_ONLY_TOOLS, "get_tags"].sort());
+
+  localStorage.removeItem("tcm-v2-mcp-disabled");
 });
 
 /// A release build whose optional extras are unlocked offers the Auto Run

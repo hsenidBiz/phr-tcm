@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { isCaptureMode } from "../dev/capture";
 import { BAND_COUNT, useAudioSpectrum } from "../lib/audioSpectrum";
 
 /**
@@ -6,7 +7,9 @@ import { BAND_COUNT, useAudioSpectrum } from "../lib/audioSpectrum";
  * to whatever audio the system is playing (WASAPI loopback streamed from
  * Rust). Silent system or capture failure = bars rest at a hairline
  * baseline, so the ambient animation still carries the scene. Decorative:
- * aria-hidden, and disabled entirely under prefers-reduced-motion.
+ * aria-hidden, and disabled entirely under prefers-reduced-motion - and in
+ * the dev-only capture mode, so a screenshot never depends on whatever the
+ * machine taking it happens to be playing.
  */
 export default function EqRing({
   radius,
@@ -20,7 +23,7 @@ export default function EqRing({
   color?: string;
 }) {
   const reduced = useMemo(
-    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    () => isCaptureMode() || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false),
     [],
   );
   const spectrum = useAudioSpectrum(!reduced);

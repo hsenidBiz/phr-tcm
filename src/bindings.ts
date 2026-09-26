@@ -788,6 +788,20 @@ export const commands = {
 	 *  the log; the person gets a sentence they can act on.
 	 */
 	setExtrasUnlocked: (unlocked: boolean) => typedError<null, string>(__TAURI_INVOKE("set_extras_unlocked", { unlocked })),
+	/**
+	 *  Open the bundled "How To Use" help site in the default browser -
+	 *  Settings' "How To Use" button. Stages this build's site under the app's
+	 *  local data dir first if it is not there yet (`help::write_help`), then
+	 *  hands the written `index.html` to the same opener call every other
+	 *  "open in browser" button in this app uses.
+	 * 
+	 *  Runs on a blocking thread. A plain sync `#[tauri::command]` runs on the
+	 *  main thread in Tauri 2, and `write_help` can be copying several
+	 *  megabytes of screenshots - each one antivirus-scanned on this machine -
+	 *  which would freeze the window for however long that scan takes, on the
+	 *  first open after every update.
+	 */
+	openHelp: () => typedError<null, string>(__TAURI_INVOKE("open_help")),
 };
 
 /** Events */

@@ -5,6 +5,7 @@
 // because it wasn't in someone's saved list.
 
 import { extrasUnlockedSnapshot, subscribeExtras } from "./extras";
+import { isCaptureMode } from "../dev/capture";
 
 const KEY = "tcm-v2-mcp-disabled";
 
@@ -112,9 +113,25 @@ export const DEV_BUILD: boolean = import.meta.env.DEV;
 /** Whether the Auto Run tools are offered right now: always in a
  * development build, and in a release build once this machine's optional
  * extras are unlocked (lib/extras). Read live, not at module load. Mirrors
- * `ai_tools.rs`'s `autorun_offered()`. */
+ * `ai_tools.rs`'s `autorun_offered()`.
+ *
+ * Deliberately NOT capture-mode-aware: this also decides what
+ * `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on, which
+ * feed `register`'s `commands.registerAiTool(...)` - real files Rust writes
+ * to disk. Capture mode must affect display only; see `autoRunToolsShown`
+ * for the screen's own gate. */
 export function autoRunToolsOffered(): boolean {
   return DEV_BUILD || extrasUnlockedSnapshot();
+}
+
+/** Whether the AI Tools screen should show anything about the Auto Run
+ * tools right now: `autoRunToolsOffered()`, hidden again in capture mode -
+ * the screen is documented and captured, so a shot must never name them.
+ * DISPLAY ONLY: never wire this into `loadDisabledTools`, `snapshotKeyFor`,
+ * or anything that feeds `register`/`setBridgeContext` - what is actually
+ * offered, saved and registered must never depend on capture mode. */
+export function autoRunToolsShown(): boolean {
+  return autoRunToolsOffered() && !isCaptureMode();
 }
 
 export function isCoreTool(name: string): boolean {
@@ -232,7 +249,8 @@ export function visibleTools(): McpToolInfo[] {
   return MCP_TOOLS.filter(
     (t) =>
       !isCoreTool(t.name) &&
-      (autoRunToolsOffered() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
+      // Display gate only - see autoRunToolsShown's own doc comment.
+      (autoRunToolsShown() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
   );
 }
 

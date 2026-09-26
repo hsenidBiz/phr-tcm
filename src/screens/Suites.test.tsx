@@ -468,6 +468,10 @@ test("a row shows View and Edit cases, with Manage, Run Tests and Report behind 
   const row = name.closest("button")!;
   expect(within(row).getByText("View")).toBeInTheDocument();
   expect(within(row).getByText("Edit cases")).toBeInTheDocument();
+  // Every row carries the same chips, so each is named for its suite - and
+  // the name starts with the words on the chip, for voice control.
+  expect(within(row).getByRole("button", { name: "View Sprint stories" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Edit cases in Sprint stories" })).toBeInTheDocument();
   for (const gone of ["Manage", "Run", "Run Tests", "Report"]) {
     expect(within(row).queryByText(gone)).not.toBeInTheDocument();
   }

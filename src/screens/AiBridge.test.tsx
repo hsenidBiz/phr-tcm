@@ -146,6 +146,31 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   expect(card.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
+// Fix round 1 (Task 3), corrected in round 2: the AI Tools tab's own
+// display gate, autoRunToolsShown() (autoRunToolsOffered() && !capture),
+// now hides every render site - the switch row, the breakdown-card entry
+// and the numbered-list bullet - in capture mode. autoRunToolsOffered()
+// itself stays capture-blind, since it also decides what gets saved and
+// registered (see mcpTools.test.ts). This is a documented, captured
+// screen; off, the tests above and below pin that this build's ordinary
+// behaviour is unchanged.
+test("capture mode hides every mention of the Auto Run tools on the AI Tools tab", async () => {
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    if (cmd === "db_server_defaults") return null;
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  await screen.findByText("Tools an assistant may use");
+  expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
+  expect(screen.queryByText("Auto Run scripts")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
+});
+
 test("the copy button writes the registration command to the clipboard", async () => {
   // copyText goes through the Tauri clipboard plugin first - capture that
   // invoke rather than the navigator fallback.
@@ -171,7 +196,9 @@ test("the copy button writes the registration command to the clipboard", async (
       document.querySelector("code")?.textContent?.includes("v2.exe"),
     ).toBe(true),
   );
-  fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]);
+  // The two Copy buttons are named for what they copy.
+  expect(screen.getByRole("button", { name: "Copy config" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
 
   await waitFor(() =>
     expect(copied).toContain(

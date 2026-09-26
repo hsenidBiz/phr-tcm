@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
 import CountUp from "../../components/CountUp";
+import { isCaptureMode } from "../../dev/capture";
 import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -284,7 +285,9 @@ export default function ViewCases({
             `${visible.length} of ${list.length} Test Cases`
           ) : (
             <>
-              <CountUp to={list.length} duration={0.8} /> Total Test Cases
+              {/* Capture mode shows the plain number: a screenshot must not
+                  catch the count on its way there. */}
+              {isCaptureMode() ? list.length : <CountUp to={list.length} duration={0.8} />} Total Test Cases
             </>
           )}
         </h2>

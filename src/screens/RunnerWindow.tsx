@@ -1002,6 +1002,8 @@ export default function RunnerWindow() {
                         <button
                           key={o}
                           title={o}
+                          aria-label={`Mark step ${i + 1} ${o.toLowerCase()}`}
+                          aria-pressed={st.stepOutcomes[i] === o}
                           className={cn(
                             "pill-label rounded px-1.5 text-[10px] font-semibold",
                             st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",

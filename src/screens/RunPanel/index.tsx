@@ -654,7 +654,7 @@ export default function RunPanel({
                 <td className="px-2 py-1 text-text">
                   <div className="flex items-center gap-1">
                     <button
-                      aria-label={expanded.has(p.point_id) ? "Collapse test case" : "Expand test case"}
+                      aria-label={`${expanded.has(p.point_id) ? "Collapse" : "Expand"} test case #${p.test_case_id}`}
                       title={expanded.has(p.point_id) ? "Hide steps" : "Show steps & last result"}
                       className="shrink-0 text-muted hover:text-accent"
                       onClick={(e) => {

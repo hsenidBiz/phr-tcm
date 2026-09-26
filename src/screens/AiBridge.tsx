@@ -26,7 +26,7 @@ import {
   subscribeDbSettings,
   type DbServerSettings,
 } from "../lib/dbServer";
-import { autoRunToolsOffered, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
+import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import {
   addRepository,
@@ -568,6 +568,7 @@ export default function AiBridge() {
                 <Button
                   size="sm"
                   variant="outline"
+                  aria-label="Copy command"
                   onClick={() =>
                     copy(`claude mcp add --scope project tcm-testcases -- "${exe}" --mcp`, "Command")
                   }
@@ -590,6 +591,7 @@ export default function AiBridge() {
                 <Button
                   size="sm"
                   variant="outline"
+                  aria-label="Copy config"
                   onClick={() =>
                     copy(
                       JSON.stringify(
@@ -941,7 +943,7 @@ export default function AiBridge() {
             beside that connection. Off, the assistant's database tools are
             switched off.
           </li>
-          {autoRunToolsOffered() && (
+          {autoRunToolsShown() && (
             <li>
               <span className="font-medium text-text">Auto Run scripts</span>: everything an assistant needs to write one
               browser script and keep it working. It reads the script guide, looks

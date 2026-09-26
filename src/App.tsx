@@ -78,6 +78,7 @@ import { logUi } from "./lib/uiLog";
 import { hideSplash } from "./lib/splash";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
+import { isCaptureMode } from "./dev/capture";
 // The sign-in screen is the first thing every launch shows (tokens live in
 // memory only), so it is the one screen bundled up front. Every other screen
 // and the command palette load on demand: on a slow machine the whole bundle
@@ -638,7 +639,8 @@ export default function App() {
   const [changelog, setChangelog] = useState<ChangelogEntry[] | null>(null);
   const shownChangelogRef = useRef(false);
   useEffect(() => {
-    if (!signedIn || shownChangelogRef.current) return;
+    // Capture mode: a "what's new" modal must never cover a shot.
+    if (!signedIn || shownChangelogRef.current || isCaptureMode()) return;
     shownChangelogRef.current = true;
     getVersion()
       .then((v) => {
@@ -820,7 +822,8 @@ export default function App() {
   // the rest of App's own state, above, for why `tourOpen` has to exist
   // before every effect that gates on it).
   useEffect(() => {
-    if (signedIn && !tourDone()) {
+    // Capture mode: the guided tour must never auto-open over a shot.
+    if (signedIn && !tourDone() && !isCaptureMode()) {
       const t = setTimeout(startTour, 800);
       return () => clearTimeout(t);
     }
@@ -976,7 +979,12 @@ export default function App() {
       </Suspense>
 
       <TitleBar
-        title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
+        // Capture mode: the custom title bar renders on every screen, so
+        // " — DEV" would land in every shot - see dev/capture.ts.
+        title={
+          (workMode ? "Work Manager" : "Test Case Manager") +
+          (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
+        }
       />
       {tourOpen && signedIn && (
         <UiTour
@@ -1073,7 +1081,8 @@ export default function App() {
             </div>
           )}
 
-          {update.data?.available && (
+          {/* Capture mode: the update banner must never cover a shot. */}
+          {update.data?.available && !isCaptureMode() && (
             <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
               {/* One row either way: the version line makes the offer, and
                   once the button is clicked the progress bar takes its slot -
@@ -1155,7 +1164,8 @@ export default function App() {
             <Suspense fallback={null}>
             {!signedIn ? (
               <SignIn signingIn={signIn.isPending} onSignIn={() => signIn.mutate()}>
-                {DEV_TOOLS && (
+                {/* Capture mode: sign-in is a documented screen too. */}
+                {DEV_TOOLS && !isCaptureMode() && (
                   <button
                     className="text-xs text-muted underline underline-offset-2 hover:text-text"
                     onClick={() => setDevAuth("in")}
@@ -1295,7 +1305,8 @@ export default function App() {
       {/* Only over a signed-in app: before sign-in the SignIn screen IS the
           prompt. "Not now" just closes it - cached data stays readable and
           the next failed fetch raises it again. */}
-      {signedIn && sessionExpired && (
+      {/* Capture mode: the session-expired modal must never cover a shot. */}
+      {signedIn && sessionExpired && !isCaptureMode() && (
         <SessionExpiredModal
           signingIn={signIn.isPending}
           onSignIn={reSignIn}
@@ -1303,7 +1314,8 @@ export default function App() {
         />
       )}
 
-      {DEV_TOOLS && signedIn && (
+      {/* Capture mode: the DEV BUILD panel must never appear in a shot. */}
+      {DEV_TOOLS && signedIn && !isCaptureMode() && (
         <Suspense fallback={null}>
           <DevPanel
             org={org}

@@ -13,6 +13,8 @@ import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
 import { resetSplashForTests } from "./lib/splash";
+import { CHANGELOG } from "./lib/changelog";
+import { flagSessionExpired } from "./lib/sessionExpired";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -1412,4 +1414,88 @@ test("signing out mid-tour ends the tour and unlocks the app", async () => {
   expect(signInButton).toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument();
   expect(document.querySelector("[inert]")).toBeNull();
+});
+
+// Task 3 (help site): a dev-only capture mode for the screenshot script.
+// `isCaptureMode()` reads `import.meta.env.DEV` directly (true by default
+// under vitest, same as AUTO_RUN_DEV elsewhere) so this needs no env
+// stubbing - only the "tcm-v2-dev-capture" flag. Sidebar's own gate (Auto
+// Run) is covered in Sidebar.test.tsx; this covers the gates that live in
+// App itself. The flag is never set in any other test in this file, so
+// their continuing to pass is the "off: dev behaviour is unchanged" half of
+// the brief - this test is the "on: everything is suppressed" half.
+test("capture mode suppresses the tour, the what's new modal, the update banner and the session-expired prompt", async () => {
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  // A pending changelog entry (an older "seen" version than CHANGELOG[0])
+  // and an available update, so both would show if capture mode did not
+  // suppress them.
+  localStorage.setItem("tcm-v2-changelog-seen", "1.25.28");
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return { available: "9.9.9", blocked: null, failed_attempt: null };
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:app|version") return "1.25.29";
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  // The update banner and the what's new check both settle on mount; the
+  // tour's own timer needs a real wait (see the 800ms comment on its effect).
+  await act(() => new Promise((r) => setTimeout(r, 900)));
+
+  expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument();
+  expect(screen.queryByText(`Version ${CHANGELOG[0].version}`)).not.toBeInTheDocument();
+  expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+
+  act(() => flagSessionExpired());
+  expect(screen.queryByRole("heading", { name: /session expired/i })).not.toBeInTheDocument();
+});
+
+// The DEV BUILD panel is additionally gated on `import.meta.env.MODE !==
+// "test"` (DEV_TOOLS), which is fixed at module load - vitest's own mode is
+// "test", so this file's other renders never reach it regardless of capture
+// mode. Forcing a fresh module graph with MODE stubbed to something else
+// reproduces a real `tauri dev` build closely enough to pin the gate.
+test("capture mode hides the DEV BUILD panel in a forced dev build; off, it shows", async () => {
+  const devMocks = () =>
+    mockIPC((cmd) => {
+      if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+      if (cmd === "check_update") return null;
+      if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "plugin:event|listen") return 1;
+    });
+
+  vi.stubEnv("DEV", true);
+  vi.stubEnv("MODE", "development");
+  vi.resetModules();
+  const dev = await import("./App");
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  devMocks();
+  const qc1 = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const mounted1 = render(
+    <QueryClientProvider client={qc1}>
+      <dev.default />
+    </QueryClientProvider>,
+  );
+  await mounted1.findByText("a@b.com");
+  expect(mounted1.queryByText("DEV BUILD")).not.toBeInTheDocument();
+  mounted1.unmount();
+  clearMocks();
+
+  // Same forced dev build, capture mode off: dev behaviour is unchanged.
+  localStorage.removeItem("tcm-v2-dev-capture");
+  devMocks();
+  const qc2 = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const mounted2 = render(
+    <QueryClientProvider client={qc2}>
+      <dev.default />
+    </QueryClientProvider>,
+  );
+  expect(await mounted2.findByText("DEV BUILD")).toBeInTheDocument();
+  mounted2.unmount();
+
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });

@@ -101,6 +101,20 @@ test("in a release build Auto Run appears once unlocked and goes again when rese
   vi.resetModules();
 });
 
+/// Capture mode (the screenshot script) hides Auto Run even in the dev
+/// build that always offers it - the help site must never shoot it. Off,
+/// a dev build's ordinary behaviour (Auto Run shown) is unchanged.
+test("capture mode hides Auto Run in a dev build; off, dev behaviour is unchanged", async () => {
+  vi.stubEnv("DEV", true);
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(shortcutOrder()).not.toContain("autorun");
+
+  localStorage.removeItem("tcm-v2-dev-capture");
+  vi.unstubAllEnvs();
+});
+
 /// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
 /// the answer comes.
 test("the shortcut order with and without Auto Run", () => {

@@ -9,9 +9,12 @@
  */
 import {
   commands,
+  events,
   type AuthStatus,
   type BoardData,
   type CaseHistory,
+  type DbDatabase,
+  type DetectedTool,
   type EnsuredSuite,
   type NewWorkItem,
   type PbiHit,
@@ -23,6 +26,7 @@ import {
   type WorkComment,
   type WorkItemDetail,
 } from "../bindings";
+import { isCaptureMode } from "./capture";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
 const PREFS_KEY = "tcm-v2-prefs";
@@ -217,14 +221,118 @@ const detailFor = (b: BoardData["items"][number]): WorkItemDetail => ({
   inline_images: [],
 });
 
+// ------------------------------------------------------- capture-mode names
+
+/** The help site's screenshots are taken on this data (capture mode), and
+ * they must never show the word it is named by. Rather than a second
+ * dataset, every answer the patched commands give passes through this map
+ * in capture mode, so a screen added later is covered without anyone
+ * remembering to. Ordered: longer phrases before the words inside them.
+ * Whatever a phrase here does not cover falls to the last rule, which
+ * keeps the case of the word it replaces ("Demo." -> "Portal."). Normal
+ * sample-data mode (capture off) is untouched. */
+
+/** The pull request's linked work item id was borrowed from a real
+ *  organisation along with its title. Capture mode answers a sample id
+ *  instead (2005 is free: the board uses 2001-2004), so no real work item
+ *  number reaches a screenshot. neutralName only rewrites text, so the
+ *  number itself is swapped in neutralValue. */
+const BORROWED_WORK_ITEM = 143783;
+const CAPTURE_WORK_ITEM = 2005;
+const CAPTURE_NUMBERS = new Map<number, number>([[BORROWED_WORK_ITEM, CAPTURE_WORK_ITEM]]);
+
+export const CAPTURE_NAMES: [string, string][] = [
+  ["Demo - Login & session flow", "Login and session flow"],
+  ["Demo - Checkout redesign", "Checkout redesign"],
+  ["DemoOrg", "Contoso"],
+  ["Demo Project", "Customer Portal"],
+  ["Demo Team", "Portal Team"],
+  ["Demo Test Plan", "Release 2.4"],
+  ["Demo Folder", "Web app"],
+  ["Demo Config", "Windows 11, Edge"],
+  ["Demo Task - wire the login flow", "Wire the login form to the session service"],
+  ["Demo Task - write test cases", "Write test cases for signing in"],
+  ["Demo Bug - session timeout not enforced", "Session timeout is not enforced"],
+  ["Demo Task - done example", "Add the guest checkout button"],
+  ["Demo Task - ", ""],
+  ["Demo Bug - ", ""],
+  ["Demo User", "Alex Tester"],
+  ["Demo Tester", "Priya Raman"],
+  ["demo@local", "alex.tester@contoso.com"],
+  ["Demo mode: ", ""],
+  ["Demo description: what changed and why.", "What changed and why."],
+  ["Demo description. Nothing here is real.", "Users stay signed in until they sign out or the session times out."],
+  ["<b>Demo description.</b> Nothing here is real.", "<b>Users stay signed in</b> until they sign out or the session times out."],
+  ["<li>bullet one</li><li>bullet two</li>", "<li>Sign in, then leave the page idle for 30 minutes.</li><li>Click any link: the sign-in page should open.</li>"],
+  ["Demo failure comment", "The error message did not appear."],
+  ["Demo: step 3", "Step 3"],
+  ["the demo build", "the staging build"],
+  ["in demo mode", "on staging"],
+  ["A demo user exists", "A test user exists"],
+  ["the demo account", "the test account"],
+  ["A demo pull request - there is no description in the demo data.", "Adds the PBI scope filter to the board."],
+  ["Publishing is off in demo data.", "Publishing is off."],
+  // People, a work item and a test project from real life that the sample
+  // history, pull request and build log borrowed.
+  ["Avin Alwis", "Alex Tester"],
+  ["Dilshan Kaviratne", "Sam Doyle"],
+  ["Ishani Dasanayake", "Priya Raman"],
+  ["Naveen Warnakulasuriya", "Jordan Lee"],
+  ["Participants - Selected employees and department inconsistencies", "Sign-in page keeps the old session after a password change"],
+  ["Timeline - split weight across sprints", "Session timeout is not enforced"],
+  [`demo-wi/${BORROWED_WORK_ITEM}`, `demo-wi/${CAPTURE_WORK_ITEM}`],
+  ["PeoplesHR.PMS.Infrastructure.Tests", "Portal.Infrastructure.Tests"],
+  ["C:\\demo\\v2.exe", "C:\\Users\\alex.tester\\AppData\\Local\\TestCaseManager\\current\\v2.exe"],
+];
+
+/** The capture organisation and project, as the context bar shows them. */
+export const CAPTURE_ORG = "Contoso";
+export const CAPTURE_PROJECT = "Customer Portal";
+
+/** One string under the capture names. */
+export function neutralName(text: string): string {
+  let out = text;
+  for (const [from, to] of CAPTURE_NAMES) out = out.split(from).join(to);
+  return out.replace(/\bdemo\b/gi, (w) => (w === "DEMO" ? "PORTAL" : w[0] === "D" ? "Portal" : "portal"));
+}
+
+/** Every string inside a value, under the capture names. */
+function neutralValue<T>(value: T): T {
+  if (typeof value === "string") return neutralName(value) as T;
+  if (typeof value === "number") return (CAPTURE_NUMBERS.get(value) ?? value) as T;
+  if (Array.isArray(value)) return value.map(neutralValue) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, neutralValue(v)])) as T;
+  }
+  return value;
+}
+
+/** The patches, each answering under the capture names. */
+function neutralized<T extends Record<string, (...args: never[]) => unknown>>(patches: T): T {
+  return Object.fromEntries(
+    Object.entries(patches).map(([name, fn]) => [
+      name,
+      (...args: never[]) => Promise.resolve(fn(...args)).then(neutralValue),
+    ]),
+  ) as T;
+}
+
+/** A name as the screen shows it: neutral in capture mode, as-is otherwise. */
+const shown = (text: string) => (isCaptureMode() ? neutralName(text) : text);
+
 // ---------------------------------------------------------------- patches
 
 function applyPatches() {
-  const auth: AuthStatus = { signed_in: true, account: "demo@local (DEMO DATA)" };
+  // Capture mode shots must never name demo data (house rule): a neutral
+  // display name stands in for the usual "(DEMO DATA)" marker.
+  const auth: AuthStatus = {
+    signed_in: true,
+    account: isCaptureMode() ? "Alex Tester" : "demo@local (DEMO DATA)",
+  };
   const allCases = () => [...casesByPbi.values()].flat();
   const findCase = (id: number) => allCases().find((c) => c.id === id);
 
-  Object.assign(commands, {
+  const patches = {
     authStatus: () => Promise.resolve(auth),
     signIn: () => ok(auth),
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
@@ -233,7 +341,9 @@ function applyPatches() {
     listOrgs: () => ok([{ name: "DemoOrg", url: "https://example.invalid/demo" }]),
     listProjects: () => ok([{ id: "demo-project", name: "Demo Project" }]),
     searchPbis: (_o: string, _p: string, query: string) =>
-      ok(PBIS.filter((b) => `${b.id} ${b.title}`.toLowerCase().includes(query.toLowerCase()))),
+      // Matched on the name shown, so a capture-mode search finds what the
+      // picker lists.
+      ok(PBIS.filter((b) => shown(`${b.id} ${b.title}`).toLowerCase().includes(query.toLowerCase()))),
 
     listTestCaseFields: () => ok([]),
     testCaseFieldValues: () => ok([]),
@@ -422,10 +532,10 @@ function applyPatches() {
     prWorkItems: () =>
       ok([
         {
-          id: 143783, work_item_type: "Bug",
+          id: BORROWED_WORK_ITEM, work_item_type: "Bug",
           title: "Participants - Selected employees and department inconsistencies",
           state: "In Progress", state_color: "007acc",
-          url: "https://example.invalid/demo-wi/143783",
+          url: `https://example.invalid/demo-wi/${BORROWED_WORK_ITEM}`,
         },
       ]),
     // 501 is mid-build and 502 went red, so both pills show on the default
@@ -844,7 +954,14 @@ function applyPatches() {
         saved_at: new Date().toISOString(),
         cases: cases.map((c) => ({ id: c.id, group: c.group ?? null })),
       }),
-    listSuiteEntries: () => ok([]),
+    // Capture mode lists each requirement suite's cases, so Suite
+    // Management has an order to show; normal sample data keeps the empty
+    // answer it always gave.
+    listSuiteEntries: (_o: string, _p: string, suiteId: number) => {
+      const pbiId = PBI_BY_SUITE.get(suiteId);
+      const cases = isCaptureMode() && pbiId != null ? (casesByPbi.get(pbiId) ?? []) : [];
+      return ok(cases.map((c, i) => ({ id: c.id, sequence_number: i, entry_type: "testCase" })));
+    },
     reorderSuiteCases: (_o: string, _p: string, _s: number, caseIds: number[]) => ok(caseIds),
     canCreateTestSuites: () => ok(true),
     createStaticSuite: (_o: string, _p: string, _plan: number, parent: number, name: string) =>
@@ -869,7 +986,7 @@ function applyPatches() {
           "Finishing: Run Unit Test",
         ].join(String.fromCharCode(10)),
       ),
-    appLogDir: () => Promise.resolve("C:\demo\logs"),
+    appLogDir: () => Promise.resolve("C:\\demo\\logs"),
     appLogs: () =>
       Promise.resolve([
         { at: "2026-07-26 09:00:01", level: "info", message: "Test Case Manager 1.11.2 started" },
@@ -879,10 +996,262 @@ function applyPatches() {
         { at: "2026-07-26 09:02:20", level: "error", message: "Submit failed for 'Checkout - guest can pay': field 'Module' is required" },
         { at: "2026-07-26 09:02:21", level: "info", message: "Submit finished: 3 of 3 processed, 1 failed" },
       ]),
-  });
+  };
+  // Capture mode only (normal sample data is unchanged): what the AI Bridge
+  // tab and a pull request's comments show in the help site's shots. The
+  // database list and the PHR X defaults come from this machine otherwise -
+  // real server names and logins - and the sample tools lack the fields the
+  // tab reads to say where each one is registered.
+  const captureOnly = {
+    detectAiTools: () => Promise.resolve(CAPTURE_AI_TOOLS),
+    dbDatabases: () => Promise.resolve(CAPTURE_DATABASES),
+    dbServerDefaults: () => Promise.resolve({ exe_path: "", db_type: "mssql", schema_filter: "" }),
+    // The open thread's reply carries a pasted screenshot.
+    prThreads: () =>
+      patches.prThreads().then((r) => ({
+        ...r,
+        data: r.data.map((t, i) =>
+          i === 0
+            ? { ...t, comments: t.comments.map((c, j) => (j === 1 ? { ...c, content: `${c.content}\n\n${CAPTURE_SHOT_MD}` } : c)) }
+            : t,
+        ),
+      })),
+    commentImages: (_o: string, texts: string[]) =>
+      ok(texts.some((t) => t.includes(CAPTURE_SHOT_URL)) ? [{ url: CAPTURE_SHOT_URL, data: captureShotData() }] : []),
+  };
+  // Capture mode: every answer goes out under the neutral names, so no
+  // shot shows the word the sample data is named by (see CAPTURE_NAMES).
+  Object.assign(commands, isCaptureMode() ? neutralized({ ...patches, ...captureOnly }) : patches);
+  muteRealSessionEvents();
+}
+
+/** Events the Rust side pushes from a REAL Azure DevOps session, which the
+ * patched commands above cannot intercept. The assigned-work poller is a
+ * Rust background task that keeps running against the real org if this dev
+ * app was signed in before demo mode went on: without this, real work-item
+ * titles would reach the bell, the Board badge and a toast - on screen, and
+ * in a capture-mode shot. The pacer's "slow down" toast likewise only ever
+ * comes from real traffic.
+ *
+ * Left alone on purpose: file-watch, draft-comment, report-note and intake
+ * events. They come from files and pages the person opened on this
+ * machine, not from Azure DevOps, and muting them would drop their edits. */
+export const MUTED_EVENTS = ["workAssigned", "slowdownRequested"] as const;
+
+function muteRealSessionEvents() {
+  const none = () => Promise.resolve(() => {});
+  for (const name of MUTED_EVENTS) Object.assign(events[name], { listen: none, once: none });
+}
+
+/** The queue the help site's screenshots are taken of (capture mode only).
+ * The queue is a local draft, not Azure DevOps data, so nothing above
+ * supplies one, and the capture script cannot pick a file or type a case.
+ * Three rows show every state the queue documents: a new case with an
+ * in-app comment and reviewer notes, an update whose title differs from
+ * #5002 (a diff to open), and a new case titled like #5001 (the duplicate
+ * check). Both orders are set, so the Order bar shows. */
+export const CAPTURE_QUEUE: TestCase[] = [
+  {
+    title: "Login - remember me keeps you signed in",
+    steps: [
+      { action: "Open the login page", expected: "The form is shown" },
+      { action: "Tick Remember me and sign in", expected: "The dashboard opens" },
+      { action: "Close and reopen the browser", expected: "You are still signed in" },
+    ],
+    tags: "smoke",
+    automation_status: "Not Automated",
+    module_value: "",
+    preconditions: "A user account exists",
+    update_id: null,
+    comment: "Asked the team how long the sign-in should last.",
+    reviewer_notes: "Covers the **Remember me** option on the sign-in form.",
+    tester_order: 1,
+    spec_order: 2,
+  },
+  {
+    title: "Login - wrong password shows an inline error",
+    steps: [
+      { action: "Open the login page", expected: "The form is shown" },
+      { action: "Enter a wrong password", expected: "An inline error appears" },
+      { action: "Submit again with the right password", expected: "The dashboard opens" },
+    ],
+    tags: "regression",
+    automation_status: "Not Automated",
+    module_value: "",
+    preconditions: "",
+    update_id: 5002,
+    tester_order: 2,
+    spec_order: 1,
+  },
+  {
+    title: "Login - valid credentials",
+    steps: [
+      { action: "Open the login page", expected: "The form is shown" },
+      { action: "Enter valid credentials and submit", expected: "The dashboard opens" },
+    ],
+    tags: "smoke",
+    automation_status: "Not Automated",
+    module_value: "",
+    preconditions: "",
+    update_id: null,
+    tester_order: 3,
+    spec_order: 3,
+  },
+];
+
+/** The local comments View Test Cases shows in capture mode, by case id. */
+export const CAPTURE_NOTES: Record<string, string> = {
+  "5002": "Check the error wording once the new copy lands.",
+};
+
+/** Remembered view choices cleared on every capture-mode boot: exact keys,
+ * or (ending in ":") every key with that prefix. */
+export const CAPTURE_RESET = [
+  "tcm-v2-group-cases",
+  "tcm-v2-group-view",
+  "tcm-v2-group-manage",
+  "tcm-v2-group-mode",
+  "tcm-v2-group-points",
+  "tcm-v2-edit-collapsed-groups",
+  "tcm-v2-view-collapsed-groups",
+  "tcm-v2-run-collapsed-groups",
+  "tcm-v2-manage-collapsed-groups",
+  "tcm-v2-runner-pinned",
+  "tcm-v2-run-order:",
+  "tcm-v2-run-order-view:",
+  // The AI Bridge tab and the Settings switches that change it.
+  "tcm-v2-working-dir",
+  "tcm-v2-ai-global-allowed",
+  "tcm-v2-ai-scope",
+  "tcm-v2-ai-show-phrx",
+  "tcm-v2-mcp-disabled",
+  "tcm-v2-db-mcp",
+  "tcm-v2-db-writes",
+  // The board's view options and the pull request filters.
+  "tcm-v2-board-swimlanes",
+  "tcm-v2-board-lanes-collapsed:",
+  "tcm-v2-hidden-cols",
+  "tcm-v2-type-filter",
+  "tcm-v2-this-sprint",
+  "tcm-v2-pr-yours:",
+  "tcm-v2-pr-status",
+];
+
+/** The working repository the AI Bridge tab shows in capture mode. */
+export const CAPTURE_REPO = "C:\\Projects\\customer-portal";
+
+/** The AI tools the AI Bridge tab lists in capture mode: one registered in
+ * the repository, one not yet, with a machine-wide copy left over. */
+export const CAPTURE_AI_TOOLS: DetectedTool[] = [
+  {
+    id: "claude-code",
+    name: "Claude Code",
+    installed: true,
+    registered_servers: ["tcm-testcases"],
+    scope: "project",
+    global_registered_servers: [],
+  },
+  {
+    id: "vscode",
+    name: "VS Code",
+    installed: true,
+    registered_servers: [],
+    scope: "project",
+    global_registered_servers: ["tcm-testcases"],
+  },
+];
+
+/** The databases the Company database card offers in capture mode, in
+ * place of this machine's own list and logins. */
+export const CAPTURE_DATABASES: DbDatabase[] = [
+  {
+    id: "qa",
+    label: "QA - read only",
+    shipped: true,
+    server: "sql-qa.contoso.local",
+    port: 1433,
+    database: "CustomerPortal_QA",
+    user: "portal_reader",
+    trust_cert: false,
+    has_password: true,
+    customised: false,
+  },
+  {
+    id: "dev",
+    label: "Dev - dev login",
+    shipped: true,
+    server: "sql-dev.contoso.local",
+    port: 1433,
+    database: "CustomerPortal_Dev",
+    user: "portal_devlogin",
+    trust_cert: false,
+    has_password: true,
+    customised: true,
+  },
+];
+
+/** A screenshot pasted into a pull request comment (capture mode). */
+export const CAPTURE_SHOT_URL =
+  "https://dev.azure.com/contoso/_apis/git/repositories/web/pullRequests/501/attachments/sign-in-error.png";
+const CAPTURE_SHOT_MD = `![sign-in error](${CAPTURE_SHOT_URL})`;
+const CAPTURE_SHOT_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="132" viewBox="0 0 360 132">' +
+  '<rect width="360" height="132" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>' +
+  '<rect x="20" y="18" width="320" height="28" rx="4" fill="#fee2e2" stroke="#fca5a5"/>' +
+  '<text x="32" y="37" font-family="Segoe UI, sans-serif" font-size="13" fill="#b91c1c">Something went wrong. Please try again.</text>' +
+  '<rect x="20" y="58" width="320" height="22" rx="4" fill="#ffffff" stroke="#cbd5e1"/>' +
+  '<rect x="20" y="88" width="320" height="22" rx="4" fill="#ffffff" stroke="#cbd5e1"/>' +
+  '<rect x="260" y="116" width="80" height="10" rx="3" fill="#15803d"/>' +
+  "</svg>";
+/** The screenshot as the data: URI `commentImages` answers with. */
+function captureShotData(): string {
+  return `data:image/svg+xml;base64,${btoa(CAPTURE_SHOT_SVG)}`;
+}
+
+/** Capture mode: every boot of the main window starts from the same scene -
+ * the sample org, project and first PBI selected, the test-case screens
+ * (not Work Manager) in front, and that PBI's queue set to CAPTURE_QUEUE.
+ * Each shot's route begins with a reload, so a route that clears the PBI,
+ * switches to Work Manager or uploads the queue cannot leave the next shot
+ * somewhere else. The runner window boots this same bundle mid-route and
+ * is left alone. The capture script puts the person's storage back when it
+ * finishes, so these keys go with it. */
+export function seedCaptureScene() {
+  if (!isCaptureMode() || window.location.hash.startsWith("#runner")) return;
+  try {
+    // Under the capture names, the same ones listOrgs/listProjects/searchPbis
+    // answer with, so the context bar's lists hold the selected values.
+    const pbis = neutralValue(PBIS);
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ org: CAPTURE_ORG, project: CAPTURE_PROJECT, section: "manual", pbi: pbis[0], workMode: false }),
+    );
+    localStorage.setItem(`tcm-v2-recent-pbis:${CAPTURE_ORG}/${CAPTURE_PROJECT}`, JSON.stringify(pbis));
+    localStorage.setItem(`tcm-v2-draft:${CAPTURE_ORG}/${PBIS[0].id}`, JSON.stringify(CAPTURE_QUEUE));
+    // One local comment, so View Test Cases has a Comment chip to show.
+    localStorage.setItem(`tcm-v2-case-notes:${CAPTURE_ORG}`, JSON.stringify(CAPTURE_NOTES));
+    // A working repository with its AI tools on, and the dev database
+    // chosen, so the AI Bridge tab shows every card.
+    localStorage.setItem("tcm-v2-repositories", JSON.stringify([{ path: CAPTURE_REPO, enabled: true }]));
+    localStorage.setItem("tcm-v2-current-repo", CAPTURE_REPO);
+    localStorage.setItem("tcm-v2-db-selected", "dev");
+    // One repository's pull requests tracked beside your own (the sample
+    // repository's id, as the capture names answer it).
+    localStorage.setItem(`tcm-v2-pr-repos:${CAPTURE_ORG}/${CAPTURE_PROJECT}`, JSON.stringify([neutralName("demo-repo-1")]));
+    // View choices a shot can switch on (grouping, folded groups, a run
+    // order, the runner's pin) are remembered across boots; each shot
+    // starts from the defaults instead of what the shot before it chose.
+    for (const key of Object.keys(localStorage)) {
+      if (CAPTURE_RESET.some((k) => (k.endsWith(":") ? key.startsWith(k) : key === k))) localStorage.removeItem(key);
+    }
+  } catch {
+    // storage unavailable
+  }
 }
 
 /** Called from main.tsx (DEV only) before the app renders. */
 export function maybeEnableDemoMode() {
-  if (isDemoMode()) applyPatches();
+  if (!isDemoMode()) return;
+  applyPatches();
+  seedCaptureScene();
 }

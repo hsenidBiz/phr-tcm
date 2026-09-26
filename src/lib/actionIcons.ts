@@ -103,6 +103,8 @@ export {
   RefreshCw as IconRefresh,
   Plug as IconRegister,
   Compass as IconTour,
+  // Opening the bundled "How To Use" help site in the browser.
+  BookOpen as IconHelp,
   Bug as IconBug,
   KanbanSquare as IconBoard,
   // The tester's own test accounts, and the project's way of signing in.

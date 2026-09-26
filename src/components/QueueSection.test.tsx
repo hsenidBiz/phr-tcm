@@ -227,7 +227,7 @@ test("Edit opens the inline editor and Save writes back into the queue", async (
 
   expect(screen.getByText("Login works").closest("li")!.className).toContain("cv-row");
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   const title = await screen.findByLabelText("Case title");
   // The editor's Combobox dropdown paints past the row, so an editing row
   // must drop content-visibility's paint containment.
@@ -248,7 +248,7 @@ test("editing preserves the UPDATE badge (update_id survives a save)", async () 
   renderQueue([makeCase({ update_id: 777 })]);
   expect(screen.getByText("UPDATE #777")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), {
     target: { value: "Renamed update" },
   });
@@ -262,7 +262,7 @@ test("Save is blocked while the edited case is invalid", async () => {
   baseMocks();
   renderQueue([makeCase()]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), { target: { value: "  " } });
 
   expect(screen.getByRole("button", { name: "Save to queue" })).toBeDisabled();
@@ -273,7 +273,7 @@ test("Cancel discards the edits", async () => {
   baseMocks();
   renderQueue([makeCase()]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), {
     target: { value: "Should not stick" },
   });
@@ -287,9 +287,9 @@ test("removing a row closes any open editor (indices shift)", async () => {
   baseMocks();
   renderQueue([makeCase(), makeCase({ title: "Second case" })]);
 
-  fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+  fireEvent.click(screen.getAllByRole("button", { name: /^Edit / })[1]);
   await screen.findByLabelText("Case title");
-  fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: / from the queue$/ })[0]);
 
   expect(screen.queryByLabelText("Case title")).not.toBeInTheDocument();
   expect(screen.getByText("Second case")).toBeInTheDocument();
@@ -433,7 +433,7 @@ test("offline disables the network writes and says why", async () => {
     expect(share).toBeDisabled();
     expect(share).toHaveAttribute("title", expect.stringContaining("No internet"));
     // Local work is untouched by the gate.
-    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Edit / })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Export JSON/ })).toBeEnabled();
 
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
@@ -661,7 +661,7 @@ test("a case's in-app comment shows on the row and is editable in the editor", a
   expect(screen.getByText("Imported from sprint 12 sheet")).toBeInTheDocument();
 
   // The inline editor exposes it as an in-app-only field.
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   const comment = await screen.findByLabelText("Comment (in-app only)");
   fireEvent.change(comment, { target: { value: "Re-check with QA" } });
   fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
@@ -697,7 +697,7 @@ test("single Edit save writes the change through to the owning file", async () =
     onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
   });
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), {
     target: { value: "Renamed title" },
   });
@@ -733,7 +733,7 @@ test("a rename write-back tells the file which case it was", async () => {
     onWatchPatched: () => {},
   });
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Case title"), {
     target: { value: "Renamed title" },
   });
@@ -1729,7 +1729,7 @@ test("removing every held row leaves the hold stored but inert - uploads are all
   expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
 
   const held = screen.getByText("Brand new").closest("li")!;
-  fireEvent.click(within(held).getByRole("button", { name: "Remove" }));
+  fireEvent.click(within(held).getByRole("button", { name: / from the queue$/ }));
   await waitFor(() => expect(screen.queryByText("Brand new")).not.toBeInTheDocument());
 
   // Never auto-cleared - still exactly what Check or Release last left.
@@ -1838,7 +1838,7 @@ test("removing one row writes the owning file back, so the case cannot return", 
     onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
   });
 
-  fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: / from the queue$/ })[0]);
 
   expect(screen.queryByText("From file A")).not.toBeInTheDocument();
   await waitFor(() => expect(saved).toEqual([{ path: "C:/drafts/a.json", titles: ["Also from file A"] }]));
@@ -1853,7 +1853,7 @@ test("a comment cleared on an update case stays cleared, and View's note follows
   renderQueue([makeCase({ update_id: 201 })]);
   expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Comment (in-app only)"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
 
@@ -1873,7 +1873,7 @@ test("editing an update case's comment reaches the View Test Cases note", async 
   renderQueue([makeCase({ update_id: 201, comment: "From the file" })]);
   await screen.findByText("From the file");
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Comment (in-app only)"), {
     target: { value: "Re-check with QA" },
   });
@@ -2075,7 +2075,7 @@ test("a second submit is refused the instant it starts, before its own pre-fligh
 test("a double-click on Remove removes that one row, not the next one too", async () => {
   baseMocks();
   renderQueue([makeCase({ title: "Alpha case" }), makeCase({ title: "Beta case" })]);
-  const remove = (await screen.findAllByRole("button", { name: "Remove" }))[0];
+  const remove = (await screen.findAllByRole("button", { name: / from the queue$/ }))[0];
   act(() => {
     fireEvent.click(remove);
     fireEvent.click(remove);
@@ -2284,12 +2284,12 @@ test("a second write-back after a re-sort still lands its edit on the row's own 
   renderWatchHarness([C, B, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
 
   // Remove the middle row (B).
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[1]);
   await waitFor(() => expect(backend.file).toHaveLength(2));
   expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open A.", "Open C."]);
 
   // Edit the last row - still A, now at queue index 1 (the queue is [C, A]).
-  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: /^Edit / }))[1]);
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "A, edited." },
   });
@@ -2316,11 +2316,11 @@ test("a Remove as the second action after a re-sort deletes the right twin", asy
   renderWatchHarness([C, B, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, B, C] }]);
 
   // Remove the middle row (B).
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[1]);
   await waitFor(() => expect(backend.file).toHaveLength(2));
 
   // Remove the last row - still A, now at queue index 1 (the queue is [C, A]).
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[1]);
 
   // A goes; C - its twin - survives.
   await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open C."]));
@@ -2341,7 +2341,7 @@ test("a file entry no row owns survives a write and does not shift later occurre
   renderWatchHarness([C, A], [{ path: "C:/d/x.json", stamp: "s0", snapshot: [A, U, C] }]);
 
   // Edit A (queue index 1).
-  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: /^Edit / }))[1]);
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "A, edited." },
   });
@@ -2353,7 +2353,7 @@ test("a file entry no row owns survives a write and does not shift later occurre
   // Edit C (queue index 0). If U had dropped out of the snapshot, C would
   // be miscounted as occurrence 2 instead of 3, and this edit would land
   // on U's entry instead.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[0]);
+  fireEvent.click((await screen.findAllByRole("button", { name: /^Edit / }))[0]);
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "C, edited." },
   });
@@ -2390,13 +2390,13 @@ test("two quick Removes on the same file are serialised, each built from the las
 
   // Remove A. The queue re-renders to [B, C] right away; A's write is sent
   // but its reply is held back.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[0]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[0]);
   await waitFor(() => expect(backend.pendingCount).toBe(1));
 
   // Remove C - now at queue index 1 - before A's write has replied.
   // Ordinary rapid use: each row's own Remove button lands under the
   // cursor as the row above it disappears.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[1]);
 
   // Serialised: C's write has not been SENT yet - it is queued behind A's,
   // which has not replied. A synchronous check here would be weak (the
@@ -2414,7 +2414,7 @@ test("two quick Removes on the same file are serialised, each built from the las
   backend.releaseNext();
 
   await waitFor(() => expect(backend.file.map((c) => c.steps[0].action)).toEqual(["Open B."]));
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Edit / }));
   expect(await screen.findByDisplayValue("Open B.")).toBeInTheDocument();
 });
 
@@ -2456,7 +2456,7 @@ test("a note patched into the file mid-Remove does not put the removed twin back
   await waitFor(() => expect(releaseComment).not.toBeNull());
 
   // Remove A while the note's patch is still in flight.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Remove" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: / from the queue$/ }))[1]);
   await new Promise((r) => setTimeout(r, 20));
   act(() => releaseComment!());
 
@@ -2469,7 +2469,7 @@ test("a note patched into the file mid-Remove does not put the removed twin back
   );
 
   // Edit B - queue index 1 now that A is gone.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: /^Edit / }))[1]);
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "B, edited." },
   });
@@ -2514,7 +2514,7 @@ test("an edit of a row an outside sync just added is not silently skipped", asyn
   // Edit X, and let the write-back fully finish - the chain drains, and a
   // remembered snapshot that outlived it would (wrongly) still be sitting
   // there for every write after this one.
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "X, edited." },
   });
@@ -2533,7 +2533,7 @@ test("an edit of a row an outside sync just added is not silently skipped", asyn
   });
 
   // Edit N.
-  fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
+  fireEvent.click((await screen.findAllByRole("button", { name: /^Edit / }))[1]);
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "N, edited." },
   });
@@ -2580,7 +2580,7 @@ test("an upload of a row an outside sync just added still gets its new id stampe
   });
 
   // Edit X, and let the write-back fully finish - the chain drains.
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "X, edited." },
   });
@@ -2656,7 +2656,7 @@ test("an upload still stamps new ids into the file when storage writes start fai
   });
 
   // Edit X: its write-back lands, and storage records the watch at [X'].
-  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Edit / }));
   fireEvent.change(await screen.findByLabelText("Step 1 expected"), {
     target: { value: "X, edited." },
   });

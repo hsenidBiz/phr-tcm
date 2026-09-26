@@ -257,6 +257,45 @@ pub fn set_extras_unlocked(unlocked: bool) -> Result<(), String> {
     })
 }
 
+/// Open the bundled "How To Use" help site in the default browser -
+/// Settings' "How To Use" button. Stages this build's site under the app's
+/// local data dir first if it is not there yet (`help::write_help`), then
+/// hands the written `index.html` to the same opener call every other
+/// "open in browser" button in this app uses.
+///
+/// Runs on a blocking thread. A plain sync `#[tauri::command]` runs on the
+/// main thread in Tauri 2, and `write_help` can be copying several
+/// megabytes of screenshots - each one antivirus-scanned on this machine -
+/// which would freeze the window for however long that scan takes, on the
+/// first open after every update.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_help(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dest_root = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| {
+                crate::applog::warn(format!("could not resolve the help folder: {e}"));
+                crate::help::OPEN_ERROR.to_string()
+            })?
+            .join("help");
+        let index = crate::help::write_help(&dest_root, env!("CARGO_PKG_VERSION")).map_err(|e| {
+            crate::applog::warn(format!("could not write the help site: {e}"));
+            crate::help::OPEN_ERROR.to_string()
+        })?;
+        tauri_plugin_opener::open_path(index, None::<&str>).map_err(|e| {
+            crate::applog::warn(format!("could not open the help site: {e}"));
+            crate::help::OPEN_ERROR.to_string()
+        })
+    })
+    .await
+    .unwrap_or_else(|e| {
+        crate::applog::warn(format!("the help site task did not finish: {e}"));
+        Err(crate::help::OPEN_ERROR.to_string())
+    })
+}
+
 /// Whether the Boards route probe may run, and the refusal when it may
 /// not. Takes `dev` rather than reading `cfg!(debug_assertions)` itself,
 /// the way `ai_tools` does: the one reader of that flag is

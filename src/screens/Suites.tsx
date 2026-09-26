@@ -324,9 +324,12 @@ export default function Suites({
   const suiteUrl = (planId: number, suiteId: number) =>
     `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_testPlans/define?planId=${planId}&suiteId=${suiteId}`;
 
-  const chip = (text: string, onClick: () => void) => (
+  /** `label` names the chip for assistive tech: every row carries the same
+   *  words, so the suite's name is what tells them apart. */
+  const chip = (text: string, label: string, onClick: () => void) => (
     <span
       role="button"
+      aria-label={label}
       className={cn(
         "whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
         "hover:border-accent hover:bg-accent-soft hover:text-accent",
@@ -442,11 +445,11 @@ export default function Suites({
             >
               <Copy size={13} />
             </span>
-            {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
+            {chip("View", `View ${s.name}`, () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {pbiSuite
-              ? chip("Edit cases", () => pbiSuite({ id: s.requirement_id!, title: s.name }, "edit"))
+              ? chip("Edit cases", `Edit cases in ${s.name}`, () => pbiSuite({ id: s.requirement_id!, title: s.name }, "edit"))
               : onEditCases &&
-                chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
+                chip("Edit cases", `Edit cases in ${s.name}`, () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {/* Use as current PBI, Manage, Run Tests and Report are the
                 extra options, folded into one chip so the row reads as
                 View and Edit first. */}

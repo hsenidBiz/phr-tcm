@@ -73,6 +73,7 @@ mod draft_comments;
 mod draft_merge;
 mod extras;
 mod filewatch;
+mod help;
 mod import_parser;
 mod intake;
 mod markdown;

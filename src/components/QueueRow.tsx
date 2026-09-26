@@ -168,7 +168,10 @@ export function QueueRowInner({
           )}
         </span>
         <span className="flex items-center gap-3">
+          {/* Named for their case: every row has one of each, and a list of
+              "Edit, Remove, Edit, Remove" says nothing about which is which. */}
           <button
+            aria-label={editing ? `Close the editor for ${tc.title}` : `Edit ${tc.title}`}
             className="text-xs text-faint hover:text-accent disabled:opacity-50"
             disabled={busy}
             onClick={() => onToggleEdit(i)}
@@ -176,6 +179,7 @@ export function QueueRowInner({
             {editing ? "Close" : "Edit"}
           </button>
           <button
+            aria-label={`Remove ${tc.title} from the queue`}
             className="text-xs text-faint hover:text-danger disabled:opacity-50"
             disabled={busy}
             onClick={() => onRemove(i)}

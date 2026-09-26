@@ -6,6 +6,7 @@
 // its AI tools - the way a development build always does.
 import { useSyncExternalStore } from "react";
 import { commands } from "../bindings";
+import { isCaptureMode } from "../dev/capture";
 
 /** True in `tauri dev` and vitest, false in `tauri build`: a development
  * build shows Auto Run whatever the switch says. Read once at module load. */
@@ -84,8 +85,11 @@ export async function setExtrasUnlocked(on: boolean): Promise<void> {
 }
 
 /** Whether Auto Run is shown right now: always in a development build,
- * and in a release build while this machine's extras are unlocked. */
+ * and in a release build while this machine's extras are unlocked - except
+ * in capture mode, which hides it whichever of those made it visible, since
+ * the screenshot script must never shoot it. */
 export function autoRunVisible(): boolean {
+  if (isCaptureMode()) return false;
   return AUTO_RUN_DEV || unlocked;
 }
 
@@ -99,6 +103,8 @@ export function useExtrasHydrated(): boolean {
 
 export function useAutoRunVisible(): boolean {
   const on = useExtrasUnlocked();
+  // Capture mode hides Auto Run even in the dev build it always ships in.
+  if (isCaptureMode()) return false;
   return AUTO_RUN_DEV || on;
 }
 

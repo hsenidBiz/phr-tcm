@@ -18,7 +18,7 @@
 - Never weaken `src/ui-consistency.test.ts` or a11y tests. Colours only from theme tokens (`text-success`, `text-danger`, `text-faint`, `bg-surface`, `border-border`...).
 - User-facing errors name no URL; raw errors go to `applog`.
 - New motion is switched off under `prefers-reduced-motion` (index.css has the existing block for `t-*` classes - join it).
-- Visible copy, changelog, commits and docs never name Auto Run, the unlock, or other hidden features.
+- Visible copy, changelog, commits and docs never name Auto Run or other hidden features.
 - No em dashes in user-visible copy. Hyphens only.
 - Commit with a Bash heredoc: `git commit -F - <<'EOF' ... EOF`, message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Confirm with `git log -1`.
 - One build/test command at a time. Cargo: `cd src-tauri && CARGO_TARGET_DIR=target/gate cargo test --test <name>`. Vitest: `rtk proxy npx vitest run <paths> --exclude "**/.claude/**"`. Typecheck: `npx tsc --noEmit`.

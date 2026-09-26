@@ -1,11 +1,22 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
 import { CHANGELOG } from "../lib/changelog";
+import { toast } from "../lib/toast";
+import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
 
-afterEach(() => clearMocks());
+vi.mock("../lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
+afterEach(() => {
+  clearMocks();
+  vi.clearAllMocks();
+  resetExtrasStore();
+  localStorage.removeItem("tcm-v2-dev-capture");
+});
 
 function renderSettings(qc: QueryClient) {
   return render(
@@ -223,6 +234,66 @@ test("Open log folder asks Rust to open it", async () => {
   expect(calls.some((c) => c.startsWith("plugin:opener|"))).toBe(false);
 });
 
+/// The "How To Use" button is one click from Settings, same shape as the
+/// other buttons that open something from Rust.
+test("How To Use opens the help site", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(String(cmd));
+    if (cmd === "open_help") return { status: "ok", data: null };
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
+  await waitFor(() => expect(calls).toContain("open_help"));
+});
+
+/// The first open after an update writes ~14 MB to disk - the button must
+/// disable itself and say "Opening" while that call is in flight, so a
+/// second click before it settles cannot open a second tab, then return to
+/// normal once the command resolves.
+test("How To Use disables itself and shows Opening while the command is in flight", async () => {
+  let resolveOpen: (v: { status: "ok"; data: null }) => void;
+  const opened = new Promise<{ status: "ok"; data: null }>((resolve) => {
+    resolveOpen = resolve;
+  });
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(String(cmd));
+    if (cmd === "open_help") return opened;
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  const button = screen.getByRole("button", { name: "How To Use" });
+  fireEvent.click(button);
+
+  await waitFor(() => expect(calls).toContain("open_help"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Opening" })).toBeDisabled());
+
+  resolveOpen!({ status: "ok", data: null });
+  await waitFor(() => expect(screen.getByRole("button", { name: "How To Use" })).toBeEnabled());
+});
+
+/// A failure from Rust (the site could not be written or opened) shows as
+/// a toast rather than doing nothing.
+test("How To Use shows a toast when it fails", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "open_help") throw "Could not open the help pages. Settings, Logs has the details.";
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
+  await vi.waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Could not open the help pages. Settings, Logs has the details."),
+  );
+});
+
 // Default tags are no longer set here - they moved to Manual Entry, where
 // they are used, and their tests went with them (ManualEntry.test.tsx).
 test("default tags are not offered in Settings any more", () => {
@@ -382,4 +453,36 @@ test("the app log colours the level tag and the values in each line", async () =
   expect(line.textContent).toBe("GET dev.azure.com/acme/_apis/testplan/Plans/107281/suites -> 200 in 184 ms");
   expect(line.firstElementChild).toHaveTextContent("GET");
   expect(line.firstElementChild).toHaveClass("text-text");
+});
+
+// Fix round 1 (Task 3): the Extras section rendered on this machine's own
+// unlocked state alone, so a capture taken on an unlocked machine (the
+// owner's) would show it. Off, this unlocked machine's ordinary behaviour
+// (the section shown) is unchanged.
+test("capture mode hides the Extras section on an unlocked machine; off, it shows", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "set_extras_unlocked") return null;
+    // Settings hydrates this machine's switch on mount - answer "unlocked"
+    // so that hydration cannot race the direct setExtrasUnlocked() below
+    // back to locked.
+    if (cmd === "get_extras_unlocked") return true;
+  });
+  await act(() => setExtrasUnlocked(true));
+
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  const qcOn = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onRender = renderSettings(qcOn);
+  await onRender.findByRole("heading", { name: "Changelog" });
+  expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
+  expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
+  expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
+  onRender.unmount();
+
+  localStorage.removeItem("tcm-v2-dev-capture");
+  const qcOff = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const offRender = renderSettings(qcOff);
+  expect(await offRender.findByRole("heading", { name: "Extras" })).toBeInTheDocument();
+  expect(offRender.getByRole("button", { name: "Play the dino game" })).toBeInTheDocument();
+  expect(offRender.getByRole("button", { name: "Reset to default" })).toBeInTheDocument();
+  offRender.unmount();
 });

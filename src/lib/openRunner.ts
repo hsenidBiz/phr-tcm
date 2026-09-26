@@ -1,5 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { RUNNER_HEIGHT, RUNNER_WIDTH } from "./runnerSize";
 import { loadRunnerPinned, saveRunnerSession, type RunnerSession } from "./runnerSession";
+
+export { RUNNER_HEIGHT, RUNNER_WIDTH };
 
 /** Open (or focus) the compact always-on-top runner window on the #runner
  * hash route. Dynamically imports the webview API so vitest never touches it. */
@@ -16,8 +19,8 @@ export async function openRunnerWindow(session: RunnerSession) {
   const runner = new WebviewWindow("runner", {
     url: "index.html#runner",
     title: "Test Runner",
-    width: 460,
-    height: 720,
+    width: RUNNER_WIDTH,
+    height: RUNNER_HEIGHT,
     // The runner is a single narrow column by design, so its floor is much
     // lower than the main window's - but below this the step rows and the
     // outcome buttons start colliding.

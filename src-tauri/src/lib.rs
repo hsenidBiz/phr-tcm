@@ -25,6 +25,7 @@ pub mod commands;
 pub mod events;
 pub mod extras;
 pub mod filewatch;
+pub mod help;
 pub mod import_parser;
 pub mod intake;
 pub mod markdown;
@@ -238,7 +239,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             run_order::get_run_order,
             run_order::save_run_order,
             misc::get_extras_unlocked,
-            misc::set_extras_unlocked
+            misc::set_extras_unlocked,
+            misc::open_help
         ])
 }
 

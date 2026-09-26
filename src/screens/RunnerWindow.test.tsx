@@ -106,8 +106,12 @@ test("plays a case, records it into a lazily-opened run, and Finish completes it
   renderRunner();
 
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
-  // Mark step 1 passed.
+  // Mark step 1 passed: the mark is named for its step and says it is on.
+  const stepPass = screen.getByRole("button", { name: "Mark step 1 passed" });
+  expect(stepPass).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(screen.getAllByTitle("Passed")[0]);
+  expect(stepPass).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Mark step 1 failed" })).toHaveAttribute("aria-pressed", "false");
   // Overall Passed.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));

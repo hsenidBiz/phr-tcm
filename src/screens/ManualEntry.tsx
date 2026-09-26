@@ -113,7 +113,7 @@ export default function ManualEntry({
                 onChange={setTags}
                 locked={lockedTags}
               />
-              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <Select aria-label="Automation status" value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option>Not Automated</option>
                 <option>Planned</option>
               </Select>

@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "docs:build": "tsc -p docs-site/tsconfig.json && vite build --config docs-site/vite.config.ts",
+    "docs:dev": "node scripts/docs-dev.mjs",
+    "docs:shots": "node scripts/docs-shots.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri"
@@ -55,6 +58,7 @@
     "shadcn": "^4.13.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^4.1.11"
   },
   "allowScripts": {

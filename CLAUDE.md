@@ -135,6 +135,17 @@ v1 and went with it. The suites above are the gate.
   come back as a chosen `AdoError`. It patches the bindings rather than
   raising a toast, so the failure travels the real path and the screen's
   own handling is what you are looking at.
+- **Help site (How To Use).** `docs-site/` is the source; it builds to
+  `src-tauri/help/`, which is embedded in the exe and opened from Settings.
+  After a UI or accessible-name change on a documented screen: close
+  `tauri dev`, run `npm run docs:dev` (starts the dev app with CDP on
+  9333 - leave it signed out, the screenshots use sample data), then
+  `npm run docs:shots -- --dry-run`, then `npm run docs:shots` (or
+  `--only <shot-id>` to re-take a few shots), then `npm run docs:build`,
+  and commit the shots, positions and built site together. `--restore`
+  puts the owner's real settings back if a capture run is interrupted
+  partway. The guard tests fail the build if the built page is stale or a
+  hidden feature is named (the term list lives in `docs-site/src/guard.test.ts`).
 
 ## Working conventions (this machine)
 

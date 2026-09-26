@@ -135,6 +135,7 @@ export default function StepsEditor({
             </>
           )}
           <button
+            aria-label={`Remove step ${i + 1}`}
             className="px-1 text-xs text-faint hover:text-danger"
             title="Remove step"
             onClick={() => onChange(steps.filter((_, j) => j !== i))}

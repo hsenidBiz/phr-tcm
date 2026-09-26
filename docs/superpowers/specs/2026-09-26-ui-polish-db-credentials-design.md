@@ -21,7 +21,7 @@ the login kept out of the webview.
 - User-facing errors name no URL (`ado/transport.rs` sentences).
 - Motion respects `prefers-reduced-motion` (index.css already switches the
   `t-*` animations off; new motion must join that).
-- Nothing names Auto Run, the unlock, or other hidden features in visible
+- Nothing names Auto Run or other hidden features in visible
   copy, the changelog, commit messages or docs.
 - Commits via Bash heredoc, trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - One build/test command at a time (shared machine). Cargo runs in SDD use

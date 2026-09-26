@@ -262,6 +262,7 @@ npm test                 # vitest (frontend)
 npx tsc --noEmit         # typecheck
 npm run build            # type-check + Vite build
 cargo test --tests       # Rust (run inside src-tauri/)
+npm run docs:build       # build docs-site/ into src-tauri/help/ (the How To Use site)
 ```
 
 ### Dev-only features

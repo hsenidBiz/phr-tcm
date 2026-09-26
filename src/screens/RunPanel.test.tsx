@@ -140,7 +140,7 @@ test("expanding a row shows the case steps and the last failure detail", async (
   renderPanel();
 
   await screen.findByText("Valid login");
-  fireEvent.click(screen.getByLabelText("Expand test case"));
+  fireEvent.click(screen.getByLabelText(/^Expand test case #/));
 
   // Steps and the last result comment + bug both appear.
   expect(await screen.findByText("Open login page")).toBeInTheDocument();
@@ -149,7 +149,7 @@ test("expanding a row shows the case steps and the last failure detail", async (
   expect(screen.getByRole("button", { name: "#900" })).toBeInTheDocument();
 
   // Collapsing hides it again.
-  fireEvent.click(screen.getByLabelText("Collapse test case"));
+  fireEvent.click(screen.getByLabelText(/^Collapse test case #/));
   expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
 });
 
@@ -221,7 +221,7 @@ test("an expanded row can open the execution history behind the dots", async () 
   renderPanel();
 
   await screen.findByText("Valid login");
-  fireEvent.click(screen.getByLabelText("Expand test case"));
+  fireEvent.click(screen.getByLabelText(/^Expand test case #/));
   await screen.findByText("Open login page");
 
   // Two results predate the current one; the newest is NOT in the list.
@@ -248,7 +248,7 @@ test("a single-result case offers no execution history button", async () => {
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
-  fireEvent.click(screen.getAllByLabelText("Expand test case")[1]); // case 202: no history at all
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[1]); // case 202: no history at all
   expect(screen.queryByRole("button", { name: /Execution history/ })).not.toBeInTheDocument();
 });
 
@@ -424,8 +424,8 @@ test("open previews survive a group collapse until Collapse all", async () => {
   expect(screen.getByRole("button", { name: /Collapse all \(1\)/ })).toBeInTheDocument();
 
   // Open both previews at once.
-  fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
-  fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[0]);
+  fireEvent.click(screen.getAllByLabelText(/^Expand test case #/)[0]);
   expect(screen.getByRole("button", { name: /Collapse all \(3\)/ })).toBeInTheDocument();
 
   // Collapse the group: both held-open rows stay on screen.

@@ -5,6 +5,7 @@ import { CHANGELOG } from "../lib/changelog";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
+import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
@@ -36,6 +37,7 @@ import {
   IconBug,
   IconCancel,
   IconCopy,
+  IconHelp,
   IconPlayGame,
   IconRefresh,
   IconTour,
@@ -99,6 +101,10 @@ export default function Settings({ org, project }: { org: string; project: strin
   const [reporting, setReporting] = useState(false);
   const [bugTitle, setBugTitle] = useState("");
   const [bugText, setBugText] = useState("");
+  // The first open after an update writes the help site to disk (~14 MB) -
+  // a pending state stops repeated clicks from opening several tabs while
+  // that write is in flight.
+  const [openingHelp, setOpeningHelp] = useState(false);
   const logs = useQuery({
     queryKey: ["app-logs"],
     queryFn: () => commands.appLogs(2000),
@@ -323,6 +329,33 @@ export default function Settings({ org, project }: { org: string; project: strin
       </section>
 
       <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">How To Use</h2>
+        <p className="text-sm text-muted">
+          A guide to every screen and button, in your browser.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={openingHelp}
+          onClick={() => {
+            setOpeningHelp(true);
+            commands
+              .openHelp()
+              .then((r) => {
+                if (r.status === "error") toast.error(r.error);
+              })
+              .catch(() =>
+                toast.error("Could not open the help pages. Settings, Logs has the details."),
+              )
+              .finally(() => setOpeningHelp(false));
+          }}
+        >
+          <IconHelp aria-hidden />
+          {openingHelp ? "Opening" : "How To Use"}
+        </Button>
+      </section>
+
+      <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Interface tour</h2>
         <p className="text-sm text-muted">
           Replay the walkthrough that highlights each area of the app.
@@ -371,7 +404,9 @@ export default function Settings({ org, project }: { org: string; project: strin
       {/* Only on a machine where the optional extras are unlocked (a key
           sequence typed on this screen - see settingsExtras.ts). The
           heading stays neutral on purpose. */}
-      {extrasUnlocked && (
+      {/* Capture mode: the owner's machine can be unlocked, but a shot must
+          never show it - see dev/capture.ts. */}
+      {extrasUnlocked && !isCaptureMode() && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-text">Extras</h2>
           <p className="text-sm text-muted">

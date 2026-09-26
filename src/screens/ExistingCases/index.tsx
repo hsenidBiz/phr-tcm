@@ -12,6 +12,7 @@ import DeleteConfirm from "../../components/DeleteConfirm";
 import RelinkDialog from "../../components/RelinkDialog";
 import CaseEditor from "./CaseEditor";
 import CountUp from "../../components/CountUp";
+import { isCaptureMode } from "../../dev/capture";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -241,7 +242,9 @@ export default function ExistingCases({
             `${visible.length} of ${list.length} Test Cases`
           ) : (
             <>
-              <CountUp to={list.length} duration={0.8} /> Total Test Cases
+              {/* Capture mode shows the plain number: a screenshot must not
+                  catch the count on its way there. */}
+              {isCaptureMode() ? list.length : <CountUp to={list.length} duration={0.8} />} Total Test Cases
             </>
           )}
         </h2>
