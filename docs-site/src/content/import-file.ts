@@ -108,11 +108,20 @@ export const importFile: Screen = {
       alt: "The results of an upload",
     },
   ],
+  groups: [
+    { id: "bring-in", title: "Import or open a shared file", summary: "Bring test cases in from a JSON file, or from a link a teammate shared." },
+    { id: "the-queue", title: "The queue", summary: "Everything waiting to be uploaded, with what you can do to all of it." },
+    { id: "queued-cases", title: "A queued case", summary: "Each row is one case: open it to see its steps, or to see what an update will change." },
+    { id: "edit-case", title: "Edit a queued case", summary: "Change a case in the queue before it is uploaded." },
+    { id: "many-at-once", title: "Change many cases at once", summary: "Tick cases to edit, rename or remove them together." },
+    { id: "upload", title: "Review and upload", summary: "A last look at every case, then the upload and its results." },
+  ],
   controls: [
     // --- Bringing cases in, and the queue ---------------------------------
     {
       id: "import-json",
       shot: QUEUE,
+      group: "bring-in",
       locate: { role: "button", name: "Import JSON" },
       name: "Import JSON",
       does:
@@ -124,6 +133,7 @@ export const importFile: Screen = {
     {
       id: "share-link",
       shot: QUEUE,
+      group: "bring-in",
       locate: { role: "textbox", name: "Share link" },
       name: "Share link",
       does: "Paste a share link a teammate sent you. A link works once: after the import it expires.",
@@ -131,6 +141,7 @@ export const importFile: Screen = {
     {
       id: "import-shared",
       shot: QUEUE,
+      group: "bring-in",
       locate: { role: "button", name: "Import shared" },
       name: "Import shared",
       does:
@@ -142,6 +153,7 @@ export const importFile: Screen = {
     {
       id: "queue-title",
       shot: QUEUE,
+      group: "the-queue",
       locate: { text: "Queue for PBI #1001 (3 queued)" },
       name: "Queue for PBI",
       does: "Every case waiting to be uploaded to this PBI, and how many there are. The queue is shared with Manual Entry and kept on this computer for each PBI.",
@@ -149,6 +161,7 @@ export const importFile: Screen = {
     {
       id: "view-in-browser",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "View in browser" },
       name: "View in browser",
       does: "Opens the queue as a review page in your browser, where you can read every case and leave comments. See **Use the review page** below.",
@@ -156,6 +169,7 @@ export const importFile: Screen = {
     {
       id: "share-for-review",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "Share for review" },
       name: "Share for review",
       does:
@@ -165,6 +179,7 @@ export const importFile: Screen = {
     {
       id: "export-json",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "Export JSON" },
       name: "Export JSON",
       does: "Saves the queue to a JSON file you choose.",
@@ -172,6 +187,7 @@ export const importFile: Screen = {
     {
       id: "rename",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "Rename" },
       name: "Rename",
       does: "Opens the rename window for every queued title, or only the ticked ones when some are ticked.",
@@ -179,6 +195,7 @@ export const importFile: Screen = {
     {
       id: "remove-all",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "Remove all" },
       name: "Remove all",
       does: "Empties the queue and stops watching the imported files. Nothing in Azure DevOps is touched.",
@@ -186,6 +203,7 @@ export const importFile: Screen = {
     {
       id: "order-testing",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "For testing" },
       name: "Order: For testing",
       does:
@@ -194,6 +212,7 @@ export const importFile: Screen = {
     {
       id: "order-spec",
       shot: QUEUE,
+      group: "the-queue",
       locate: { role: "button", name: "Down the spec" },
       name: "Order: Down the spec",
       does: "Sorts the queue to follow the specification document, so a reviewer can read both side by side.",
@@ -201,6 +220,7 @@ export const importFile: Screen = {
     {
       id: "select-all",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "checkbox", name: "Select all queued cases" },
       name: "Select cases for bulk actions",
       does: "Ticks every case, ready for a bulk action.",
@@ -208,6 +228,7 @@ export const importFile: Screen = {
     {
       id: "row-select",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "checkbox", name: `Select ${FIRST}` },
       name: "A queued case",
       does:
@@ -216,6 +237,7 @@ export const importFile: Screen = {
     {
       id: "expand-steps",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "button", name: `Expand steps of ${FIRST}` },
       name: "Show steps (>)",
       does: "Opens the case to its steps, with the preconditions and reviewer notes, exactly as they will be written.",
@@ -223,6 +245,7 @@ export const importFile: Screen = {
     {
       id: "update-badge",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { text: "UPDATE #5002" },
       name: "NEW or UPDATE",
       does: "**NEW** means the case will be created. **UPDATE** and a number means it will change that existing test case.",
@@ -230,6 +253,7 @@ export const importFile: Screen = {
     {
       id: "what-changes",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "button", nameRe: "^Click to view" },
       name: "What will change",
       does:
@@ -238,6 +262,7 @@ export const importFile: Screen = {
     {
       id: "comment",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { text: "Asked the team how long the sign-in should last." },
       name: "Comment",
       does:
@@ -246,6 +271,7 @@ export const importFile: Screen = {
     {
       id: "row-edit",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "button", name: `Edit ${FIRST}` },
       name: "Edit",
       does: "Opens the case for changes right in the queue. See the editor below.",
@@ -253,6 +279,7 @@ export const importFile: Screen = {
     {
       id: "row-remove",
       shot: QUEUE,
+      group: "queued-cases",
       locate: { role: "button", name: `Remove ${FIRST} from the queue` },
       name: "Remove",
       does: "Takes the case out of the queue, and out of the file it came from, so the file and the queue still agree.",
@@ -260,6 +287,7 @@ export const importFile: Screen = {
     {
       id: "review",
       shot: QUEUE,
+      group: "upload",
       locate: { role: "button", nameRe: "^Review \\d+ test cases?$" },
       name: "Review",
       does: "Starts the final check before anything is written. It stays within reach at the bottom right while you scroll a long queue.",
@@ -269,6 +297,7 @@ export const importFile: Screen = {
     {
       id: "hide-steps",
       shot: OPEN,
+      group: "queued-cases",
       locate: { role: "button", name: `Collapse steps of ${FIRST}` },
       name: "Hide steps (v)",
       does: "Closes the case again.",
@@ -276,6 +305,7 @@ export const importFile: Screen = {
     {
       id: "case-preconditions",
       shot: OPEN,
+      group: "queued-cases",
       locate: { text: "Preconditions:" },
       name: "Preconditions",
       does: "What must be true before the first step.",
@@ -283,6 +313,7 @@ export const importFile: Screen = {
     {
       id: "reviewer-notes",
       shot: OPEN,
+      group: "queued-cases",
       locate: { text: "Reviewer notes" },
       name: "Reviewer notes",
       does: "Notes for whoever reviews the draft, for example which part of the spec the case covers. They stay in the app and the review page.",
@@ -290,6 +321,7 @@ export const importFile: Screen = {
     {
       id: "steps-table",
       shot: OPEN,
+      group: "queued-cases",
       locate: { text: "Action" },
       name: "Steps",
       does: "Every step with its action and expected result, numbered in order.",
@@ -297,6 +329,7 @@ export const importFile: Screen = {
     {
       id: "collapse-all",
       shot: OPEN,
+      group: "queued-cases",
       locate: { role: "button", nameRe: "^Collapse all" },
       name: "Collapse all",
       does: "Closes every opened case at once. It shows while anything in the queue is open, with how many are.",
@@ -304,6 +337,7 @@ export const importFile: Screen = {
     {
       id: "what-changes-open",
       shot: CHANGES,
+      group: "queued-cases",
       locate: { role: "button", nameRe: "^Click to view" },
       name: "What will change, opened",
       does: "Click it again to close the changes.",
@@ -311,6 +345,7 @@ export const importFile: Screen = {
     {
       id: "change-detail",
       shot: CHANGES,
+      group: "queued-cases",
       locate: { text: "Title:" },
       name: "The changes",
       does: "Each field that will change, with the old and new wording marked word by word, and the steps that change.",
@@ -320,6 +355,7 @@ export const importFile: Screen = {
     {
       id: "editor-title",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "textbox", name: "Case title" },
       name: "Title",
       does: "The case's title. [[Enter]] here saves, like **Save to queue**.",
@@ -327,6 +363,7 @@ export const importFile: Screen = {
     {
       id: "editor-status",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
       does: "**Not Automated** or **Planned**.",
@@ -334,6 +371,7 @@ export const importFile: Screen = {
     {
       id: "editor-tags",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "textbox", name: "Tags" },
       name: "Tags",
       does: "The case's tags. Type to search the project's tags or add a new one.",
@@ -341,6 +379,7 @@ export const importFile: Screen = {
     {
       id: "editor-module",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "combobox", name: "Module" },
       name: "Module",
       does: "The module the case belongs to.",
@@ -348,6 +387,7 @@ export const importFile: Screen = {
     {
       id: "editor-preconditions",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "textbox", name: "Preconditions" },
       name: "Preconditions",
       does: "What must be true before the first step.",
@@ -355,6 +395,7 @@ export const importFile: Screen = {
     {
       id: "editor-comment",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "textbox", name: "Comment (in-app only)" },
       name: "Comment (in-app only)",
       does: "A note about the case. It is saved in the JSON file and never sent to Azure DevOps.",
@@ -362,6 +403,7 @@ export const importFile: Screen = {
     {
       id: "editor-steps",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "textbox", name: "Step 1 action" },
       name: "Steps",
       does: "The steps, edited the same way as on Manual Entry: drag to reorder, **Add Step**, and the x to remove one.",
@@ -369,6 +411,7 @@ export const importFile: Screen = {
     {
       id: "editor-save",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "button", name: "Save to queue" },
       name: "Save to queue",
       does:
@@ -377,6 +420,7 @@ export const importFile: Screen = {
     {
       id: "editor-cancel",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the editor and drops the changes.",
@@ -384,6 +428,7 @@ export const importFile: Screen = {
     {
       id: "editor-close",
       shot: EDIT,
+      group: "edit-case",
       locate: { role: "button", name: `Close the editor for ${FIRST}` },
       name: "Close",
       does: "While the editor is open, the row's **Edit** reads **Close** and closes it the same way.",
@@ -393,6 +438,7 @@ export const importFile: Screen = {
     {
       id: "selected-count",
       shot: SELECTED,
+      group: "many-at-once",
       locate: { text: "2 of 3 selected" },
       name: "Selected",
       does: "How many cases are ticked.",
@@ -400,6 +446,7 @@ export const importFile: Screen = {
     {
       id: "bulk-edit",
       shot: SELECTED,
+      group: "many-at-once",
       locate: { role: "button", name: "Bulk edit" },
       name: "Bulk edit",
       does: "Changes the automation status, module, tags or preconditions of every ticked case at once.",
@@ -407,6 +454,7 @@ export const importFile: Screen = {
     {
       id: "rename-selected",
       shot: SELECTED,
+      group: "many-at-once",
       locate: { role: "button", name: "Rename 2" },
       name: "Rename",
       does: "Opens the rename window for the ticked cases only.",
@@ -414,6 +462,7 @@ export const importFile: Screen = {
     {
       id: "remove-selected",
       shot: SELECTED,
+      group: "many-at-once",
       locate: { role: "button", name: "Remove 2" },
       name: "Remove",
       does: "Takes the ticked cases out of the queue.",
@@ -421,6 +470,7 @@ export const importFile: Screen = {
     {
       id: "bulk-status",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
       does: "Leave it unchanged, or set every ticked case to **Not Automated** or **Planned**.",
@@ -428,6 +478,7 @@ export const importFile: Screen = {
     {
       id: "bulk-module",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "checkbox", name: "Set module" },
       name: "Set module",
       does: "Tick it to choose one module for all of them.",
@@ -435,6 +486,7 @@ export const importFile: Screen = {
     {
       id: "bulk-tags",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "combobox", name: "Tags" },
       name: "Tags",
       does: "Leave tags unchanged, add tags to the ones each case already has, or replace them.",
@@ -442,6 +494,7 @@ export const importFile: Screen = {
     {
       id: "bulk-preconditions",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "checkbox", name: "Set preconditions" },
       name: "Set preconditions",
       does: "Tick it to give them all the same preconditions.",
@@ -449,6 +502,7 @@ export const importFile: Screen = {
     {
       id: "bulk-cancel",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without changing anything.",
@@ -456,6 +510,7 @@ export const importFile: Screen = {
     {
       id: "bulk-apply",
       shot: BULK,
+      group: "many-at-once",
       locate: { role: "button", nameRe: "^Apply to \\d+$" },
       name: "Apply",
       does: "Makes the changes. Titles and steps are never touched, and the file each case came from is updated to match.",
@@ -465,6 +520,7 @@ export const importFile: Screen = {
     {
       id: "rename-find",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "textbox", name: "Find" },
       name: "Find",
       does: "The text to look for in each title.",
@@ -472,6 +528,7 @@ export const importFile: Screen = {
     {
       id: "rename-replace",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "textbox", name: "Replace with" },
       name: "Replace with",
       does: "What to put in its place. Leave it empty to delete the text found.",
@@ -479,6 +536,7 @@ export const importFile: Screen = {
     {
       id: "rename-regex",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "checkbox", name: "Regular expression" },
       name: "Regular expression",
       does: "Treats **Find** as a pattern, so parts of it can be reused in the replacement as $1, $2 and so on.",
@@ -486,6 +544,7 @@ export const importFile: Screen = {
     {
       id: "rename-match-case",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "checkbox", name: "Match case" },
       name: "Match case",
       does: "Only finds text with the same capital and small letters.",
@@ -493,6 +552,7 @@ export const importFile: Screen = {
     {
       id: "rename-first-only",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "checkbox", name: "First match only" },
       name: "First match only",
       does: "Replaces only the first match in each title.",
@@ -500,6 +560,7 @@ export const importFile: Screen = {
     {
       id: "rename-prefix",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "textbox", name: "Prefix" },
       name: "Prefix",
       does: "Text added to the start of every title.",
@@ -507,6 +568,7 @@ export const importFile: Screen = {
     {
       id: "rename-suffix",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "textbox", name: "Suffix" },
       name: "Suffix",
       does: "Text added to the end of every title.",
@@ -514,6 +576,7 @@ export const importFile: Screen = {
     {
       id: "rename-capitalisation",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "combobox", name: "Capitalisation" },
       name: "Capitalisation",
       does: "Leave titles as they are, or change them to Title Case, UPPERCASE or lowercase.",
@@ -521,6 +584,7 @@ export const importFile: Screen = {
     {
       id: "rename-number-from",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "spinbutton", name: "Number from" },
       name: "Number from",
       does: "Where numbering starts. Put ${n} in the replacement, prefix or suffix to number the cases in the order shown.",
@@ -528,6 +592,7 @@ export const importFile: Screen = {
     {
       id: "rename-digits",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "spinbutton", name: "Number digits" },
       name: "Digits",
       does: "How many digits each number has, with zeros in front: 3 digits gives 001, 002 and so on.",
@@ -535,6 +600,7 @@ export const importFile: Screen = {
     {
       id: "rename-summary",
       shot: RENAME,
+      group: "many-at-once",
       locate: { text: "0 will change" },
       name: "Preview",
       does:
@@ -543,6 +609,7 @@ export const importFile: Screen = {
     {
       id: "rename-cancel",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without renaming. After a rename it reads **Done**.",
@@ -550,6 +617,7 @@ export const importFile: Screen = {
     {
       id: "rename-apply",
       shot: RENAME,
+      group: "many-at-once",
       locate: { role: "button", nameRe: "^Rename \\d+$" },
       name: "Rename",
       does: "Renames the titles shown in the preview. Afterwards **Undo rename** puts them back.",
@@ -559,6 +627,7 @@ export const importFile: Screen = {
     {
       id: "check-pbi",
       shot: REVIEW,
+      group: "upload",
       locate: { testId: "pbi" },
       name: "Highlighted PBI",
       does: "While you confirm, the PBI glows, so you can check the new cases are going to the right place.",
@@ -566,6 +635,7 @@ export const importFile: Screen = {
     {
       id: "duplicate-hint",
       shot: REVIEW,
+      group: "upload",
       locate: { text: "A test case with this title already exists on the PBI - this will create a duplicate, not update it." },
       name: "Duplicate warning",
       does: "Marks a new case whose title is already used by a case on the PBI. Uploading it would make a second case, not update the first.",
@@ -573,6 +643,7 @@ export const importFile: Screen = {
     {
       id: "stop-back",
       shot: REVIEW,
+      group: "upload",
       locate: { role: "button", nameRe: "^Stop . take me back$" },
       name: "Stop, take me back",
       does:
@@ -581,6 +652,7 @@ export const importFile: Screen = {
     {
       id: "create-anyway",
       shot: REVIEW,
+      group: "upload",
       locate: { role: "button", name: "Create duplicates anyway" },
       name: "Create duplicates anyway",
       does: "Accepts the duplicates. Nothing is written yet; it only makes the upload button available.",
@@ -588,6 +660,7 @@ export const importFile: Screen = {
     {
       id: "confirm",
       shot: REVIEW,
+      group: "upload",
       locate: { role: "button", nameRe: "^Yes . create" },
       name: "Yes, create and update",
       does:
@@ -598,6 +671,7 @@ export const importFile: Screen = {
     {
       id: "back",
       shot: REVIEW,
+      group: "upload",
       locate: { role: "button", name: "Back" },
       name: "Back",
       does: "Leaves the review without uploading anything.",
@@ -607,6 +681,7 @@ export const importFile: Screen = {
     {
       id: "uploaded",
       shot: RESULTS,
+      group: "upload",
       locate: { text: "UPLOADED" },
       name: "UPLOADED",
       does: "Marks a case the last upload wrote. It stays in the queue, now carrying its id, until you remove it.",
@@ -614,6 +689,7 @@ export const importFile: Screen = {
     {
       id: "results",
       shot: RESULTS,
+      group: "upload",
       locate: { text: "1 test case uploaded - 1 updated" },
       name: "Results",
       does:
@@ -622,6 +698,7 @@ export const importFile: Screen = {
     {
       id: "copy-changes",
       shot: RESULTS,
+      group: "upload",
       locate: { role: "button", name: "Copy changes" },
       name: "Copy changes",
       does:
@@ -630,6 +707,7 @@ export const importFile: Screen = {
     {
       id: "clear-results",
       shot: RESULTS,
+      group: "upload",
       locate: { role: "button", name: "Clear results" },
       name: "Clear results",
       does: "Hides the results and the marks they left on the rows.",

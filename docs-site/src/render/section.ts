@@ -1,11 +1,19 @@
-// One screen: heading and summary, then a stage per shot (the annotated
-// figure with its numbered control list beside it), then tips and how-tos.
+// One screen: heading and summary, then a stage per figure (the annotated
+// shot with its numbered control list beside or below it), then tips and
+// how-tos. A screen split into groups (a busy one) shows each shot that
+// spans several groups once as an overview - a map whose outlined areas
+// link to the subsections - then one subsection per group, each with a
+// zoomed crop of the shot around that group's controls.
 
-import type { Box, Control, Screen, SiteContent } from "../types";
+import { shotSize, type Control, type ControlGroup, type Screen, type Shot, type SiteContent } from "../types";
 import { h, rich } from "./dom";
 import { icon } from "./icons";
-import { renderShot, type ShotView } from "./shot";
-import type { Theme } from "./theme";
+import { figureWidth, planScreen, stageFlow, type Region, type Stage } from "./plan";
+import { placeholder, renderShot, type ShotView } from "./shot";
+import { currentTheme, shotSrc, type Theme } from "./theme";
+import type { ViewerContent } from "./viewer";
+
+export { readingOrder } from "./plan";
 
 export type ControlRef = {
   screen: string;
@@ -18,15 +26,23 @@ export type SectionView = {
   section: HTMLElement;
   controls: ControlRef[];
   views: ShotView[];
+  /** A grouped screen's subsections (#screen/group), in page order. */
+  subsections: HTMLElement[];
+};
+
+export type SectionEnv = {
+  theme: Theme;
+  motion: boolean;
+  onRowClick: (ref: ControlRef) => void;
+  /** Opens a figure full screen; `from` gets focus back when it closes. */
+  openViewer: (build: () => ViewerContent, from: HTMLElement) => void;
 };
 
 export const controlAnchor = (screen: string, control: string) => `${screen}/${control}`;
 
-export function renderSection(
-  screen: Screen,
-  content: SiteContent,
-  env: { theme: Theme; motion: boolean; onRowClick: (ref: ControlRef) => void },
-): SectionView {
+const pct = (n: number, of: number) => `${+((n / of) * 100).toFixed(4)}%`;
+
+export function renderSection(screen: Screen, content: SiteContent, env: SectionEnv): SectionView {
   const titleId = `${screen.id}--title`;
   const section = h(
     "section",
@@ -42,20 +58,19 @@ export function renderSection(
 
   const refs: ControlRef[] = [];
   const views: ShotView[] = [];
+  const subsections: HTMLElement[] = [];
   const available = new Set(content.available);
-  const multi = screen.shots.length > 1;
+  const plan = planScreen(screen, content.positions);
 
-  for (const shot of screen.shots) {
-    const onShot = readingOrder(
-      screen.controls.filter((c) => c.shot === shot.id),
-      content.positions[shot.id]?.controls,
-    ).map((control, i) => ({ control, n: i + 1 }));
+  function stageEl(stage: Stage, label: string | null, group: ControlGroup | null): HTMLElement {
+    const { shot } = stage;
     const rows = new Map<string, HTMLButtonElement>();
 
     const view = renderShot({
       shot,
-      controls: onShot,
+      controls: stage.controls,
       placed: content.positions[shot.id],
+      view: stage.view,
       available: available.has(shot.id),
       theme: env.theme,
       motion: env.motion,
@@ -66,12 +81,13 @@ export function renderSection(
         const ref = refs.find((r) => r.view === view && r.id === id);
         if (ref) env.onRowClick(ref);
       },
+      onExpand: (from) => env.openViewer(() => viewerContent(screen, content, env, stage, group), from),
     });
     views.push(view);
 
     const list = h("ol", { class: "controls", "aria-label": `Controls on ${shot.alt}` });
-    for (const { control, n } of onShot) {
-      const row = controlRow(screen, control, n, view.has(control.id));
+    for (const { control, n } of stage.controls) {
+      const row = controlRow(control, n, view.has(control.id), controlAnchor(screen.id, control.id));
       rows.set(control.id, row);
       const ref: ControlRef = { screen: screen.id, id: control.id, row, view };
       refs.push(ref);
@@ -83,15 +99,51 @@ export function renderSection(
       list.appendChild(h("li", {}, row));
     }
 
-    section.appendChild(
-      h(
-        "div",
-        { class: onShot.length ? "stage" : "stage is-solo" },
-        multi ? h("p", { class: "stage-label", "aria-hidden": "true" }, shot.alt) : null,
-        view.figure,
-        onShot.length ? list : null,
-      ),
+    const listed = stage.controls.length > 0;
+    const el = h(
+      "div",
+      { class: listed ? "stage" : "stage is-solo", "data-flow": "below" },
+      label ? h("p", { class: "stage-label", "aria-hidden": "true" }, label) : null,
+      view.figure,
+      listed ? list : null,
     );
+    const fig = figureWidth(stage);
+    el.style.setProperty("--fig-w", String(fig));
+    if (listed) watchFlow(el, fig);
+    return el;
+  }
+
+  if (!plan.grouped) {
+    const multi = plan.stages.length > 1;
+    for (const stage of plan.stages) section.appendChild(stageEl(stage, multi ? stage.shot.alt : null, null));
+  } else {
+    if (plan.overviews.length) {
+      section.appendChild(
+        h(
+          "div",
+          { class: plan.overviews.length > 1 ? "overviews is-multi" : "overviews" },
+          ...plan.overviews.map((o) => overview(screen, o.shot, o.regions, available.has(o.shot.id), env.theme)),
+        ),
+      );
+    }
+    for (const { group, stages } of plan.groups) {
+      const id = controlAnchor(screen.id, group.id);
+      const subTitle = `${id}--title`;
+      const sub = h(
+        "section",
+        { id, class: "subsection", "aria-labelledby": subTitle, tabindex: "-1" },
+        h(
+          "header",
+          { class: "subsection-head" },
+          h("h3", { id: subTitle }, group.title),
+          group.summary ? h("p", { class: "subsection-summary" }, rich(group.summary)) : null,
+        ),
+      );
+      const multi = stages.length > 1;
+      for (const stage of stages) sub.appendChild(stageEl(stage, multi ? stage.shot.alt : null, group));
+      section.appendChild(sub);
+      subsections.push(sub);
+    }
   }
 
   const notes = h("div", { class: "screen-notes" });
@@ -122,36 +174,102 @@ export function renderSection(
   }
   if (notes.childElementCount) section.appendChild(notes);
 
-  return { section, controls: refs, views };
+  return { section, controls: refs, views, subsections };
 }
 
-/** Controls on a shot in reading order: placed ones by visual row (centres
- *  within ROW_TOLERANCE shot px share a row), each row left to right; then
- *  any control without a position yet, in the order the content lists them. */
-const ROW_TOLERANCE = 16;
-export function readingOrder(controls: Control[], boxes: Record<string, Box> | undefined): Control[] {
-  const placed = controls
-    .filter((c) => boxes?.[c.id])
-    .map((c) => ({ c, b: boxes![c.id] }))
-    .sort((a, z) => a.b.y + a.b.h / 2 - (z.b.y + z.b.h / 2));
-  const rows: (typeof placed)[] = [];
-  for (const item of placed) {
-    const row = rows[rows.length - 1];
-    const cy = item.b.y + item.b.h / 2;
-    if (row && cy - (row[0].b.y + row[0].b.h / 2) <= ROW_TOLERANCE) row.push(item);
-    else rows.push([item]);
+/** Keeps a stage's data-flow in step with its width: the list beside the
+ *  figure when both fit, below it (in two columns when there is room) when
+ *  they do not. */
+function watchFlow(stage: HTMLElement, figure: number) {
+  const sync = () => {
+    const next = stageFlow(stage.clientWidth, figure);
+    if (stage.dataset.flow !== next) stage.dataset.flow = next;
+  };
+  sync();
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(sync).observe(stage);
+}
+
+/** A grouped screen's map: the whole shot with an outlined, labelled area
+ *  per group, each a link to its subsection. No numbered markers. */
+function overview(screen: Screen, shot: Shot, regions: Region[], has: boolean, theme: Theme): HTMLElement {
+  const size = shotSize(shot);
+  const media = has
+    ? h("img", { "data-shot": shot.id, src: shotSrc(theme, shot.id), alt: shot.alt, width: size.w, height: size.h, loading: "lazy", decoding: "async" })
+    : placeholder(shot.alt);
+  const links = regions.map(({ group, box }) => {
+    // A region on the right half has its label at its right end, so the label runs into the shot, not off it.
+    const end = box.x + box.w / 2 > size.w * 0.55;
+    const a = h("a", { class: end ? "region is-end" : "region", href: `#${controlAnchor(screen.id, group.id)}` }, h("span", { class: "region-label" }, group.title));
+    Object.assign(a.style, { left: pct(box.x, size.w), top: pct(box.y, size.h), width: pct(box.w, size.w), height: pct(box.h, size.h) });
+    return a;
+  });
+  const frame = h(
+    "div",
+    { class: size.w < 1440 ? "frame is-narrow" : "frame" },
+    media,
+    h("nav", { class: "regions", "aria-label": `Parts of ${shot.alt}` }, ...links),
+  );
+  frame.style.setProperty("--shot-w", String(size.w));
+  frame.style.setProperty("--shot-h", String(size.h));
+  frame.style.setProperty("--fig-w", String(size.w));
+  return h(
+    "figure",
+    { class: "shot overview", "data-overview": shot.id },
+    frame,
+    h("figcaption", { class: "overview-caption" }, icon("section", 14), h("span", {}, "Pick a part of the screen to go to its section.")),
+  );
+}
+
+/** The full-screen view of one stage: a fresh copy of the figure (in the
+ *  theme showing now) and a compact list with the same spotlight. */
+function viewerContent(screen: Screen, content: SiteContent, env: SectionEnv, stage: Stage, group: ControlGroup | null): ViewerContent {
+  const { shot } = stage;
+  const rows = new Map<string, HTMLButtonElement>();
+  const toggle = (id: string) => {
+    const next = view.pinned() === id ? null : id;
+    view.pin(next);
+    for (const [cid, row] of rows) row.toggleAttribute("data-pinned", cid === next);
+    if (next) rows.get(next)?.scrollIntoView?.({ block: "nearest" });
+  };
+  const view: ShotView = renderShot({
+    shot,
+    controls: stage.controls,
+    placed: content.positions[shot.id],
+    view: stage.view,
+    available: content.available.includes(shot.id),
+    theme: currentTheme(),
+    motion: env.motion,
+    onActive: (id) => {
+      for (const [cid, row] of rows) row.toggleAttribute("data-active", cid === id);
+    },
+    onMarkerClick: toggle,
+  });
+  const list = h("ol", { class: "controls is-compact", "aria-label": `Controls on ${shot.alt}` });
+  for (const { control, n } of stage.controls) {
+    const row = controlRow(control, n, view.has(control.id), null);
+    rows.set(control.id, row);
+    row.addEventListener("mouseenter", () => view.hover(control.id));
+    row.addEventListener("mouseleave", () => view.hover(null));
+    row.addEventListener("focus", () => view.hover(control.id));
+    row.addEventListener("blur", () => view.hover(null));
+    row.addEventListener("click", () => toggle(control.id));
+    list.appendChild(h("li", {}, row));
   }
-  const ordered = rows.flatMap((row) => row.sort((a, z) => a.b.x - z.b.x)).map((i) => i.c);
-  return [...ordered, ...controls.filter((c) => !boxes?.[c.id])];
+  return {
+    title: shot.alt,
+    context: group ? `${screen.title} · ${group.title}` : screen.title,
+    figure: view.figure,
+    list: stage.controls.length ? list : null,
+  };
 }
 
-function controlRow(screen: Screen, c: Control, n: number, placed: boolean): HTMLButtonElement {
+function controlRow(c: Control, n: number, placed: boolean, id: string | null): HTMLButtonElement {
   return h(
     "button",
     {
       type: "button",
       class: "row",
-      id: controlAnchor(screen.id, c.id),
+      id,
       "data-for": c.id,
       "data-placed": placed ? "true" : "false",
     },

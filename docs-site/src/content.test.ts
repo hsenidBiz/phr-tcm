@@ -92,6 +92,59 @@ describe("validateContent", () => {
   });
 });
 
+describe("groups (subsections of a busy screen)", () => {
+  const grouped = (): Screen[] => {
+    const s = good();
+    s[1].groups = [
+      { id: "filters", title: "Filters", summary: "Narrow the list." },
+      { id: "rest", title: "The rest" },
+    ];
+    s[1].controls[0].group = "filters";
+    s[1].controls[1].group = "rest";
+    s[1].controls[2].group = "rest";
+    return s;
+  };
+
+  test("a screen whose every control names one of its groups is valid", () => {
+    expect(validateContent({ screens: grouped() })).toEqual([]);
+  });
+
+  test("names a control with no group, or an unknown one, on a grouped screen", () => {
+    const s = grouped();
+    delete s[1].controls[1].group;
+    s[1].controls[2].group = "nowhere";
+    expect(validateContent({ screens: s })).toEqual([
+      'screen "beta", group "rest": has no controls',
+      'screen "beta", control "tab": names no group (the screen has groups)',
+      'screen "beta", control "title": group "nowhere" is not one of this screen\'s groups',
+    ]);
+  });
+
+  test("names a duplicate group id, one that is also a control id, a missing title, and an empty groups list", () => {
+    const s = grouped();
+    s[1].groups!.push({ id: "filters", title: "Again" }, { id: "tab", title: " " });
+    s[1].controls[1].group = "tab";
+    s[0].groups = [];
+    const problems = validateContent({ screens: s });
+    expect(problems).toContain('screen "alpha": groups is empty (leave it out instead)');
+    expect(problems).toContain('screen "beta": group id "filters" is used more than once');
+    expect(problems).toContain('screen "beta", group "tab": id is also a control id (both would be #beta/tab)');
+    expect(problems).toContain('screen "beta", group "tab": has no title');
+  });
+
+  test("names a control that names a group on a screen without groups", () => {
+    const s = good();
+    s[0].controls[0].group = "somewhere";
+    expect(validateContent({ screens: s })).toEqual(['screen "alpha", control "open": names group "somewhere", but the screen has no groups']);
+  });
+
+  test("the real registry groups its busy screens", () => {
+    const busy = screens.filter((s) => s.shots.some((shot) => s.controls.filter((c) => c.shot === shot.id).length > 12));
+    expect(busy.length).toBeGreaterThan(0);
+    expect(busy.filter((s) => !s.groups?.length).map((s) => s.id)).toEqual([]);
+  });
+});
+
 describe("shot sizes and positions", () => {
   const withRunner = (): Screen[] => {
     const s = good();

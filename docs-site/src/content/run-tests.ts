@@ -85,11 +85,18 @@ export const runTests: Screen = {
       alt: "Filing a bug from the runner",
     },
   ],
+  groups: [
+    { id: "choose", title: "Choose what to run", summary: "The PBI's test cases with their last outcomes; open one to see its history." },
+    { id: "order", title: "Set the run order", summary: "Put the cases in the order you want to run them, for yourself or for everyone." },
+    { id: "work-through", title: "Work through a case", summary: "The runner window: the case, its steps, and what you found on the way." },
+    { id: "wrap-up", title: "Record the outcome and move on", summary: "Mark the case, then go to the next one or finish the run." },
+  ],
   controls: [
     // --- The list ----------------------------------------------------------
     {
       id: "execution-report",
       shot: LIST,
+      group: "choose",
       locate: { role: "button", name: "Execution report" },
       name: "Execution report",
       does: "Opens a report of the selected cases' results in your browser. It is greyed out until at least one case is selected, as here.",
@@ -97,6 +104,7 @@ export const runTests: Screen = {
     {
       id: "suite",
       shot: LIST,
+      group: "choose",
       locate: { text: 'Plan "Release 2.4" / suite 91' },
       name: "Plan and suite",
       does: "The test plan and the PBI's test suite the results are recorded in. The first time you open a PBI here, the app finds its suite, or creates one when it has none.",
@@ -104,6 +112,7 @@ export const runTests: Screen = {
     {
       id: "refresh-outcomes",
       shot: LIST,
+      group: "choose",
       locate: { role: "button", name: "Refresh outcomes" },
       name: "Refresh outcomes",
       does: "Reads the latest outcomes, history and run order from Azure DevOps. [[Shift]]+click looks for the PBI's test suite again from scratch.",
@@ -111,6 +120,7 @@ export const runTests: Screen = {
     {
       id: "set-order",
       shot: LIST,
+      group: "choose",
       locate: { role: "button", name: "Set execution order" },
       name: "Set execution order",
       does: "Opens the Execution order window, where you choose the order the list and the runner follow, and how the list is grouped. It is greyed out while the run order is loading.",
@@ -118,6 +128,7 @@ export const runTests: Screen = {
     {
       id: "filter-text",
       shot: LIST,
+      group: "choose",
       locate: { role: "textbox", name: "Filter points" },
       name: "Filter by name or id",
       does: "Shows only the cases whose title or id contains what you type. Filtering hides rows; it never changes the order.",
@@ -125,6 +136,7 @@ export const runTests: Screen = {
     {
       id: "filter-outcome",
       shot: LIST,
+      group: "choose",
       locate: { role: "combobox", name: "Filter by last outcome" },
       name: "Last outcome filter",
       does: "Shows only the cases whose last result was Passed, Failed, Paused, Blocked or Not Applicable, or that were **Never run**.",
@@ -133,6 +145,7 @@ export const runTests: Screen = {
     {
       id: "select-all",
       shot: LIST,
+      group: "choose",
       locate: { role: "button", name: "Select all" },
       name: "Select all",
       does: "Selects every case the list shows, filters included. [[Ctrl]]+[[A]] does the same. While the list is grouped, the button is hidden and each group's box selects that group.",
@@ -140,6 +153,7 @@ export const runTests: Screen = {
     {
       id: "expand",
       shot: LIST,
+      group: "choose",
       locate: { role: "button", name: "Expand test case #5001" },
       name: "Open (>)",
       does: "Opens the case below its row: the last result's comment and bugs, earlier results, and the steps. Several can be open at once.",
@@ -147,6 +161,7 @@ export const runTests: Screen = {
     {
       id: "row",
       shot: LIST,
+      group: "choose",
       locate: { role: "row", nameRe: "#5003 Login - locked account" },
       name: "Test case",
       does:
@@ -156,6 +171,7 @@ export const runTests: Screen = {
     {
       id: "last-outcome",
       shot: LIST,
+      group: "choose",
       locate: { role: "columnheader", name: "Last outcome" },
       name: "Last outcome",
       does: "The result the case got the last time it was run. A dash means it has never been run.",
@@ -163,6 +179,7 @@ export const runTests: Screen = {
     {
       id: "history",
       shot: LIST,
+      group: "choose",
       locate: { role: "columnheader", name: "History" },
       name: "History",
       does: "The last few results as coloured dots, newest on the left. Hover a dot for its outcome, date and run.",
@@ -172,6 +189,7 @@ export const runTests: Screen = {
     {
       id: "run-in-runner",
       shot: SELECTED,
+      group: "choose",
       locate: { role: "button", nameRe: "^Run \\d+ in runner$" },
       name: "Run N in runner",
       does:
@@ -181,6 +199,7 @@ export const runTests: Screen = {
     {
       id: "clear-selection",
       shot: SELECTED,
+      group: "choose",
       locate: { role: "button", name: "Clear selection" },
       name: "Clear selection (x)",
       does: "Clears the selection.",
@@ -190,6 +209,7 @@ export const runTests: Screen = {
     {
       id: "group-fold",
       shot: GROUPED,
+      group: "choose",
       locate: { role: "button", name: "Collapse group Login" },
       name: "Fold group (v)",
       does: "Folds the group away, or opens it again. A case you have opened stays on screen when its group is folded.",
@@ -197,6 +217,7 @@ export const runTests: Screen = {
     {
       id: "group-select",
       shot: GROUPED,
+      group: "choose",
       locate: { role: "checkbox", name: "Select all in Login" },
       name: "Select the group",
       does: "Selects every case in the group, or clears them when they are all selected. Folding a group does not unselect its cases.",
@@ -204,6 +225,7 @@ export const runTests: Screen = {
     {
       id: "group-name",
       shot: GROUPED,
+      group: "choose",
       locate: { role: "button", name: "Login (3)" },
       name: "Group name",
       does:
@@ -214,6 +236,7 @@ export const runTests: Screen = {
     {
       id: "last-result",
       shot: PREVIEW,
+      group: "choose",
       locate: { text: "Last result" },
       name: "Last result",
       does: "The comment recorded with the latest result, and the bugs linked to it.",
@@ -221,6 +244,7 @@ export const runTests: Screen = {
     {
       id: "bug-link",
       shot: PREVIEW,
+      group: "choose",
       locate: { role: "button", name: "#2003" },
       name: "Bug",
       does: "Opens that bug in Azure DevOps, in your browser.",
@@ -228,6 +252,7 @@ export const runTests: Screen = {
     {
       id: "execution-history",
       shot: PREVIEW,
+      group: "choose",
       locate: { role: "button", name: "Hide execution history" },
       name: "Execution history",
       does:
@@ -237,6 +262,7 @@ export const runTests: Screen = {
     {
       id: "steps",
       shot: PREVIEW,
+      group: "choose",
       locate: { role: "columnheader", name: "Action" },
       name: "Steps",
       does: "The case's steps, so a failure can be checked without opening the runner.",
@@ -244,6 +270,7 @@ export const runTests: Screen = {
     {
       id: "collapse-all",
       shot: PREVIEW,
+      group: "choose",
       locate: { role: "button", nameRe: "^Collapse all \\(\\d+\\)$" },
       name: "Collapse all",
       does: "Closes every open case and folds every open group in one press.",
@@ -253,6 +280,7 @@ export const runTests: Screen = {
     {
       id: "start-from",
       shot: ORDER,
+      group: "order",
       locate: { role: "combobox", name: "Start from" },
       name: "Start from",
       does:
@@ -262,6 +290,7 @@ export const runTests: Screen = {
     {
       id: "group-cases",
       shot: ORDER,
+      group: "order",
       locate: { role: "combobox", name: "Group cases" },
       name: "Group cases",
       does:
@@ -270,6 +299,7 @@ export const runTests: Screen = {
     {
       id: "order-note",
       shot: ORDER,
+      group: "order",
       locate: { text: "No suggested run order yet." },
       name: "Suggested run order note",
       does: "Who saved the suggested run order and when, or that there is none yet. If it cannot be read, this line says why.",
@@ -277,6 +307,7 @@ export const runTests: Screen = {
     {
       id: "order-count",
       shot: ORDER,
+      group: "order",
       locate: { text: "5 test cases" },
       name: "Cases and selection",
       does:
@@ -285,6 +316,7 @@ export const runTests: Screen = {
     {
       id: "order-row",
       shot: ORDER,
+      group: "order",
       locate: { text: "Login - valid credentials" },
       name: "Case",
       does:
@@ -293,6 +325,7 @@ export const runTests: Screen = {
     {
       id: "order-move",
       shot: ORDER,
+      group: "order",
       locate: { role: "button", name: "Move #5001 down" },
       name: "Move up / down",
       does: "Moves the case (or the selection it belongs to) one place up or down.",
@@ -300,6 +333,7 @@ export const runTests: Screen = {
     {
       id: "order-cancel",
       shot: ORDER,
+      group: "order",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window. The list keeps the order and grouping it had.",
@@ -307,6 +341,7 @@ export const runTests: Screen = {
     {
       id: "save-for-everyone",
       shot: ORDER,
+      group: "order",
       locate: { role: "button", name: "Save for everyone" },
       name: "Save for everyone",
       does:
@@ -316,6 +351,7 @@ export const runTests: Screen = {
     {
       id: "use-this-order",
       shot: ORDER,
+      group: "order",
       locate: { role: "button", name: "Use this order" },
       name: "Use this order",
       does:
@@ -324,6 +360,7 @@ export const runTests: Screen = {
     {
       id: "order-save-message",
       shot: ORDER_SAVE,
+      group: "order",
       locate: { text: "Every tester will see this as the suggested run order for this PBI." },
       name: "Confirm",
       does: "Appears after **Save for everyone**, so the order is not shared by accident.",
@@ -331,6 +368,7 @@ export const runTests: Screen = {
     {
       id: "order-save-cancel",
       shot: ORDER_SAVE,
+      group: "order",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Goes back without saving.",
@@ -338,6 +376,7 @@ export const runTests: Screen = {
     {
       id: "order-save",
       shot: ORDER_SAVE,
+      group: "order",
       locate: { role: "button", name: "Save" },
       name: "Save",
       does: "Saves the suggested run order and switches the list to it.",
@@ -347,6 +386,7 @@ export const runTests: Screen = {
     {
       id: "runner-case-id",
       shot: RUNNER,
+      group: "work-through",
       locate: { text: "#5001" },
       name: "Case id",
       does: "The id of the case on screen, the number to quote in a bug.",
@@ -354,6 +394,7 @@ export const runTests: Screen = {
     {
       id: "runner-selected",
       shot: RUNNER,
+      group: "work-through",
       locate: { text: "2 selected" },
       name: "Selected",
       does: "How many cases this run was opened with.",
@@ -361,6 +402,7 @@ export const runTests: Screen = {
     {
       id: "runner-position",
       shot: RUNNER,
+      group: "work-through",
       locate: { text: "1/2" },
       name: "Position",
       does: "Which case you are on, out of how many. Hover it to see how many are marked.",
@@ -368,6 +410,7 @@ export const runTests: Screen = {
     {
       id: "runner-pin",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", nameRe: "^(Unpin|Pin on top)" },
       name: "Pin",
       does: "Keeps the runner on top of other windows, or lets them cover it. The next run opens the way you left it.",
@@ -375,6 +418,7 @@ export const runTests: Screen = {
     {
       id: "runner-close",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Close runner" },
       name: "Close (x)",
       does: "Closes the runner. Results already recorded stay recorded; a run that was not finished stays In Progress in Azure DevOps.",
@@ -382,6 +426,7 @@ export const runTests: Screen = {
     {
       id: "runner-title",
       shot: RUNNER,
+      group: "work-through",
       locate: { text: "Login - valid credentials" },
       name: "Case",
       does: "The case's title, with its last outcome and recent history beside it.",
@@ -389,6 +434,7 @@ export const runTests: Screen = {
     {
       id: "runner-preconditions",
       shot: RUNNER,
+      group: "work-through",
       locate: { text: "Preconditions" },
       name: "Preconditions",
       does: "What must be true before you start, when the case has any.",
@@ -396,6 +442,7 @@ export const runTests: Screen = {
     {
       id: "step-passed",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Mark step 1 passed" },
       name: "P (step passed)",
       does: "Marks this step Passed. Click it again to clear it. Marking steps is optional.",
@@ -403,6 +450,7 @@ export const runTests: Screen = {
     {
       id: "step-failed",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Mark step 1 failed" },
       name: "F (step failed)",
       does: "Marks this step Failed, which also offers **File bug**. Click it again to clear it.",
@@ -410,6 +458,7 @@ export const runTests: Screen = {
     {
       id: "runner-comment",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "textbox", name: "Comment" },
       name: "Comment",
       does: "A comment for this result. It starts with the last result's comment, if there was one.",
@@ -417,6 +466,7 @@ export const runTests: Screen = {
     {
       id: "record",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Record" },
       name: "Record",
       does: "Records your screen: pick a screen or window, then press **Stop recording**. The video is attached to this case's result.",
@@ -424,6 +474,7 @@ export const runTests: Screen = {
     {
       id: "snip",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Snip" },
       name: "Snip",
       does:
@@ -432,6 +483,7 @@ export const runTests: Screen = {
     {
       id: "paste",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Paste" },
       name: "Paste",
       does: "Attaches the picture on the clipboard. [[Ctrl]]+[[V]] anywhere in the runner does the same.",
@@ -439,6 +491,7 @@ export const runTests: Screen = {
     {
       id: "attach-file",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "Attach file" },
       name: "Attach file",
       does: "Attaches any file you pick to this case's result.",
@@ -447,6 +500,7 @@ export const runTests: Screen = {
     {
       id: "file-bug",
       shot: RUNNER,
+      group: "work-through",
       locate: { role: "button", name: "File bug" },
       name: "File bug",
       does: "Opens the bug window, filled in from this case. It shows once the case or one of its steps is marked Failed.",
@@ -454,6 +508,7 @@ export const runTests: Screen = {
     {
       id: "passed",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Passed" },
       name: "Passed",
       does: "Marks the case Passed. Every verdict works the same way: click it to mark, click it again to clear.",
@@ -462,6 +517,7 @@ export const runTests: Screen = {
     {
       id: "failed",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Failed" },
       name: "Failed",
       does: "Marks the case Failed and offers **File bug**.",
@@ -469,6 +525,7 @@ export const runTests: Screen = {
     {
       id: "paused",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Paused" },
       name: "Paused",
       does: "For a case you had to stop half way and mean to come back to.",
@@ -476,6 +533,7 @@ export const runTests: Screen = {
     {
       id: "blocked",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Blocked" },
       name: "Blocked",
       does: "For a case that could not be run, for example because something it needs is broken.",
@@ -483,6 +541,7 @@ export const runTests: Screen = {
     {
       id: "not-applicable",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Not Applicable" },
       name: "Not Applicable",
       does: "For a case that does not apply to this build.",
@@ -490,6 +549,7 @@ export const runTests: Screen = {
     {
       id: "prev",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Prev" },
       name: "Prev",
       does: "Goes back one case, recording the one you leave, as **Next** does.",
@@ -497,6 +557,7 @@ export const runTests: Screen = {
     {
       id: "next",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", name: "Next" },
       name: "Next",
       does:
@@ -506,6 +567,7 @@ export const runTests: Screen = {
     {
       id: "finish",
       shot: RUNNER,
+      group: "wrap-up",
       locate: { role: "button", nameRe: "^Finish \\(\\d+\\)$" },
       name: "Finish (N)",
       does:
@@ -517,6 +579,7 @@ export const runTests: Screen = {
     {
       id: "bug-title",
       shot: BUG,
+      group: "work-through",
       locate: { role: "textbox", name: "Bug title" },
       name: "Bug title",
       does: "The bug's title, filled in from the case. Change it as you need.",
@@ -524,6 +587,7 @@ export const runTests: Screen = {
     {
       id: "bug-repro",
       shot: BUG,
+      group: "work-through",
       locate: { role: "textbox", name: "Repro steps" },
       name: "Repro steps",
       does: "The case and its steps, filled in for you. Add what actually happened.",
@@ -531,6 +595,7 @@ export const runTests: Screen = {
     {
       id: "bug-links",
       shot: BUG,
+      group: "work-through",
       locate: { text: "Links to test case #5001 and PBI #1001. Paste (Ctrl+V) to add more." },
       name: "Links and screenshots",
       does:
@@ -540,6 +605,7 @@ export const runTests: Screen = {
     {
       id: "bug-cancel",
       shot: BUG,
+      group: "work-through",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without filing anything.",

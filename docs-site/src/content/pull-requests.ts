@@ -51,11 +51,18 @@ export const pullRequests: Screen = {
       alt: "One step's log from a pipeline run",
     },
   ],
+  groups: [
+    { id: "what-to-show", title: "Choose what to show", summary: "Your own pull requests, the repositories you follow, active or completed." },
+    { id: "lists", title: "The pull request lists", summary: "Waiting for your review, your own, and each followed repository, with their state at a glance." },
+    { id: "read", title: "Read a pull request", summary: "Open one to see its description, comments, reviewers, pipeline and work items." },
+    { id: "pipeline", title: "Pipeline runs and logs", summary: "Every stage, job and step of a pull request's pipeline, down to one step's log." },
+  ],
   controls: [
     // --- The list -----------------------------------------------------------------
     {
       id: "repositories",
       shot: LIST,
+      group: "what-to-show",
       locate: { role: "button", name: "Repositories" },
       name: "What to show",
       does:
@@ -65,6 +72,7 @@ export const pullRequests: Screen = {
     {
       id: "clear-repositories",
       shot: LIST,
+      group: "what-to-show",
       locate: { role: "button", name: "Clear selection" },
       name: "Clear (x)",
       does: "Unticks everything, leaving only the pull requests waiting for your review.",
@@ -72,6 +80,7 @@ export const pullRequests: Screen = {
     {
       id: "active-completed",
       shot: LIST,
+      group: "what-to-show",
       locate: { role: "button", name: "active" },
       name: "Active / Completed",
       does: "Whether the repositories you follow show their active or their completed pull requests. It does not change the two lists above them.",
@@ -79,6 +88,7 @@ export const pullRequests: Screen = {
     {
       id: "refresh",
       shot: LIST,
+      group: "what-to-show",
       locate: { role: "button", name: "Refresh pull requests" },
       name: "Refresh",
       does: "Reads the lists again from Azure DevOps.",
@@ -86,6 +96,7 @@ export const pullRequests: Screen = {
     {
       id: "awaiting",
       shot: LIST,
+      group: "lists",
       locate: { role: "heading", nameRe: "^Awaiting your review" },
       name: "Awaiting your review",
       does: "Active pull requests you are a reviewer on and have not voted on yet, with how many there are. The heading lights up while there are any.",
@@ -93,6 +104,7 @@ export const pullRequests: Screen = {
     {
       id: "row",
       shot: LIST,
+      group: "lists",
       locate: { role: "button", nameRe: "^!501 " },
       name: "Pull request",
       does:
@@ -102,6 +114,7 @@ export const pullRequests: Screen = {
     {
       id: "pipeline-in-progress",
       shot: LIST,
+      group: "lists",
       locate: { text: "Pipeline In Progress" },
       name: "Pipeline In Progress",
       does: "The pull request's validation build is still running. A build that passed shows nothing, so a quiet row is a good sign.",
@@ -109,6 +122,7 @@ export const pullRequests: Screen = {
     {
       id: "open-in-ado",
       shot: LIST,
+      group: "lists",
       locate: { role: "button", name: "Open !501 in Azure DevOps" },
       name: "Open in Azure DevOps",
       does: "Opens the pull request in your browser, for voting, replying or completing it.",
@@ -116,6 +130,7 @@ export const pullRequests: Screen = {
     {
       id: "yours",
       shot: LIST,
+      group: "lists",
       locate: { role: "heading", nameRe: "^Your pull requests" },
       name: "Your pull requests",
       does: "The active pull requests you opened. Shown while **Your Pull Requests** is ticked.",
@@ -123,6 +138,7 @@ export const pullRequests: Screen = {
     {
       id: "draft",
       shot: LIST,
+      group: "lists",
       locate: { text: "Draft" },
       name: "Draft",
       does: "The pull request is still a draft.",
@@ -130,6 +146,7 @@ export const pullRequests: Screen = {
     {
       id: "conflicts",
       shot: LIST,
+      group: "lists",
       locate: { text: "Conflicts" },
       name: "Conflicts",
       does: "The pull request has merge conflicts to resolve.",
@@ -137,6 +154,7 @@ export const pullRequests: Screen = {
     {
       id: "pipeline-error",
       shot: LIST,
+      group: "lists",
       locate: { text: "Pipeline Error" },
       name: "Pipeline Error",
       does: "The pull request's validation build failed. Open the row to see where.",
@@ -144,6 +162,7 @@ export const pullRequests: Screen = {
     {
       id: "followed-repository",
       shot: LIST,
+      group: "lists",
       locate: { role: "heading", nameRe: "^Active on " },
       name: "Active on (repository)",
       does:
@@ -155,6 +174,7 @@ export const pullRequests: Screen = {
     {
       id: "description",
       shot: OPEN,
+      group: "read",
       locate: { text: "What changed and why." },
       name: "Description",
       does: "The pull request's description. A long one is cut short with **View more**, which opens the whole text in a window.",
@@ -162,6 +182,7 @@ export const pullRequests: Screen = {
     {
       id: "comments",
       shot: OPEN,
+      group: "read",
       locate: { text: "1 unresolved of 2" },
       name: "Comments",
       does: "How many comment threads are still open. The open ones come first; resolved ones stay below them as a record.",
@@ -169,6 +190,7 @@ export const pullRequests: Screen = {
     {
       id: "thread",
       shot: OPEN,
+      group: "read",
       locate: { text: "/src/components/LoginForm.tsx:42" },
       name: "Comment thread",
       does:
@@ -177,6 +199,7 @@ export const pullRequests: Screen = {
     {
       id: "image",
       shot: OPEN,
+      group: "read",
       locate: { role: "img", name: "sign-in error" },
       name: "Pictures",
       does: "Screenshots pasted into a comment show in place. If one cannot be loaded, a note says so.",
@@ -184,6 +207,7 @@ export const pullRequests: Screen = {
     {
       id: "resolve",
       shot: OPEN,
+      group: "read",
       locate: { role: "button", name: "Resolve" },
       name: "Resolve",
       does: "Marks the thread resolved in Azure DevOps. Resolving and reactivating threads are the only changes this page makes there.",
@@ -191,6 +215,7 @@ export const pullRequests: Screen = {
     {
       id: "reactivate",
       shot: OPEN,
+      group: "read",
       locate: { role: "button", name: "Reactivate" },
       name: "Reactivate",
       does: "Puts a resolved thread back to active in Azure DevOps.",
@@ -198,6 +223,7 @@ export const pullRequests: Screen = {
     {
       id: "view-history",
       shot: OPEN,
+      group: "read",
       locate: { role: "button", name: "View history" },
       name: "View history",
       does: "Opens every pipeline run of this pull request, with its stages and steps.",
@@ -205,6 +231,7 @@ export const pullRequests: Screen = {
     {
       id: "last-run",
       shot: OPEN,
+      group: "read",
       locate: { role: "button", nameRe: "^Open build " },
       name: "Last Run Pipeline",
       does:
@@ -214,6 +241,7 @@ export const pullRequests: Screen = {
     {
       id: "work-item",
       shot: OPEN,
+      group: "read",
       locate: { role: "button", nameRe: "^2005 " },
       name: "Work items",
       does: "The work items linked to the pull request, with their state. Click one to open it in your browser.",
@@ -223,6 +251,7 @@ export const pullRequests: Screen = {
     {
       id: "your-pull-requests",
       shot: PICKER,
+      group: "what-to-show",
       locate: { role: "checkbox", name: "Your Pull Requests" },
       name: "Your Pull Requests",
       does: "Ticked, the page lists the pull requests you opened. It starts ticked.",
@@ -230,6 +259,7 @@ export const pullRequests: Screen = {
     {
       id: "repository",
       shot: PICKER,
+      group: "what-to-show",
       locate: { role: "checkbox", name: "portal-api" },
       name: "A repository",
       does:
@@ -240,6 +270,7 @@ export const pullRequests: Screen = {
     {
       id: "close-history",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "button", name: "Close pipeline history" },
       name: "Close",
       does: "Closes the pipeline history. The line under the title says how many runs there were and how far the change got, such as the last environment it reached.",
@@ -247,6 +278,7 @@ export const pullRequests: Screen = {
     {
       id: "search-steps",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "textbox", name: "Search stages and steps" },
       name: "Search stages, jobs and steps",
       does: "Shows only the stages, jobs and steps whose names contain what you type, with every run opened.",
@@ -254,6 +286,7 @@ export const pullRequests: Screen = {
     {
       id: "failures-only",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "button", name: "Failures only" },
       name: "Failures only",
       does: "Shows only the steps that failed. Greyed out when nothing failed.",
@@ -261,6 +294,7 @@ export const pullRequests: Screen = {
     {
       id: "run",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "button", nameRe: "^in progress " },
       name: "Run",
       does:
@@ -270,6 +304,7 @@ export const pullRequests: Screen = {
     {
       id: "step",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "button", nameRe: "^Restore The Solution" },
       name: "Step",
       does: "A step of the run, with how long it took. A failed step shows its error under it. Click a step to read its log.",
@@ -277,6 +312,7 @@ export const pullRequests: Screen = {
     {
       id: "open-run",
       shot: PIPELINE,
+      group: "pipeline",
       locate: { role: "button", name: "Open run in Azure DevOps" },
       name: "Open run in Azure DevOps",
       does: "Opens the run in your browser. A run that was deployed also lists its environments, each with a button to open the release.",
@@ -286,6 +322,7 @@ export const pullRequests: Screen = {
     {
       id: "close-log",
       shot: LOG,
+      group: "pipeline",
       locate: { role: "button", name: "Close log" },
       name: "Close",
       does: "Closes the log. The log of a step that is still running keeps filling in while it is open.",
@@ -293,6 +330,7 @@ export const pullRequests: Screen = {
     {
       id: "copy-log",
       shot: LOG,
+      group: "pipeline",
       locate: { role: "button", name: "Copy log" },
       name: "Copy log",
       does: "Copies the whole log.",

@@ -42,6 +42,10 @@ function visibleText(): { where: string; text: string }[] {
       add(`${s.id} how-to`, how.title);
       how.steps.forEach((t, i) => add(`${s.id} how-to "${how.title}" step ${i + 1}`, t));
     }
+    for (const g of s.groups ?? []) {
+      add(`${s.id}/${g.id} group title`, g.title);
+      add(`${s.id}/${g.id} group summary`, g.summary);
+    }
     for (const shot of s.shots) add(`${shot.id} alt`, shot.alt);
     for (const c of s.controls) {
       add(`${s.id}/${c.id} name`, c.name);

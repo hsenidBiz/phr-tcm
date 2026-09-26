@@ -1,4 +1,4 @@
-// Ctrl+K search over every screen, control, tip and common task, with a
+// Ctrl+K search over every screen, its sections, controls, tips and common tasks, with a
 // small fuzzy scorer (no library): exact > prefix > whole-word substring >
 // substring > all words present > an in-order subsequence.
 
@@ -39,20 +39,24 @@ export function score(query: string, text: string): number {
   return Math.max(1, Math.min(299, 200 + longest * 8 - gaps * 3 - first));
 }
 
-type Kind = "screen" | "control" | "tip" | "task";
+type Kind = "screen" | "section" | "control" | "tip" | "task";
 type Item = { kind: Kind; title: string; context: string; href: string };
 
 const KIND: Record<Kind, { label: string; icon: IconName; rank: number }> = {
   screen: { label: "Screen", icon: "screen", rank: 0 },
-  control: { label: "Control", icon: "control", rank: 1 },
-  task: { label: "Common task", icon: "task", rank: 2 },
-  tip: { label: "Tip", icon: "tip", rank: 3 },
+  section: { label: "Section", icon: "section", rank: 1 },
+  control: { label: "Control", icon: "control", rank: 2 },
+  task: { label: "Common task", icon: "task", rank: 3 },
+  tip: { label: "Tip", icon: "tip", rank: 4 },
 };
 
 export function buildIndex(content: SiteContent): Item[] {
   const items: Item[] = [];
   for (const s of content.screens) {
     items.push({ kind: "screen", title: s.title, context: plain(s.summary), href: s.id });
+    for (const g of s.groups ?? []) {
+      items.push({ kind: "section", title: g.title, context: g.summary ? `${s.title} · ${plain(g.summary)}` : s.title, href: controlAnchor(s.id, g.id) });
+    }
     for (const c of s.controls) {
       items.push({
         kind: "control",

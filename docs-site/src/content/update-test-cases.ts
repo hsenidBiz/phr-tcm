@@ -68,11 +68,17 @@ export const updateTestCases: Screen = {
       alt: "The confirmation before test cases are deleted",
     },
   ],
+  groups: [
+    { id: "find-case", title: "Find a test case", summary: "The PBI's test cases, with a filter and grouping by title." },
+    { id: "edit-case", title: "Edit a test case", summary: "Open a case to change its title, tags and steps, then save." },
+    { id: "selection", title: "Act on a selection", summary: "Tick cases to edit, rename, export, move or delete them together." },
+  ],
   controls: [
     // --- The list ----------------------------------------------------------
     {
       id: "count",
       shot: LIST,
+      group: "find-case",
       locate: { role: "heading", nameRe: "Total Test Cases$" },
       name: "Total Test Cases",
       does: "How many test cases are linked to the PBI. While the search box has text, it shows how many of them match.",
@@ -80,6 +86,7 @@ export const updateTestCases: Screen = {
     {
       id: "refresh",
       shot: LIST,
+      group: "find-case",
       locate: { role: "button", name: "Refresh" },
       name: "Refresh",
       does: "Reads the test cases from Azure DevOps again, for changes made somewhere else.",
@@ -87,6 +94,7 @@ export const updateTestCases: Screen = {
     {
       id: "search",
       shot: LIST,
+      group: "find-case",
       locate: { role: "textbox", name: "Search test cases" },
       name: "Filter by name or id",
       does: "Shows only the cases whose title, id or tags contain what you type.",
@@ -94,6 +102,7 @@ export const updateTestCases: Screen = {
     {
       id: "group-by-title",
       shot: LIST,
+      group: "find-case",
       locate: { role: "checkbox", name: "Group by title" },
       name: "Group by title",
       does: "Gathers cases whose titles start the same way, such as every case beginning with **Login**, under one heading. The choice is remembered.",
@@ -101,6 +110,7 @@ export const updateTestCases: Screen = {
     {
       id: "expand",
       shot: LIST,
+      group: "find-case",
       locate: { role: "button", name: "Expand #5001" },
       name: "Open the editor (>)",
       does: "Opens the case for editing right in the list. Press it again to close it. Double-clicking the row does the same.",
@@ -108,6 +118,7 @@ export const updateTestCases: Screen = {
     {
       id: "case",
       shot: LIST,
+      group: "find-case",
       locate: { text: FIRST },
       name: "Test case",
       does:
@@ -119,6 +130,7 @@ export const updateTestCases: Screen = {
     {
       id: "case-title",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "textbox", name: "Case title" },
       name: "Title",
       does: "The case's title. Pressing [[Enter]] here saves, the same as **Save changes**.",
@@ -126,6 +138,7 @@ export const updateTestCases: Screen = {
     {
       id: "case-status",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
       does: "**Not Automated** or **Planned**.",
@@ -133,6 +146,7 @@ export const updateTestCases: Screen = {
     {
       id: "remove-tag",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Remove regression" },
       name: "Remove tag (x)",
       does: "Takes that tag off the case when you save.",
@@ -140,6 +154,7 @@ export const updateTestCases: Screen = {
     {
       id: "tags",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "textbox", name: "Tags" },
       name: "Tags",
       does: "Add a tag: type to search the project's existing tags, or type a new one.",
@@ -148,6 +163,7 @@ export const updateTestCases: Screen = {
     {
       id: "reorder-step",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Reorder step 1" },
       name: "Drag handle",
       does: "Drag a step by its handle to move it, or click the handle and use the up and down arrow keys.",
@@ -155,6 +171,7 @@ export const updateTestCases: Screen = {
     {
       id: "step-action",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "textbox", name: "Step 1 action" },
       name: "Action",
       does: "What the tester does in this step.",
@@ -162,6 +179,7 @@ export const updateTestCases: Screen = {
     {
       id: "step-expected",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "textbox", name: "Step 1 expected" },
       name: "Expected result",
       does: "What should happen after the action.",
@@ -169,6 +187,7 @@ export const updateTestCases: Screen = {
     {
       id: "remove-step",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Remove step 1" },
       name: "Remove step (x)",
       does: "Removes the step.",
@@ -176,6 +195,7 @@ export const updateTestCases: Screen = {
     {
       id: "add-step",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Add Step" },
       name: "Add Step",
       does: "Adds an empty step at the end.",
@@ -183,6 +203,7 @@ export const updateTestCases: Screen = {
     {
       id: "save",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Save changes" },
       name: "Save changes",
       does:
@@ -192,6 +213,7 @@ export const updateTestCases: Screen = {
     {
       id: "discard",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", name: "Discard changes" },
       name: "Discard changes",
       does: "Shows once something has changed. It puts the case back as it was when you opened it (or last saved it). A message offers **Undo** for ten seconds, in case you pressed it by mistake.",
@@ -199,6 +221,7 @@ export const updateTestCases: Screen = {
     {
       id: "collapse-all",
       shot: EDITOR,
+      group: "edit-case",
       locate: { role: "button", nameRe: "^Collapse all \\(\\d+\\)$" },
       name: "Collapse all",
       does: "Closes the open editor and folds every open group in one press. It stays in the corner while anything is open.",
@@ -208,6 +231,7 @@ export const updateTestCases: Screen = {
     {
       id: "group-fold",
       shot: GROUPED,
+      group: "find-case",
       locate: { role: "button", name: "Collapse group Login" },
       name: "Fold group (v)",
       does: "Folds the group away, or opens it again. An open editor stays on screen when its group is folded.",
@@ -215,6 +239,7 @@ export const updateTestCases: Screen = {
     {
       id: "group-select",
       shot: GROUPED,
+      group: "find-case",
       locate: { role: "checkbox", name: "Select all in Login" },
       name: "Select the group",
       does: "Selects every case in the group, or clears them when they are all selected.",
@@ -222,6 +247,7 @@ export const updateTestCases: Screen = {
     {
       id: "group-name",
       shot: GROUPED,
+      group: "find-case",
       locate: { role: "button", name: "Login (3)" },
       name: "Group name",
       does: "The words the titles share and how many cases are in the group. Clicking it folds or opens the group. Cases that share nothing sit under **Ungrouped**.",
@@ -231,6 +257,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-edit",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Bulk edit" },
       name: "Bulk edit",
       does: "Opens a window for setting the same automation status, tags, module or preconditions on every selected case.",
@@ -238,6 +265,7 @@ export const updateTestCases: Screen = {
     {
       id: "rename",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Rename" },
       name: "Rename",
       does:
@@ -246,6 +274,7 @@ export const updateTestCases: Screen = {
     {
       id: "export-json",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Export JSON" },
       name: "Export JSON",
       does: "Saves the selected cases to a JSON file you choose. The file carries their ids, so importing it later updates these cases instead of creating copies.",
@@ -253,6 +282,7 @@ export const updateTestCases: Screen = {
     {
       id: "delete",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Delete" },
       name: "Delete",
       does: "Opens the confirmation for deleting the selected cases for good. It only shows when Azure DevOps allows you to delete test cases in this PBI's area.",
@@ -260,6 +290,7 @@ export const updateTestCases: Screen = {
     {
       id: "move-to-pbi",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Move to PBI" },
       name: "Move to PBI",
       does: "Opens a window for moving the selected cases to a different PBI, for cases that were linked to the wrong one.",
@@ -267,6 +298,7 @@ export const updateTestCases: Screen = {
     {
       id: "clear",
       shot: SELECTED,
+      group: "selection",
       locate: { role: "button", name: "Clear" },
       name: "Clear",
       does: "Clears the selection.",
@@ -274,6 +306,7 @@ export const updateTestCases: Screen = {
     {
       id: "selection-hint",
       shot: SELECTED,
+      group: "selection",
       locate: { text: "Ctrl+click to toggle · Shift+click for range" },
       name: "Selection",
       does:
@@ -285,6 +318,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-status",
       shot: BULK,
+      group: "selection",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
       does: "The status to give every selected case, or **Leave unchanged**.",
@@ -292,6 +326,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-module",
       shot: BULK,
+      group: "selection",
       locate: { role: "checkbox", name: "Set module" },
       name: "Set module",
       does: "Tick it to show a Module field; the value you pick goes on every selected case.",
@@ -299,6 +334,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-tags",
       shot: BULK,
+      group: "selection",
       locate: { role: "combobox", name: "Tags" },
       name: "Tags",
       does: "**Add tags** adds the tags you type to each case's own. **Replace tags** swaps each case's tags for them. **Leave unchanged** keeps them.",
@@ -306,6 +342,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-preconditions",
       shot: BULK,
+      group: "selection",
       locate: { role: "checkbox", name: "Set preconditions" },
       name: "Set preconditions",
       does: "Tick it to show a Preconditions box; its text replaces the preconditions of every selected case.",
@@ -313,6 +350,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-cancel",
       shot: BULK,
+      group: "selection",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without changing anything.",
@@ -320,6 +358,7 @@ export const updateTestCases: Screen = {
     {
       id: "bulk-apply",
       shot: BULK,
+      group: "selection",
       locate: { role: "button", nameRe: "^Apply to \\d+$" },
       name: "Apply to N",
       does:
@@ -331,6 +370,7 @@ export const updateTestCases: Screen = {
     {
       id: "move-search",
       shot: MOVE,
+      group: "selection",
       locate: { role: "textbox", name: "Search for the destination PBI" },
       name: "Search PBIs",
       does: "Type a title or an id to find the PBI to move the cases to, then click it in the list. **change** beside it picks a different one.",
@@ -338,6 +378,7 @@ export const updateTestCases: Screen = {
     {
       id: "move-cancel",
       shot: MOVE,
+      group: "selection",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without moving anything.",
@@ -345,6 +386,7 @@ export const updateTestCases: Screen = {
     {
       id: "move-confirm",
       shot: MOVE,
+      group: "selection",
       locate: { role: "button", name: "Pick a PBI first" },
       name: "Move N to #PBI",
       does:
@@ -356,6 +398,7 @@ export const updateTestCases: Screen = {
     {
       id: "delete-confirm-tick",
       shot: DELETE,
+      group: "selection",
       locate: { role: "checkbox", name: "I understand these test cases will be permanently deleted" },
       name: "I understand",
       does: "Tick it to confirm you have read the list above it. The delete button stays greyed out until you do.",
@@ -363,6 +406,7 @@ export const updateTestCases: Screen = {
     {
       id: "delete-cancel",
       shot: DELETE,
+      group: "selection",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window. Nothing is deleted.",
@@ -370,6 +414,7 @@ export const updateTestCases: Screen = {
     {
       id: "delete-confirm",
       shot: DELETE,
+      group: "selection",
       locate: { role: "button", nameRe: "^Permanently delete \\d+$" },
       name: "Permanently delete N",
       does:

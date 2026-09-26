@@ -37,10 +37,15 @@ export const searchSuites: Screen = {
       alt: "The More menu of a PBI's suite",
     },
   ],
+  groups: [
+    { id: "find", title: "Search the test plans", summary: "Find a plan, folder or suite by name." },
+    { id: "tree", title: "Plans, folders and suites", summary: "Open a folder to see its suites; a suite shows its test points and what you can do with it." },
+  ],
   controls: [
     {
       id: "refresh",
       shot: TREE,
+      group: "find",
       locate: { role: "button", name: "Refresh test plans" },
       name: "Refresh test plans",
       does:
@@ -49,6 +54,7 @@ export const searchSuites: Screen = {
     {
       id: "search",
       shot: TREE,
+      group: "find",
       locate: { role: "textbox", name: "Search suites" },
       name: "Search plans and suites",
       does:
@@ -57,6 +63,7 @@ export const searchSuites: Screen = {
     {
       id: "folder",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", nameRe: "^Web app Open " },
       name: "Folder",
       does: "A suite that holds other suites. Click it to open or fold it. Each plan starts with its folders folded, under the plan's name and area.",
@@ -64,6 +71,7 @@ export const searchSuites: Screen = {
     {
       id: "pbi-badge",
       shot: TREE,
+      group: "tree",
       locate: { text: "PBI 1001" },
       name: "PBI badge",
       does: "Marks a PBI's own suite, with the PBI's number.",
@@ -71,6 +79,7 @@ export const searchSuites: Screen = {
     {
       id: "suite",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", nameRe: "^PBI 1001 " },
       name: "Suite",
       does: "Click a suite to show or hide its test points below it.",
@@ -78,6 +87,7 @@ export const searchSuites: Screen = {
     {
       id: "open-in-ado",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", name: `Open ${SUITE} in Azure DevOps` },
       name: "Open in Azure DevOps",
       does: "Opens the suite in Azure DevOps' Test Plans, in your browser.",
@@ -85,6 +95,7 @@ export const searchSuites: Screen = {
     {
       id: "copy-link",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", name: `Copy link to ${SUITE}` },
       name: "Copy link",
       does: "Copies the suite's Azure DevOps link.",
@@ -92,6 +103,7 @@ export const searchSuites: Screen = {
     {
       id: "view",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", name: `View ${SUITE}` },
       name: "View",
       does: "Opens the test cases as a page in your browser. On a folder, every suite inside it is included.",
@@ -99,6 +111,7 @@ export const searchSuites: Screen = {
     {
       id: "edit-cases",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", name: `Edit cases in ${SUITE}` },
       name: "Edit cases",
       does:
@@ -107,6 +120,7 @@ export const searchSuites: Screen = {
     {
       id: "more",
       shot: TREE,
+      group: "tree",
       locate: { role: "button", name: `More actions for ${SUITE}` },
       name: "More",
       does: "Opens the other options for the suite. Hovering it opens them too.",
@@ -114,6 +128,7 @@ export const searchSuites: Screen = {
     {
       id: "points",
       shot: TREE,
+      group: "tree",
       locate: { role: "table", name: `Test points in ${SUITE}` },
       name: "Test points",
       does: "The suite's test cases, one row per configuration they run on, with the last outcome of each.",
@@ -121,6 +136,7 @@ export const searchSuites: Screen = {
     {
       id: "use-as-pbi",
       shot: MORE,
+      group: "tree",
       locate: { role: "menuitem", name: "Use as current PBI" },
       name: "Use as current PBI",
       does: "Makes the suite's PBI the one chosen in the bar at the top, without leaving this screen. Offered on a PBI's suite.",
@@ -128,6 +144,7 @@ export const searchSuites: Screen = {
     {
       id: "manage",
       shot: MORE,
+      group: "tree",
       locate: { role: "menuitem", name: "Manage" },
       name: "Manage",
       does: "Opens Suite Management on this suite's plan, with the suite open.",
@@ -135,6 +152,7 @@ export const searchSuites: Screen = {
     {
       id: "run",
       shot: MORE,
+      group: "tree",
       locate: { role: "menuitem", name: "Run Tests" },
       name: "Run Tests",
       does:
@@ -143,6 +161,7 @@ export const searchSuites: Screen = {
     {
       id: "report",
       shot: MORE,
+      group: "tree",
       locate: { role: "menuitem", name: "Report" },
       name: "Report",
       does: "Opens an execution report of the suite and every suite inside it, in your browser.",

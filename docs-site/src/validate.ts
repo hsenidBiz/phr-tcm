@@ -117,6 +117,39 @@ export function validateContent(content: { screens: Screen[] }): string[] {
       const p = locateProblem(control.locate);
       if (p) problems.push(`${at}: ${p}`);
     }
+    problems.push(...groupProblems(screen));
+  }
+  return problems;
+}
+
+/** A grouped screen's subsections: each group is a unique, anchor-safe id
+ *  that is not also a control id (both become `#screen/<id>`), with a title
+ *  and at least one control; every control names one of them. A screen
+ *  without groups must not name any. */
+function groupProblems(screen: Screen): string[] {
+  const problems: string[] = [];
+  const where = `screen "${screen.id}"`;
+  if (screen.groups === undefined) {
+    for (const c of screen.controls) {
+      if (c.group !== undefined) problems.push(`${where}, control "${c.id}": names group "${c.group}", but the screen has no groups`);
+    }
+    return problems;
+  }
+  if (screen.groups.length === 0) problems.push(`${where}: groups is empty (leave it out instead)`);
+  for (const id of duplicates(screen.groups.map((g) => g.id))) problems.push(`${where}: group id "${id}" is used more than once`);
+  const controlIds = new Set(screen.controls.map((c) => c.id));
+  for (const g of screen.groups) {
+    const at = `${where}, group "${g.id}"`;
+    if (!KEBAB.test(g.id)) problems.push(`${at}: id is not lower-case kebab-case`);
+    if (controlIds.has(g.id)) problems.push(`${at}: id is also a control id (both would be #${screen.id}/${g.id})`);
+    if (!nonEmpty(g.title)) problems.push(`${at}: has no title`);
+    if (!screen.controls.some((c) => c.group === g.id)) problems.push(`${at}: has no controls`);
+  }
+  const groupIds = new Set(screen.groups.map((g) => g.id));
+  for (const c of screen.controls) {
+    const at = `${where}, control "${c.id}"`;
+    if (c.group === undefined) problems.push(`${at}: names no group (the screen has groups)`);
+    else if (!groupIds.has(c.group)) problems.push(`${at}: group "${c.group}" is not one of this screen's groups`);
   }
   return problems;
 }
