@@ -13,8 +13,6 @@
    the antivirus) on every cold start. */
 @import "tailwindcss" source("../src");
 @source "../index.html";
-/* XiodUI's components carry their own Tailwind classes. */
-@source "../node_modules/xiod-ui/dist";
 @import "@fontsource/fira-sans/400.css";
 @import "@fontsource/fira-sans/500.css";
 @import "@fontsource/fira-sans/600.css";
@@ -86,6 +84,7 @@
   --color-danger: #dc2626;
   --color-success: #15803d;
   --color-warning: #a16207;
+  --color-info: #2563eb;
 
   /* Sidebar icon hues. Each nav item gets its own colour so the collapsed
      icon rail is scannable at a glance; the selected row still uses the
@@ -123,6 +122,7 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-info: #60a5fa;
 
   /* Brighter on dark: the light values sink into the surface. */
 }
@@ -145,6 +145,7 @@
   --color-danger: var(--color-danger);
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
+  --color-info: var(--color-info);
 }
 
 /* Full UI themes (Settings > Appearance). data-theme on <html> swaps the
@@ -168,6 +169,7 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-info: #60a5fa;
 }
 :root[data-theme="graphite"] {
   --color-bg: #141416;
@@ -185,6 +187,7 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-info: #60a5fa;
 }
 :root[data-theme="oled"] {
   /* True-black for OLED panels: pure #000 canvas, near-black surfaces
@@ -205,6 +208,7 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-info: #60a5fa;
 }
 :root[data-theme="ocean"] {
   --color-bg: #071a1f;
@@ -222,6 +226,7 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-info: #60a5fa;
 }
 
 /* Accent theme presets (Settings > Appearance). data-accent on <html>;
