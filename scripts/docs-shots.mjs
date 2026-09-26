@@ -39,6 +39,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import {
   CDP_URL,
+  DRIFT_PX,
   KEYS,
   MAIN_SIZE,
   NO_SIGN_IN_NOTICE,
@@ -48,6 +49,7 @@ import {
   START_APP_HINT,
   START_APP_MESSAGE,
   USAGE,
+  boxDrift,
   boxInShot,
   formatMissing,
   locatorFor,
@@ -194,6 +196,29 @@ async function place(target, locate, size) {
   const box = await shown.boundingBox();
   if (!box || !boxInShot(box, size)) return { reason: "outside the shot" };
   return { box };
+}
+
+/** Waits until the shot's controls stop moving: two readings of every box,
+ *  STILL_GAP_MS apart, that agree. Content that arrives late (the app log,
+ *  sample answers on a delay) or an entry animation still running would
+ *  otherwise leave the picture and the measured boxes describing two
+ *  different moments - and the two theme passes caught at different ones.
+ *  Gives up after STILL_TRIES readings and lets the drift check judge. */
+const STILL_GAP_MS = 150;
+const STILL_TRIES = 20;
+async function untilStill(target, controls, size) {
+  const read = async () =>
+    JSON.stringify(await Promise.all(controls.map(async (c) => {
+      const r = await place(target, c.locate, size).catch(() => ({}));
+      return r.box ? roundBox(r.box) : null;
+    })));
+  let last = await read();
+  for (let i = 0; i < STILL_TRIES; i++) {
+    await sleep(STILL_GAP_MS);
+    const now = await read();
+    if (now === last) return;
+    last = now;
+  }
 }
 
 /** The leftover settings snapshot, if an earlier run was interrupted. */
@@ -490,6 +515,7 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
       // reacts to it.
       await target.mouse.move(2, 2).catch(() => {});
       await settle(target);
+      await untilStill(target, controls, size);
       guard();
       if (staging) {
         const dir = join(staging, pass.dir);
@@ -507,8 +533,22 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
         }
         placed++;
         // Layout is the same in both themes: record from the first pass,
-        // and only check that the others find the control too.
-        if (passIndex === 0) positions[shot.id].controls[control.id] = roundBox(r.box);
+        // and hold the others to it. A box that moved between passes means
+        // the shots differ (a "just now" that became "2m ago" once moved a
+        // whole row), and the markers would be off in one theme.
+        const box = roundBox(r.box);
+        if (passIndex === 0) positions[shot.id].controls[control.id] = box;
+        else {
+          const first = positions[shot.id]?.controls[control.id];
+          if (first && boxDrift(first, box) > DRIFT_PX) {
+            missing.push({
+              shot: shot.id,
+              control: control.id,
+              locate: control.locate,
+              reason: `moved between passes: ${JSON.stringify(first)} in ${passes[0].dir}, ${JSON.stringify(box)} in ${pass.dir}`,
+            });
+          }
+        }
       }
       console.log(`  ${shot.id}  ${placed}/${controls.length} controls`);
     }

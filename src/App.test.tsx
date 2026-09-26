@@ -558,7 +558,8 @@ test("a legacy connection string is migrated before the first bridge push", asyn
   await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
   expect(imported).toHaveLength(1);
   expect(pushes[0]).toMatchObject({ dbId: "dev-read" });
-  expect(localStorage.getItem("tcm-v2-db-mcp")).not.toContain("Password");
+  // The string has left the webview, and the key it sat under with it.
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 });
 
 /// The last manual step in the AI loop. `begin_test_case_writing` already

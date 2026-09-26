@@ -27,7 +27,7 @@ const DEV: DbDatabase = {
   shipped: true,
   server: "sgdev01db02.cloud",
   port: 1433,
-  database: "phrx",
+  database: "hrmmain",
   user: "sgdev01db02_readonly",
   trust_cert: true,
   has_password: true,
@@ -62,7 +62,7 @@ test("the dialog is named for the database it edits", () => {
 test("a shipped database shows its server and database as text", () => {
   open(DEV);
   expect(screen.getByText("sgdev01db02.cloud,1433")).toBeInTheDocument();
-  expect(screen.getByText("phrx")).toBeInTheDocument();
+  expect(screen.getByText("hrmmain")).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Server" })).not.toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Database" })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "User" })).toHaveValue("sgdev01db02_readonly");
@@ -100,15 +100,15 @@ test("Test connection sends the form, a blank password as null, and shows the an
   expect(testDb).toHaveBeenCalledWith("dev-read", {
     server: "sgdev01db02.cloud",
     port: 1433,
-    database: "phrx",
+    database: "hrmmain",
     user: "sgdev01db02_readonly",
     password: null,
     trust_cert: true,
   });
 
-  answer({ status: "ok", data: "Connected to phrx on sgdev01db02.cloud as sgdev01db02_readonly." });
+  answer({ status: "ok", data: "Connected to hrmmain on sgdev01db02.cloud as sgdev01db02_readonly." });
   const status = await screen.findByRole("status");
-  expect(status).toHaveTextContent("Connected to phrx on sgdev01db02.cloud as sgdev01db02_readonly.");
+  expect(status).toHaveTextContent("Connected to hrmmain on sgdev01db02.cloud as sgdev01db02_readonly.");
   expect(status).toHaveClass("text-success");
   expect(screen.getByRole("button", { name: "Test connection" })).not.toBeDisabled();
 });

@@ -274,11 +274,6 @@ export const commands = {
 	 */
 	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
 	/**
-	 *  The shipped defaults for the database server form. The frontend applies
-	 *  these only to a form nothing was ever saved into.
-	 */
-	dbServerDefaults: () => __TAURI_INVOKE<DbServerDefaults>("db_server_defaults"),
-	/**
 	 *  Every database the Company database card offers, as the public view:
 	 *  who signs in and whether a password is saved, never the password or
 	 *  the connection string.
@@ -752,12 +747,17 @@ export const commands = {
 	 */
 	retireGlobalRegistrations: (id: string) => typedError<null, string>(__TAURI_INVOKE("retire_global_registrations", { id })),
 	/**
-	 *  `Ok(Some(warning))` when the registration worked but the connection
-	 *  string is somewhere git can carry it away - the UI shows that instead of
-	 *  the plain success toast. `Ok(None)` = registered and excluded.
+	 *  Removes the separate database server an earlier version of this app
+	 *  registered (`LEGACY_DB_SERVER`) from the tool's config: the repository's
+	 *  when one is set and the tool has one, else the global one - the same
+	 *  removal `unregister_ai_tool` does for our own server, and nothing else in
+	 *  the config is touched. Nothing registers that server any more; the AI
+	 *  Bridge tab calls this, quietly, for a tool whose scan still lists it.
+	 *  Off the main thread: for Claude Code it runs the `claude` CLI, and it
+	 *  fires on opening the tab rather than on a click, so a slow CLI must not
+	 *  stall the window.
 	 */
-	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null, global: boolean) => typedError<string | null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir, global })),
-	unregisterDbServer: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id, workingDir, global })),
+	removeLegacyDbServer: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("remove_legacy_db_server", { id, workingDir, global })),
 	/**  Create `<root>/.test-cases` if needed and return its path. */
 	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
 	/**
@@ -1208,37 +1208,6 @@ export type DbDatabase = {
 	 *  something to undo.
 	 */
 	customised: boolean,
-};
-
-/**
- *  The company's SQL Server MCP server, registered beside ours so an
- *  assistant can read the schema and the test cases in one session. The
- *  server itself is configured entirely through environment variables
- *  (see its README); we only place them in the tool's config.
- */
-export type DbServerConfig = {
-	/**  Path to the built PeoplesHR.DBMCPServer.exe. */
-	exe_path: string,
-	/**  "mssql" or "sqlserver". */
-	db_type: string,
-	/**
-	 *  Which database the server signs in to. Only the id crosses IPC; the
-	 *  login it stands for is resolved in Rust at registration.
-	 */
-	db_id: string,
-	/**  Comma-separated; blank means the server's own default (dbo). */
-	schema_filter: string,
-};
-
-/**
- *  The PHR X server settings a never-configured form starts from. No
- *  database among them: a machine that never chose one has none chosen,
- *  and registering names the selected database when the person clicks.
- */
-export type DbServerDefaults = {
-	exe_path: string,
-	db_type: string,
-	schema_filter: string,
 };
 
 /**  One work item's fate after a delete attempt. */

@@ -183,9 +183,9 @@ fn data_row_count(text: &str) -> usize {
 /// through to the ranking - so an assistant can type either without knowing
 /// which it typed.
 ///
-/// The ranking looks in the `PeoplesHR` schema first, as the PHR X DB
-/// server does: the HR databases also hold `PeoplesHRDAP` copies of many
-/// tables, and `PeoplesHR` is the right one. Only when nothing matches
+/// The ranking looks in the `PeoplesHR` schema first: the HR databases also
+/// hold `PeoplesHRDAP` copies of many tables, and `PeoplesHR` is the right
+/// one. Only when nothing matches
 /// there is every schema searched. Then one more statement reads the
 /// details for the tables it picked - see `schema` for why that is two
 /// round trips and not one.

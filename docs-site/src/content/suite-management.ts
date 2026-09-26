@@ -44,25 +44,33 @@ export const suiteManagement: Screen = {
       alt: "The New test suite window",
     },
   ],
+  groups: [
+    { id: "plans", title: "Pick a plan and suite", summary: "Choose which plans to show, open a suite, or make a new one." },
+    { id: "order", title: "Order the cases", summary: "Put a suite's cases in order, one by one or group by group." },
+    { id: "copy-cases", title: "Copy cases to another suite", summary: "Tick cases and pick the suite to copy them to." },
+  ],
   controls: [
     // --- The plan -----------------------------------------------------------
     {
       id: "scope",
       shot: PLAN,
+      group: "plans",
       locate: { text: "Showing the plan that holds PBI #1001." },
       name: "Which plans",
-      does: "With a PBI chosen, only the plan that holds its suite is shown, with that suite open. When the PBI has no suite yet, every plan is shown.",
+      does: "With a Product Backlog Item chosen, only the plan that holds its suite is shown, with that suite open. When the Product Backlog Item has no suite yet, every plan is shown.",
     },
     {
       id: "show-all",
       shot: PLAN,
+      group: "plans",
       locate: { role: "button", name: "Show all plans" },
       name: "Show all plans",
-      does: "Shows every plan in the project. **Show only this PBI's plan** goes back.",
+      does: "Shows every plan in the project. **Show only this Product Backlog Item's plan** goes back.",
     },
     {
       id: "new-suite",
       shot: PLAN,
+      group: "plans",
       locate: { role: "button", name: "New test suite" },
       name: "New test suite",
       does: "Opens a window for creating a suite in this plan. With cases selected, they are copied into it too. It only shows when you may create suites in the plan's area.",
@@ -70,6 +78,7 @@ export const suiteManagement: Screen = {
     {
       id: "folder",
       shot: PLAN,
+      group: "plans",
       locate: { role: "button", name: "Expand Web app" },
       name: "Suite",
       does: "Every suite of the plan, in tree order. Click one to open it and see its cases; click again to close it. Several can be open at once.",
@@ -77,13 +86,15 @@ export const suiteManagement: Screen = {
     {
       id: "open-suite",
       shot: PLAN,
+      group: "plans",
       locate: { role: "button", name: "Collapse Login and session flow" },
       name: "Open suite",
-      does: "An open suite. A PBI's own suite carries a badge with the PBI's number.",
+      does: "An open suite. A Product Backlog Item's own suite carries a badge with the Product Backlog Item's number.",
     },
     {
       id: "group-by-title",
       shot: PLAN,
+      group: "order",
       locate: { role: "switch", name: "Group by title" },
       name: "Group by title",
       does:
@@ -92,6 +103,7 @@ export const suiteManagement: Screen = {
     {
       id: "apply-order",
       shot: PLAN,
+      group: "order",
       locate: { role: "button", name: "Apply order" },
       name: "Apply order",
       does: "Saves the order on screen to the suite in Azure DevOps. It is greyed out until the order has changed.",
@@ -99,6 +111,7 @@ export const suiteManagement: Screen = {
     {
       id: "reset",
       shot: PLAN,
+      group: "order",
       locate: { role: "button", name: "Reset" },
       name: "Reset",
       does: "Puts the list back in the suite's saved order. It is greyed out until the order has changed.",
@@ -106,6 +119,7 @@ export const suiteManagement: Screen = {
     {
       id: "order-from-files",
       shot: PLAN,
+      group: "order",
       locate: { role: "button", name: "Apply order from files" },
       name: "Apply order from files",
       does: "Orders the suite by draft files you pick: each file's cases become one block, in the file's own order. See the tips below.",
@@ -113,6 +127,7 @@ export const suiteManagement: Screen = {
     {
       id: "count",
       shot: PLAN,
+      group: "order",
       locate: { text: "5 test cases" },
       name: "Cases",
       does: "How many cases the suite holds, or how many of them are selected.",
@@ -120,6 +135,7 @@ export const suiteManagement: Screen = {
     {
       id: "select-all",
       shot: PLAN,
+      group: "order",
       locate: { role: "button", name: "Select all" },
       name: "Select all",
       does: "Selects every case in the suite.",
@@ -127,6 +143,7 @@ export const suiteManagement: Screen = {
     {
       id: "case",
       shot: PLAN,
+      group: "order",
       locate: { text: FIRST },
       name: "Case",
       does:
@@ -135,6 +152,7 @@ export const suiteManagement: Screen = {
     {
       id: "move",
       shot: PLAN,
+      group: "order",
       locate: { role: "button", name: "Move #5001 down" },
       name: "Move up / down",
       does: "Moves the case, or the selection it belongs to, one place up or down.",
@@ -144,6 +162,7 @@ export const suiteManagement: Screen = {
     {
       id: "selected",
       shot: SELECTED,
+      group: "copy-cases",
       locate: { text: "1 selected" },
       name: "Selected",
       does: "How many cases are selected in this plan. A selection can take cases from several suites of the same plan; picking a case in another plan starts a new one.",
@@ -151,6 +170,7 @@ export const suiteManagement: Screen = {
     {
       id: "clear-selection",
       shot: SELECTED,
+      group: "copy-cases",
       locate: { role: "button", name: "Clear selection" },
       name: "Clear selection",
       does: "Clears the selection in every suite of the plan.",
@@ -158,6 +178,7 @@ export const suiteManagement: Screen = {
     {
       id: "copy-to",
       shot: SELECTED,
+      group: "copy-cases",
       locate: { role: "combobox", name: "Copy to" },
       name: "Copy to",
       does: "The suite to copy the selected cases into: the plan's root or one of its static suites. Type to search the list; the x empties the choice.",
@@ -165,6 +186,7 @@ export const suiteManagement: Screen = {
     {
       id: "copy",
       shot: SELECTED,
+      group: "copy-cases",
       locate: { role: "button", name: "Copy to suite" },
       name: "Copy to suite",
       does: "Adds the selected cases to the chosen suite. They stay in the suites they were in; a case can belong to many suites. It is greyed out until cases are selected and a suite is picked.",
@@ -172,6 +194,7 @@ export const suiteManagement: Screen = {
     {
       id: "list-selected",
       shot: SELECTED,
+      group: "copy-cases",
       locate: { text: "1 of 5 selected" },
       name: "Selected in this suite",
       does: "How many of this suite's cases are selected. **Clear** beside it clears the selection in this suite only.",
@@ -181,6 +204,7 @@ export const suiteManagement: Screen = {
     {
       id: "a-z",
       shot: GROUPED,
+      group: "order",
       locate: { role: "button", name: "A-Z groups" },
       name: "A-Z groups",
       does: "Puts every group's cases together and the groups in A to Z order.",
@@ -188,6 +212,7 @@ export const suiteManagement: Screen = {
     {
       id: "collapse-groups",
       shot: GROUPED,
+      group: "order",
       locate: { role: "button", name: "Collapse groups" },
       name: "Collapse groups",
       does: "Folds every group; **Expand groups** opens them all again.",
@@ -195,6 +220,7 @@ export const suiteManagement: Screen = {
     {
       id: "group-fold",
       shot: GROUPED,
+      group: "order",
       locate: { role: "button", name: "Collapse group Login" },
       name: "Group heading",
       does:
@@ -203,6 +229,7 @@ export const suiteManagement: Screen = {
     {
       id: "group-move",
       shot: GROUPED,
+      group: "order",
       locate: { role: "button", name: "Move group Login down" },
       name: "Move group up / down",
       does: "Moves the whole group past the group above or below it.",
@@ -212,6 +239,7 @@ export const suiteManagement: Screen = {
     {
       id: "suite-name",
       shot: NEW_SUITE,
+      group: "plans",
       locate: { role: "textbox", name: "Suite name" },
       name: "Suite name",
       does: "The new suite's name.",
@@ -219,6 +247,7 @@ export const suiteManagement: Screen = {
     {
       id: "create-inside",
       shot: NEW_SUITE,
+      group: "plans",
       locate: { role: "combobox", name: "Create inside" },
       name: "Create inside",
       does: "Where the suite goes: the plan's root or another static suite, the only places Azure DevOps allows.",
@@ -226,6 +255,7 @@ export const suiteManagement: Screen = {
     {
       id: "new-cancel",
       shot: NEW_SUITE,
+      group: "plans",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without creating anything.",
@@ -233,6 +263,7 @@ export const suiteManagement: Screen = {
     {
       id: "create",
       shot: NEW_SUITE,
+      group: "plans",
       locate: { role: "button", nameRe: "^Create suite" },
       name: "Create suite",
       does:
@@ -242,7 +273,7 @@ export const suiteManagement: Screen = {
   tips: [
     "Nothing moves in Azure DevOps until you press **Apply order**. When you scroll down a long suite, its order buttons float at the bottom of the window, and they stay there while the order has unsaved changes.",
     "**Apply order from files** asks for one or more draft JSON files and lists them in a window. Put the files in the order their blocks should take (drag them, or use the arrows); each shows how many of the suite's cases it places. **Add more files** adds another; **Apply** arranges the list, and **Apply order** then saves it. Cases in no file stay after the blocks, in their current order.",
-    "**Manage** in Search Suites opens this screen on the suite you picked, with **Show this PBI's plan** or **Show all plans** to go back to the usual view.",
+    "**Manage** in Search Suites opens this screen on the suite you picked, with **Show this Product Backlog Item's plan** or **Show all plans** to go back to the usual view.",
     "When the selected cases sit in a plan that is no longer shown, a line says how many are out of view, with **Clear selection**.",
     "The order saved here is the suite's own order in Azure DevOps, which is what **Spec order** means in Run Tests.",
   ],
@@ -250,7 +281,7 @@ export const suiteManagement: Screen = {
     {
       title: "Put a suite's cases in order",
       steps: [
-        "Choose the PBI in the bar at the top; its suite opens by itself.",
+        "Choose the Product Backlog Item in the bar at the top; its suite opens by itself.",
         "Drag the cases into order, or select several and move them together with the arrows.",
         "Press **Apply order**.",
       ],

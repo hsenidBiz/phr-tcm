@@ -19,6 +19,8 @@ const ICONS = {
   control: '<rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="16" cy="12" r="2.5"/>',
   task: '<path d="M9 11l3 3L21 5"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
   enter: '<path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
+  expand: '<path d="M15 3h6v6M9 21H3v-6"/><path d="m21 3-7 7M3 21l7-7"/>',
+  section: '<path d="M4 6h16M4 12h10M4 18h7"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,6 +1,5 @@
 // The Company database card's local choices: which database the app's own
-// database tools use, whether they may write, and the settings for
-// registering the company's separate SQL Server MCP server beside ours.
+// database tools use, and whether they may write.
 //
 // None of it is secret. Each database's login lives in Windows Credential
 // Manager, owned by Rust; the webview names a database by its id and never
@@ -8,10 +7,14 @@
 // older version saved here, which `migrateLegacyDbConnection` moves into
 // Rust once and then deletes.
 
-import { commands, type DbServerConfig } from "../bindings";
+import { commands } from "../bindings";
 import { logUi } from "./uiLog";
 
-const KEY = "tcm-v2-db-mcp";
+/** What older versions kept: the settings for registering a separate
+ * database server, and before that a whole connection string. Nothing
+ * writes it any more - it is read once, to move a connection string into
+ * Rust, and then removed. */
+const LEGACY_KEY = "tcm-v2-db-mcp";
 
 /** The id of the database the tools use - absent when none is chosen. */
 const SELECTED_KEY = "tcm-v2-db-selected";
@@ -20,10 +23,6 @@ const SELECTED_KEY = "tcm-v2-db-selected";
  * otherwise - so a fresh profile and a cleared one both read off, which is
  * the only default a switch like this may have. */
 const WRITES_KEY = "tcm-v2-db-writes";
-
-/** What the PHR X registration keeps on this machine. The database it
- * registers is the selected one, added as `db_id` when registering. */
-export type DbServerSettings = Omit<DbServerConfig, "db_id">;
 
 const listeners = new Set<() => void>();
 
@@ -42,25 +41,9 @@ export function subscribeDbSettings(cb: () => void): () => void {
   };
 }
 
-export const EMPTY_DB_CONFIG: DbServerSettings = {
-  exe_path: "",
-  db_type: "mssql",
-  schema_filter: "",
-};
-
-/** Whether the person ever saved a config on this machine - the shipped
- * defaults only fill a form that has never been touched. */
-export function hasStoredDbConfig(): boolean {
-  try {
-    return localStorage.getItem(KEY) != null;
-  } catch {
-    return false;
-  }
-}
-
 function readBlob(): Record<string, unknown> | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(LEGACY_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
@@ -75,43 +58,12 @@ function legacyConnectionString(blob: Record<string, unknown> | null): string {
   return typeof cs === "string" ? cs.trim() : "";
 }
 
-export function loadDbConfig(): DbServerSettings {
-  const parsed = readBlob();
-  if (!parsed) return { ...EMPTY_DB_CONFIG };
-  // Field-by-field, so a stored blob from an older shape can't leave a
-  // required field undefined and blow up the form.
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  return {
-    exe_path: str(parsed.exe_path),
-    db_type: str(parsed.db_type) || "mssql",
-    schema_filter: str(parsed.schema_filter),
-  };
-}
-
-export function saveDbConfig(config: DbServerSettings): void {
-  const next: Record<string, unknown> = {
-    exe_path: config.exe_path,
-    db_type: config.db_type,
-    schema_filter: config.schema_filter,
-  };
-  // A string that has not moved into Rust yet (its import failed and waits
-  // for the next start) rides along, or editing the server path here would
-  // throw away the login the person saved before.
-  const legacy = legacyConnectionString(readBlob());
-  if (legacy) next.connection_string = legacy;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(next));
-  } catch {
-    // storage unavailable -> the settings last for this session only
-  }
-  notify();
-}
-
-/** The local half of "Forget them": the PHR X settings and the choice of
- * database. The saved logins are Rust's, wiped by `forgetDbCredentials`. */
+/** The local half of "Forget them": the choice of database, and whatever an
+ * older version left under the legacy key. The saved logins are Rust's,
+ * wiped by `forgetDbCredentials`. */
 export function forgetDbConfig(): void {
   try {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem(LEGACY_KEY);
     localStorage.removeItem(SELECTED_KEY);
   } catch {
     // nothing to do
@@ -191,12 +143,6 @@ export function isDevLoginConnection(connectionString: string): boolean {
   return false;
 }
 
-/** Everything the PHR X server needs before it can be registered. Whether
- * the chosen database has a login saved is Rust's to answer. */
-export function isDbConfigComplete(c: DbServerSettings, dbId: string): boolean {
-  return Boolean(c.exe_path.trim() && c.db_type.trim() && dbId);
-}
-
 let migrating: Promise<void> | null = null;
 
 /** Moves a connection string an older version kept in the webview into
@@ -228,9 +174,23 @@ async function keepsCurrentSelection(): Promise<boolean> {
   }
 }
 
+/** The legacy key goes once nothing in it is still waiting to move. */
+function dropLegacyBlob(): void {
+  try {
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // storage unavailable -> nothing was stored to remove either
+  }
+}
+
 async function runMigration(): Promise<void> {
   const cs = legacyConnectionString(readBlob());
-  if (!cs) return;
+  if (!cs) {
+    // Only an old version's server settings, if anything: nothing reads
+    // them now, so they do not stay behind.
+    dropLegacyBlob();
+    return;
+  }
   let id: string;
   try {
     const res = await commands.importLegacyDbConnection(cs);
@@ -249,16 +209,7 @@ async function runMigration(): Promise<void> {
   // selection, or one naming a database this build does not know, takes
   // the imported one.
   if (!(await keepsCurrentSelection())) saveSelectedDb(id);
-  // Re-read rather than reuse the blob from before the await: the PHR X
-  // settings may have been edited meanwhile.
-  const blob = readBlob();
-  if (blob) {
-    delete blob.connection_string;
-    try {
-      localStorage.setItem(KEY, JSON.stringify(blob));
-    } catch {
-      // storage unavailable -> nothing was stored to remove either
-    }
-  }
+  // The string has moved, and nothing else under the key is read any more.
+  dropLegacyBlob();
   notify();
 }

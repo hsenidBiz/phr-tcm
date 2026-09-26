@@ -22,7 +22,7 @@ export const viewTestCases: Screen = {
   title: "View Test Cases",
   group: "Test cases",
   summary:
-    "Read the PBI's test cases without any risk of changing them. Open a case to see its steps, keep a personal comment on it, " +
+    "Read the Product Backlog Item's test cases without any risk of changing them. Open a case to see its steps, keep a personal comment on it, " +
     "and open the cases as a page in your browser or save them to a file.",
   shots: [
     { id: LIST, route: [NAV], alt: "View Test Cases listing the test cases of the PBI" },
@@ -46,7 +46,7 @@ export const viewTestCases: Screen = {
       shot: LIST,
       locate: { role: "heading", nameRe: "Total Test Cases$" },
       name: "Total Test Cases",
-      does: "How many test cases are linked to the PBI. While the search box has text, it shows how many of them match.",
+      does: "How many test cases are linked to the Product Backlog Item. While the search box has text, it shows how many of them match.",
     },
     {
       id: "refresh",
@@ -183,13 +183,6 @@ export const viewTestCases: Screen = {
     },
 
     // --- The comment window ---------------------------------------------------
-    {
-      id: "comment-close",
-      shot: COMMENT,
-      locate: { role: "button", name: "Close comment" },
-      name: "Close (x)",
-      does: "Closes the window. [[Esc]] does the same.",
-    },
     {
       id: "comment-text",
       shot: COMMENT,

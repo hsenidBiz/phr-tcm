@@ -31,19 +31,25 @@ const DARK_PREF_KEY = "tcm-v2-theme-dark"; // last dark theme, for the sun/moon 
 export function getThemeChoice(): ThemeChoice {
   const t = localStorage.getItem(ID_KEY);
   if (THEMES.some((x) => x.id === t)) return t as ThemeId;
+  // "system" is stored explicitly (see setThemeChoice) so it stays distinct
+  // from nobody having chosen anything yet.
+  if (t === "system") return "system";
   const legacy = localStorage.getItem(LEGACY_KEY);
   if (legacy === "light") return "light";
   if (legacy === "dark") return "slate";
-  return "system";
+  // Nothing stored, nothing legacy: the app's own default look - Light,
+  // regardless of the OS light/dark setting - not "system".
+  return "light";
 }
 
 /** The dark theme the light/dark toggle goes back to - the last dark one
- * the user picked, or Slate. Exported because the browser pages carry a
- * dark scheme too, and it should be the same dark the app would give. */
+ * the user picked, or Graphite (the app's default dark look). Exported
+ * because the browser pages carry a dark scheme too, and it should be the
+ * same dark the app would give. */
 export function darkPref(): ThemeId {
   const t = localStorage.getItem(DARK_PREF_KEY);
   const theme = THEMES.find((x) => x.id === t);
-  return theme?.dark ? theme.id : "slate";
+  return theme?.dark ? theme.id : "graphite";
 }
 
 export function resolveThemeId(choice: ThemeChoice = getThemeChoice()): ThemeId {
@@ -54,7 +60,7 @@ export function resolveThemeId(choice: ThemeChoice = getThemeChoice()): ThemeId 
 
 export function applyThemeChoice(choice: ThemeChoice) {
   const id = resolveThemeId(choice);
-  const theme = THEMES.find((x) => x.id === id) ?? THEMES[1];
+  const theme = THEMES.find((x) => x.id === id) ?? THEMES[0];
   const root = document.documentElement;
   root.classList.toggle("dark", theme.dark);
   // light/slate are the base palettes defined by :root / .dark directly.
@@ -63,11 +69,12 @@ export function applyThemeChoice(choice: ThemeChoice) {
 }
 
 export function setThemeChoice(choice: ThemeChoice) {
-  if (choice === "system") {
-    localStorage.removeItem(ID_KEY);
-  } else {
-    localStorage.setItem(ID_KEY, choice);
-    if (THEMES.find((x) => x.id === choice)?.dark) localStorage.setItem(DARK_PREF_KEY, choice);
+  // Stored explicitly - including "system" - so a deliberate pick is never
+  // indistinguishable from nobody having chosen anything (getThemeChoice's
+  // unset default is "light", not "system").
+  localStorage.setItem(ID_KEY, choice);
+  if (choice !== "system" && THEMES.find((x) => x.id === choice)?.dark) {
+    localStorage.setItem(DARK_PREF_KEY, choice);
   }
   localStorage.removeItem(LEGACY_KEY);
   applyThemeChoice(choice);
@@ -89,7 +96,9 @@ export function setTheme(mode: Theme) {
 
 /** "default" = no override: the theme's own accent shows (green for
  * Light/Slate/OLED, indigo for Midnight, amber for Graphite, cyan for
- * Ocean). Every other value forces that accent family on any theme. */
+ * Ocean). Every other value forces that accent family on any theme.
+ * Violet is the app's own default (it matches the icon) - "default" here
+ * only ever means "the theme's own colour", picked explicitly. */
 export type Accent = "default" | "green" | "blue" | "violet" | "amber" | "rose";
 export const ACCENTS: Accent[] = ["default", "green", "blue", "violet", "amber", "rose"];
 
@@ -97,12 +106,16 @@ const ACCENT_KEY = "tcm-v2-accent";
 
 export function getAccent(): Accent {
   const a = localStorage.getItem(ACCENT_KEY);
-  return a && ACCENTS.includes(a as Accent) ? (a as Accent) : "default";
+  if (a && ACCENTS.includes(a as Accent)) return a as Accent;
+  // Nobody has chosen an accent yet: violet, matching the app icon.
+  return "violet";
 }
 
 export function setAccent(accent: Accent) {
-  if (accent === "default") localStorage.removeItem(ACCENT_KEY);
-  else localStorage.setItem(ACCENT_KEY, accent);
+  // Stored explicitly, including "default" - so picking "the theme's own
+  // colour" is remembered as a real choice rather than read back later as
+  // "nothing chosen" (which now means violet, not "default").
+  localStorage.setItem(ACCENT_KEY, accent);
   applyAccent(accent);
 }
 

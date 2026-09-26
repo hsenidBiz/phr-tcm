@@ -41,7 +41,10 @@ function readRoot(dark: boolean): ReportPalette {
     muted: read(style, "muted"),
     faint: read(style, "faint"),
     border: read(style, "border"),
-    accent: read(style, "accent"),
+    // The pages use their one accent mostly for words (ids, links, chip
+    // labels) and put dark ink on it where they fill with it, so they get
+    // the readable text shade - the one that differs in dark violet.
+    accent: read(style, "accent-text") || read(style, "accent"),
     success: read(style, "success"),
     danger: read(style, "danger"),
     warning: read(style, "warning"),

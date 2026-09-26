@@ -1,33 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
-import { commands, type DbServerConfig } from "../bindings";
+import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { DbCredentialsModal } from "../components/DbCredentialsModal";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
-import { Input } from "../components/ui/input";
-import { Select } from "../components/ui/select";
 import { cn } from "../lib/cn";
 import {
   forgetDbConfig,
-  hasStoredDbConfig,
-  isDbConfigComplete,
   isDevLoginUser,
-  loadDbConfig,
   loadDbWrites,
-  saveDbConfig,
   saveDbWrites,
   saveSelectedDb,
   selectedDbSnapshot,
   subscribeDbSettings,
-  type DbServerSettings,
 } from "../lib/dbServer";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
+import { logUi } from "../lib/uiLog";
 import {
   addRepository,
   currentPathSnapshot,
@@ -39,9 +33,16 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "../lib/workingDir";
-import { globalAllowedSnapshot, saveScope, scopeSnapshot, showPhrxSnapshot, subscribeAiScope, subscribeShowPhrx } from "../lib/aiScope";
 import {
-  IconBrowse,
+  globalAllowedSnapshot,
+  legacyCleanupKey,
+  legacyDbCleaned,
+  markLegacyDbCleaned,
+  saveScope,
+  scopeSnapshot,
+  subscribeAiScope,
+} from "../lib/aiScope";
+import {
   IconConfirm,
   IconCopy,
   IconEdit,
@@ -50,10 +51,10 @@ import {
   IconUnregister,
 } from "../lib/actionIcons";
 
-/** Config keys, mirroring `ai_tools.rs` - a tool row shows a separate
- * state for each server this app can register. */
+/** Config keys, mirroring `ai_tools.rs`. The second is a server earlier
+ * versions could register beside ours; it is only ever removed now. */
 const TCM_SERVER = "tcm-testcases";
-const DB_SERVER = "phr-db-mcp";
+const LEGACY_DB_SERVER = "phr-db-mcp";
 
 /** Clipboard copies are fire-and-forget from the UI's perspective, but the
  * promise must always be handled - a bare `.then()` leaves rejected copies
@@ -96,11 +97,6 @@ export default function AiBridge() {
   const globalAllowed = useSyncExternalStore(subscribeAiScope, globalAllowedSnapshot);
   const scopeChoice = useSyncExternalStore(subscribeAiScope, scopeSnapshot);
   const global = globalAllowed && scopeChoice === "global";
-  // The connection card is always shown - it is the app's own database
-  // tools' setup, not optional. Registering the separate PHR X server
-  // stays opt-in from Settings; it predates those tools and most people
-  // no longer need it.
-  const showPhrx = useSyncExternalStore(subscribeShowPhrx, showPhrxSnapshot);
   // What every call below is told: the repository, or null for the whole
   // machine (detection reads the global configs on null; registration is
   // ALSO told `global` explicitly, so null alone can never mean "global").
@@ -149,15 +145,6 @@ export default function AiBridge() {
   // Tools the user has switched off; App re-pushes these to the bridge.
   const [disabled, setDisabled] = useState<string[]>(loadDisabledTools);
   const visible = visibleRows();
-  // The company's database MCP server. Its settings persist locally so a
-  // second editor can be registered without retyping them; none of them is
-  // secret - the login is Rust's, named here only by the database's id.
-  const [db, setDb] = useState<DbServerSettings>(loadDbConfig);
-  const editDb = (patch: Partial<DbServerSettings>) => {
-    const next = { ...db, ...patch };
-    setDb(next);
-    saveDbConfig(next);
-  };
   // Which database the app's own tools use. Read through the store so App's
   // bridge push and this card agree the moment it changes.
   const dbId = useSyncExternalStore(subscribeDbSettings, selectedDbSnapshot);
@@ -179,136 +166,58 @@ export default function AiBridge() {
     saveDbWrites(on);
   };
   const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
-  const dbConfig = (id: string): DbServerConfig => ({ ...db, db_id: id });
-
-  // Shipped defaults fill a form NOTHING was ever saved into - a machine
-  // that configured (or deliberately cleared) its own values never has
-  // them overwritten. Prefill only: nothing persists or registers until
-  // the person edits or clicks Register themselves. The defaults name no
-  // database - a fresh machine has none selected until the person picks.
-  const dbDefaults = useQuery({
-    queryKey: ["db-defaults"],
-    queryFn: () => commands.dbServerDefaults(),
-    staleTime: Infinity,
-  });
-  useEffect(() => {
-    const d = dbDefaults.data;
-    if (!d) return; // no defaults shipped
-    if (hasStoredDbConfig()) return;
-    const prefill = { exe_path: d.exe_path, db_type: d.db_type, schema_filter: d.schema_filter };
-    // Only replace a still-pristine form, in case typing raced the IPC.
-    setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? prefill : cur));
-  }, [dbDefaults.data]);
-
-  // A warning back means the registration worked but the login it carries
-  // is somewhere git can carry it away (the file is already tracked, or the
-  // folder is not a checkout). That is not a success sentence - it is the
-  // one thing on this tab worth reading, so it replaces the toast and stays
-  // up long enough to act on.
-  const registerDb = useMutation({
-    mutationFn: (id: string) =>
-      unwrapStr(commands.registerDbServer(id, dbConfig(dbId), target, global)),
-    onSuccess: (warning) => {
-      if (warning) toast.warning(warning, { duration: 12000 });
-      else toast.success("Database server registered.");
-      qc.invalidateQueries({ queryKey: ["ai-tools"] });
-    },
-    onError: (e) => toast.error(`Could not register: ${e.message}`),
-  });
-
-  // Choosing a different database rewrites the config of every tool the
-  // database server is ALREADY registered in - otherwise the dropdown
-  // changes the card and the .mcp.json keeps the old login until someone
-  // remembers to click Register again. Re-registering is an
-  // upsert on every tool path. The running assistants read that file at
-  // startup, so the toast says the one thing the user has to do next.
-  const syncDb = useMutation({
-    mutationFn: async ({ ids, config }: { ids: string[]; config: DbServerConfig }) => {
-      const warnings: string[] = [];
-      for (const id of ids) {
-        const w = await unwrapStr(commands.registerDbServer(id, config, target, global));
-        if (w) warnings.push(w);
-      }
-      return { count: ids.length, warnings };
-    },
-    onSuccess: ({ count, warnings }) => {
-      toast.info(
-        `Updated the connection in ${count} tool config${count === 1 ? "" : "s"}. ` +
-          "Your coding session may need to be restarted for the change to take effect.",
-        { duration: 10000 },
-      );
-      for (const w of warnings) toast.warning(w, { duration: 12000 });
-      qc.invalidateQueries({ queryKey: ["ai-tools"] });
-    },
-    onError: (e) => toast.error(`Could not update the registered connection: ${e.message}`),
-  });
-
-  const unregisterDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id, target, global)),
-    onSuccess: () => {
-      toast.success("Database server unregistered.");
-      qc.invalidateQueries({ queryKey: ["ai-tools"] });
-    },
-    onError: (e) => toast.error(`Could not unregister: ${e.message}`),
-  });
-
-  const pickExe = () => {
-    open({
-      multiple: false,
-      // .exe first as the common case, but any file is selectable - the
-      // server may be an extension-less binary, a script, or a shim, and
-      // the Rust side only requires that the picked path exists.
-      filters: [
-        { name: "Server executable", extensions: ["exe"] },
-        { name: "All files", extensions: ["*"] },
-      ],
-    })
-      .then((path) => {
-        if (typeof path === "string") editDb({ exe_path: path });
-      })
-      .catch(() => toast.error("Could not open the file picker."));
-  };
-
-  // A native dialog picks EITHER files or folders, never both - so the
-  // folder case gets its own button. Some server layouts are addressed by
-  // their directory rather than a specific file.
-  const pickFolder = () => {
-    open({ multiple: false, directory: true })
-      .then((path) => {
-        if (typeof path === "string") editDb({ exe_path: path });
-      })
-      .catch(() => toast.error("Could not open the folder picker."));
-  };
-
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
-  const dbReady = isDbConfigComplete(db, dbId);
 
-  const chooseDb = (id: string) => {
-    saveSelectedDb(id);
-    const chosen = databases.data?.find((d) => d.id === id);
-    if (!chosen) return;
-    // A shipped database is the company's, which the PHR X server reads
-    // through its PeoplesHR schema - set as picking one always has.
-    const patch = chosen.shipped ? { db_type: "mssql", schema_filter: "PeoplesHR" } : {};
-    if (chosen.shipped) editDb(patch);
-    // Push the new database into every config that carries the server, so
-    // the file agrees with the card - but only when the PHR X option is
-    // switched on. With it off, a leftover registration is left alone here;
-    // the only action offered for it is Unregister.
-    if (showPhrx) {
-      const ids = installed
-        .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
-        .map((t) => t.id);
-      if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch, db_id: id } });
+  // Earlier versions could register a separate database server beside ours;
+  // the app's own database tools replaced it. A tool that still carries that
+  // entry has it removed here, quietly: it is a registration this app made,
+  // and nothing on the tab mentions it. Once per tool and config, ever: a
+  // removal that worked is remembered (legacyDbCleaned), so an entry
+  // someone adds back by hand afterwards is theirs and is left alone. A
+  // failure is logged and waits for the next scan, a call already on its
+  // way is not made twice, and a removal never triggers a rescan of its
+  // own, so nothing here can loop.
+  const legacyScanned = useRef(0);
+  const legacyInFlight = useRef(new Set<string>());
+  useEffect(() => {
+    if (!tools.data || legacyScanned.current === tools.dataUpdatedAt) return;
+    legacyScanned.current = tools.dataUpdatedAt;
+    const removeLegacy = (id: string, where: string, workingDir: string | null, machineWide: boolean) => {
+      const key = legacyCleanupKey(id, machineWide ? null : workingDir);
+      if (legacyDbCleaned(key) || legacyInFlight.current.has(key)) return;
+      legacyInFlight.current.add(key);
+      const failed = (why: string) =>
+        logUi(`AI tools: could not remove the old database server from ${id} (${where} config): ${why}`);
+      commands
+        .removeLegacyDbServer(id, workingDir, machineWide)
+        .then((res) => {
+          if (res.status === "error") return failed(res.error);
+          markLegacyDbCleaned(key);
+          logUi(`AI tools: removed the old database server from ${id} (${where} config)`);
+        })
+        .catch((e: unknown) => failed(String(e)))
+        .finally(() => legacyInFlight.current.delete(key));
+    };
+    for (const t of tools.data) {
+      if (!t.installed) continue;
+      if ((t.registered_servers ?? []).includes(LEGACY_DB_SERVER)) {
+        removeLegacy(t.id, t.scope, target, global);
+      }
+      // A copy left in the machine-wide config while this row reads the
+      // repository's - the same leftover, one config over.
+      if ((t.global_registered_servers ?? []).includes(LEGACY_DB_SERVER)) {
+        removeLegacy(t.id, "global", null, true);
+      }
     }
-  };
+  }, [tools.data, tools.dataUpdatedAt, target, global]);
+
+  const chooseDb = (id: string) => saveSelectedDb(id);
   // Every saved login goes with the local settings, and permission to
   // write with them: leaving it standing would hand the next database a
   // decision nobody made about it.
   const forgetDb = async () => {
     forgetDbConfig();
-    setDb(loadDbConfig());
     setDbWrites(false);
     let failed: string | null = null;
     try {
@@ -321,30 +230,6 @@ export default function AiBridge() {
     if (failed) toast.error(failed);
     else toast.success("Database settings forgotten.");
   };
-  // A tool can still carry a PHR X registration from before the option was
-  // switched off (or from before it existed at all) - that row has to stay
-  // reachable so the leftover connection string can be removed from it.
-  const phrxLeftover = installed.filter((t) => (t.registered_servers ?? []).includes(DB_SERVER));
-
-  // The PHR X Unregister button: identical whether it sits beside "Registered
-  // check" in the on-branch's tool list or is the only control in the
-  // leftover-notice row, so one render keeps the two in sync. The visible
-  // label stays "Unregister" - the accessible name is the one that says
-  // which server and which tool, for the tests and for anyone using a
-  // screen reader on a page with more than one Unregister button.
-  const unregisterDbButton = (t: (typeof installed)[number]) => (
-    <Button
-      size="sm"
-      variant="ghost"
-      aria-label={`Unregister the PHR X server from ${t.name}`}
-      disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
-      onClick={() => unregisterDb.mutate(t.id)}
-    >
-      <IconUnregister aria-hidden />
-      {unregisterDb.isPending && unregisterDb.variables === t.id ? "Removing" : "Unregister"}
-    </Button>
-  );
-
   const repoCard = (
     <section data-tour="ai-repos" className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center gap-2">
@@ -528,12 +413,14 @@ export default function AiBridge() {
                     </Button>
                   )}
                 </div>
-                {/* A machine-wide copy of our servers, left from before this
+                {/* A machine-wide copy of our server, left from before this
                     repository was registered (or from another one). Most
                     clients let a user-scope server shadow the project one,
                     so it is worth saying - and worth being able to remove
-                    from here, since nothing else in the app reaches it. */}
-                {(t.global_registered_servers ?? []).length > 0 && (
+                    from here, since nothing else in the app reaches it.
+                    The old database server's copy is not ours to show: it
+                    is removed quietly above. */}
+                {(t.global_registered_servers ?? []).includes(TCM_SERVER) && (
                   <div className="mt-1 flex items-center gap-2">
                     <span className="flex-1 text-xs text-faint">also registered globally</span>
                     <Button
@@ -755,142 +642,16 @@ export default function AiBridge() {
           </div>
         </div>
 
-        {showPhrx ? (
-          <>
-            {/* Everything below registers the company's SEPARATE database MCP
-                server. It predates the tools above and is no longer how a
-                lookup happens, so it is secondary now rather than the point
-                of the card. */}
-            <div className="space-y-2 border-t border-border/60 pt-3">
-              <p className="text-xs text-muted">
-                Optional: register the company&apos;s own database MCP server beside this
-                one. It is no longer needed for lookups. Point it at the built{" "}
-                <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and it receives
-                the login of the database above.
-              </p>
-
-              <div className="flex items-end gap-2">
-                <label className="min-w-0 flex-1 text-xs text-muted">
-                  Server path (file or folder)
-                  <Input
-                    aria-label="Database server path"
-                    className="mt-1 w-full py-1.5 text-xs"
-                    placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
-                    value={db.exe_path}
-                    onChange={(e) => editDb({ exe_path: e.target.value })}
-                  />
-                </label>
-                <Button size="sm" variant="outline" onClick={pickExe}>
-                  <IconBrowse aria-hidden />
-                  File
-                </Button>
-                <Button size="sm" variant="outline" onClick={pickFolder}>
-                  <IconBrowse aria-hidden />
-                  Folder
-                </Button>
-              </div>
-
-              <label className="block text-xs text-muted">
-                DB_TYPE
-                <Select
-                  aria-label="Database type"
-                  className="mt-1 w-full"
-                  triggerClassName="py-1.5 text-xs"
-                  value={db.db_type}
-                  onChange={(e) => editDb({ db_type: e.target.value })}
-                >
-                  <option value="mssql">mssql</option>
-                  <option value="sqlserver">sqlserver</option>
-                </Select>
-              </label>
-
-              <label className="block text-xs text-muted">
-                SCHEMA_FILTER <span className="text-faint">(optional)</span>
-                <Input
-                  aria-label="Schema filter"
-                  className="mt-1 w-full py-1.5 text-xs"
-                  placeholder="dbo,hr - blank uses the server's default"
-                  value={db.schema_filter}
-                  onChange={(e) => editDb({ schema_filter: e.target.value })}
-                />
-              </label>
-            </div>
-
-            {!dbReady ? (
-              <p className="text-xs text-faint">
-                Choose a database and fill in the server path to enable registration.
-              </p>
-            ) : installed.length === 0 ? (
-              <p className="text-xs text-muted">No supported AI tools detected on this machine.</p>
-            ) : (
-              <ul className="space-y-2 border-t border-border/60 pt-2">
-                {installed.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="text-text">{t.name}</span>
-                    {/* The same label as the list above: which config this row
-                        is about is exactly what a person needs to know before
-                        putting a connection string into it. */}
-                    <span className="flex-1 text-xs text-faint">
-                      {t.scope === "project" ? "in this repo" : "global"}
-                    </span>
-                    {(t.registered_servers ?? []).includes(DB_SERVER) ? (
-                      <span className="flex items-center gap-2">
-                        <span className="text-xs text-success">Registered ✓</span>
-                        {unregisterDbButton(t)}
-                      </span>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={registerDb.isPending && registerDb.variables === t.id}
-                        onClick={() => registerDb.mutate(t.id)}
-                      >
-                        <IconRegister aria-hidden />
-                        {registerDb.isPending && registerDb.variables === t.id
-                          ? "Registering"
-                          : "Register"}
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : phrxLeftover.length > 0 ? (
-          <div className="space-y-2 border-t border-border/60 pt-3">
-            <p className="text-xs text-muted">
-              The PHR X database server is still registered with the tools below. This
-              app&apos;s own database tools replace it, and its registration keeps the
-              connection string, password included, in that tool&apos;s settings file.
-              Unregister it to remove that copy.
-            </p>
-            <ul className="space-y-2">
-              {phrxLeftover.map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-text">{t.name}</span>
-                  <span className="flex-1 text-xs text-faint">
-                    {t.scope === "project" ? "in this repo" : "global"}
-                  </span>
-                  {unregisterDbButton(t)}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
         <p className="text-[11px] text-faint">
-          {(showPhrx || phrxLeftover.length > 0)
-            ? "Logins are kept in Windows Credential Manager and the other settings on this machine, so you can register another editor without retyping them. Registering writes the login into that tool's MCP config."
-            : "Logins are kept in Windows Credential Manager and the other settings on this machine."}{" "}
+          Logins are kept in Windows Credential Manager and the other settings on this
+          machine.{" "}
           <button
             className="underline underline-offset-2 hover:text-danger"
             onClick={() => void forgetDb()}
           >
             Forget them
           </button>
-          {(showPhrx || phrxLeftover.length > 0)
-            ? ". This clears them here only. Unregister above to remove them from a tool."
-            : "."}
+          .
         </p>
       </section>
 

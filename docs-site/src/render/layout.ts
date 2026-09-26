@@ -7,10 +7,11 @@ import { h, reducedMotion, rich } from "./dom";
 import { icon } from "./icons";
 import { PRODUCT, renderHero } from "./hero";
 import { createPalette, searchButton } from "./search";
-import { renderSection, type ControlRef } from "./section";
+import { releaseStages, renderSection, type ControlRef } from "./section";
 import type { ShotView } from "./shot";
 import { renderSidebar, scrollSpy } from "./sidebar";
 import { applyTheme, initialTheme, themeToggle } from "./theme";
+import { createViewer } from "./viewer";
 import appIcon from "../../../src-tauri/icons/64x64.png";
 
 /** Every class that starts an animation. Under reduced motion none is ever applied. */
@@ -20,6 +21,10 @@ export type SiteHandle = { destroy(): void };
 
 /** Below this width the sidebar becomes a drawer (matches styles.css). */
 const NARROW = "(max-width: 960px)";
+/** From this width the page is wide enough to show a whole shot at its own
+ *  size (1440) with the control list beside it: data-layout="wide" widens
+ *  the page for that (styles.css). Below it, the list goes under the shot. */
+export const WIDE = "(min-width: 2240px)";
 
 export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const motion = !reducedMotion();
@@ -36,10 +41,11 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
 
   const refs = new Map<string, ControlRef>();
   const views: ShotView[] = [];
+  const viewer = createViewer();
 
   // ---- sections -------------------------------------------------------
   const sections = content.screens.map((screen) =>
-    renderSection(screen, content, { theme, motion, onRowClick: (ref) => togglePin(ref) }),
+    renderSection(screen, content, { theme, motion, onRowClick: (ref) => togglePin(ref), openViewer: viewer.open }),
   );
   for (const s of sections) {
     views.push(...s.views);
@@ -47,8 +53,9 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   }
 
   const recipeIds = new Set(content.recipes.map((r) => `common-tasks/${r.id}`));
+  const subsectionIds = new Set(sections.flatMap((s) => s.subsections.map((sub) => sub.id)));
   const exists = (id: string) =>
-    content.screens.some((s) => s.id === id) || refs.has(id) || (id === "common-tasks" && content.recipes.length > 0) || recipeIds.has(id);
+    content.screens.some((s) => s.id === id) || refs.has(id) || subsectionIds.has(id) || (id === "common-tasks" && content.recipes.length > 0) || recipeIds.has(id);
 
   // ---- chrome ---------------------------------------------------------
   const palette = createPalette(content, (href) => go(href, { push: true }));
@@ -99,8 +106,10 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
     topbar,
     h("div", { class: "shell" }, sidebar, scrim, main),
     palette.el,
+    viewer.el,
   );
   root.replaceChildren(site);
+  viewer.setBackground([...site.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c !== viewer.el));
   applyTheme(theme, root);
 
   // ---- contents drawer (narrow windows) -------------------------------
@@ -135,6 +144,20 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   narrowQuery?.addEventListener?.("change", onBreakpoint);
   cleanups.push(() => narrowQuery?.removeEventListener?.("change", onBreakpoint));
   syncInert();
+
+  // ---- page width -----------------------------------------------------
+  let wideQuery: MediaQueryList | null = null;
+  try {
+    wideQuery = typeof window.matchMedia === "function" ? window.matchMedia(WIDE) : null;
+  } catch {
+    wideQuery = null;
+  }
+  const syncLayout = () => {
+    site.dataset.layout = wideQuery?.matches ? "wide" : "standard";
+  };
+  wideQuery?.addEventListener?.("change", syncLayout);
+  cleanups.push(() => wideQuery?.removeEventListener?.("change", syncLayout));
+  syncLayout();
 
   // ---- navigation -----------------------------------------------------
   function flash(el: HTMLElement) {
@@ -179,6 +202,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
       /* a stray "%" (e.g. #50%) is not an escape; use the id as written */
     }
     const el = id ? document.getElementById(id) : null;
+    viewer.close(); // a link or a hash change always lands on the page
     setNav(false);
     if (!el || !root.contains(el)) return;
     if (opts.push) {
@@ -200,7 +224,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
     } else {
       pinOnly(null);
       if (el.tabIndex >= 0 || el.hasAttribute("tabindex")) el.focus({ preventScroll: true });
-      flash(el.querySelector<HTMLElement>("h2") ?? el);
+      flash(el.querySelector<HTMLElement>("h2, h3") ?? el);
     }
   }
 
@@ -227,6 +251,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   on(window, "hashchange", () => go(location.hash));
 
   on<KeyboardEvent>(document, "keydown", (e) => {
+    if (viewer.isOpen()) return; // it handles its own keys
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === "k") {
       e.preventDefault();
@@ -248,7 +273,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   // A click away from the rows and markers lets go of a pinned spotlight.
   on<MouseEvent>(document, "click", (e) => {
     const t = e.target as Element | null;
-    if (t?.closest?.(".row, .marker, .palette")) return;
+    if (t?.closest?.(".row, .marker, .palette, .viewer, .shot-expand")) return;
     if (!views.some((v) => v.figure.dataset.active)) return;
     pinOnly(null);
     for (const r of refs.values()) r.row.removeAttribute("data-pinned");
@@ -258,7 +283,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const spyTargets = [heroParts[0], ...sections.map((s) => s.section)];
   const recipesSection = main.querySelector<HTMLElement>("#common-tasks");
   if (recipesSection) spyTargets.push(recipesSection);
-  cleanups.push(scrollSpy(sidebar, spyTargets));
+  cleanups.push(scrollSpy(sidebar, spyTargets, sections.flatMap((s) => s.subsections)));
 
   if (motion && typeof IntersectionObserver !== "undefined") {
     const io = new IntersectionObserver(
@@ -282,9 +307,11 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
 
   return {
     destroy() {
+      viewer.close();
+      releaseStages();
       cleanups.forEach((c) => c());
       timers.forEach((t) => clearTimeout(t));
-      document.documentElement.classList.remove("palette-open");
+      document.documentElement.classList.remove("palette-open", "viewer-open");
       root.replaceChildren();
     },
   };

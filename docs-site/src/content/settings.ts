@@ -26,8 +26,8 @@ export const settings: Screen = {
     { id: MAIN, route: [OPEN], alt: "Settings: appearance and request rate on the left, the changelog, backup and updates on the right" },
     {
       id: MORE,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" } }],
-      alt: "Settings scrolled down to How To Use, the interface tour and the AI tools options",
+      route: [OPEN, { scrollTo: { role: "switch", name: "Allow registering AI tools machine-wide" } }],
+      alt: "Settings scrolled down to How To Use, the interface tour and the AI tools option",
     },
     { id: LOGS, route: [OPEN, { click: { role: "button", name: "Logs" } }, { waitFor: { role: "button", name: "Copy log" } }], alt: "The app log in place of the changelog" },
     {
@@ -36,11 +36,19 @@ export const settings: Screen = {
       alt: "The Report a bug window",
     },
   ],
+  groups: [
+    { id: "appearance", title: "Appearance", summary: "The theme and the accent colour." },
+    { id: "rate", title: "Azure DevOps request rate", summary: "How fast the app may call Azure DevOps." },
+    { id: "changelog-logs", title: "Changelog, logs and bug reports", summary: "What changed in each version, the app's own log, and a way to report a problem." },
+    { id: "backup-updates", title: "Backup and updates", summary: "Move your settings to another computer, and check for a new version." },
+    { id: "help-and-options", title: "Help, the tour and AI tools options", summary: "Further down: this guide, the interface tour, and a switch for AI Bridge." },
+  ],
   controls: [
     // --- Appearance and request rate ------------------------------------------
     {
       id: "theme",
       shot: MAIN,
+      group: "appearance",
       locate: { role: "button", name: "Theme Light" },
       name: "Theme",
       does: "Changes the whole app's colours: Light, Slate, Midnight, Graphite, Ocean or OLED.",
@@ -48,6 +56,7 @@ export const settings: Screen = {
     {
       id: "theme-system",
       shot: MAIN,
+      group: "appearance",
       locate: { role: "button", name: "Theme System" },
       name: "System",
       does: "Follows Windows: light when Windows is light, dark when it is dark.",
@@ -55,6 +64,7 @@ export const settings: Screen = {
     {
       id: "accent",
       shot: MAIN,
+      group: "appearance",
       locate: { role: "button", name: "Accent Theme default" },
       name: "Accent",
       does: "The highlight colour. The first swatch keeps the theme's own; the others (green, blue, violet, amber, rose) replace it in any theme.",
@@ -62,6 +72,7 @@ export const settings: Screen = {
     {
       id: "request-rate",
       shot: MAIN,
+      group: "rate",
       locate: { role: "button", nameRe: "^Full speed" },
       name: "Azure DevOps request rate",
       does:
@@ -73,6 +84,7 @@ export const settings: Screen = {
     {
       id: "report-bug",
       shot: MAIN,
+      group: "changelog-logs",
       locate: { role: "button", name: "Report a bug" },
       name: "Report a bug",
       does: "Opens a window for reporting a problem with this app (see below). Problems in the product you test are filed from the runner instead.",
@@ -80,6 +92,7 @@ export const settings: Screen = {
     {
       id: "changelog",
       shot: MAIN,
+      group: "changelog-logs",
       locate: { role: "button", name: "Changelog" },
       name: "Changelog",
       does: "Shows what changed in the latest version of the app.",
@@ -87,6 +100,7 @@ export const settings: Screen = {
     {
       id: "logs",
       shot: MAIN,
+      group: "changelog-logs",
       locate: { role: "button", name: "Logs" },
       name: "Logs",
       does: "Shows the app's own log in the same place, for when something needs reporting.",
@@ -94,6 +108,7 @@ export const settings: Screen = {
     {
       id: "show-more",
       shot: MAIN,
+      group: "changelog-logs",
       locate: { role: "button", nameRe: "^Show more \\(" },
       name: "Show more",
       does: "Opens the notes of every earlier version, in a box of their own. **Show less** folds them away again.",
@@ -101,6 +116,7 @@ export const settings: Screen = {
     {
       id: "export-backup",
       shot: MAIN,
+      group: "backup-updates",
       locate: { role: "button", name: "Export to file" },
       name: "Export to file",
       does:
@@ -110,6 +126,7 @@ export const settings: Screen = {
     {
       id: "import-backup",
       shot: MAIN,
+      group: "backup-updates",
       locate: { role: "button", name: "Import from file" },
       name: "Import from file",
       does:
@@ -119,6 +136,7 @@ export const settings: Screen = {
     {
       id: "check-updates",
       shot: MAIN,
+      group: "backup-updates",
       locate: { role: "button", name: "Check for updates" },
       name: "Check for updates",
       does:
@@ -129,6 +147,7 @@ export const settings: Screen = {
     {
       id: "how-to-use",
       shot: MORE,
+      group: "help-and-options",
       locate: { role: "button", name: "How To Use" },
       name: "How To Use",
       does: "Opens this guide in your browser. It comes with the app, so it works offline and always matches the version you have.",
@@ -136,6 +155,7 @@ export const settings: Screen = {
     {
       id: "show-tour",
       shot: MORE,
+      group: "help-and-options",
       locate: { role: "button", name: "Show UI tour" },
       name: "Show UI tour",
       does: "Replays the walkthrough that highlights each area of the app.",
@@ -143,23 +163,18 @@ export const settings: Screen = {
     {
       id: "allow-machine-wide",
       shot: MORE,
+      group: "help-and-options",
       locate: { role: "switch", name: "Allow registering AI tools machine-wide" },
       name: "Allow registering AI tools machine-wide",
       does:
         "For a computer that does not work from a repository: the AI Bridge tab then offers **Register in: This repository** or **Machine-wide**. Writing test cases still needs a repository.",
-    },
-    {
-      id: "offer-phrx",
-      shot: MORE,
-      locate: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" },
-      name: "Offer the PHR X database server",
-      does: "Shows the settings for registering the company's own database server on the AI Bridge tab. Most people no longer need it.",
     },
 
     // --- The app log ------------------------------------------------------------------
     {
       id: "log",
       shot: LOGS,
+      group: "changelog-logs",
       locate: { role: "heading", name: "App log" },
       name: "App log",
       does: "What the app has been doing, refreshed every few seconds while it is open. Include it when you report a bug. A file is kept for each day, for a week.",
@@ -167,6 +182,7 @@ export const settings: Screen = {
     {
       id: "copy-log",
       shot: LOGS,
+      group: "changelog-logs",
       locate: { role: "button", name: "Copy log" },
       name: "Copy log",
       does: "Copies the whole log shown, to paste into a message.",
@@ -174,6 +190,7 @@ export const settings: Screen = {
     {
       id: "open-log-folder",
       shot: LOGS,
+      group: "changelog-logs",
       locate: { role: "button", name: "Open log folder" },
       name: "Open log folder",
       does: "Opens the folder with the daily log files.",
@@ -183,6 +200,7 @@ export const settings: Screen = {
     {
       id: "bug-title",
       shot: BUG,
+      group: "changelog-logs",
       locate: { role: "textbox", name: "Bug title" },
       name: "Bug title",
       does: "One line for the issue. Leave it blank to take it from the description.",
@@ -190,6 +208,7 @@ export const settings: Screen = {
     {
       id: "what-happened",
       shot: BUG,
+      group: "changelog-logs",
       locate: { role: "textbox", name: "What happened" },
       name: "What happened",
       does: "What you were doing, and what happened instead.",
@@ -197,6 +216,7 @@ export const settings: Screen = {
     {
       id: "bug-cancel",
       shot: BUG,
+      group: "changelog-logs",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without reporting anything.",
@@ -204,6 +224,7 @@ export const settings: Screen = {
     {
       id: "open-issue",
       shot: BUG,
+      group: "changelog-logs",
       locate: { role: "button", name: "Open the issue" },
       name: "Open the issue",
       does:

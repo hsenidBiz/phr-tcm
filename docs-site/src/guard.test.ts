@@ -42,6 +42,10 @@ function visibleText(): { where: string; text: string }[] {
       add(`${s.id} how-to`, how.title);
       how.steps.forEach((t, i) => add(`${s.id} how-to "${how.title}" step ${i + 1}`, t));
     }
+    for (const g of s.groups ?? []) {
+      add(`${s.id}/${g.id} group title`, g.title);
+      add(`${s.id}/${g.id} group summary`, g.summary);
+    }
     for (const shot of s.shots) add(`${shot.id} alt`, shot.alt);
     for (const c of s.controls) {
       add(`${s.id}/${c.id} name`, c.name);
@@ -190,6 +194,31 @@ describe("the shipped screenshots", () => {
       }
     }
     expect(problems).toEqual([]);
+  });
+});
+
+describe("the site wears the app's look", () => {
+  const css = readFileSync(join(DOCS, "src", "styles.css"), "utf8");
+  const block = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    return at < 0 ? "" : css.slice(at, css.indexOf("}", at));
+  };
+
+  test("light with the app's light violet, graphite with its split dark violet", () => {
+    const light = block(":root");
+    expect(light).toContain("--bg: #f8fafc;");
+    expect(light).toContain("--accent: #6d28d9;");
+    expect(light).toContain("--on-accent: #ffffff;");
+    const dark = block(':root[data-theme="dark"]');
+    expect(dark).toContain("--bg: #141416;");
+    expect(dark).toContain("--surface: #1d1d21;");
+    expect(dark).toContain("--accent: #8655f6;");
+    expect(dark).toContain("--accent-text: #a78bfa;");
+  });
+
+  test("no green is left from the old look", () => {
+    const greens = [/#15803d/i, /#166534/i, /#22c55e/i, /#4ade80/i, /#0f766e/i, /#2dd4bf/i, /34 197 94/, /21 128 61/, /20 184 166/, /45 212 191/];
+    expect(greens.filter((g) => g.test(css)).map(String)).toEqual([]);
   });
 });
 

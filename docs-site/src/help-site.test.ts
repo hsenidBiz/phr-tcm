@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { ANIMATION_CLASSES, render, type SiteHandle } from "./render/layout";
+import { ANIMATION_CLASSES, render, WIDE, type SiteHandle } from "./render/layout";
 import { score } from "./render/search";
 import { captionPlacement, spotStyle } from "./render/shot";
 import type { Box, ShotPositions, SiteContent } from "./types";
@@ -154,13 +154,17 @@ describe("screen sections", () => {
     expect(open.querySelector('.marker[data-control="filter"]')?.textContent).toBe("1");
   });
 
-  test("markers sit where positions.json puts them, scaled to the rendered width", () => {
+  test("markers sit just outside their control's corner from positions.json, in shot percentages", () => {
     mount();
     const m = document.querySelector<HTMLElement>('figure[data-shot="alpha-open"] .marker[data-control="filter"]')!;
-    // anchored on the top-left corner: x 720 of 1440 = 50%, y 450 of 900 = 50%
+    // top-left corner 720,450, the marker centred 9 px (0.75 of its 12 px
+    // radius) up and left of it: 711 of 1440, 441 of 900
     expect(m.dataset.anchor).toBe("tl");
-    expect(m.style.getPropertyValue("--x")).toBe("50%");
-    expect(m.style.getPropertyValue("--y")).toBe("50%");
+    expect(m.style.getPropertyValue("--x")).toBe("49.375%");
+    expect(m.style.getPropertyValue("--y")).toBe("49%");
+    // its size, as a share of the frame width: 24 of 1440
+    expect(m.style.getPropertyValue("--d")).toBe("1.6667");
+    expect(m.hasAttribute("data-leader")).toBe(false);
   });
 
   test("a narrow window's shot keeps its own size: framed narrow, markers scaled by its pixels", () => {
@@ -189,8 +193,8 @@ describe("screen sections", () => {
     const img = fig.querySelector("img")!;
     expect([img.getAttribute("width"), img.getAttribute("height")]).toEqual(["460", "720"]);
     const m = fig.querySelector<HTMLElement>('.marker[data-control="close"]')!;
-    expect(m.style.getPropertyValue("--x")).toBe("50%"); // 230 of 460
-    expect(m.style.getPropertyValue("--y")).toBe("25%"); // 180 of 720
+    expect(m.style.getPropertyValue("--x")).toBe("48.0435%"); // 230 - 9 of 460
+    expect(m.style.getPropertyValue("--y")).toBe("23.75%"); // 180 - 9 of 720
 
     // The main window's shots are unchanged: full width, 1440 x 900.
     const mainFrame = document.querySelector<HTMLElement>('figure[data-shot="alpha-main"] .frame')!;
@@ -213,9 +217,9 @@ describe("screen sections", () => {
     mount(edge);
     const m = (id: string) => document.querySelector<HTMLElement>(`.marker[data-control="${id}"]`)!;
     expect(m("save").dataset.anchor).toBe("tr");
-    expect(m("save").style.getPropertyValue("--x")).toBe("3.3333%"); // x + w = 48 of 1440
+    expect(m("save").style.getPropertyValue("--x")).toBe("3.9583%"); // x + w + 9 = 57 of 1440
     expect(m("discard").dataset.anchor).toBe("bl");
-    expect(m("discard").style.getPropertyValue("--y")).toBe("4.4444%"); // y + h = 40 of 900
+    expect(m("discard").style.getPropertyValue("--y")).toBe("5.4444%"); // y + h + 9 = 49 of 900
     expect(m("filter").dataset.anchor).toBe("br");
   });
 
@@ -502,19 +506,28 @@ describe("search", () => {
 });
 
 describe("theme", () => {
-  test("follows the system by default, and the toggle switches data-theme and every screenshot", () => {
+  test("opens light by default, even on a system set to dark, as the app does", () => {
     mockMatchMedia(["(prefers-color-scheme: dark)"]);
     mount();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.querySelector("button.theme-toggle")?.getAttribute("aria-label")).toBe("Switch to dark theme");
+  });
+
+  test("the toggle switches data-theme and every screenshot, both ways", () => {
+    mount();
     const html = document.documentElement;
-    expect(html.dataset.theme).toBe("dark");
     const imgs = () => [...document.querySelectorAll<HTMLImageElement>("img[data-shot]")].map((i) => i.getAttribute("src"));
     expect(imgs().length).toBeGreaterThan(0);
+    expect(imgs().every((s) => s?.startsWith("img/light/"))).toBe(true);
+
+    document.querySelector<HTMLButtonElement>("button.theme-toggle")!.click();
+    expect(html.dataset.theme).toBe("dark");
     expect(imgs().every((s) => s?.startsWith("img/dark/"))).toBe(true);
+    expect(imgs()).toContain("img/dark/alpha-main.jpg");
 
     document.querySelector<HTMLButtonElement>("button.theme-toggle")!.click();
     expect(html.dataset.theme).toBe("light");
     expect(imgs().every((s) => s?.startsWith("img/light/"))).toBe(true);
-    expect(imgs()).toContain("img/light/alpha-main.jpg");
   });
 
   test("the choice is remembered", () => {
@@ -561,5 +574,420 @@ describe("reduced motion", () => {
     key(input, { key: "Enter" });
     expect(location.hash).toBe("#alpha/save");
     expect(anyAnimated()).toBeNull();
+  });
+});
+
+// A busy screen split into two groups, on one shot (so it gets an overview).
+const grouped: SiteContent = {
+  ...fixture,
+  screens: [
+    ...fixture.screens,
+    {
+      id: "gamma",
+      title: "Gamma Screen",
+      group: "Work Manager",
+      summary: "Gamma summary text.",
+      shots: [{ id: "gamma-main", route: [{ nav: "Gamma" }], alt: "The gamma screen" }],
+      groups: [
+        { id: "top-card", title: "The top card", summary: "What the top card does." },
+        { id: "bottom-card", title: "The bottom card" },
+      ],
+      controls: [
+        { id: "a", shot: "gamma-main", group: "top-card", locate: { text: "A" }, name: "Control A", does: "Does A." },
+        { id: "b", shot: "gamma-main", group: "top-card", locate: { text: "B" }, name: "Control B", does: "Does B." },
+        { id: "c", shot: "gamma-main", group: "bottom-card", locate: { text: "C" }, name: "Control C", does: "Does C." },
+        { id: "d", shot: "gamma-main", group: "bottom-card", locate: { text: "D" }, name: "Control D", does: "Does D." },
+      ],
+    },
+  ],
+  positions: {
+    ...fixture.positions,
+    "gamma-main": main({
+      a: { x: 100, y: 100, w: 80, h: 30 },
+      b: { x: 200, y: 100, w: 80, h: 30 },
+      c: { x: 100, y: 700, w: 100, h: 30 },
+      d: { x: 400, y: 720, w: 60, h: 20 },
+    }),
+  },
+  available: [...fixture.available, "gamma-main"],
+};
+
+const quietObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+};
+
+describe("grouped screens", () => {
+  test("show the shot once as an overview whose outlined parts link to the subsections, with no numbered markers", () => {
+    mount(grouped);
+    const overview = document.querySelector('#gamma figure[data-overview="gamma-main"]')!;
+    expect(overview.querySelector(".marker")).toBeNull();
+    // The labels are the links, outside the shot; the outlined parts are
+    // mouse shortcuts to the same places, out of the tab order.
+    const labels = [...overview.querySelectorAll<HTMLAnchorElement>("a.ov-label")];
+    expect(labels.map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
+      ["#gamma/top-card", "The top card"],
+      ["#gamma/bottom-card", "The bottom card"],
+    ]);
+    for (const a of labels) expect(a.closest(".frame")).toBeNull();
+    const parts = [...overview.querySelectorAll<HTMLAnchorElement>("a.region")];
+    expect(parts.map((a) => [a.getAttribute("href"), a.textContent, a.getAttribute("tabindex"), a.getAttribute("aria-hidden")])).toEqual([
+      ["#gamma/top-card", "", "-1", "true"],
+      ["#gamma/bottom-card", "", "-1", "true"],
+    ]);
+    // the union of the group's boxes, padded by 10: 90..290 x 90..140 of 1440 x 900
+    expect(parts[0].style.left).toBe("6.25%");
+    expect(parts[0].style.width).toBe("13.8889%");
+  });
+
+  test("then one subsection per group: a heading at #screen/group, a zoomed crop, markers numbered within the group", () => {
+    mount(grouped);
+    const subs = [...document.querySelectorAll<HTMLElement>("#gamma section.subsection")];
+    expect(subs.map((s) => s.id)).toEqual(["gamma/top-card", "gamma/bottom-card"]);
+    expect(subs[0].querySelector("h3")?.textContent).toBe("The top card");
+    expect(subs[0].textContent).toContain("What the top card does.");
+
+    const frame = subs[0].querySelector<HTMLElement>(".frame")!;
+    expect(frame.classList.contains("is-crop")).toBe(true);
+    // 100..280 x 100..130, padded 48, at least 40% of 1440 wide and a quarter as tall
+    expect([frame.style.getPropertyValue("--shot-w"), frame.style.getPropertyValue("--shot-h")]).toEqual(["576", "144"]);
+    const img = frame.querySelector("img")!;
+    expect(img.style.width).toBe("250%"); // 1440 of 576
+    expect(img.style.top).toBe("-29.8611%"); // 43 of 144
+
+    const numbers = (i: number) => [...subs[i].querySelectorAll<HTMLElement>(".marker")].map((m) => `${m.dataset.control}:${m.textContent}`);
+    expect(numbers(0)).toEqual(["a:1", "b:2"]);
+    expect(numbers(1)).toEqual(["c:1", "d:2"]);
+    // rows keep their #screen/control anchors
+    expect(document.getElementById("gamma/d")?.closest("section.subsection")).toBe(subs[1]);
+  });
+
+  test("a #screen/group link scrolls to the subsection and focuses it", () => {
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView");
+    history.replaceState(null, "", "#gamma/bottom-card");
+    mount(grouped);
+    const sub = document.getElementById("gamma/bottom-card")!;
+    expect(spy.mock.contexts).toContain(sub);
+    expect(document.activeElement).toBe(sub);
+  });
+
+  test("the sidebar lists a screen's groups under it, and scroll-spy opens and marks them", () => {
+    type Entries = { target: Element; isIntersecting: boolean }[];
+    const callbacks: ((entries: Entries) => void)[] = [];
+    const fire = (entries: Entries) => callbacks.forEach((cb) => cb(entries));
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class extends quietObserver {
+        constructor(cb: (entries: Entries) => void) {
+          super();
+          callbacks.push(cb);
+        }
+      },
+    );
+    try {
+      mount(grouped);
+      const nav = document.getElementById("sidebar")!;
+      const subLinks = [...nav.querySelectorAll<HTMLAnchorElement>("a.nav-sublink")];
+      expect(subLinks.map((a) => a.getAttribute("href"))).toEqual(["#gamma/top-card", "#gamma/bottom-card"]);
+      const screenLi = nav.querySelector('a[data-spy="gamma"]')!.parentElement!;
+      expect(screenLi.hasAttribute("data-open")).toBe(false);
+
+      fire([
+        { target: document.getElementById("gamma")!, isIntersecting: true },
+        { target: document.getElementById("gamma/bottom-card")!, isIntersecting: true },
+      ]);
+      expect(screenLi.hasAttribute("data-open")).toBe(true);
+      expect(subLinks[1].getAttribute("aria-current")).toBe("true");
+      expect(subLinks[0].hasAttribute("aria-current")).toBe(false);
+    } finally {
+      vi.stubGlobal("IntersectionObserver", quietObserver);
+    }
+  });
+
+  test("search finds a group by its title and jumps to its subsection", () => {
+    mount(grouped);
+    key(document, { key: "k", ctrlKey: true });
+    const input = document.querySelector<HTMLInputElement>('.palette input[role="combobox"]')!;
+    input.value = "The bottom card";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    const first = document.querySelector('.palette [role="option"]')!;
+    expect(first.textContent).toContain("Section");
+    key(input, { key: "Enter" });
+    expect(location.hash).toBe("#gamma/bottom-card");
+  });
+});
+
+describe("page width and stage flow", () => {
+  test("a very wide window gets the wide layout (a whole shot at its own size, the list beside it)", () => {
+    mockMatchMedia([WIDE]);
+    mount();
+    expect(document.querySelector<HTMLElement>(".site")!.dataset.layout).toBe("wide");
+  });
+
+  test("any other window gets the standard layout", () => {
+    mount();
+    expect(document.querySelector<HTMLElement>(".site")!.dataset.layout).toBe("standard");
+  });
+
+  test("the layout follows the window when it crosses the breakpoint", () => {
+    const listeners: (() => void)[] = [];
+    let wide = false;
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return query === WIDE && wide;
+      },
+      media: query,
+      addEventListener: (_: string, fn: () => void) => {
+        if (query === WIDE) listeners.push(fn);
+      },
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    mount();
+    const site = document.querySelector<HTMLElement>(".site")!;
+    expect(site.dataset.layout).toBe("standard");
+    wide = true;
+    listeners.forEach((fn) => fn());
+    expect(site.dataset.layout).toBe("wide");
+  });
+
+  test("a stage draws its figure no taller than the window allows, and puts its list beside it when both fit, else below", () => {
+    const observers: { cb: () => void; el: Element }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        cb: () => void;
+        constructor(cb: () => void) {
+          this.cb = cb;
+        }
+        observe(el: Element) {
+          observers.push({ cb: this.cb, el });
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      mount();
+      const stage = document.querySelector<HTMLElement>('#alpha figure[data-shot="alpha-main"]')!.closest<HTMLElement>(".stage")!;
+      expect(stage.dataset.flow).toBe("below"); // no width yet
+      const resize = (w: number) => {
+        Object.defineProperty(stage, "clientWidth", { value: w, configurable: true });
+        observers.filter((o) => o.el === stage).forEach((o) => o.cb());
+      };
+      // jsdom's window is 768 tall: a figure may be 768 - 116 = 652 tall,
+      // so the 1440 x 900 shot is drawn 1043 wide.
+      expect(stage.style.getPropertyValue("--fig-w")).toBe("1043");
+      resize(1868);
+      expect(stage.dataset.flow).toBe("beside");
+      resize(1300); // 1043 + 28 + 340 does not fit
+      expect(stage.dataset.flow).toBe("below");
+      // a taller window lets the shot reach its own size
+      const tall = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", { value: 1100, configurable: true });
+      try {
+        window.dispatchEvent(new Event("resize"));
+        expect(stage.style.getPropertyValue("--fig-w")).toBe("1440");
+        resize(1868); // 1440 + 28 + 340 fits
+        expect(stage.dataset.flow).toBe("beside");
+        resize(1440);
+        expect(stage.dataset.flow).toBe("below");
+      } finally {
+        Object.defineProperty(window, "innerHeight", { value: tall, configurable: true });
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubGlobal("IntersectionObserver", quietObserver);
+    }
+  });
+});
+
+describe("full-screen view", () => {
+  const expandBtn = () => document.querySelector<HTMLButtonElement>('#alpha figure[data-shot="alpha-main"] .shot-expand')!;
+  const viewer = () => document.querySelector<HTMLElement>(".viewer")!;
+  const dialog = () => viewer().querySelector<HTMLElement>('[role="dialog"]')!;
+
+  test("the expand button is named for the shot and opens a labelled modal dialog with the shot, its markers and its list", () => {
+    mount();
+    const btn = expandBtn();
+    expect(btn.getAttribute("aria-label")).toBe("Open The alpha screen full screen");
+    expect(viewer().hidden).toBe(true);
+    btn.click();
+    expect(viewer().hidden).toBe(false);
+    expect(dialog().getAttribute("aria-modal")).toBe("true");
+    const label = document.getElementById(dialog().getAttribute("aria-labelledby")!);
+    expect(label?.textContent).toBe("The alpha screen");
+    expect([...dialog().querySelectorAll<HTMLElement>(".marker")].map((m) => m.textContent)).toEqual(["1", "2"]);
+    expect(dialog().querySelectorAll(".row")).toHaveLength(2);
+    // its rows are not the page's anchors
+    expect(dialog().querySelector('[id="alpha/save"]')).toBeNull();
+    expect(document.documentElement.classList.contains("viewer-open")).toBe(true);
+  });
+
+  test("hovering a row in the view spotlights the view's copy of the shot", () => {
+    mount();
+    expandBtn().click();
+    const row = dialog().querySelector<HTMLElement>('.row[data-for="discard"]')!;
+    row.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(dialog().querySelector<HTMLElement>("figure")!.dataset.active).toBe("discard");
+    expect(dialog().querySelector(".caption")?.textContent).toContain("Throws the draft away.");
+    // the inline figure is untouched
+    expect(document.querySelector<HTMLElement>('#alpha figure[data-shot="alpha-main"]')!.dataset.active).toBeUndefined();
+  });
+
+  test("clicking the image opens it too", () => {
+    mount();
+    document.querySelector<HTMLImageElement>('#alpha figure[data-shot="alpha-main"] img')!.click();
+    expect(viewer().hidden).toBe(false);
+  });
+
+  test("Escape closes it, unlocks the page and gives focus back to the expand button", () => {
+    mount();
+    expandBtn().focus();
+    expandBtn().click();
+    expect(dialog().contains(document.activeElement)).toBe(true);
+    key(document.activeElement!, { key: "Escape" });
+    expect(viewer().hidden).toBe(true);
+    expect(document.documentElement.classList.contains("viewer-open")).toBe(false);
+    expect(document.activeElement).toBe(expandBtn());
+  });
+
+  test("the close button and a click on the backdrop close it", () => {
+    mount();
+    expandBtn().click();
+    dialog().querySelector<HTMLButtonElement>(".viewer-close")!.click();
+    expect(viewer().hidden).toBe(true);
+    expect(document.activeElement).toBe(expandBtn());
+
+    document.querySelector<HTMLImageElement>('#alpha figure[data-shot="alpha-main"] img')!.click();
+    expect(viewer().hidden).toBe(false);
+    viewer().querySelector<HTMLElement>(".viewer-backdrop")!.click();
+    expect(viewer().hidden).toBe(true);
+    expect(document.activeElement).toBe(expandBtn());
+  });
+
+  test("Tab stays inside it, and focus pulled out to the page comes back", () => {
+    mount();
+    expandBtn().click();
+    const stops = [...dialog().querySelectorAll<HTMLElement>("button")];
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    expect(document.activeElement).toBe(first);
+    last.focus();
+    key(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    key(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    document.querySelector<HTMLElement>("button.theme-toggle")!.focus();
+    expect(dialog().contains(document.activeElement)).toBe(true);
+  });
+
+  test("page shortcuts wait while it is open", () => {
+    mount();
+    expandBtn().click();
+    key(document.activeElement!, { key: "k", ctrlKey: true });
+    expect(document.querySelector(".palette")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  test("under reduced motion it applies no animation classes", () => {
+    mockMatchMedia(["(prefers-reduced-motion: reduce)"]);
+    mount();
+    expandBtn().click();
+    expect(dialog().querySelector(ANIMATION_CLASSES.map((c) => `.${c}`).join(","))).toBeNull();
+  });
+
+  test("a shot with no image yet has no expand button", () => {
+    mount();
+    expect(document.querySelector('figure[data-shot="beta-main"] .shot-expand')).toBeNull();
+  });
+});
+
+describe("full-screen view, continued", () => {
+  const viewer = () => document.querySelector<HTMLElement>(".viewer")!;
+  const dialog = () => viewer().querySelector<HTMLElement>('[role="dialog"]')!;
+  const open = () => document.querySelector<HTMLButtonElement>('#alpha figure[data-shot="alpha-main"] .shot-expand')!.click();
+
+  test("Escape still closes it after a click on the shot left focus on the page body", () => {
+    mount();
+    open();
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    key(document.body, { key: "Escape" });
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("a click on the shot or the list focuses the dialog, never the page", () => {
+    mount();
+    open();
+    expect(dialog().getAttribute("tabindex")).toBe("-1");
+  });
+
+  test("a click on the empty space around the shot closes it", () => {
+    mount();
+    open();
+    viewer().querySelector<HTMLElement>(".viewer-stage")!.click();
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("the page behind is inert while it is open, and not after", () => {
+    mount();
+    const shell = document.querySelector<HTMLElement>(".shell")!;
+    const topbar = document.querySelector<HTMLElement>(".topbar")!;
+    open();
+    expect(shell.hasAttribute("inert")).toBe(true);
+    expect(topbar.hasAttribute("inert")).toBe(true);
+    expect(viewer().hasAttribute("inert")).toBe(false);
+    key(document.body, { key: "Escape" });
+    expect(shell.hasAttribute("inert")).toBe(false);
+    expect(topbar.hasAttribute("inert")).toBe(false);
+  });
+
+  test("a hash change (the Back button, a link) closes it", () => {
+    mount();
+    open();
+    history.replaceState(null, "", "#beta");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(viewer().hidden).toBe(true);
+  });
+
+  test("a group's crop opens as that crop, named for its group", () => {
+    mount(grouped);
+    const btn = document.querySelector<HTMLButtonElement>('[id="gamma/top-card"] .shot-expand')!;
+    expect(btn.getAttribute("aria-label")).toBe("Open The top card full screen");
+    expect(document.querySelector('[id="gamma/top-card"] ol.controls')?.getAttribute("aria-label")).toBe("Controls in The top card");
+    btn.click();
+    const frame = dialog().querySelector<HTMLElement>(".frame")!;
+    expect(frame.classList.contains("is-crop")).toBe(true);
+    expect([frame.style.getPropertyValue("--shot-w"), frame.style.getPropertyValue("--shot-h")]).toEqual(["576", "144"]);
+    expect([...dialog().querySelectorAll<HTMLElement>(".marker")].map((m) => `${m.dataset.control}:${m.textContent}`)).toEqual(["a:1", "b:2"]);
+    expect(dialog().querySelector(".viewer-context")?.textContent).toBe("Gamma Screen · The top card");
+  });
+});
+
+describe("overview labels", () => {
+  test("a part in the upper half is labelled above the shot, one in the lower half below it", () => {
+    mount(grouped); // the top card's controls sit at y 100, the bottom card's at 700
+    const strip = (g: string) => document.querySelector(`figure[data-overview="gamma-main"] a.ov-label[data-g="${g}"]`)!.closest(".ov-strip")!;
+    expect(strip("top-card").classList.contains("is-below")).toBe(false);
+    expect(strip("bottom-card").classList.contains("is-below")).toBe(true);
+    // Above, then the shot, then below.
+    const ov = document.querySelector('figure[data-overview="gamma-main"] .ov')!;
+    expect([...ov.children].map((c) => c.className)).toEqual(["ov-strip", "frame", "ov-strip is-below"]);
+  });
+
+  test("pointing at a label lights its part, and pointing at a part lights its label", () => {
+    mount(grouped);
+    const fig = document.querySelector('figure[data-overview="gamma-main"]')!;
+    const label = fig.querySelector<HTMLElement>('a.ov-label[data-g="top-card"]')!;
+    const part = fig.querySelector<HTMLElement>('a.region[data-g="top-card"]')!;
+    label.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(part.classList.contains("is-hot")).toBe(true);
+    label.dispatchEvent(new MouseEvent("mouseleave"));
+    part.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(label.classList.contains("is-hot")).toBe(true);
+    expect(fig.querySelector('a.region[data-g="bottom-card"]')!.classList.contains("is-hot")).toBe(false);
   });
 });

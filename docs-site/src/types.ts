@@ -44,6 +44,17 @@ export type Control = {
   name: string; // as the person sees it
   does: string; // what it does, plain words
   tips?: string[];
+  /** On a screen with `groups`: the id of the group it is documented under. */
+  group?: string;
+};
+
+/** One part of a busy screen (a card or a panel of it), documented as a
+ *  subsection of its own: a heading at `#screen/group`, and a zoomed crop
+ *  of each shot around the group's controls. */
+export type ControlGroup = {
+  id: string; // unique within the screen, kebab-case, never one of its control ids
+  title: string; // plain task language, shown as a heading
+  summary?: string;
 };
 
 export type Screen = {
@@ -53,6 +64,10 @@ export type Screen = {
   summary: string;
   shots: Shot[];
   controls: Control[];
+  /** Splits a crowded screen into subsections. When set, every control
+   *  names one of these in `group`; the page shows each shot that spans
+   *  several groups once as an overview, then one subsection per group. */
+  groups?: ControlGroup[];
   tips?: string[];
   howTo?: { title: string; steps: string[] }[];
 };

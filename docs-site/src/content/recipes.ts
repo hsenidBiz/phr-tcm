@@ -9,11 +9,11 @@ export const recipes: Recipe[] = [
     id: "first-upload",
     title: "Upload your first test cases",
     steps: [
-      { text: "Sign in, then choose the organisation, project and PBI in the bar at the top.", link: "getting-started/find-pbi" },
+      { text: "Sign in, then choose the organisation, project and Product Backlog Item in the bar at the top.", link: "getting-started/find-pbi" },
       { text: "Press **Import JSON** and pick your file, or write the cases on Manual Entry.", link: "import-file/import-json" },
       { text: "Check the queue: open a case to read its steps.", link: "import-file/expand-steps" },
       { text: "Press **Review** and deal with any duplicate it finds.", link: "import-file/review" },
-      { text: "Check the highlighted PBI and confirm the upload.", link: "import-file/confirm" },
+      { text: "Check the highlighted Product Backlog Item and confirm the upload.", link: "import-file/confirm" },
       { text: "Read the results: every case with its new id.", link: "import-file/results" },
     ],
   },
@@ -42,7 +42,7 @@ export const recipes: Recipe[] = [
     id: "rerun-failed",
     title: "Run the failed cases again",
     steps: [
-      { text: "Open Run Tests with the PBI chosen.", link: "run-tests" },
+      { text: "Open Run Tests with the Product Backlog Item chosen.", link: "run-tests" },
       { text: "Pick **Failed** in the last outcome filter.", link: "run-tests/filter-outcome" },
       { text: "Press **Select all**.", link: "run-tests/select-all" },
       { text: "Press **Run N in runner**.", link: "run-tests/run-in-runner" },
@@ -58,14 +58,14 @@ export const recipes: Recipe[] = [
       { text: "Press **File bug**.", link: "run-tests/file-bug" },
       { text: "Check the bug's title.", link: "run-tests/bug-title" },
       { text: "Add what actually happened to the repro steps.", link: "run-tests/bug-repro" },
-      { text: "Paste any screenshots, then press **File bug**. The bug is linked to the case and the PBI.", link: "run-tests/bug-links" },
+      { text: "Paste any screenshots, then press **File bug**. The bug is linked to the case and the Product Backlog Item.", link: "run-tests/bug-links" },
     ],
   },
   {
     id: "reorder-suite",
     title: "Put a suite's cases in order",
     steps: [
-      { text: "Open Suite Management with the PBI chosen; its suite opens by itself.", link: "suite-management/open-suite" },
+      { text: "Open Suite Management with the Product Backlog Item chosen; its suite opens by itself.", link: "suite-management/open-suite" },
       { text: "Drag the cases into order, or select some and move them with the arrows.", link: "suite-management/move" },
       { text: "Press **Apply order** to save the order to the suite in Azure DevOps.", link: "suite-management/apply-order" },
     ],
@@ -108,7 +108,7 @@ export const recipes: Recipe[] = [
     steps: [
       { text: "On AI Bridge, press **Add repository** and pick the repository the cases belong to.", link: "ai-bridge/add-repository" },
       { text: "Press **Register** beside your assistant, then start its session in that repository.", link: "ai-bridge/register" },
-      { text: "Ask it to write test cases for your PBI. It saves them as a file in the repository's .test-cases folder.", link: "ai-bridge/breakdown" },
+      { text: "Ask it to write test cases for your Product Backlog Item. It saves them as a file in the repository's .test-cases folder.", link: "ai-bridge/breakdown" },
       { text: "Import the file on Import File, review the queue and upload it.", link: "import-file/import-json" },
     ],
   },

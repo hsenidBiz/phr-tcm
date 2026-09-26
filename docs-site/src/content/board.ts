@@ -37,7 +37,7 @@ export const board: Screen = {
   group: "Work Manager",
   summary:
     "Your work items as cards in To Do, In Progress and Done. Drag a card to another column to change its state, or click it to open the work item: " +
-    "edit its fields, read and add comments, and see its history. Switch the board to an area or a PBI to see more than your own work.",
+    "edit its fields, read and add comments, and see its history. Switch the board to an area or a Product Backlog Item to see more than your own work.",
   shots: [
     { id: COLUMNS, route: [...NAV, { waitFor: { text: CARD } }], alt: "The board with its three columns and a work item's pull request chips" },
     { id: SWIMLANES, route: [...NAV, { click: { role: "switch", name: "Swimlanes" } }, { waitFor: { role: "button", name: "Collapse all" } }], alt: "The board in swimlanes, one lane per parent work item" },
@@ -49,7 +49,7 @@ export const board: Screen = {
     {
       id: SCOPE,
       route: [...NAV, { click: { role: "combobox", name: "Board scope" } }, { waitFor: { role: "option", name: "My work" } }],
-      alt: "The board scope list: my work, by PBI, or an area",
+      alt: "The board scope list: my work, by Product Backlog Item, or an area",
     },
     {
       id: AREA,
@@ -78,18 +78,28 @@ export const board: Screen = {
       alt: "A bug's RCA page",
     },
   ],
+  groups: [
+    { id: "scope-filters", title: "Choose what the board shows", summary: "Your own work, one Product Backlog Item or an area, narrowed by title, type or person." },
+    { id: "columns-cards", title: "Columns and cards", summary: "One card per work item, in the column of its state." },
+    { id: "lanes", title: "Swimlanes", summary: "One lane per parent work item." },
+    { id: "item-head", title: "A work item: title, state and people", summary: "Open a card to change the item in place." },
+    { id: "item-pages", title: "A work item: description, discussion and history", summary: "The item's pages, its comments and everything that changed." },
+    { id: "item-side", title: "A work item: planning and saving", summary: "Effort, dates and where the item belongs, then save or close." },
+  ],
   controls: [
     // --- The toolbar and the columns --------------------------------------------------
     {
       id: "scope",
       shot: COLUMNS,
+      group: "scope-filters",
       locate: { role: "combobox", name: "Board scope" },
       name: "Board scope",
-      does: "Whose work the board shows: **My work** (assigned to you, the default), **By PBI** or an area. Type to find an area in a long list.",
+      does: "Whose work the board shows: **My work** (assigned to you, the default), **By Product Backlog Item** or an area. Type to find an area in a long list.",
     },
     {
       id: "filter",
       shot: COLUMNS,
+      group: "scope-filters",
       locate: { role: "textbox", name: "Filter items" },
       name: "Filter by title, id, tag",
       does: "Shows only the cards whose title, number or tags contain what you type.",
@@ -97,6 +107,7 @@ export const board: Screen = {
     {
       id: "filter-type",
       shot: COLUMNS,
+      group: "scope-filters",
       locate: { role: "button", name: "Filter type" },
       name: "All types",
       does: "Shows only the work item types you tick, such as Bug or Task. The choice is remembered.",
@@ -104,6 +115,7 @@ export const board: Screen = {
     {
       id: "refresh",
       shot: COLUMNS,
+      group: "scope-filters",
       locate: { role: "button", name: "Refresh work items" },
       name: "Refresh",
       does: "Reads the board again from Azure DevOps. The board otherwise shows what it read last and updates itself in the background.",
@@ -111,13 +123,15 @@ export const board: Screen = {
     {
       id: "swimlanes",
       shot: COLUMNS,
+      group: "scope-filters",
       locate: { role: "switch", name: "Swimlanes" },
       name: "Swimlanes",
-      does: "Groups the cards under the item they belong to, such as tasks under their PBI. The choice is remembered on this computer.",
+      does: "Groups the cards under the item they belong to, such as tasks under their Product Backlog Item. The choice is remembered on this computer.",
     },
     {
       id: "hide-column",
       shot: COLUMNS,
+      group: "columns-cards",
       locate: { role: "button", name: "Hide Done" },
       name: "Hide",
       does: "Folds a column to a narrow strip, with its name and count, so the others get more room. At least one column always stays open. Hidden columns are remembered.",
@@ -125,6 +139,7 @@ export const board: Screen = {
     {
       id: "card",
       shot: COLUMNS,
+      group: "columns-cards",
       locate: { text: "Wire the login form to the session service" },
       name: "Card",
       does:
@@ -137,6 +152,7 @@ export const board: Screen = {
     {
       id: "pr-chip",
       shot: COLUMNS,
+      group: "columns-cards",
       locate: { role: "button", name: "portal-web" },
       name: "Pull request chip",
       does: "A pull request linked to the work item, named by its repository. A dot means it is active. Hover it for the title; click it to open it in your browser.",
@@ -144,6 +160,7 @@ export const board: Screen = {
     {
       id: "completed-pr-chip",
       shot: COLUMNS,
+      group: "columns-cards",
       locate: { role: "button", name: "portal-db" },
       name: "Completed pull request",
       does: "A tick instead of the dot means the pull request is completed.",
@@ -153,6 +170,7 @@ export const board: Screen = {
     {
       id: "collapse-all",
       shot: SWIMLANES,
+      group: "lanes",
       locate: { role: "button", name: "Collapse all" },
       name: "Collapse all",
       does: "Folds every lane to its heading.",
@@ -160,6 +178,7 @@ export const board: Screen = {
     {
       id: "expand-all",
       shot: SWIMLANES,
+      group: "lanes",
       locate: { role: "button", name: "Expand all" },
       name: "Expand all",
       does: "Opens every lane again.",
@@ -167,6 +186,7 @@ export const board: Screen = {
     {
       id: "lane-toggle",
       shot: SWIMLANES,
+      group: "lanes",
       locate: { role: "button", name: "Login and session flow, 2 cards, collapse" },
       name: "Fold a lane",
       does: "Folds or opens this lane on its own. Folded lanes are remembered for each project.",
@@ -174,6 +194,7 @@ export const board: Screen = {
     {
       id: "lane-title",
       shot: SWIMLANES,
+      group: "lanes",
       locate: { role: "button", name: "#1001 Login and session flow" },
       name: "Lane heading",
       does: "The parent work item, with its type and how many cards are under it. Click its title to open it, as you would a card.",
@@ -181,6 +202,7 @@ export const board: Screen = {
     {
       id: "no-parent",
       shot: SWIMLANES,
+      group: "lanes",
       locate: { text: "No parent" },
       name: "No parent",
       does: "The last lane holds the cards with no parent. In swimlanes, a card can only be dropped into a column of its own lane.",
@@ -190,6 +212,7 @@ export const board: Screen = {
     {
       id: "open-column",
       shot: HIDDEN,
+      group: "columns-cards",
       locate: { role: "button", name: "Open Done" },
       name: "Open",
       does: "Opens the hidden column again.",
@@ -199,6 +222,7 @@ export const board: Screen = {
     {
       id: "my-work",
       shot: SCOPE,
+      group: "scope-filters",
       locate: { role: "option", name: "My work" },
       name: "My work",
       does: "The work items assigned to you in this project.",
@@ -206,13 +230,15 @@ export const board: Screen = {
     {
       id: "by-pbi",
       shot: SCOPE,
+      group: "scope-filters",
       locate: { role: "option", name: "By PBI…" },
-      name: "By PBI",
-      does: "Everything parented under one PBI, and the PBI itself. A PBI search box appears in the toolbar; pick the PBI there.",
+      name: "By Product Backlog Item",
+      does: "Everything parented under one Product Backlog Item, and the Product Backlog Item itself. A Product Backlog Item search box appears in the toolbar; pick the Product Backlog Item there.",
     },
     {
       id: "area",
       shot: SCOPE,
+      group: "scope-filters",
       locate: { role: "option", name: "Area: Customer Portal" },
       name: "Area",
       does: "Everything in that area of the project, whoever it is assigned to.",
@@ -222,6 +248,7 @@ export const board: Screen = {
     {
       id: "filter-assignee",
       shot: AREA,
+      group: "scope-filters",
       locate: { role: "button", name: "Filter assignee" },
       name: "All assignees",
       does: "On an area board: shows only the cards of the people you tick, or **Unassigned**.",
@@ -229,6 +256,7 @@ export const board: Screen = {
     {
       id: "this-sprint",
       shot: AREA,
+      group: "scope-filters",
       locate: { role: "checkbox", name: "This sprint" },
       name: "This sprint",
       does: "On an area board: shows only the items in the current sprint of the project's default team. Remembered.",
@@ -238,6 +266,7 @@ export const board: Screen = {
     {
       id: "copy-link",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "button", name: "Copy link" },
       name: "Copy link",
       does: "Copies the work item's Azure DevOps link.",
@@ -245,20 +274,15 @@ export const board: Screen = {
     {
       id: "open-in-ado",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "button", name: "Open in Azure DevOps" },
       name: "Open in Azure DevOps",
       does: "Opens the work item in your browser.",
     },
     {
-      id: "close-details",
-      shot: ITEM,
-      locate: { role: "button", name: "Close details" },
-      name: "Close (x)",
-      does: "Closes the work item. [[Esc]] does the same. Changes you have not saved are dropped; clicking outside the window does not close it.",
-    },
-    {
       id: "title",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "textbox", name: "Title" },
       name: "Title",
       does: "The work item's title.",
@@ -266,6 +290,7 @@ export const board: Screen = {
     {
       id: "state",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "combobox", name: "State" },
       name: "State",
       does: "The states this type of work item can be in.",
@@ -273,6 +298,7 @@ export const board: Screen = {
     {
       id: "assigned-to",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "combobox", name: "Assigned to" },
       name: "Assigned to",
       does: "Who the work item is assigned to. Type to find a team member; the x leaves it unassigned.",
@@ -280,6 +306,7 @@ export const board: Screen = {
     {
       id: "activity",
       shot: ITEM,
+      group: "item-head",
       locate: { role: "combobox", name: "Activity" },
       name: "Activity",
       does: "The kind of work, such as Development or Testing, when the work item type has one.",
@@ -287,6 +314,7 @@ export const board: Screen = {
     {
       id: "pages",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Description" },
       name: "Description and other pages",
       does: "The description, and any other pages your process adds to this type, such as **RCA** and **Preventive Measures** on a bug. Click one to show it.",
@@ -294,6 +322,7 @@ export const board: Screen = {
     {
       id: "write-preview",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Write" },
       name: "Write / Preview",
       does: "**Write** opens every text field on the page for editing, in markdown with a toolbar and a live preview. **Preview** shows them as they will look.",
@@ -301,6 +330,7 @@ export const board: Screen = {
     {
       id: "edit-description",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Edit Description" },
       name: "Edit",
       does: "Opens this one field for editing. Clicking the text does the same.",
@@ -308,6 +338,7 @@ export const board: Screen = {
     {
       id: "discussion-history",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Discussion" },
       name: "Discussion / History",
       does: "Switches between the comments and the work item's history.",
@@ -315,6 +346,7 @@ export const board: Screen = {
     {
       id: "new-comment",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "textbox", name: "New comment (markdown)" },
       name: "New comment",
       does: "Write a comment in markdown; the buttons above add bold, italic, code, links, headings, lists and quotes. The preview under it shows how it will look.",
@@ -322,6 +354,7 @@ export const board: Screen = {
     {
       id: "post",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Post" },
       name: "Post",
       does: "Adds the comment to the work item in Azure DevOps straight away, without **Save changes**. Greyed out until you type something.",
@@ -329,6 +362,7 @@ export const board: Screen = {
     {
       id: "edit-comment",
       shot: ITEM,
+      group: "item-pages",
       locate: { role: "button", name: "Edit" },
       name: "Edit (comment)",
       does: "Shown on your own comments: opens the comment for editing, with **Cancel** and **Update**. **Update** saves it in Azure DevOps.",
@@ -336,6 +370,7 @@ export const board: Screen = {
     {
       id: "remaining",
       shot: ITEM,
+      group: "item-side",
       locate: { role: "spinbutton", name: "Remaining" },
       name: "Planning",
       does: "Remaining, Completed and Original work, as numbers.",
@@ -343,6 +378,7 @@ export const board: Screen = {
     {
       id: "start-date",
       shot: ITEM,
+      group: "item-side",
       locate: { role: "button", name: "Start date" },
       name: "Start date / Target date",
       does: "Pick a date from the calendar.",
@@ -350,20 +386,15 @@ export const board: Screen = {
     {
       id: "classification",
       shot: ITEM,
+      group: "item-side",
       locate: { role: "heading", name: "Classification" },
       name: "Classification",
       does: "The work item's area and iteration. They are shown, not changed, here.",
     },
     {
-      id: "close",
-      shot: ITEM,
-      locate: { role: "button", name: "Close" },
-      name: "Close",
-      does: "Closes the work item without saving.",
-    },
-    {
       id: "save",
       shot: ITEM,
+      group: "item-side",
       locate: { role: "button", name: "Save changes" },
       name: "Save changes",
       does:
@@ -374,6 +405,7 @@ export const board: Screen = {
     {
       id: "state-option",
       shot: STATE,
+      group: "item-head",
       locate: { role: "option", name: "In Progress" },
       name: "Pick a state",
       does: "Choose the new state, then press **Save changes**. To change only the state, you can also drag the card to another column.",
@@ -383,6 +415,7 @@ export const board: Screen = {
     {
       id: "time-in-state",
       shot: HISTORY,
+      group: "item-pages",
       locate: { text: "Time in each state" },
       name: "Time in each state",
       does: "Every state the work item has been in, how many times it entered each one and how long it spent there in total. **now** marks the current state.",
@@ -390,6 +423,7 @@ export const board: Screen = {
     {
       id: "history-filter",
       shot: HISTORY,
+      group: "item-pages",
       locate: { role: "button", name: "Everything" },
       name: "Everything / State / Field edits / Links",
       does: "Shows every change, or only state changes, field edits or links added and removed.",
@@ -397,6 +431,7 @@ export const board: Screen = {
     {
       id: "history-details",
       shot: HISTORY,
+      group: "item-pages",
       locate: { role: "button", name: "Show details of Sam Doyle's change" },
       name: "details",
       does: "Each change, grouped by day, says who made it, when and what changed. **details** lists each field with its old and new value, with the changed words marked.",
@@ -406,6 +441,7 @@ export const board: Screen = {
     {
       id: "rca-field",
       shot: RCA,
+      group: "item-pages",
       locate: { role: "button", name: "Edit Initial Findings" },
       name: "Text fields",
       does: "The page's fields, laid out as in Azure DevOps. Rich text fields edit like the description; plain text fields are simple boxes.",
@@ -413,12 +449,14 @@ export const board: Screen = {
     {
       id: "rca-pick",
       shot: RCA,
+      group: "item-pages",
       locate: { role: "combobox", name: "Root Cause Category" },
       name: "Pick lists",
       does: "Fields with a fixed set of values are lists. Like every field here, they are saved with **Save changes**.",
     },
   ],
   tips: [
+    "Changes you have not saved are dropped when a work item closes, and clicking outside the work item does not close it.",
     "Clicking a work item in the notification bell opens the board with that work item open.",
     "Work items are created on **New Work Item**, not on the board.",
   ],

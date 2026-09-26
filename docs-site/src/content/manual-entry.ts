@@ -27,10 +27,16 @@ export const manualEntry: Screen = {
       alt: "The Default tags window",
     },
   ],
+  groups: [
+    { id: "describe", title: "Describe the test case", summary: "The title and the optional fields: tags, automation status, module and preconditions." },
+    { id: "write-steps", title: "Write the steps", summary: "Each step is an action and the result you expect from it." },
+    { id: "queue-it", title: "Add it to the queue", summary: "The case joins the queue, ready to review and upload." },
+  ],
   controls: [
     {
       id: "title",
       shot: FORM,
+      group: "describe",
       locate: { role: "textbox", name: "Test case title" },
       name: "Test case title",
       does: "The title, as it will appear in Azure DevOps.",
@@ -38,6 +44,7 @@ export const manualEntry: Screen = {
     {
       id: "tags",
       shot: FORM,
+      group: "describe",
       locate: { role: "textbox", name: "Tags" },
       name: "Tags",
       does:
@@ -46,6 +53,7 @@ export const manualEntry: Screen = {
     {
       id: "automation-status",
       shot: FORM,
+      group: "describe",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
       does: "**Not Automated** or **Planned**. It stays as you set it for the next case.",
@@ -53,6 +61,7 @@ export const manualEntry: Screen = {
     {
       id: "default-tags",
       shot: FORM,
+      group: "describe",
       locate: { role: "button", name: "Default tags" },
       name: "Default tags",
       does: "Opens the window where you set the tags every new case in this project should carry.",
@@ -60,6 +69,7 @@ export const manualEntry: Screen = {
     {
       id: "module",
       shot: FORM,
+      group: "describe",
       locate: { role: "combobox", name: "Module" },
       name: "Module",
       does: "The module the case belongs to. Pick one from the project's list when it has one, or type your own value.",
@@ -67,6 +77,7 @@ export const manualEntry: Screen = {
     {
       id: "preconditions",
       shot: FORM,
+      group: "describe",
       locate: { role: "textbox", name: "Preconditions (optional)" },
       name: "Preconditions",
       does: "What must be true before the first step, for example an account that already exists.",
@@ -74,6 +85,7 @@ export const manualEntry: Screen = {
     {
       id: "reorder-step",
       shot: FORM,
+      group: "write-steps",
       locate: { role: "button", name: "Reorder step 1" },
       name: "Drag handle",
       does: "Drag a step by its handle to move it. Or click the handle and use the up and down arrow keys to move it one place at a time.",
@@ -81,6 +93,7 @@ export const manualEntry: Screen = {
     {
       id: "step-action",
       shot: FORM,
+      group: "write-steps",
       locate: { role: "textbox", name: "Step 1 action" },
       name: "Action",
       does: "What the tester does in this step. A step needs an action; empty ones are left out.",
@@ -88,6 +101,7 @@ export const manualEntry: Screen = {
     {
       id: "step-expected",
       shot: FORM,
+      group: "write-steps",
       locate: { role: "textbox", name: "Step 1 expected" },
       name: "Expected result",
       does: "What should happen after the action. It can be left empty.",
@@ -95,6 +109,7 @@ export const manualEntry: Screen = {
     {
       id: "remove-step",
       shot: FORM,
+      group: "write-steps",
       locate: { role: "button", name: "Remove step 1" },
       name: "Remove step (x)",
       does: "Removes the step.",
@@ -102,6 +117,7 @@ export const manualEntry: Screen = {
     {
       id: "add-step",
       shot: FORM,
+      group: "write-steps",
       locate: { role: "button", name: "Add Step" },
       name: "Add Step",
       does: "Adds an empty step at the end.",
@@ -109,6 +125,7 @@ export const manualEntry: Screen = {
     {
       id: "add-to-queue",
       shot: FORM,
+      group: "queue-it",
       locate: { role: "button", name: "Add to queue" },
       name: "Add to queue",
       does:
@@ -118,13 +135,15 @@ export const manualEntry: Screen = {
     {
       id: "queue",
       shot: FORM,
+      group: "queue-it",
       locate: { text: "Queue for PBI #1001 (3 queued)" },
       name: "Queue",
-      does: "The cases waiting to be uploaded to this PBI. It is the same queue as on Import File, where every part of it is explained.",
+      does: "The cases waiting to be uploaded to this Product Backlog Item. It is the same queue as on Import File, where every part of it is explained.",
     },
     {
       id: "default-tags-field",
       shot: DEFAULTS,
+      group: "describe",
       locate: { role: "textbox", name: "Default tags" },
       name: "Default tags",
       does: "The tags every new case in this project should carry. Saving an empty field removes them.",
@@ -132,6 +151,7 @@ export const manualEntry: Screen = {
     {
       id: "default-tags-cancel",
       shot: DEFAULTS,
+      group: "describe",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without changing anything.",
@@ -139,6 +159,7 @@ export const manualEntry: Screen = {
     {
       id: "default-tags-save",
       shot: DEFAULTS,
+      group: "describe",
       locate: { role: "button", name: "Save" },
       name: "Save",
       does: "Saves the tags. They appear on the form at once, fixed in place, and go on every case you add from then on.",
@@ -147,13 +168,13 @@ export const manualEntry: Screen = {
   tips: [
     "Nothing reaches Azure DevOps until you review the queue and confirm the upload on Import File or here.",
     "A case written here is always created new. To change a case already in Azure DevOps, use Update Test Cases, or import a file that carries its id.",
-    "The queue is kept on this computer for each PBI, so closing the app never loses it.",
+    "The queue is kept on this computer for each Product Backlog Item, so closing the app never loses it.",
   ],
   howTo: [
     {
       title: "Write a case and upload it",
       steps: [
-        "Choose the PBI in the bar at the top.",
+        "Choose the Product Backlog Item in the bar at the top.",
         "Type the title, then the first step's action and expected result.",
         "Press **Add Step** for each further step, and fill in the tags, module and preconditions if you need them.",
         "Press **Add to queue**. Repeat for the next case.",

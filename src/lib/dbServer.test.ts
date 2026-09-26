@@ -21,11 +21,9 @@ import {
   forgetDbConfig,
   isDevLoginConnection,
   isDevLoginUser,
-  loadDbConfig,
   loadDbWrites,
   loadSelectedDb,
   migrateLegacyDbConnection,
-  saveDbConfig,
   saveDbWrites,
   saveSelectedDb,
   selectedDbSnapshot,
@@ -40,6 +38,7 @@ beforeEach(() => {
 });
 afterEach(() => localStorage.clear());
 
+/** What an older version kept beside the string: a separate server's settings. */
 const settings = { exe_path: "C:/tools/x.exe", db_type: "mssql", schema_filter: "dbo" };
 
 /// Off is the only default a switch like this may have, and it has to be
@@ -84,12 +83,14 @@ test("the selected database and the write switch notify, so App can re-push them
   expect(seen).toHaveBeenCalledTimes(3);
 });
 
-/// The blob holds only the PHR X server's non-secret settings now.
-test("the stored settings carry no connection string", () => {
-  saveDbConfig(settings);
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!);
-  expect(stored).toEqual(settings);
-  expect(loadDbConfig()).toEqual(settings);
+/// "Forget them" takes the choice and whatever an older version left under
+/// the legacy key.
+test("forgetting clears the choice and the legacy key", () => {
+  saveSelectedDb("dev-read");
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify(settings));
+  forgetDbConfig();
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 });
 
 /// A mirror of `db::guard::access_for`, which is the door that enforces
@@ -118,7 +119,7 @@ test("the same rule applied to a user name", () => {
 
 const LEGACY = "Server=x;Database=HR;User Id=me;Password=secret;";
 
-test("a stored connection string moves into Rust once, and leaves the blob", async () => {
+test("a stored connection string moves into Rust once, and the legacy key goes with it", async () => {
   localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({ ...settings, connection_string: LEGACY }));
   importLegacy.mockResolvedValue({ status: "ok", data: "own" });
 
@@ -127,9 +128,8 @@ test("a stored connection string moves into Rust once, and leaves the blob", asy
   expect(importLegacy).toHaveBeenCalledTimes(1);
   expect(importLegacy).toHaveBeenCalledWith(LEGACY);
   expect(loadSelectedDb()).toBe("own");
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!);
-  expect(stored).toEqual(settings);
-  expect(localStorage.getItem("tcm-v2-db-mcp")).not.toContain("secret");
+  // Nothing else under the key is read any more, so none of it stays.
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 
   // Strictly one-time: nothing left to import, so a login saved later can
   // never be replaced by a leftover.
@@ -167,7 +167,7 @@ test("a retry that succeeds keeps a database picked while it waited", async () =
   await migrateLegacyDbConnection();
 
   expect(loadSelectedDb()).toBe("dev-login");
-  expect(localStorage.getItem("tcm-v2-db-mcp")).not.toContain("secret");
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 });
 
 test("a retry that succeeds replaces a selection naming no known database", async () => {
@@ -190,12 +190,14 @@ test("with no connection string stored there is nothing to import", async () => 
   expect(importLegacy).not.toHaveBeenCalled();
 });
 
-/// Until the move has worked, editing the PHR X settings must not drop the
-/// string the next start still has to import.
-test("saving settings before the move keeps the string for it", () => {
-  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify({ ...settings, connection_string: LEGACY }));
-  saveDbConfig({ ...settings, exe_path: "D:/other.exe" });
-  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp")!);
-  expect(stored.exe_path).toBe("D:/other.exe");
-  expect(stored.connection_string).toBe(LEGACY);
+/// An older version's server settings with no string waiting: nothing reads
+/// them now, so the start that finds them removes them - and touches nothing
+/// else.
+test("old server settings with no string waiting are removed at start", async () => {
+  localStorage.setItem("tcm-v2-db-mcp", JSON.stringify(settings));
+  saveSelectedDb("dev-read");
+  await migrateLegacyDbConnection();
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
+  expect(loadSelectedDb()).toBe("dev-read");
+  expect(importLegacy).not.toHaveBeenCalled();
 });

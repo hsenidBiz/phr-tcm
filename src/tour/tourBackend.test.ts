@@ -43,11 +43,11 @@ test("installing twice does not trap the stand-ins as the originals", () => {
 test("every stand-in command is answered locally", async () => {
   installTourBackend();
 
-  // Deletion and the user's real DB config must never be able to fall
-  // through to the real binding during a tour - assert by name so removing
-  // either stand-in later is a test failure, not a silent regression.
+  // Deletion and the user's real database logins must never be able to
+  // fall through to the real binding during a tour - assert by name so
+  // removing either stand-in later is a test failure, not a silent regression.
   expect(TOUR_STAND_IN_COMMANDS).toContain("canDeleteTestCases");
-  expect(TOUR_STAND_IN_COMMANDS).toContain("dbServerDefaults");
+  expect(TOUR_STAND_IN_COMMANDS).toContain("dbDatabases");
   // Run Tests reads the suggested run order; saving one is a write, and a
   // write that gets through during the tour must find the real call.
   expect(TOUR_STAND_IN_COMMANDS).toContain("getRunOrder");

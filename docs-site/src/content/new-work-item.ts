@@ -14,7 +14,7 @@ export const newWorkItem: Screen = {
   title: "New Work Item",
   group: "Work Manager",
   summary:
-    "Create a task, bug or PBI in the project with everything set before it is created: who it is for, where it sits, its priority, tags, description and, if you like, the PBI it belongs under.",
+    "Create a task, bug or Product Backlog Item in the project with everything set before it is created: who it is for, where it sits, its priority, tags, description and, if you like, the Product Backlog Item it belongs under.",
   shots: [{ id: FORM, route: [{ click: { testId: "work" } }, { nav: "New Work Item" }, { waitFor: { role: "textbox", name: "Title" } }], alt: "The New Work Item form" }],
   controls: [
     {
@@ -70,8 +70,8 @@ export const newWorkItem: Screen = {
       id: "parent",
       shot: FORM,
       locate: { role: "textbox", name: "Find PBI" },
-      name: "Parent PBI",
-      does: "Optional. Search for a PBI by number or title and pick it: the new item is linked under it, so it sits beneath that PBI on boards and backlogs.",
+      name: "Parent Product Backlog Item",
+      does: "Optional. Search for a Product Backlog Item by number or title and pick it: the new item is linked under it, so it sits beneath that Product Backlog Item on boards and backlogs.",
     },
     {
       id: "description",

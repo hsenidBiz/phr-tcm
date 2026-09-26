@@ -42,10 +42,12 @@ export const STALE_BACKUP_MS = 24 * 60 * 60 * 1000;
 
 /** Theme passes: the app theme to switch to, and the folder under
  *  docs-site/shots/ its images go in (the site's own light/dark names).
- *  Positions are recorded from the first pass only. */
+ *  Both passes pin the accent to violet - the app's own default look
+ *  (src/lib/theme.ts) - light and dark (Graphite) are what the app now
+ *  shows out of the box. Positions are recorded from the first pass only. */
 export const PASSES = [
   { theme: "light", dir: "light" },
-  { theme: "slate", dir: "dark" },
+  { theme: "graphite", dir: "dark" },
 ];
 
 // The app's own localStorage keys (src/dev/capture.ts, src/lib/theme.ts,
@@ -200,15 +202,15 @@ export function preflight(args, backup, backupPath, now) {
 /**
  * The localStorage writes that set up one theme pass (on top of the app's
  * own demo switch, which the script flips through the app). Everything
- * that changes how a whole shot looks is pinned: the theme, the default
- * accent, the sidebar open.
- * @param {string} theme an app theme id ("light", "slate", ...)
+ * that changes how a whole shot looks is pinned: the theme, the accent
+ * (violet - the app's own default look), the sidebar open.
+ * @param {string} theme an app theme id ("light", "graphite", ...)
  * @returns {{ set: Record<string, string>, remove: string[] }}
  */
 export function passStorage(theme) {
   return {
-    set: { [KEYS.capture]: "on", [KEYS.themeId]: theme },
-    remove: [KEYS.themeLegacy, KEYS.accent, KEYS.sidebar],
+    set: { [KEYS.capture]: "on", [KEYS.themeId]: theme, [KEYS.accent]: "violet" },
+    remove: [KEYS.themeLegacy, KEYS.sidebar],
   };
 }
 
@@ -300,6 +302,16 @@ export const roundBox = (box) => ({
   w: Math.round(box.width),
   h: Math.round(box.height),
 });
+
+/** How far a control may sit from where the first pass measured it, in
+ *  shot px, before the passes count as different pictures. Sub-pixel text
+ *  rounding moves a box by one; anything the eye would see is more. */
+export const DRIFT_PX = 2;
+
+/** The largest distance any edge of `b` sits from the same edge of `a`. */
+export function boxDrift(a, b) {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.x + a.w - (b.x + b.w)), Math.abs(a.y + a.h - (b.y + b.h)));
+}
 
 /** A marker is drawn at the control, so its centre must be in the shot. */
 export function boxInShot(box, size = MAIN_SIZE) {

@@ -135,20 +135,17 @@ the board's test count.
   follow: short active sentences, exact values, no em dashes.
 - A badge beside the tab title shows whether the bridge is running.
 - The app's own database tools let an assistant check real data instead
-  of guessing, without a separate server: `db_lookup` finds the tables
+  of guessing: `db_lookup` finds the tables
   and columns behind a topic (or lists one named table's full column
   list), and `db_query` runs a single SQL statement and reads back the
   result. Change the connection in the app and it reaches an assistant on
   its next call - the app pushes the change straight to its own bridge,
   there is no tool config file to keep in step.
-- An older option, the separate PHR X database MCP server, still exists
-  for whoever still runs it. It is off unless switched on in Settings -
-  the app's own tools above replaced it - and, if it was switched on
-  before, a tool that still has it registered can unregister it on the
-  AI Bridge tab even with the option off, so a stale registration is
-  never stranded there. With the option on, picking a different
-  connection also re-registers PHR X in every tool config that already
-  carries it, so that copy of the connection string stays in step too.
+- No tool config holds a database login: the login stays in Windows
+  Credential Manager and the app's own tools use it from there. A
+  separate database server that earlier versions could register beside
+  the app is removed from a tool's config by itself the next time the AI
+  Bridge tab scans the tools, and the removal is written to the app log.
 - The app runs `sqlcmd` itself to reach the database - it is not bundled,
   so the app looks for it on PATH, in the ODBC 17/18 client tools
   folders, and in `C:\Program Files\sqlcmd`, and says so plainly when

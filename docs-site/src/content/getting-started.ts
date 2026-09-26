@@ -22,14 +22,14 @@ export const gettingStarted: Screen = {
   title: "Getting started",
   group: "Getting started",
   summary:
-    "Sign in once with your Microsoft work account, then choose the organisation, project and PBI you are working on in the bar across the top. " +
-    "Every test case screen works on that PBI until you choose another, and the app remembers all three the next time you open it.",
+    "Sign in once with your Microsoft work account, then choose the organisation, project and Product Backlog Item you are working on in the bar across the top. " +
+    "Every test case screen works on that Product Backlog Item until you choose another, and the app remembers all three the next time you open it.",
   shots: [
     { id: SHELL, route: [{ nav: "Manual Entry" }], alt: "The app with the sidebar on the left and the context bar across the top" },
     {
       id: PBI,
       route: [{ nav: "Manual Entry" }, { click: { role: "button", name: "Clear PBI" } }, { click: { role: "textbox", name: "Find PBI" } }],
-      alt: "Choosing a PBI: the search box with recently used PBIs",
+      alt: "Choosing a Product Backlog Item: the search box with recently used Product Backlog Items",
     },
     {
       id: BELL,
@@ -54,11 +54,18 @@ export const gettingStarted: Screen = {
       alt: "Work Manager, with its own sidebar",
     },
   ],
+  groups: [
+    { id: "move-around", title: "Move between screens", summary: "The sidebar lists every screen; the command palette reaches them from the keyboard." },
+    { id: "where-you-work", title: "Pick the organisation, project and Product Backlog Item", summary: "The context bar across the top says which Product Backlog Item every screen works on." },
+    { id: "top-right", title: "Notifications, Work Manager and your account", summary: "The corner of the context bar: what changed, the switch to Work Manager, and who you are signed in as." },
+    { id: "commands", title: "Run a command", summary: "The command palette finds any screen or action by name." },
+  ],
   controls: [
     // --- The shell --------------------------------------------------------
     {
       id: "sidebar",
       shot: SHELL,
+      group: "move-around",
       locate: { testId: "nav-manual" },
       name: "Sidebar",
       does:
@@ -69,35 +76,40 @@ export const gettingStarted: Screen = {
     {
       id: "organization",
       shot: SHELL,
+      group: "where-you-work",
       locate: { role: "combobox", name: "Organization" },
       name: "Organization",
-      does: "The Azure DevOps organisation you work in, from every organisation your account can open. Choosing another one clears the project and PBI.",
+      does: "The Azure DevOps organisation you work in, from every organisation your account can open. Choosing another one clears the project and Product Backlog Item.",
     },
     {
       id: "project",
       shot: SHELL,
+      group: "where-you-work",
       locate: { role: "combobox", name: "Project" },
       name: "Project",
-      does: "The project inside that organisation. Choosing another one clears the PBI.",
+      does: "The project inside that organisation. Choosing another one clears the Product Backlog Item.",
     },
     {
       id: "pbi",
       shot: SHELL,
+      group: "where-you-work",
       locate: { testId: "pbi" },
-      name: "PBI",
+      name: "Product Backlog Item",
       does:
-        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import File, Update Test Cases, View Test Cases and Run Tests all work on this PBI.",
+        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import File, Update Test Cases, View Test Cases and Run Tests all work on this Product Backlog Item.",
     },
     {
       id: "clear-pbi",
       shot: SHELL,
+      group: "where-you-work",
       locate: { role: "button", name: "Clear PBI" },
-      name: "Clear PBI (x)",
-      does: "Clears the PBI so you can search for another one.",
+      name: "Clear Product Backlog Item (x)",
+      does: "Clears the Product Backlog Item so you can search for another one.",
     },
     {
       id: "bell",
       shot: SHELL,
+      group: "top-right",
       locate: { role: "button", nameRe: "^Notifications" },
       name: "Notifications",
       does:
@@ -106,6 +118,7 @@ export const gettingStarted: Screen = {
     {
       id: "work-manager",
       shot: SHELL,
+      group: "top-right",
       locate: { testId: "work" },
       name: "Work Manager",
       does: "Switches the app to Work Manager: pull requests, the board and new work items. The same button, then named Test Case Manager, brings you back.",
@@ -114,6 +127,7 @@ export const gettingStarted: Screen = {
     {
       id: "account",
       shot: SHELL,
+      group: "top-right",
       locate: { text: "Alex Tester" },
       name: "Your account",
       does: "The account you are signed in with. It is shown when the window is wide enough.",
@@ -121,6 +135,7 @@ export const gettingStarted: Screen = {
     {
       id: "settings",
       shot: SHELL,
+      group: "top-right",
       locate: { role: "button", name: "Settings" },
       name: "Settings",
       does: "Opens Settings. Click it again to go back to the screen you came from.",
@@ -128,46 +143,44 @@ export const gettingStarted: Screen = {
     {
       id: "palette-hint",
       shot: SHELL,
+      group: "move-around",
       locate: { text: "Ctrl+K for commands" },
       name: "Ctrl+K for commands",
       does: "A reminder that [[Ctrl+K]] opens the command palette from anywhere.",
-    },
-    {
-      id: "close-sidebar",
-      shot: SHELL,
-      locate: { role: "button", name: "Close sidebar" },
-      name: "Close",
-      does: "Folds the sidebar to a strip of icons, so the screen gets more room. Hover an icon to see its name; the same button opens the sidebar again.",
     },
 
     // --- Choosing a PBI ---------------------------------------------------
     {
       id: "find-pbi",
       shot: PBI,
+      group: "where-you-work",
       locate: { role: "textbox", name: "Find PBI" },
-      name: "Find PBI",
+      name: "Find Product Backlog Item",
       does:
-        "Type a PBI number or words from its title. Matching PBIs appear as you type; [[Enter]] searches at once. Click a result to choose it.",
+        "Type a Product Backlog Item number or words from its title. Matching Product Backlog Items appear as you type; [[Enter]] searches at once. Click a result to choose it.",
     },
     {
       id: "recently-used",
       shot: PBI,
+      group: "where-you-work",
       locate: { text: "Recently used" },
       name: "Recently used",
-      does: "Before you type, the PBIs you chose most recently in this project. Click one to choose it again; the x beside it removes it from the list.",
+      does: "Before you type, the Product Backlog Items you chose most recently in this project. Click one to choose it again; the x beside it removes it from the list.",
     },
     {
       id: "recent-pbis",
       shot: PBI,
+      group: "where-you-work",
       locate: { text: "Recent PBIs" },
-      name: "Recent PBIs",
-      does: "While no PBI is chosen, the screen offers the same recent PBIs as cards. Click one to choose it.",
+      name: "Recent Product Backlog Items",
+      does: "While no Product Backlog Item is chosen, the screen offers the same recent Product Backlog Items as cards. Click one to choose it.",
     },
 
     // --- Notifications ----------------------------------------------------
     {
       id: "notification-panel",
       shot: BELL,
+      group: "top-right",
       locate: { role: "dialog", name: "Notifications" },
       name: "Notification list",
       does:
@@ -176,6 +189,7 @@ export const gettingStarted: Screen = {
     {
       id: "clear-all",
       shot: BELL,
+      group: "top-right",
       locate: { role: "button", name: "Clear all" },
       name: "Clear all",
       does: "Removes every notification from the list.",
@@ -183,6 +197,7 @@ export const gettingStarted: Screen = {
     {
       id: "kind",
       shot: BELL,
+      group: "top-right",
       locate: { text: "Mention" },
       name: "Kind and time",
       does: "What the notification is about (Assigned, Conflicts, Review, Comments or Mention) and how long ago it happened.",
@@ -190,6 +205,7 @@ export const gettingStarted: Screen = {
     {
       id: "open-in-browser",
       shot: BELL,
+      group: "top-right",
       locate: { role: "button", nameRe: "^Open in Azure DevOps: " },
       name: "Open in Azure DevOps",
       does: "Opens the item in Azure DevOps in your browser.",
@@ -197,6 +213,7 @@ export const gettingStarted: Screen = {
     {
       id: "dismiss",
       shot: BELL,
+      group: "top-right",
       locate: { role: "button", nameRe: "^Dismiss: " },
       name: "Dismiss (x)",
       does: "Removes this one notification.",
@@ -204,6 +221,7 @@ export const gettingStarted: Screen = {
     {
       id: "notification-title",
       shot: BELL,
+      group: "top-right",
       locate: { role: "button", nameRe: "^Sam Doyle mentioned you on" },
       name: "Notification title",
       does: "Takes you to the work item or pull request inside the app, in Work Manager. When the app cannot open it there, it opens in your browser instead.",
@@ -213,6 +231,7 @@ export const gettingStarted: Screen = {
     {
       id: "palette-search",
       shot: PALETTE,
+      group: "commands",
       locate: { role: "combobox", name: "Type a command or search" },
       name: "Type a command or search",
       does:
@@ -221,6 +240,7 @@ export const gettingStarted: Screen = {
     {
       id: "go-to",
       shot: PALETTE,
+      group: "commands",
       locate: { role: "option", nameRe: "^Run Tests" },
       name: "Go to",
       does: "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge), and Settings at the end.",
@@ -228,6 +248,7 @@ export const gettingStarted: Screen = {
     {
       id: "toggle-work",
       shot: PALETTE,
+      group: "commands",
       locate: { role: "option", nameRe: "^Toggle Work Manager" },
       name: "Toggle Work Manager",
       does: "Switches between the test case screens and Work Manager, the same as [[Ctrl+Shift+M]].",
@@ -235,6 +256,7 @@ export const gettingStarted: Screen = {
     {
       id: "toggle-theme",
       shot: PALETTE,
+      group: "commands",
       locate: { role: "option", name: "Toggle theme" },
       name: "Toggle theme",
       does: "Switches between the light and the dark theme.",
@@ -242,6 +264,7 @@ export const gettingStarted: Screen = {
     {
       id: "check-updates",
       shot: PALETTE,
+      group: "commands",
       locate: { role: "option", name: "Check for updates" },
       name: "Check for updates",
       does: "Asks whether a newer version is out. If one is, a bar at the top offers **Restart to update**; if not, a message says you are on the latest version.",
@@ -249,6 +272,7 @@ export const gettingStarted: Screen = {
     {
       id: "switch-project",
       shot: PALETTE,
+      group: "commands",
       // The one project in the capture's organisation.
       locate: { role: "option", name: "Customer Portal" },
       name: "Switch project",
@@ -259,6 +283,7 @@ export const gettingStarted: Screen = {
     {
       id: "back-to-test-cases",
       shot: WORK,
+      group: "top-right",
       locate: { testId: "work" },
       name: "Test Case Manager",
       does: "In Work Manager the switch takes you back to the test case screens.",
@@ -266,6 +291,7 @@ export const gettingStarted: Screen = {
     {
       id: "nav-prs",
       shot: WORK,
+      group: "top-right",
       locate: { testId: "nav-prs" },
       name: "Pull Requests",
       does: "The project's pull requests, with their checks and comments.",
@@ -273,6 +299,7 @@ export const gettingStarted: Screen = {
     {
       id: "nav-board",
       shot: WORK,
+      group: "top-right",
       locate: { testId: "nav-board" },
       name: "Board",
       does: "The team's board. A red number on it counts work newly assigned to you; opening the board clears it.",
@@ -280,16 +307,18 @@ export const gettingStarted: Screen = {
     {
       id: "nav-create",
       shot: WORK,
+      group: "top-right",
       locate: { testId: "nav-create" },
       name: "New Work Item",
       does: "Creates a new work item in the project.",
     },
   ],
   tips: [
+    "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
     "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens, and [[Ctrl+Shift+M]] switches to Work Manager and back.",
-    "The organisation, project, PBI and the screen you were on are remembered, so the app opens where you left it.",
+    "The organisation, project, Product Backlog Item and the screen you were on are remembered, so the app opens where you left it.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",
-    "Until a PBI is chosen, the test case screens show a short prompt and your recent PBIs instead of their usual content.",
+    "Until a Product Backlog Item is chosen, the test case screens show a short prompt and your recent Product Backlog Items instead of their usual content.",
     "Settings has an interface tour that walks you through the app one screen at a time.",
   ],
   howTo: [
@@ -298,15 +327,15 @@ export const gettingStarted: Screen = {
       steps: [
         "Open the app and press **Sign in with Microsoft**.",
         "Finish signing in in the browser window that opens. Until you do, the button reads **Waiting for browser**.",
-        "Back in the app, choose your organisation, project and PBI in the bar across the top.",
+        "Back in the app, choose your organisation, project and Product Backlog Item in the bar across the top.",
       ],
     },
     {
-      title: "Choose the PBI to work on",
+      title: "Choose the Product Backlog Item to work on",
       steps: [
-        "Press the **x** on the PBI in the bar, or start from a screen with no PBI chosen.",
-        "Click **Find PBI** and pick one of your recent PBIs, or type its number or part of its title.",
-        "Click the PBI. Every test case screen now works on it.",
+        "Press the **x** on the Product Backlog Item in the bar, or start from a screen with no Product Backlog Item chosen.",
+        "Click **Find Product Backlog Item** and pick one of your recent Product Backlog Items, or type its number or part of its title.",
+        "Click the Product Backlog Item. Every test case screen now works on it.",
       ],
     },
   ],

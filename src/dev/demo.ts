@@ -999,13 +999,12 @@ function applyPatches() {
   };
   // Capture mode only (normal sample data is unchanged): what the AI Bridge
   // tab and a pull request's comments show in the help site's shots. The
-  // database list and the PHR X defaults come from this machine otherwise -
-  // real server names and logins - and the sample tools lack the fields the
-  // tab reads to say where each one is registered.
+  // database list comes from this machine otherwise - real server names and
+  // logins - and the sample tools lack the fields the tab reads to say where
+  // each one is registered.
   const captureOnly = {
     detectAiTools: () => Promise.resolve(CAPTURE_AI_TOOLS),
     dbDatabases: () => Promise.resolve(CAPTURE_DATABASES),
-    dbServerDefaults: () => Promise.resolve({ exe_path: "", db_type: "mssql", schema_filter: "" }),
     // The open thread's reply carries a pasted screenshot.
     prThreads: () =>
       patches.prThreads().then((r) => ({
@@ -1123,7 +1122,6 @@ export const CAPTURE_RESET = [
   "tcm-v2-working-dir",
   "tcm-v2-ai-global-allowed",
   "tcm-v2-ai-scope",
-  "tcm-v2-ai-show-phrx",
   "tcm-v2-mcp-disabled",
   "tcm-v2-db-mcp",
   "tcm-v2-db-writes",

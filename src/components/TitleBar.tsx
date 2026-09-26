@@ -21,7 +21,7 @@ export default function TitleBar({
       data-tauri-drag-region
       className="flex h-9 shrink-0 select-none items-center gap-2 border-b border-border bg-surface pl-3"
     >
-      <span className="pointer-events-none flex items-center gap-2 text-accent">
+      <span className="pointer-events-none flex items-center gap-2 text-accent-fill">
         <FlaskLogo size={15} />
         <span className="text-xs font-semibold text-text">{title}</span>
       </span>

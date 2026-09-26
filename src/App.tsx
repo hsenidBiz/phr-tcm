@@ -34,6 +34,7 @@ import { forgetAllNotifications, noteAssigned, type NotificationTarget } from ".
 import { forgetMentionBaselines } from "./lib/mentions";
 import { announce, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
+import { dropRetiredAiSwitches } from "./lib/aiScope";
 import {
   dbWritesSnapshot,
   isDevLoginUser,
@@ -695,6 +696,9 @@ export default function App() {
   const [dbMigrated, setDbMigrated] = useState(false);
   useEffect(() => {
     let live = true;
+    // Switches an older version kept for the AI Bridge tab, gone with the
+    // controls they drove.
+    dropRetiredAiSwitches();
     migrateLegacyDbConnection().finally(() => {
       if (live) setDbMigrated(true);
     });

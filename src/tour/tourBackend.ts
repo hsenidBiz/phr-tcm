@@ -15,7 +15,6 @@ import {
   TOUR_CASES,
   TOUR_CASE_SUMMARIES,
   TOUR_CONNECTED_USER,
-  TOUR_DB_DEFAULTS,
   TOUR_DATABASES,
   TOUR_HISTORY,
   TOUR_MENTIONS,
@@ -94,7 +93,6 @@ function standIns(): Partial<Commands> {
     bridgeStatus: () => ok(TOUR_BRIDGE),
     detectAiTools: () => Promise.resolve(TOUR_TOOLS),
     dbDatabases: () => Promise.resolve(TOUR_DATABASES),
-    dbServerDefaults: () => Promise.resolve(TOUR_DB_DEFAULTS),
   };
 }
 

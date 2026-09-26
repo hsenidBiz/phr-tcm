@@ -34,6 +34,16 @@ test("the palette is read from the live CSS variables", () => {
   expect(p.dark).toBe(true);
 });
 
+test("the pages get the accent's text shade, which is the readable one in dark violet", () => {
+  setTokens({ accent: "#8655f6", "accent-text": "#a78bfa" });
+  expect(reportPalette().accent).toBe("#a78bfa");
+});
+
+test("without a text shade the accent itself is used", () => {
+  setTokens({ accent: "#22c55e" });
+  expect(reportPalette().accent).toBe("#22c55e");
+});
+
 test("a light theme reports dark: false", () => {
   setTokens({ bg: "#f8fafc" });
   const p = reportPalette();

@@ -18,16 +18,11 @@ export function renderHero(
   const hasImage = !!heroShot && content.available.includes(heroShot);
   const firstScreen = content.screens[0];
 
+  // No drawn title bar: the screenshot already carries the app's own, and a
+  // second one above it read as two windows stacked.
   const windowFrame = h(
     "div",
     { class: "window" },
-    h(
-      "div",
-      { class: "window-bar", "aria-hidden": "true" },
-      h("img", { class: "window-icon", src: env.appIcon, alt: "", width: 16, height: 16 }),
-      h("span", { class: "window-title" }, PRODUCT),
-      h("span", { class: "window-controls" }, h("i", { class: "wc-min" }), h("i", { class: "wc-max" }), h("i", { class: "wc-close" })),
-    ),
     h(
       "div",
       { class: "window-body" },
@@ -87,7 +82,7 @@ export function renderHero(
   const quick = h(
     "section",
     { class: "quickstart", "aria-labelledby": "quickstart-title" },
-    h("div", { class: "quickstart-head" }, h("h2", { id: "quickstart-title" }, "Quick start"), h("p", {}, "From an empty PBI to a finished run, in six steps.")),
+    h("div", { class: "quickstart-head" }, h("h2", { id: "quickstart-title" }, "Quick start"), h("p", {}, "From an empty Product Backlog Item to a finished run, in six steps.")),
     h("ol", { class: "qs-steps" }, ...steps),
   );
 

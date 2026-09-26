@@ -6,8 +6,8 @@
 // and components/BridgeStatusBadge.tsx. In capture mode the sample data
 // seeds one working repository, two detected tools (one registered, one
 // with a machine-wide copy left over) and two databases with the dev one
-// chosen (src/dev/demo.ts). The options shot turns on the two Settings
-// switches that change this tab; every capture boot turns them off again.
+// chosen (src/dev/demo.ts). The options shot turns on the Settings switch
+// that changes this tab; every capture boot turns it off again.
 
 import type { Screen, Step } from "../types";
 
@@ -26,7 +26,7 @@ export const aiBridge: Screen = {
   group: "AI tools",
   summary:
     "Connect an AI coding assistant, such as Claude Code or VS Code, to this app. The assistant can then read your test cases, suites, " +
-    "run results, tags, PBIs and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
+    "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
     { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and the company database" },
@@ -54,18 +54,25 @@ export const aiBridge: Screen = {
       route: [
         { click: { role: "button", name: "Settings" } },
         { click: { role: "switch", name: "Allow registering AI tools machine-wide" } },
-        { click: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" } },
         NAV,
-        { waitFor: { role: "textbox", name: "Database server path" } },
+        { waitFor: { role: "button", name: "Machine-wide" } },
       ],
-      alt: "AI Bridge with the machine-wide choice and the PHR X server settings switched on in Settings",
+      alt: "AI Bridge with the machine-wide choice switched on in Settings",
     },
+  ],
+  groups: [
+    { id: "repositories", title: "Working repositories", summary: "The folders your test cases belong to, and whether the bridge is running." },
+    { id: "connect", title: "Connect your AI tools", summary: "Register the bridge with the AI tools installed on this computer." },
+    { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call." },
+    { id: "company-database", title: "Company database", summary: "The one database the assistants' tools work with, and how they sign in to it." },
+    { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
   ],
   controls: [
     // --- The tab --------------------------------------------------------------
     {
       id: "status",
       shot: TAB,
+      group: "repositories",
       locate: { role: "status", nameRe: "^Bridge listening" },
       name: "Running",
       does:
@@ -75,6 +82,7 @@ export const aiBridge: Screen = {
     {
       id: "repository",
       shot: TAB,
+      group: "repositories",
       locate: { role: "radio", name: `Use ${REPO}` },
       name: "Working repository",
       does:
@@ -84,6 +92,7 @@ export const aiBridge: Screen = {
     {
       id: "repository-switch",
       shot: TAB,
+      group: "repositories",
       locate: { role: "switch", name: `AI tools for ${REPO}` },
       name: "AI tools switch",
       does: "Turns the AI tools on or off for that repository. Switching off the current one turns them off without forgetting the folder.",
@@ -91,6 +100,7 @@ export const aiBridge: Screen = {
     {
       id: "remove-repository",
       shot: TAB,
+      group: "repositories",
       locate: { role: "button", name: `Remove ${REPO}` },
       name: "Remove (x)",
       does: "Takes the repository off the list. Nothing in the folder is changed.",
@@ -98,6 +108,7 @@ export const aiBridge: Screen = {
     {
       id: "add-repository",
       shot: TAB,
+      group: "repositories",
       locate: { role: "button", name: "Add repository" },
       name: "Add repository",
       does: "Opens a folder picker. The folder you pick is added to the list and becomes the current repository.",
@@ -105,6 +116,7 @@ export const aiBridge: Screen = {
     {
       id: "rescan",
       shot: TAB,
+      group: "connect",
       locate: { role: "button", name: "Rescan" },
       name: "Rescan",
       does: "Looks again for the AI tools installed on this computer and says how many it found. Use it after installing one, without restarting the app.",
@@ -112,6 +124,7 @@ export const aiBridge: Screen = {
     {
       id: "registered",
       shot: TAB,
+      group: "connect",
       locate: { text: "Registered ✓" },
       name: "Installed AI tools",
       does:
@@ -120,6 +133,7 @@ export const aiBridge: Screen = {
     {
       id: "unregister",
       shot: TAB,
+      group: "connect",
       locate: { role: "button", name: "Unregister" },
       name: "Unregister",
       does: "Removes this app's tools from that AI tool's settings.",
@@ -127,6 +141,7 @@ export const aiBridge: Screen = {
     {
       id: "register",
       shot: TAB,
+      group: "connect",
       locate: { role: "button", name: "Register" },
       name: "Register",
       does:
@@ -135,6 +150,7 @@ export const aiBridge: Screen = {
     {
       id: "retire-global",
       shot: TAB,
+      group: "connect",
       locate: { role: "button", name: "Retire global copies" },
       name: "Retire global copies",
       does:
@@ -143,6 +159,7 @@ export const aiBridge: Screen = {
     {
       id: "other-tools",
       shot: TAB,
+      group: "connect",
       locate: { text: "Other tools" },
       name: "Other tools",
       does: "For an assistant the app does not detect: opens a command line and a settings snippet you can copy and add yourself.",
@@ -150,6 +167,7 @@ export const aiBridge: Screen = {
     {
       id: "tool-count",
       shot: TAB,
+      group: "tools",
       locate: { text: "6 of 6 on" },
       name: "Tools an assistant may use",
       does:
@@ -158,14 +176,16 @@ export const aiBridge: Screen = {
     {
       id: "tool-switch",
       shot: TAB,
+      group: "tools",
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run failures, Company database (read), Project tags, Find a PBI and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run failures, Company database (read), Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
     },
     {
       id: "database",
       shot: TAB,
+      group: "company-database",
       locate: { role: "combobox", name: "Database" },
       name: "Database",
       does:
@@ -174,6 +194,7 @@ export const aiBridge: Screen = {
     {
       id: "signs-in-as",
       shot: TAB,
+      group: "company-database",
       locate: { text: "Signs in as portal_devlogin" },
       name: "Signs in as",
       does: "The user the chosen database signs in as, or **No login saved**. The password is never shown.",
@@ -181,6 +202,7 @@ export const aiBridge: Screen = {
     {
       id: "manage-credentials",
       shot: TAB,
+      group: "company-database",
       locate: { role: "button", name: "Manage credentials" },
       name: "Manage credentials",
       does: "Opens the login of the chosen database. Greyed out until a database is chosen.",
@@ -188,6 +210,7 @@ export const aiBridge: Screen = {
     {
       id: "writes",
       shot: TAB,
+      group: "company-database",
       locate: { role: "switch", name: "Create, update and delete" },
       name: "Create, update and delete",
       does:
@@ -196,6 +219,7 @@ export const aiBridge: Screen = {
     {
       id: "forget",
       shot: TAB,
+      group: "company-database",
       locate: { role: "button", name: "Forget them" },
       name: "Forget them",
       does:
@@ -204,15 +228,17 @@ export const aiBridge: Screen = {
     {
       id: "breakdown",
       shot: TAB,
+      group: "tools-breakdown",
       locate: { role: "heading", name: "AI Tools Breakdown" },
       name: "AI Tools Breakdown",
-      does: "What each tool you can switch does, and the recommended way to have an assistant write test cases for a PBI.",
+      does: "What each tool you can switch does, and the recommended way to have an assistant write test cases for a Product Backlog Item.",
     },
 
     // --- Other tools ------------------------------------------------------------
     {
       id: "copy-command",
       shot: OTHER,
+      group: "connect",
       locate: { role: "button", name: "Copy command" },
       name: "Copy (command line)",
       does: "Copies the command that registers this app's tools with Claude Code. Run it inside the repository.",
@@ -220,6 +246,7 @@ export const aiBridge: Screen = {
     {
       id: "copy-config",
       shot: OTHER,
+      group: "connect",
       locate: { role: "button", name: "Copy config" },
       name: "Copy (config)",
       does: "Copies the settings snippet to paste into another assistant's tool settings.",
@@ -229,6 +256,7 @@ export const aiBridge: Screen = {
     {
       id: "switched-off",
       shot: SWITCHED_OFF,
+      group: "tools",
       locate: { role: "switch", name: "Run failures" },
       name: "A switched-off tool",
       does: "Its name is greyed out and the count above drops by one.",
@@ -236,6 +264,7 @@ export const aiBridge: Screen = {
     {
       id: "turn-all-on",
       shot: SWITCHED_OFF,
+      group: "tools",
       locate: { role: "button", name: "Turn all back on" },
       name: "Turn all back on",
       does: "Switches every tool on again. It shows while any tool is off.",
@@ -245,6 +274,7 @@ export const aiBridge: Screen = {
     {
       id: "credentials",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "dialog", name: "Credentials for Dev - dev login" },
       name: "Credentials window",
       does:
@@ -253,6 +283,7 @@ export const aiBridge: Screen = {
     {
       id: "user",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "textbox", name: "User" },
       name: "User",
       does: "Who the database signs in as.",
@@ -260,6 +291,7 @@ export const aiBridge: Screen = {
     {
       id: "password",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "textbox", name: "Password" },
       name: "Password",
       does: "Type a new password, or leave it blank to keep the saved one. A saved password is never shown back.",
@@ -267,6 +299,7 @@ export const aiBridge: Screen = {
     {
       id: "test-connection",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "button", name: "Test connection" },
       name: "Test connection",
       does: "Tries to sign in with what is in the form, without saving it, and shows the result under the fields.",
@@ -274,6 +307,7 @@ export const aiBridge: Screen = {
     {
       id: "reset-default",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "button", name: "Reset to default" },
       name: "Reset to default",
       does: "Puts back the login the database came with. It shows only on a database that comes with the app, once its login has been changed.",
@@ -281,6 +315,7 @@ export const aiBridge: Screen = {
     {
       id: "credentials-cancel",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "button", name: "Cancel" },
       name: "Cancel",
       does: "Closes the window without saving.",
@@ -288,6 +323,7 @@ export const aiBridge: Screen = {
     {
       id: "credentials-save",
       shot: CREDENTIALS,
+      group: "company-database",
       locate: { role: "button", name: "Save" },
       name: "Save",
       does: "Saves the login in Windows Credential Manager on this computer and closes the window.",
@@ -297,6 +333,7 @@ export const aiBridge: Screen = {
     {
       id: "register-in-repository",
       shot: OPTIONS,
+      group: "connect",
       locate: { role: "button", name: "This repository" },
       name: "Register in: This repository",
       does: "Registers the AI tools into the current repository. The choice shows only when **Allow registering AI tools machine-wide** is on in Settings.",
@@ -304,60 +341,15 @@ export const aiBridge: Screen = {
     {
       id: "register-machine-wide",
       shot: OPTIONS,
+      group: "connect",
       locate: { role: "button", name: "Machine-wide" },
       name: "Register in: Machine-wide",
       does: "Registers the AI tools for the whole computer instead, for a machine that does not work from a repository. Writing test cases still needs a repository.",
-    },
-    {
-      id: "server-path",
-      shot: OPTIONS,
-      locate: { role: "textbox", name: "Database server path" },
-      name: "Server path",
-      does:
-        "Shown when **Offer the PHR X database server on the AI Bridge tab** is on in Settings: registers the company's own database server beside this app's tools. Type or pick where its PeoplesHR.DBMCPServer.exe is. It is no longer needed for looking things up.",
-    },
-    {
-      id: "server-file",
-      shot: OPTIONS,
-      locate: { role: "button", name: "File" },
-      name: "File",
-      does: "Picks the server's file.",
-    },
-    {
-      id: "server-folder",
-      shot: OPTIONS,
-      locate: { role: "button", name: "Folder" },
-      name: "Folder",
-      does: "Picks the folder the server is in instead.",
-    },
-    {
-      id: "db-type",
-      shot: OPTIONS,
-      locate: { role: "combobox", name: "Database type" },
-      name: "DB_TYPE",
-      does: "The kind of database the server talks to: mssql or sqlserver.",
-    },
-    {
-      id: "schema-filter",
-      shot: OPTIONS,
-      locate: { role: "textbox", name: "Schema filter" },
-      name: "SCHEMA_FILTER",
-      does: "Which schemas the server reads, separated by commas. Leave it blank for the server's default.",
-    },
-    {
-      id: "phrx-register",
-      shot: OPTIONS,
-      locate: { text: "Choose a database and fill in the server path to enable registration." },
-      name: "Register the server",
-      does:
-        "Once a database is chosen and the server path filled in, each AI tool gets a **Register** button here. Registering writes the chosen database's login into that tool's settings file; **Unregister** takes it out again.",
     },
   ],
   tips: [
     "None of the tools an assistant gets through this app can create, update or delete anything in Azure DevOps. You import what it writes yourself, on Import File.",
     "The AI Bridge only works while this app is open and signed in.",
-    "When the PHR X server is switched off in Settings but still registered with a tool, the database card lists that tool with an **Unregister** button, so its saved login can be removed.",
-    "Choosing another database while the PHR X server is switched on also updates the login in every tool it is registered with. Restart the assistant's session afterwards.",
   ],
   howTo: [
     {

@@ -40,15 +40,15 @@ export const screens: Screen[] = [
 export const intro: Intro = {
   promise: "Every screen and every button, in plain words.",
   lead:
-    "Write test cases by hand or import them, review the queue, upload them to your PBI, then run them and follow the work. " +
+    "Write test cases by hand or import them, review the queue, upload them to your Product Backlog Item, then run them and follow the work. " +
     "Pick a screen from the contents, or press [[Ctrl+K]] to search.",
   heroShot: "import-file-queue",
   quickStart: [
     { label: "Sign in", hint: "With your Microsoft work account", link: "getting-started" },
-    { label: "Pick a PBI", hint: "Organisation, project, backlog item", link: "getting-started/find-pbi" },
+    { label: "Pick a Product Backlog Item", hint: "Organisation, project, backlog item", link: "getting-started/find-pbi" },
     { label: "Write or import", hint: "By hand, or from a JSON file", link: "import-file/import-json" },
     { label: "Review", hint: "Check every case in the queue", link: "import-file/review" },
-    { label: "Upload", hint: "Linked to the PBI and its suite", link: "import-file/confirm" },
+    { label: "Upload", hint: "Linked to the Product Backlog Item and its suite", link: "import-file/confirm" },
     { label: "Run", hint: "Step through and record results", link: "run-tests" },
   ],
 };

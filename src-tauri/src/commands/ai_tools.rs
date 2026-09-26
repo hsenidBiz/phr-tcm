@@ -12,8 +12,8 @@ use tauri::State;
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
     legacy_command_path, merge_entry, project_command_dir, remove_entry, tcm_server,
-    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, MANAGED_SERVERS, TCM_SERVER,
-    TOOL_SPECS,
+    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS,
+    TCM_SERVER, TOOL_SPECS,
 };
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
@@ -77,16 +77,6 @@ fn root_of(working_dir: Option<&str>) -> Option<&str> {
     working_dir.map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// `path` relative to `root`, forward-slashed - the shape
-/// `crate::workspace::exclude_locally` wants. None when `path` is not
-/// actually under `root`, which the caller treats as "cannot exclude".
-/// Public for `tests/suite/ai_tools.rs`; not a command.
-pub fn project_relative(root: &str, path: &std::path::Path) -> Option<String> {
-    path.strip_prefix(std::path::Path::new(root))
-        .ok()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-}
-
 #[tauri::command]
 #[specta::specta]
 pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
@@ -108,95 +98,7 @@ pub fn register_ai_tool(
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    // The warning `register_server` can return is about the database
-    // server's connection string; ours carries no secret, so there is
-    // nothing to say here.
     register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)
-        .map(|_| ())
-}
-
-/// The company's SQL Server MCP server, registered beside ours so an
-/// assistant can read the schema and the test cases in one session. The
-/// server itself is configured entirely through environment variables
-/// (see its README); we only place them in the tool's config.
-#[derive(serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct DbServerConfig {
-    /// Path to the built PeoplesHR.DBMCPServer.exe.
-    pub exe_path: String,
-    /// "mssql" or "sqlserver".
-    pub db_type: String,
-    /// Which database the server signs in to. Only the id crosses IPC; the
-    /// login it stands for is resolved in Rust at registration.
-    pub db_id: String,
-    /// Comma-separated; blank means the server's own default (dbo).
-    pub schema_filter: String,
-}
-
-impl DbServerConfig {
-    /// `connection_string` is what `db_id` resolved to - passed in rather
-    /// than looked up here, so the config shape stays free of the store.
-    fn to_server(&self, connection_string: &str) -> Result<McpServer, String> {
-        let exe = self.exe_path.trim();
-        if exe.is_empty() {
-            return Err("pick the database MCP server first".into());
-        }
-        // Only a real invocation may reach the config: the resolver turns
-        // an exe/dll/folder pick into command+args, and refuses anything
-        // an MCP client could not launch (a bare directory was registered
-        // once - the server never started, silently).
-        let (command, args) = crate::ai_tools::resolve_db_command(std::path::Path::new(exe))?;
-        if self.db_type.trim().is_empty() {
-            return Err("DB_TYPE is required".into());
-        }
-        if connection_string.trim().is_empty() {
-            return Err(NO_LOGIN.into());
-        }
-        let mut env = std::collections::BTreeMap::new();
-        env.insert("DB_TYPE".to_string(), self.db_type.trim().to_string());
-        env.insert(
-            "CONNECTION_STRING".to_string(),
-            connection_string.trim().to_string(),
-        );
-        // Omitted entirely when blank, so the server applies its default
-        // rather than being handed an empty filter.
-        if !self.schema_filter.trim().is_empty() {
-            env.insert(
-                "SCHEMA_FILTER".to_string(),
-                self.schema_filter.trim().to_string(),
-            );
-        }
-        Ok(McpServer {
-            name: DB_SERVER.to_string(),
-            command,
-            args,
-            env,
-        })
-    }
-}
-
-/// Said when the chosen database has no login to hand the server.
-const NO_LOGIN: &str = "Save a login for this database first.";
-
-/// The PHR X server settings a never-configured form starts from. No
-/// database among them: a machine that never chose one has none chosen,
-/// and registering names the selected database when the person clicks.
-#[derive(serde::Serialize, specta::Type)]
-pub struct DbServerDefaults {
-    pub exe_path: String,
-    pub db_type: String,
-    pub schema_filter: String,
-}
-
-/// The shipped defaults for the database server form. The frontend applies
-/// these only to a form nothing was ever saved into.
-#[tauri::command]
-#[specta::specta]
-pub fn db_server_defaults() -> DbServerDefaults {
-    DbServerDefaults {
-        exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
-        db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
-        schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
-    }
 }
 
 /// Every database the Company database card offers, as the public view:
@@ -265,35 +167,31 @@ pub fn import_legacy_db_connection(
     credentials::import_legacy(&*secrets.0, &connection_string)
 }
 
-/// `Ok(Some(warning))` when the registration worked but the connection
-/// string is somewhere git can carry it away - the UI shows that instead of
-/// the plain success toast. `Ok(None)` = registered and excluded.
+/// Removes the separate database server an earlier version of this app
+/// registered (`LEGACY_DB_SERVER`) from the tool's config: the repository's
+/// when one is set and the tool has one, else the global one - the same
+/// removal `unregister_ai_tool` does for our own server, and nothing else in
+/// the config is touched. Nothing registers that server any more; the AI
+/// Bridge tab calls this, quietly, for a tool whose scan still lists it.
+/// Off the main thread: for Claude Code it runs the `claude` CLI, and it
+/// fires on opening the tab rather than on a click, so a slow CLI must not
+/// stall the window.
 #[tauri::command]
 #[specta::specta]
-pub fn register_db_server(
-    secrets: State<'_, DbSecrets>,
-    id: String,
-    config: DbServerConfig,
-    working_dir: Option<String>,
-    global: bool,
-) -> Result<Option<String>, String> {
-    // The server reads its login from its own config, so this is where a
-    // resolved connection string leaves the store: into the AI tool's
-    // config file, never back over IPC.
-    let conn = credentials::resolve(&*secrets.0, &config.db_id)?.ok_or_else(|| NO_LOGIN.to_string())?;
-    // No command files are written for the database server, so the disabled
-    // set is irrelevant here.
-    register_server(&id, &config.to_server(&conn)?, working_dir.as_deref(), &[], global)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn unregister_db_server(
+pub async fn remove_legacy_db_server(
     id: String,
     working_dir: Option<String>,
     global: bool,
 ) -> Result<(), String> {
-    unregister_server(&id, DB_SERVER, working_dir.as_deref(), global)
+    tauri::async_runtime::spawn_blocking(move || remove_legacy_db_server_now(&id, working_dir.as_deref(), global))
+        .await
+        .map_err(|e| format!("could not remove the old database server: {e}"))?
+}
+
+/// The removal itself, on the calling thread. Public for
+/// `tests/suite/ai_tools.rs`.
+pub fn remove_legacy_db_server_now(id: &str, working_dir: Option<&str>, global: bool) -> Result<(), String> {
+    unregister_server(id, LEGACY_DB_SERVER, working_dir, global)
 }
 
 /// The repository a registration for `spec` targets: a tool with a project
@@ -351,8 +249,8 @@ fn remove_from_file(path: &std::path::Path, key: &str, name: &str) -> Result<(),
     }
 }
 
-/// Shared by both servers: refuse a tool that isn't installed, pick the
-/// repository or global target, then either shell out to the claude CLI
+/// Refuse a tool that isn't installed, pick the repository or global
+/// target, then either shell out to the claude CLI
 /// or merge into the tool's JSON config. A repository registration also
 /// retires the app's own global copies - a user-scope server of the same
 /// name would shadow the project one, and `/tcm:*` twice in the picker is
@@ -363,7 +261,7 @@ fn register_server(
     working_dir: Option<&str>,
     disabled: &[String],
     global: bool,
-) -> Result<Option<String>, String> {
+) -> Result<(), String> {
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
@@ -377,8 +275,7 @@ fn register_server(
     if spec.id == "claude-code" {
         // `project_root` gives None here only for the machine-wide choice:
         // user scope and the global command set, exactly what registering
-        // did before per-repo scoping. No git is involved, so there is no
-        // exclusion and nothing to warn about.
+        // did before per-repo scoping.
         let Some(r) = root else {
             register_claude_code_global(server)?;
             if server.name == TCM_SERVER {
@@ -386,7 +283,7 @@ fn register_server(
                     crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
                 }
             }
-            return Ok(None);
+            return Ok(());
         };
         register_claude_code_in(r, server)?;
         if server.name == TCM_SERVER {
@@ -398,60 +295,16 @@ fn register_server(
                 crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
             }
         }
-        let warning = if server.name == DB_SERVER {
-            // The connection string is in the config now; keep every
-            // project-scoped tool's config out of `git status` for this
-            // checkout (owner's decision - the repo's .gitignore is not
-            // ours to edit), not just Claude Code's - see `exclude_db_config`.
-            exclude_db_config(r, ".mcp.json")
-        } else {
-            None
-        };
         retire_global(spec, &server.name, Some(r));
-        return Ok(warning);
+        return Ok(());
     }
 
     let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
     merge_into_file(&config_path, key, server)?;
-    let mut warning = None;
     if let Some(r) = root {
-        if server.name == DB_SERVER {
-            match project_relative(r, &config_path) {
-                Some(rel) => warning = exclude_db_config(r, &rel),
-                None => crate::applog::warn(format!(
-                    "could not exclude {} locally - not inside {r}",
-                    config_path.display()
-                )),
-            }
-        }
         retire_global(spec, &server.name, Some(r));
     }
-    Ok(warning)
-}
-
-/// Keep the DB server's connection string out of git for this project-scoped
-/// config file, and say so when that could not be done: `None` means the
-/// file is genuinely out of git's way, `Some(text)` is a sentence for the
-/// person who just clicked Register.
-///
-/// Best-effort like every other retirement/exclude step here - a failure to
-/// exclude does not undo a registration that already worked, it warns.
-fn exclude_db_config(root: &str, rel: &str) -> Option<String> {
-    let warning = match crate::workspace::exclude_locally(std::path::Path::new(root), rel) {
-        Ok(crate::workspace::Exclusion::Excluded) => return None,
-        Ok(crate::workspace::Exclusion::Tracked) => format!(
-            "The connection string is in {rel}, which git is tracking in this repository — it \
-             will be committed unless you remove the file from the index (git rm --cached {rel}) \
-             or move the secret out."
-        ),
-        Ok(crate::workspace::Exclusion::NotGit) => format!(
-            "{root} is not a git checkout, so nothing was excluded — the connection string sits \
-             in {rel} in plain text."
-        ),
-        Err(e) => e,
-    };
-    crate::applog::warn(warning.clone());
-    Some(warning)
+    Ok(())
 }
 
 /// Take the app's OWN global copy away once the repository carries it.
@@ -726,9 +579,6 @@ fn run_claude_mcp_remove(
     Ok(())
 }
 
-/// Registers via `claude mcp add --scope user`, so it applies regardless
-/// of the app's cwd. Environment pairs go through `-e`, which is how the
-/// CLI carries the database server's connection settings.
 /// The Claude Code CLI's absolute path, or None when it is not where the
 /// installers put it. See `ai_tools::claude_cli_candidates` for why this
 /// does not simply trust PATH.
@@ -762,8 +612,8 @@ fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String>
 /// VARIADIC - it keeps consuming arguments until something option-like or
 /// `--` stops it - so env pairs placed before the name swallowed the name
 /// too, and the CLI then bound the server binary to `name` and reported
-/// `missing required argument 'commandOrUrl'`. Only the database server
-/// sends env pairs, which is why registering it was the first to break.
+/// `missing required argument 'commandOrUrl'`. Our own server sends no env
+/// pairs today; the order is kept right for any server that does.
 ///
 /// Public for `tests/suite/ai_tools.rs` - its only caller runs the real CLI.
 pub fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {

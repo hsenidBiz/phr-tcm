@@ -207,9 +207,9 @@ test("Next records the outcome immediately, without waiting for Finish", async (
 
 /// The previous run's outcome is SHOWN, never pre-applied: pre-selecting
 /// the button made "pass it again" impossible (the lit button's click
-/// un-marks). A previously-run case opens unmarked with the last verdict
-/// pulsing on its button; never-run cases stay entirely blank.
-test("a previously-run case opens unmarked with its last verdict pulsing", async () => {
+/// un-marks). A previously-run case opens unmarked with the last verdict's
+/// button softly tinted; never-run cases stay entirely blank.
+test("a previously-run case opens unmarked with its last verdict tinted", async () => {
   mockIPC((cmd) => {
     if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full")
@@ -257,18 +257,22 @@ test("a previously-run case opens unmarked with its last verdict pulsing", async
   renderRunner();
   await screen.findByText("Valid login");
 
-  // Case 201 failed last time: the Failed button arrives UNLIT, carrying
-  // a pulsing dot and a tooltip naming it as the previous result instead.
+  // Case 201 failed last time: the Failed button arrives UNLIT - a soft
+  // tint, not the solid fill a mark gets - with a tooltip naming it as the
+  // previous result.
   const failedBtn = await screen.findByTitle("Failed - the previous run's result");
   expect(failedBtn).not.toHaveClass("bg-danger");
-  expect(failedBtn.querySelector(".animate-pulse")).toBeTruthy();
+  expect(failedBtn).toHaveClass("bg-danger/15");
+  // The others are outlined in their colour, untinted.
+  expect(screen.getByRole("button", { name: "Passed" })).toHaveClass("border-success/70");
+  expect(screen.getByRole("button", { name: "Passed" })).not.toHaveClass("bg-success/15");
   // Nothing is marked yet - the indicator is information, not a mark -
   // and the off-list point 999 adds nothing either.
   expect(screen.getByTitle("0 of 2 marked")).toHaveTextContent("1/2");
   expect(screen.getByRole("button", { name: /Finish \(0\)/ })).toBeInTheDocument();
 
   // Case 202 has never run: it must arrive with NOTHING selected and
-  // nothing pulsing - a blank slate is information too.
+  // nothing tinted - a blank slate is information too.
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Invalid login");
   // ...and walking forward increments the position.
