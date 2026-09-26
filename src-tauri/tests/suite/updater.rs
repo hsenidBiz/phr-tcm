@@ -1,0 +1,315 @@
+//! The byte figure shown next to the update progress bar.
+//!
+//! The download itself needs a Velopack install to exercise, so what is
+//! pinned here is the arithmetic the user actually reads: "X of Y".
+
+use v2_lib::updater::{bytes_at, REPO_URL, RELEASES_URL};
+
+/// Both urls point at the SAME repo, and it is the company one. They
+/// drifted apart once already - the feed was read from one place and this
+/// is what stops the package being fetched from another.
+#[test]
+fn both_urls_name_the_phr_tcm_repo() {
+    assert!(RELEASES_URL.starts_with(REPO_URL), "{RELEASES_URL} is not under {REPO_URL}");
+    assert!(REPO_URL.ends_with("hsenidBiz/phr-tcm"), "{REPO_URL}");
+    // The repo root, not a release: `latest/download` is appended by the
+    // mirror constant, and pointing REPO_URL at a release would make the
+    // API source read one release's assets as the whole feed.
+    assert!(!REPO_URL.contains("/releases/"), "REPO_URL must be the repo root, not a release");
+    assert!(RELEASES_URL.ends_with("/releases/latest/download/"), "{RELEASES_URL}");
+}
+
+/// The download that failed for real, reproduced against the live repo.
+///
+/// `latest/download/` serves whatever release is newest, so the moment
+/// 1.18.10 was published, `latest/download/...1.18.9-full.nupkg` started
+/// 404ing while 1.18.9's own release still held the file. Ignored by
+/// default because it needs the network; run with
+/// `cargo test --test suite updater:: -- --ignored`.
+#[test]
+#[ignore = "hits github.com"]
+fn a_superseded_version_is_still_downloadable_from_its_own_release() {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("tcm-v2-test")
+        .build()
+        .expect("client");
+    let status = |url: String| client.head(&url).send().expect("request failed").status().as_u16();
+    // Any superseded release in the CURRENT repo reproduces it; 1.18.9 was
+    // the original and lives only in the old one, so this follows the feed.
+    let file = "AzureDevOpsTestCaseManager.V2-1.23.2-full.nupkg";
+    assert_eq!(status(format!("{RELEASES_URL}{file}")), 404, "latest/ should have moved on");
+    assert_eq!(
+        status(format!("{REPO_URL}/releases/download/v1.23.2/{file}")),
+        200,
+        "the per-release url is the one that does not move"
+    );
+}
+
+#[test]
+fn the_ends_are_exact() {
+    // A size that is deliberately not a round hundred: `total / 100 * p`
+    // silently drops the remainder, so a finished download would report
+    // one byte short of the size it just told the user it was fetching.
+    let total = 25_000_001;
+    assert_eq!(bytes_at(0, total), 0);
+    assert_eq!(bytes_at(100, total), total, "100% must be the whole package");
+}
+
+#[test]
+fn the_middle_is_the_floor_not_a_rounding() {
+    // 50% of 25,000,001 is 12,500,000.5 - claiming the extra byte would be
+    // claiming a byte that has not arrived.
+    assert_eq!(bytes_at(50, 25_000_001), 12_500_000);
+    assert_eq!(bytes_at(5, 24_800_000), 1_240_000);
+    assert_eq!(bytes_at(95, 24_800_000), 23_560_000);
+}
+
+#[test]
+fn a_percentage_out_of_range_is_clamped() {
+    // Velopack should only ever send 0-100, but this feeds a progress bar
+    // and a byte count: out-of-range must land on an end, never wrap or
+    // read as more bytes than the package holds.
+    assert_eq!(bytes_at(-1, 24_800_000), 0);
+    assert_eq!(bytes_at(-32_768, 24_800_000), 0);
+    assert_eq!(bytes_at(101, 24_800_000), 24_800_000);
+    assert_eq!(bytes_at(32_767, 24_800_000), 24_800_000);
+}
+
+#[test]
+fn an_absurd_size_does_not_overflow() {
+    assert_eq!(bytes_at(100, u64::MAX), u64::MAX);
+    assert_eq!(bytes_at(50, u64::MAX), u64::MAX / 2);
+}
+
+#[test]
+fn an_unknown_size_stays_zero() {
+    // The feed always gives a size, but a zero must not become a division
+    // by zero or a bar that fills from nothing.
+    assert_eq!(bytes_at(0, 0), 0);
+    assert_eq!(bytes_at(50, 0), 0);
+    assert_eq!(bytes_at(100, 0), 0);
+}
+
+/// The process must not keep the install's `current\` as its working
+/// directory.
+///
+/// Velopack launches the app with cwd = `current\`, and every child the
+/// app starts without an explicit cwd - the browser behind "View in
+/// Browser", Auto Run's Edge, `claude mcp add` - inherits it. A process's
+/// cwd pins that directory against rename, and renaming `current\` is the
+/// first thing Update.exe does when applying an update. On 2026-08-21 a
+/// user's 1.20.2 -> 1.20.5 update failed three times with "os error 32"
+/// because Edge, opened from the app that morning, still sat in
+/// `current\`. Update.exe kills processes whose EXE is under the install
+/// root, but a browser's exe is not, so only the app can prevent this - by
+/// leaving the directory before anything can inherit it.
+///
+/// The working directory is the whole process's, and this suite runs every
+/// module's tests on parallel threads of one process: moving it here would
+/// move it under all of them, and a child any of them spawned meanwhile
+/// would pin `current\` - the failure this test is about, caused by the
+/// test itself. So the check runs in a process of its own: this same test,
+/// in a fresh copy of the binary, told apart by an environment variable.
+#[test]
+fn the_process_leaves_the_install_dir_so_children_cannot_pin_it() {
+    const IN_CHILD: &str = "TCM_TEST_LEAVE_INSTALL_DIR_CHILD";
+    const NAME: &str = "updater::the_process_leaves_the_install_dir_so_children_cannot_pin_it";
+    if std::env::var_os(IN_CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([NAME, "--exact", "--test-threads=1", "--nocapture"])
+            .env(IN_CHILD, "1")
+            .output()
+            .expect("start a copy of the test binary");
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "the check failed in its own process:\n{said}");
+        // A renamed test would filter to nothing and "pass" having run no
+        // check at all.
+        assert!(said.contains("1 passed"), "the child ran no check - is NAME still this test's path?\n{said}");
+        return;
+    }
+
+    let root = std::env::temp_dir().join(format!("tcm-leave-{}", std::process::id()));
+    let current = root.join("current");
+    std::fs::create_dir_all(&current).unwrap();
+    let was = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&current).unwrap();
+
+    v2_lib::leave_install_dir();
+
+    let now = std::env::current_dir().unwrap();
+    assert!(!now.starts_with(&root), "still inside the install dir: {}", now.display());
+    // The point of leaving: Update.exe can now rename `current\`.
+    let moved = root.join("current.bak");
+    std::fs::rename(&current, &moved).expect("the current dir should be renameable once nothing sits in it");
+
+    std::env::set_current_dir(&was).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The forensic marker behind "your last update didn't finish".
+///
+/// The apply runs after the app has exited and reports its failure only to
+/// Velopack's own log, so the app restarting on the OLD version was
+/// indistinguishable from never having clicked at all - the banner just
+/// came back. `note_attempt` + `failed_attempt` close that gap: aim is
+/// recorded before the hand-off, outcome is judged on the next launch.
+mod update_attempt_marker {
+    use v2_lib::updater::{failed_attempt, note_attempt};
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("tcm-attempt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn still_on_the_old_version_means_the_apply_failed_and_the_marker_survives() {
+        let d = dir("failed");
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.8".into()));
+        // Kept: the explanation must survive further restarts of the old
+        // version, not vanish after being shown once.
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.8".into()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn reaching_or_passing_the_target_clears_the_marker() {
+        let d = dir("landed");
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.20.8"), None, "the update landed - nothing failed");
+        assert!(!d.join("update-attempt.txt").exists(), "a resolved marker must not linger");
+
+        // Overshot (hand-copied files, a skipped release): also not a failure.
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.21.0"), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_marker_or_an_unreadable_one_alarms_no_one() {
+        let d = dir("noise");
+        assert_eq!(failed_attempt(&d, "1.20.7"), None);
+        std::fs::write(d.join("update-attempt.txt"), "not-a-version").unwrap();
+        assert_eq!(failed_attempt(&d, "1.20.7"), None);
+        assert!(!d.join("update-attempt.txt").exists(), "garbage must be cleaned up, not re-read forever");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_newer_attempt_overwrites_the_old_aim() {
+        let d = dir("overwrite");
+        note_attempt(&d, "1.20.8");
+        note_attempt(&d, "1.20.9");
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.9".into()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+use v2_lib::updater::{resolve, sources, Attempt, UpdateState};
+
+/// The two GitHub sources, in the order that closes the moving-pointer
+/// race documented at the top of `updater/mod.rs`: the API first, because
+/// it downloads each asset from its own release rather than through
+/// `latest/download`, which moves.
+#[test]
+fn the_sources_are_the_two_github_ones_in_order() {
+    let list = sources();
+    let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["github api", "latest/download"]);
+}
+
+fn info(version: &str) -> Box<velopack::UpdateInfo> {
+    let mut i = velopack::UpdateInfo::default();
+    i.TargetFullRelease.Version = version.into();
+    Box::new(i)
+}
+
+/// The FIRST source that answers wins, and a later failure cannot undo
+/// it. The pending info is kept, because the download re-reads it.
+#[test]
+fn the_first_source_that_answers_wins() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Available(info("1.24.0"))),
+            ("latest/download", Attempt::Failed("timeout".into())),
+        ],
+        &state,
+    );
+    assert_eq!(s.available.as_deref(), Some("1.24.0"));
+    assert!(s.blocked.is_none());
+    assert!(state.pending.lock().unwrap().is_some(), "kept for the download");
+}
+
+/// Every source failed. That is NOT "up to date" - the app has not
+/// checked and must not claim it has. The LAST failure is the one named.
+#[test]
+fn every_source_failing_is_blocked_not_up_to_date() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Failed("http 500".into())),
+            ("latest/download", Attempt::Failed("timeout".into())),
+        ],
+        &state,
+    );
+    assert!(s.available.is_none());
+    assert!(s.blocked.as_deref().unwrap().contains("timeout"));
+}
+
+#[test]
+fn up_to_date_from_the_first_source_is_a_plain_up_to_date() {
+    let state = UpdateState::default();
+    let s = resolve(vec![("github api", Attempt::UpToDate)], &state);
+    assert!(s.available.is_none() && s.blocked.is_none());
+}
+
+#[test]
+fn no_attempts_at_all_means_this_build_cannot_update() {
+    let state = UpdateState::default();
+    let s = resolve(vec![], &state);
+    assert!(s.blocked.as_deref().unwrap().contains("does not update itself"));
+}
+
+/// Velopack's `UpdateCheck::RemoteIsEmpty` (a feed that parsed but named no
+/// `Full` asset) is mapped in `check` to `Attempt::Failed`, not
+/// `Attempt::UpToDate` - an empty feed is not a claim that the running
+/// version is current, and folding it into the catch-all would tell someone
+/// "You are on the latest version" without having checked. That mapping
+/// itself needs a live Velopack install to exercise (see the module doc at
+/// the top of this file), so what is pinned here is `resolve`'s side of the
+/// contract: a failed attempt for this reason must behave exactly like any
+/// other failure - fall through when a later source answers, and never
+/// resolve to up to date when every source gives it.
+#[test]
+fn an_empty_feed_falls_through_to_the_next_source() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Failed("the update feed listed no releases".into())),
+            ("latest/download", Attempt::Available(info("1.24.0"))),
+        ],
+        &state,
+    );
+    assert_eq!(s.available.as_deref(), Some("1.24.0"), "the second source's update must still be reported");
+}
+
+#[test]
+fn an_empty_feed_from_every_source_is_blocked_not_up_to_date() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Failed("the update feed listed no releases".into())),
+            ("latest/download", Attempt::Failed("the update feed listed no releases".into())),
+        ],
+        &state,
+    );
+    assert!(s.available.is_none(), "must not report an update that was never seen");
+    assert!(
+        s.blocked.as_deref().unwrap().contains("no releases"),
+        "must not silently become up to date: {:?}",
+        s.blocked
+    );
+}

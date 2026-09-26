@@ -12,7 +12,7 @@
 //! uses it for real; `expect` looks until something holds; `actions` is
 //! what a script is written in.
 //!
-//! `tests/browser_live.rs` runs the whole stack against a real headless
+//! `tests/suite/browser_live.rs` runs the whole stack against a real headless
 //! browser; everything else is tested against a scripted fake.
 
 pub mod launch;

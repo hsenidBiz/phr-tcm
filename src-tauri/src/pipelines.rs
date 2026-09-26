@@ -12,7 +12,7 @@
 //! GET only, and every lookup past the build list is best-effort: a missing
 //! timeline or an org with no Release Management just yields fewer details,
 //! never an error that hides the builds. No writes, no DELETE, ever
-//! (scanned by tests/ado.rs).
+//! (scanned by tests/suite/ado.rs).
 
 use crate::ado::{AdoClient, AdoError};
 use serde::Serialize;

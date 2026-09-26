@@ -88,7 +88,7 @@ pub const PROBE_JS: &str = r#"function() {
 /// Measured on Edge 153 rather than assumed: `select()` selects in every
 /// text-like input, `number` and `email` included. Only `selectionStart`
 /// reads back `null` there, and nothing here needs to know the difference,
-/// so there is no special case for them. `tests/browser_live.rs` counts
+/// so there is no special case for them. `tests/suite/browser_live.rs` counts
 /// the input events the page receives, so a special case cannot come back
 /// unnoticed.
 ///

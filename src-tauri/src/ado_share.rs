@@ -23,7 +23,7 @@
 //! first import (guarded by a json-patch `test` on /rev so a concurrent
 //! change can never make the remove hit the wrong relation). Nothing else
 //! about the PBI may change - no fields, no other relation types, and
-//! still no HTTP DELETE anywhere (scanned by tests/ado.rs).
+//! still no HTTP DELETE anywhere (scanned by tests/suite/ado.rs).
 //! ────────────────────────────────────────────────────────────────────────
 
 use crate::ado::{AdoClient, AdoError};

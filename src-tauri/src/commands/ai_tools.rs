@@ -80,7 +80,7 @@ fn root_of(working_dir: Option<&str>) -> Option<&str> {
 /// `path` relative to `root`, forward-slashed - the shape
 /// `crate::workspace::exclude_locally` wants. None when `path` is not
 /// actually under `root`, which the caller treats as "cannot exclude".
-/// Public for `tests/ai_tools.rs`; not a command.
+/// Public for `tests/suite/ai_tools.rs`; not a command.
 pub fn project_relative(root: &str, path: &std::path::Path) -> Option<String> {
     path.strip_prefix(std::path::Path::new(root))
         .ok()
@@ -299,7 +299,7 @@ pub fn unregister_db_server(
 /// The repository a registration for `spec` targets: a tool with a project
 /// config needs one and refuses without (the UI never offers that - the
 /// AI Bridge tab is gated on the repository); a tool without one ignores it.
-/// Public for `tests/ai_tools.rs` - its only caller writes real config files.
+/// Public for `tests/suite/ai_tools.rs` - its only caller writes real config files.
 pub fn project_root<'a>(
     spec: &ToolSpec,
     working_dir: Option<&'a str>,
@@ -765,7 +765,7 @@ fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String>
 /// `missing required argument 'commandOrUrl'`. Only the database server
 /// sends env pairs, which is why registering it was the first to break.
 ///
-/// Public for `tests/ai_tools.rs` - its only caller runs the real CLI.
+/// Public for `tests/suite/ai_tools.rs` - its only caller runs the real CLI.
 pub fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {
     let mut args = vec![
         "mcp".into(),

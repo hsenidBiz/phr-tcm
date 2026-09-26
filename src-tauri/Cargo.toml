@@ -91,17 +91,19 @@ wiremock = "0.6.5"
 tempfile = "3"
 
 
-# The test profile links 27 separate integration binaries, and on Windows
-# the expensive, heavily-threaded part of each link is generating the PDB -
-# which is why the process pegging the machine during `cargo test` is
-# link.exe, not rustc. Capping cargo's job count alone does not help much:
-# each of those concurrent links is itself multi-threaded.
+# Every test binary links the whole crate plus Tauri, and on Windows the
+# expensive, heavily-threaded part of each link is generating the PDB -
+# which is why the process pegging the machine during `cargo test` was
+# link.exe, not rustc. Capping cargo's job count alone did not help much:
+# each of those concurrent links is itself multi-threaded. The real fix was
+# fewer links: the 86 files under tests/ were 86 binaries, and are now the
+# modules of one (tests/suite/main.rs) - three test links in all, with
+# tests/bindings.rs and the lib's own unit-test binary.
 #
 # Dropping debug info costs nothing that a test run uses. Panic locations
 # come from the panic metadata compiled into the binary, not from the PDB,
-# so a failure still reports `tests\foo.rs:77:9` exactly as before - only a
-# step debugger would notice, and that is `cargo build`'s profile, which is
-# deliberately left alone.
+# so a failure still reports `tests\suite\foo.rs:77:9` exactly as before -
+# only a step debugger would notice.
 [profile.test]
 debug = 0
 

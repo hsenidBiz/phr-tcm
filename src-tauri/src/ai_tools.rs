@@ -697,7 +697,7 @@ fn held_by_another_process(e: &std::io::Error) -> bool {
 }
 
 /// `atomic_write` with the file operations and the wait passed in - the
-/// seam tests/ai_tools.rs drives. A rename that fails because another
+/// seam tests/suite/ai_tools.rs drives. A rename that fails because another
 /// process holds the file is retried after each of `RENAME_RETRY_WAITS_MS`;
 /// any other failure, or the last retry's, removes the temp file and
 /// returns the error. So does a temp write that fails part-way.

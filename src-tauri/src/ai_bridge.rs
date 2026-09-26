@@ -147,7 +147,7 @@ pub fn new_token() -> String {
 }
 
 /// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,
-/// arbitrary %XX -> the raw byte). `pub` so `tests/ai_bridge.rs` can
+/// arbitrary %XX -> the raw byte). `pub` so `tests/suite/ai_bridge.rs` can
 /// exercise it directly.
 pub fn q(target: &str, key: &str) -> Option<String> {
     let qs = target.split_once('?')?.1;

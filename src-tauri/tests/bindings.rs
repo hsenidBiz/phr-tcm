@@ -4,7 +4,9 @@
 //! NOTE: all Rust tests in this crate live in tests/ (integration targets),
 //! never as lib unit tests — see build.rs: only integration-test binaries get
 //! the Common-Controls v6 manifest link args, and any test binary linking
-//! tauri dies at startup without them (STATUS_ENTRYPOINT_NOT_FOUND).
+//! tauri dies at startup without them (STATUS_ENTRYPOINT_NOT_FOUND). Every
+//! test but these is a module of the one tests/suite/ binary; this file
+//! stays a binary of its own because it is the generator.
 
 /// No token may appear in any type exported over IPC.
 ///
