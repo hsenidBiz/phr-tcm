@@ -35,7 +35,7 @@ export const importFile: Screen = {
   title: "Import File",
   group: "Test cases",
   summary:
-    "Bring test cases in from a JSON file or a teammate's share link, check them in the queue, then upload them to the PBI. " +
+    "Bring test cases in from a JSON file or a teammate's share link, check them in the queue, then upload them to the Product Backlog Item. " +
     "A case that carries an id updates that exact work item; a case without one is created new.",
   shots: [
     { id: QUEUE, route: [{ nav: "Import File" }], alt: "Import File with three cases in the queue" },
@@ -147,7 +147,7 @@ export const importFile: Screen = {
       does:
         "Fetches the shared draft and adds its cases to the queue. A copy is saved on this computer and watched like an imported file, so the ids an upload creates are kept.",
       tips: [
-        "A draft shared for a different PBI asks first: stay on the PBI you have chosen, or switch to the one it was shared for.",
+        "A draft shared for a different Product Backlog Item asks first: stay on the Product Backlog Item you have chosen, or switch to the one it was shared for.",
       ],
     },
     {
@@ -155,8 +155,8 @@ export const importFile: Screen = {
       shot: QUEUE,
       group: "the-queue",
       locate: { text: "Queue for PBI #1001 (3 queued)" },
-      name: "Queue for PBI",
-      does: "Every case waiting to be uploaded to this PBI, and how many there are. The queue is shared with Manual Entry and kept on this computer for each PBI.",
+      name: "Queue for Product Backlog Item",
+      does: "Every case waiting to be uploaded to this Product Backlog Item, and how many there are. The queue is shared with Manual Entry and kept on this computer for each Product Backlog Item.",
     },
     {
       id: "view-in-browser",
@@ -173,7 +173,7 @@ export const importFile: Screen = {
       locate: { role: "button", name: "Share for review" },
       name: "Share for review",
       does:
-        "Attaches the draft to the PBI in Azure DevOps as a file and copies a one-time link to it, ready to send to a reviewer, who imports it with **Import shared**. " +
+        "Attaches the draft to the Product Backlog Item in Azure DevOps as a file and copies a one-time link to it, ready to send to a reviewer, who imports it with **Import shared**. " +
         "No test cases are created. It needs a connection, so it is greyed out while you are offline.",
     },
     {
@@ -621,8 +621,8 @@ export const importFile: Screen = {
       shot: REVIEW,
       group: "upload",
       locate: { testId: "pbi" },
-      name: "Highlighted PBI",
-      does: "While you confirm, the PBI glows, so you can check the new cases are going to the right place.",
+      name: "Highlighted Product Backlog Item",
+      does: "While you confirm, the Product Backlog Item glows, so you can check the new cases are going to the right place.",
     },
     {
       id: "duplicate-hint",
@@ -630,7 +630,7 @@ export const importFile: Screen = {
       group: "upload",
       locate: { text: "A test case with this title already exists on the PBI - this will create a duplicate, not update it." },
       name: "Duplicate warning",
-      does: "Marks a new case whose title is already used by a case on the PBI. Uploading it would make a second case, not update the first.",
+      does: "Marks a new case whose title is already used by a case on the Product Backlog Item. Uploading it would make a second case, not update the first.",
     },
     {
       id: "stop-back",
@@ -656,9 +656,9 @@ export const importFile: Screen = {
       locate: { role: "button", nameRe: "^Yes . create" },
       name: "Yes, create and update",
       does:
-        "Uploads the queue. New cases are created, linked to the PBI and added to its test suite; cases with an id are updated. " +
+        "Uploads the queue. New cases are created, linked to the Product Backlog Item and added to its test suite; cases with an id are updated. " +
         "The button says how many of each, and stays greyed out while a duplicate waits for an answer or a case has a problem to fix. " +
-        "With only updates in the queue there is no PBI to check, so it reads **Confirm & update** and the number, and uploads at once.",
+        "With only updates in the queue there is no Product Backlog Item to check, so it reads **Confirm & update** and the number, and uploads at once.",
     },
     {
       id: "back",
@@ -721,11 +721,11 @@ export const importFile: Screen = {
     {
       title: "Import a file and upload it",
       steps: [
-        "Choose the PBI in the bar at the top.",
+        "Choose the Product Backlog Item in the bar at the top.",
         "Press **Import JSON** and pick the file.",
         "Check the queue: open a case with **>** to read its steps, and open **what will change** on each update.",
         "Press **Review**. Deal with any duplicate or flagged case.",
-        "Check the highlighted PBI, then press the button that says what it will create and update.",
+        "Check the highlighted Product Backlog Item, then press the button that says what it will create and update.",
       ],
     },
     {

@@ -42,3 +42,14 @@ test("a leader meets its part level with the label, kept off the part's ends", (
   // A label past the part's right end: the leader lands just inside it.
   expect(leaderX({ x: 500, w: 80 }, { x: 0, w: 400 })).toEqual({ from: 510, to: 390 });
 });
+
+test("pointing at one part dims every other label, leader and outline", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const css = readFileSync(resolve(__dirname, "styles.css"), "utf8");
+  expect(css).toMatch(/\.ov:has\(\.is-hot\) \.ov-label:not\(\.is-hot\),\s*\.ov:has\(\.is-hot\) \.region:not\(\.is-hot\)\s*\{\s*opacity:/);
+  expect(css).toMatch(/\.ov:has\(\.is-hot\) \.ov-leader:not\(\.is-hot\)\s*\{\s*opacity:/);
+  // Labels draw above the leaders, so a line never crosses a label's words.
+  expect(css).toMatch(/\.ov\[data-laid\] \.ov-label \{[^}]*z-index: 3/);
+  expect(css).toMatch(/\.ov-leaders \{[^}]*z-index: 2/);
+});

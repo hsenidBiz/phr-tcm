@@ -22,14 +22,14 @@ export const gettingStarted: Screen = {
   title: "Getting started",
   group: "Getting started",
   summary:
-    "Sign in once with your Microsoft work account, then choose the organisation, project and PBI you are working on in the bar across the top. " +
-    "Every test case screen works on that PBI until you choose another, and the app remembers all three the next time you open it.",
+    "Sign in once with your Microsoft work account, then choose the organisation, project and Product Backlog Item you are working on in the bar across the top. " +
+    "Every test case screen works on that Product Backlog Item until you choose another, and the app remembers all three the next time you open it.",
   shots: [
     { id: SHELL, route: [{ nav: "Manual Entry" }], alt: "The app with the sidebar on the left and the context bar across the top" },
     {
       id: PBI,
       route: [{ nav: "Manual Entry" }, { click: { role: "button", name: "Clear PBI" } }, { click: { role: "textbox", name: "Find PBI" } }],
-      alt: "Choosing a PBI: the search box with recently used PBIs",
+      alt: "Choosing a Product Backlog Item: the search box with recently used Product Backlog Items",
     },
     {
       id: BELL,
@@ -56,7 +56,7 @@ export const gettingStarted: Screen = {
   ],
   groups: [
     { id: "move-around", title: "Move between screens", summary: "The sidebar lists every screen; the command palette reaches them from the keyboard." },
-    { id: "where-you-work", title: "Pick the organisation, project and PBI", summary: "The context bar across the top says which PBI every screen works on." },
+    { id: "where-you-work", title: "Pick the organisation, project and Product Backlog Item", summary: "The context bar across the top says which Product Backlog Item every screen works on." },
     { id: "top-right", title: "Notifications, Work Manager and your account", summary: "The corner of the context bar: what changed, the switch to Work Manager, and who you are signed in as." },
     { id: "commands", title: "Run a command", summary: "The command palette finds any screen or action by name." },
   ],
@@ -79,7 +79,7 @@ export const gettingStarted: Screen = {
       group: "where-you-work",
       locate: { role: "combobox", name: "Organization" },
       name: "Organization",
-      does: "The Azure DevOps organisation you work in, from every organisation your account can open. Choosing another one clears the project and PBI.",
+      does: "The Azure DevOps organisation you work in, from every organisation your account can open. Choosing another one clears the project and Product Backlog Item.",
     },
     {
       id: "project",
@@ -87,24 +87,24 @@ export const gettingStarted: Screen = {
       group: "where-you-work",
       locate: { role: "combobox", name: "Project" },
       name: "Project",
-      does: "The project inside that organisation. Choosing another one clears the PBI.",
+      does: "The project inside that organisation. Choosing another one clears the Product Backlog Item.",
     },
     {
       id: "pbi",
       shot: SHELL,
       group: "where-you-work",
       locate: { testId: "pbi" },
-      name: "PBI",
+      name: "Product Backlog Item",
       does:
-        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import File, Update Test Cases, View Test Cases and Run Tests all work on this PBI.",
+        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import File, Update Test Cases, View Test Cases and Run Tests all work on this Product Backlog Item.",
     },
     {
       id: "clear-pbi",
       shot: SHELL,
       group: "where-you-work",
       locate: { role: "button", name: "Clear PBI" },
-      name: "Clear PBI (x)",
-      does: "Clears the PBI so you can search for another one.",
+      name: "Clear Product Backlog Item (x)",
+      does: "Clears the Product Backlog Item so you can search for another one.",
     },
     {
       id: "bell",
@@ -155,9 +155,9 @@ export const gettingStarted: Screen = {
       shot: PBI,
       group: "where-you-work",
       locate: { role: "textbox", name: "Find PBI" },
-      name: "Find PBI",
+      name: "Find Product Backlog Item",
       does:
-        "Type a PBI number or words from its title. Matching PBIs appear as you type; [[Enter]] searches at once. Click a result to choose it.",
+        "Type a Product Backlog Item number or words from its title. Matching Product Backlog Items appear as you type; [[Enter]] searches at once. Click a result to choose it.",
     },
     {
       id: "recently-used",
@@ -165,15 +165,15 @@ export const gettingStarted: Screen = {
       group: "where-you-work",
       locate: { text: "Recently used" },
       name: "Recently used",
-      does: "Before you type, the PBIs you chose most recently in this project. Click one to choose it again; the x beside it removes it from the list.",
+      does: "Before you type, the Product Backlog Items you chose most recently in this project. Click one to choose it again; the x beside it removes it from the list.",
     },
     {
       id: "recent-pbis",
       shot: PBI,
       group: "where-you-work",
       locate: { text: "Recent PBIs" },
-      name: "Recent PBIs",
-      does: "While no PBI is chosen, the screen offers the same recent PBIs as cards. Click one to choose it.",
+      name: "Recent Product Backlog Items",
+      does: "While no Product Backlog Item is chosen, the screen offers the same recent Product Backlog Items as cards. Click one to choose it.",
     },
 
     // --- Notifications ----------------------------------------------------
@@ -316,9 +316,9 @@ export const gettingStarted: Screen = {
   tips: [
     "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
     "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens, and [[Ctrl+Shift+M]] switches to Work Manager and back.",
-    "The organisation, project, PBI and the screen you were on are remembered, so the app opens where you left it.",
+    "The organisation, project, Product Backlog Item and the screen you were on are remembered, so the app opens where you left it.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",
-    "Until a PBI is chosen, the test case screens show a short prompt and your recent PBIs instead of their usual content.",
+    "Until a Product Backlog Item is chosen, the test case screens show a short prompt and your recent Product Backlog Items instead of their usual content.",
     "Settings has an interface tour that walks you through the app one screen at a time.",
   ],
   howTo: [
@@ -327,15 +327,15 @@ export const gettingStarted: Screen = {
       steps: [
         "Open the app and press **Sign in with Microsoft**.",
         "Finish signing in in the browser window that opens. Until you do, the button reads **Waiting for browser**.",
-        "Back in the app, choose your organisation, project and PBI in the bar across the top.",
+        "Back in the app, choose your organisation, project and Product Backlog Item in the bar across the top.",
       ],
     },
     {
-      title: "Choose the PBI to work on",
+      title: "Choose the Product Backlog Item to work on",
       steps: [
-        "Press the **x** on the PBI in the bar, or start from a screen with no PBI chosen.",
-        "Click **Find PBI** and pick one of your recent PBIs, or type its number or part of its title.",
-        "Click the PBI. Every test case screen now works on it.",
+        "Press the **x** on the Product Backlog Item in the bar, or start from a screen with no Product Backlog Item chosen.",
+        "Click **Find Product Backlog Item** and pick one of your recent Product Backlog Items, or type its number or part of its title.",
+        "Click the Product Backlog Item. Every test case screen now works on it.",
       ],
     },
   ],

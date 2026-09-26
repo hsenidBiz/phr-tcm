@@ -138,7 +138,7 @@ export const manualEntry: Screen = {
       group: "queue-it",
       locate: { text: "Queue for PBI #1001 (3 queued)" },
       name: "Queue",
-      does: "The cases waiting to be uploaded to this PBI. It is the same queue as on Import File, where every part of it is explained.",
+      does: "The cases waiting to be uploaded to this Product Backlog Item. It is the same queue as on Import File, where every part of it is explained.",
     },
     {
       id: "default-tags-field",
@@ -168,13 +168,13 @@ export const manualEntry: Screen = {
   tips: [
     "Nothing reaches Azure DevOps until you review the queue and confirm the upload on Import File or here.",
     "A case written here is always created new. To change a case already in Azure DevOps, use Update Test Cases, or import a file that carries its id.",
-    "The queue is kept on this computer for each PBI, so closing the app never loses it.",
+    "The queue is kept on this computer for each Product Backlog Item, so closing the app never loses it.",
   ],
   howTo: [
     {
       title: "Write a case and upload it",
       steps: [
-        "Choose the PBI in the bar at the top.",
+        "Choose the Product Backlog Item in the bar at the top.",
         "Type the title, then the first step's action and expected result.",
         "Press **Add Step** for each further step, and fill in the tags, module and preconditions if you need them.",
         "Press **Add to queue**. Repeat for the next case.",

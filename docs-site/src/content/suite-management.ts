@@ -57,7 +57,7 @@ export const suiteManagement: Screen = {
       group: "plans",
       locate: { text: "Showing the plan that holds PBI #1001." },
       name: "Which plans",
-      does: "With a PBI chosen, only the plan that holds its suite is shown, with that suite open. When the PBI has no suite yet, every plan is shown.",
+      does: "With a Product Backlog Item chosen, only the plan that holds its suite is shown, with that suite open. When the Product Backlog Item has no suite yet, every plan is shown.",
     },
     {
       id: "show-all",
@@ -65,7 +65,7 @@ export const suiteManagement: Screen = {
       group: "plans",
       locate: { role: "button", name: "Show all plans" },
       name: "Show all plans",
-      does: "Shows every plan in the project. **Show only this PBI's plan** goes back.",
+      does: "Shows every plan in the project. **Show only this Product Backlog Item's plan** goes back.",
     },
     {
       id: "new-suite",
@@ -89,7 +89,7 @@ export const suiteManagement: Screen = {
       group: "plans",
       locate: { role: "button", name: "Collapse Login and session flow" },
       name: "Open suite",
-      does: "An open suite. A PBI's own suite carries a badge with the PBI's number.",
+      does: "An open suite. A Product Backlog Item's own suite carries a badge with the Product Backlog Item's number.",
     },
     {
       id: "group-by-title",
@@ -273,7 +273,7 @@ export const suiteManagement: Screen = {
   tips: [
     "Nothing moves in Azure DevOps until you press **Apply order**. When you scroll down a long suite, its order buttons float at the bottom of the window, and they stay there while the order has unsaved changes.",
     "**Apply order from files** asks for one or more draft JSON files and lists them in a window. Put the files in the order their blocks should take (drag them, or use the arrows); each shows how many of the suite's cases it places. **Add more files** adds another; **Apply** arranges the list, and **Apply order** then saves it. Cases in no file stay after the blocks, in their current order.",
-    "**Manage** in Search Suites opens this screen on the suite you picked, with **Show this PBI's plan** or **Show all plans** to go back to the usual view.",
+    "**Manage** in Search Suites opens this screen on the suite you picked, with **Show this Product Backlog Item's plan** or **Show all plans** to go back to the usual view.",
     "When the selected cases sit in a plan that is no longer shown, a line says how many are out of view, with **Clear selection**.",
     "The order saved here is the suite's own order in Azure DevOps, which is what **Spec order** means in Run Tests.",
   ],
@@ -281,7 +281,7 @@ export const suiteManagement: Screen = {
     {
       title: "Put a suite's cases in order",
       steps: [
-        "Choose the PBI in the bar at the top; its suite opens by itself.",
+        "Choose the Product Backlog Item in the bar at the top; its suite opens by itself.",
         "Drag the cases into order, or select several and move them together with the arrows.",
         "Press **Apply order**.",
       ],

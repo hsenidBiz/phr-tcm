@@ -27,8 +27,8 @@ export const updateTestCases: Screen = {
   title: "Update Test Cases",
   group: "Test cases",
   summary:
-    "Change test cases that are already in Azure DevOps. Every case linked to the PBI is listed; open one to edit it in place, " +
-    "or select several to change them together, rename them, move them to another PBI or export them.",
+    "Change test cases that are already in Azure DevOps. Every case linked to the Product Backlog Item is listed; open one to edit it in place, " +
+    "or select several to change them together, rename them, move them to another Product Backlog Item or export them.",
   shots: [
     { id: LIST, route: [NAV], alt: "Update Test Cases listing the five test cases of the PBI" },
     {
@@ -60,7 +60,7 @@ export const updateTestCases: Screen = {
         { click: { role: "button", name: "Move to PBI" } },
         { waitFor: { role: "textbox", name: "Search for the destination PBI" } },
       ],
-      alt: "The window for moving test cases to another PBI",
+      alt: "The window for moving test cases to another Product Backlog Item",
     },
     {
       id: DELETE,
@@ -69,7 +69,7 @@ export const updateTestCases: Screen = {
     },
   ],
   groups: [
-    { id: "find-case", title: "Find a test case", summary: "The PBI's test cases, with a filter and grouping by title." },
+    { id: "find-case", title: "Find a test case", summary: "The Product Backlog Item's test cases, with a filter and grouping by title." },
     { id: "edit-case", title: "Edit a test case", summary: "Open a case to change its title, tags and steps, then save." },
     { id: "selection", title: "Act on a selection", summary: "Tick cases to edit, rename, export, move or delete them together." },
   ],
@@ -81,7 +81,7 @@ export const updateTestCases: Screen = {
       group: "find-case",
       locate: { role: "heading", nameRe: "Total Test Cases$" },
       name: "Total Test Cases",
-      does: "How many test cases are linked to the PBI. While the search box has text, it shows how many of them match.",
+      does: "How many test cases are linked to the Product Backlog Item. While the search box has text, it shows how many of them match.",
     },
     {
       id: "refresh",
@@ -285,15 +285,15 @@ export const updateTestCases: Screen = {
       group: "selection",
       locate: { role: "button", name: "Delete" },
       name: "Delete",
-      does: "Opens the confirmation for deleting the selected cases for good. It only shows when Azure DevOps allows you to delete test cases in this PBI's area.",
+      does: "Opens the confirmation for deleting the selected cases for good. It only shows when Azure DevOps allows you to delete test cases in this Product Backlog Item's area.",
     },
     {
       id: "move-to-pbi",
       shot: SELECTED,
       group: "selection",
       locate: { role: "button", name: "Move to PBI" },
-      name: "Move to PBI",
-      does: "Opens a window for moving the selected cases to a different PBI, for cases that were linked to the wrong one.",
+      name: "Move to Product Backlog Item",
+      does: "Opens a window for moving the selected cases to a different Product Backlog Item, for cases that were linked to the wrong one.",
     },
     {
       id: "clear",
@@ -372,8 +372,8 @@ export const updateTestCases: Screen = {
       shot: MOVE,
       group: "selection",
       locate: { role: "textbox", name: "Search for the destination PBI" },
-      name: "Search PBIs",
-      does: "Type a title or an id to find the PBI to move the cases to, then click it in the list. **change** beside it picks a different one.",
+      name: "Search Product Backlog Items",
+      does: "Type a title or an id to find the Product Backlog Item to move the cases to, then click it in the list. **change** beside it picks a different one.",
     },
     {
       id: "move-cancel",
@@ -388,9 +388,9 @@ export const updateTestCases: Screen = {
       shot: MOVE,
       group: "selection",
       locate: { role: "button", name: "Pick a PBI first" },
-      name: "Move N to #PBI",
+      name: "Move N to the chosen Product Backlog Item",
       does:
-        "Reads **Pick a PBI first** until you choose one. Then it moves the cases: their link goes from this PBI to the new one, so they leave this list and show under the new PBI's suite. " +
+        "Reads **Pick a Product Backlog Item first** until you choose one. Then it moves the cases: their link goes from this Product Backlog Item to the new one, so they leave this list and show under the new Product Backlog Item's suite. " +
         "Moving them back is the same move the other way.",
     },
 
@@ -423,14 +423,14 @@ export const updateTestCases: Screen = {
     },
   ],
   tips: [
-    "Cases picked with **Edit cases** in Search Suites open here with **Back to PBI cases** above them, which returns to the PBI's own list. **Move to PBI** is greyed out for them.",
+    "Cases picked with **Edit cases** in Search Suites open here with **Back to Product Backlog Item cases** above them, which returns to the Product Backlog Item's own list. **Move to Product Backlog Item** is greyed out for them.",
     "A case you open keeps what you type until you save or discard it, even if you fold its group.",
   ],
   howTo: [
     {
       title: "Change one test case",
       steps: [
-        "Choose the PBI in the bar at the top.",
+        "Choose the Product Backlog Item in the bar at the top.",
         "Press **>** on the case, or double-click it.",
         "Make the change: title, status, tags or steps.",
         "Press **Save changes**.",

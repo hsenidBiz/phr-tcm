@@ -37,7 +37,7 @@ export const board: Screen = {
   group: "Work Manager",
   summary:
     "Your work items as cards in To Do, In Progress and Done. Drag a card to another column to change its state, or click it to open the work item: " +
-    "edit its fields, read and add comments, and see its history. Switch the board to an area or a PBI to see more than your own work.",
+    "edit its fields, read and add comments, and see its history. Switch the board to an area or a Product Backlog Item to see more than your own work.",
   shots: [
     { id: COLUMNS, route: [...NAV, { waitFor: { text: CARD } }], alt: "The board with its three columns and a work item's pull request chips" },
     { id: SWIMLANES, route: [...NAV, { click: { role: "switch", name: "Swimlanes" } }, { waitFor: { role: "button", name: "Collapse all" } }], alt: "The board in swimlanes, one lane per parent work item" },
@@ -49,7 +49,7 @@ export const board: Screen = {
     {
       id: SCOPE,
       route: [...NAV, { click: { role: "combobox", name: "Board scope" } }, { waitFor: { role: "option", name: "My work" } }],
-      alt: "The board scope list: my work, by PBI, or an area",
+      alt: "The board scope list: my work, by Product Backlog Item, or an area",
     },
     {
       id: AREA,
@@ -79,7 +79,7 @@ export const board: Screen = {
     },
   ],
   groups: [
-    { id: "scope-filters", title: "Choose what the board shows", summary: "Your own work, one PBI or an area, narrowed by title, type or person." },
+    { id: "scope-filters", title: "Choose what the board shows", summary: "Your own work, one Product Backlog Item or an area, narrowed by title, type or person." },
     { id: "columns-cards", title: "Columns and cards", summary: "One card per work item, in the column of its state." },
     { id: "lanes", title: "Swimlanes", summary: "One lane per parent work item." },
     { id: "item-head", title: "A work item: title, state and people", summary: "Open a card to change the item in place." },
@@ -94,7 +94,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "combobox", name: "Board scope" },
       name: "Board scope",
-      does: "Whose work the board shows: **My work** (assigned to you, the default), **By PBI** or an area. Type to find an area in a long list.",
+      does: "Whose work the board shows: **My work** (assigned to you, the default), **By Product Backlog Item** or an area. Type to find an area in a long list.",
     },
     {
       id: "filter",
@@ -126,7 +126,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "switch", name: "Swimlanes" },
       name: "Swimlanes",
-      does: "Groups the cards under the item they belong to, such as tasks under their PBI. The choice is remembered on this computer.",
+      does: "Groups the cards under the item they belong to, such as tasks under their Product Backlog Item. The choice is remembered on this computer.",
     },
     {
       id: "hide-column",
@@ -232,8 +232,8 @@ export const board: Screen = {
       shot: SCOPE,
       group: "scope-filters",
       locate: { role: "option", name: "By PBI…" },
-      name: "By PBI",
-      does: "Everything parented under one PBI, and the PBI itself. A PBI search box appears in the toolbar; pick the PBI there.",
+      name: "By Product Backlog Item",
+      does: "Everything parented under one Product Backlog Item, and the Product Backlog Item itself. A Product Backlog Item search box appears in the toolbar; pick the Product Backlog Item there.",
     },
     {
       id: "area",

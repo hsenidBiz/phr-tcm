@@ -579,7 +579,9 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .ov-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .ov-strip.is-below { margin: 12px 0 0; }
 .ov[data-laid] .ov-strip { display: block; position: relative; margin: 0; }
-.ov[data-laid] .ov-label { position: absolute; }
+/* Above the leaders: a line from a farther row passes behind a nearer
+   label rather than across its words. */
+.ov[data-laid] .ov-label { position: absolute; z-index: 3; }
 .ov-label {
   display: inline-block; max-width: 100%;
   padding: 0.25em 0.85em; border-radius: 999px;
@@ -595,6 +597,13 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .ov-leader circle { fill: var(--accent-line); transition: fill 0.2s; }
 .ov-leader.is-hot path { stroke: var(--accent); }
 .ov-leader.is-hot circle { fill: var(--accent); }
+/* While one part is pointed at or focused, every other label, leader and
+   outline steps back, so two labels stacked close together cannot be
+   mistaken for each other. */
+.ov-label, .ov-leader, .region { transition: opacity 0.2s, box-shadow 0.2s, background 0.2s, border-color 0.2s, transform 0.2s var(--ease-out); }
+.ov:has(.is-hot) .ov-label:not(.is-hot),
+.ov:has(.is-hot) .region:not(.is-hot) { opacity: 0.35; }
+.ov:has(.is-hot) .ov-leader:not(.is-hot) { opacity: 0.15; }
 .overview-caption { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
 .overview-caption svg { color: var(--accent-text); flex: none; }
 

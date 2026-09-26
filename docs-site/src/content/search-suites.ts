@@ -34,7 +34,7 @@ export const searchSuites: Screen = {
     {
       id: MORE,
       route: [...OPEN_SUITE, { click: { role: "button", name: `More actions for ${SUITE}` } }, { waitFor: { role: "menuitem", name: "Report" } }],
-      alt: "The More menu of a PBI's suite",
+      alt: "The More menu of a Product Backlog Item's suite",
     },
   ],
   groups: [
@@ -73,8 +73,8 @@ export const searchSuites: Screen = {
       shot: TREE,
       group: "tree",
       locate: { text: "PBI 1001" },
-      name: "PBI badge",
-      does: "Marks a PBI's own suite, with the PBI's number.",
+      name: "Product Backlog Item badge",
+      does: "Marks a Product Backlog Item's own suite, with the Product Backlog Item's number.",
     },
     {
       id: "suite",
@@ -115,7 +115,7 @@ export const searchSuites: Screen = {
       locate: { role: "button", name: `Edit cases in ${SUITE}` },
       name: "Edit cases",
       does:
-        "Opens the cases in Update Test Cases. On a PBI's suite, that PBI becomes the current one. On any other suite or folder, the cases under it are handed over on their own.",
+        "Opens the cases in Update Test Cases. On a Product Backlog Item's suite, that Product Backlog Item becomes the current one. On any other suite or folder, the cases under it are handed over on their own.",
     },
     {
       id: "more",
@@ -138,8 +138,8 @@ export const searchSuites: Screen = {
       shot: MORE,
       group: "tree",
       locate: { role: "menuitem", name: "Use as current PBI" },
-      name: "Use as current PBI",
-      does: "Makes the suite's PBI the one chosen in the bar at the top, without leaving this screen. Offered on a PBI's suite.",
+      name: "Use as current Product Backlog Item",
+      does: "Makes the suite's Product Backlog Item the one chosen in the bar at the top, without leaving this screen. Offered on a Product Backlog Item's suite.",
     },
     {
       id: "manage",
@@ -156,7 +156,7 @@ export const searchSuites: Screen = {
       locate: { role: "menuitem", name: "Run Tests" },
       name: "Run Tests",
       does:
-        "On a PBI's suite, opens Run Tests for that PBI. On any other suite, opens the runner straight away with the suite's own cases (not those of the suites inside it).",
+        "On a Product Backlog Item's suite, opens Run Tests for that Product Backlog Item. On any other suite, opens the runner straight away with the suite's own cases (not those of the suites inside it).",
     },
     {
       id: "report",

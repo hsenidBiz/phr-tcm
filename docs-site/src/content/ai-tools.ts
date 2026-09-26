@@ -26,7 +26,7 @@ export const aiBridge: Screen = {
   group: "AI tools",
   summary:
     "Connect an AI coding assistant, such as Claude Code or VS Code, to this app. The assistant can then read your test cases, suites, " +
-    "run results, tags, PBIs and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
+    "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
     { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and the company database" },
@@ -54,11 +54,10 @@ export const aiBridge: Screen = {
       route: [
         { click: { role: "button", name: "Settings" } },
         { click: { role: "switch", name: "Allow registering AI tools machine-wide" } },
-        { click: { role: "switch", name: "Offer the PHR X database server on the AI Bridge tab" } },
         NAV,
-        { waitFor: { role: "textbox", name: "Database server path" } },
+        { waitFor: { role: "button", name: "Machine-wide" } },
       ],
-      alt: "AI Bridge with the machine-wide choice and the PHR X server settings switched on in Settings",
+      alt: "AI Bridge with the machine-wide choice switched on in Settings",
     },
   ],
   groups: [
@@ -181,7 +180,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run failures, Company database (read), Project tags, Find a PBI and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run failures, Company database (read), Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
     },
     {
       id: "database",
@@ -232,7 +231,7 @@ export const aiBridge: Screen = {
       group: "tools-breakdown",
       locate: { role: "heading", name: "AI Tools Breakdown" },
       name: "AI Tools Breakdown",
-      does: "What each tool you can switch does, and the recommended way to have an assistant write test cases for a PBI.",
+      does: "What each tool you can switch does, and the recommended way to have an assistant write test cases for a Product Backlog Item.",
     },
 
     // --- Other tools ------------------------------------------------------------
@@ -347,62 +346,10 @@ export const aiBridge: Screen = {
       name: "Register in: Machine-wide",
       does: "Registers the AI tools for the whole computer instead, for a machine that does not work from a repository. Writing test cases still needs a repository.",
     },
-    {
-      id: "server-path",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { role: "textbox", name: "Database server path" },
-      name: "Server path",
-      does:
-        "Shown when **Offer the PHR X database server on the AI Bridge tab** is on in Settings: registers the company's own database server beside this app's tools. Type or pick where its PeoplesHR.DBMCPServer.exe is. It is no longer needed for looking things up.",
-    },
-    {
-      id: "server-file",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { role: "button", name: "File" },
-      name: "File",
-      does: "Picks the server's file.",
-    },
-    {
-      id: "server-folder",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { role: "button", name: "Folder" },
-      name: "Folder",
-      does: "Picks the folder the server is in instead.",
-    },
-    {
-      id: "db-type",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { role: "combobox", name: "Database type" },
-      name: "DB_TYPE",
-      does: "The kind of database the server talks to: mssql or sqlserver.",
-    },
-    {
-      id: "schema-filter",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { role: "textbox", name: "Schema filter" },
-      name: "SCHEMA_FILTER",
-      does: "Which schemas the server reads, separated by commas. Leave it blank for the server's default.",
-    },
-    {
-      id: "phrx-register",
-      shot: OPTIONS,
-      group: "company-database",
-      locate: { text: "Choose a database and fill in the server path to enable registration." },
-      name: "Register the server",
-      does:
-        "Once a database is chosen and the server path filled in, each AI tool gets a **Register** button here. Registering writes the chosen database's login into that tool's settings file; **Unregister** takes it out again.",
-    },
   ],
   tips: [
     "None of the tools an assistant gets through this app can create, update or delete anything in Azure DevOps. You import what it writes yourself, on Import File.",
     "The AI Bridge only works while this app is open and signed in.",
-    "When the PHR X server is switched off in Settings but still registered with a tool, the database card lists that tool with an **Unregister** button, so its saved login can be removed.",
-    "Choosing another database while the PHR X server is switched on also updates the login in every tool it is registered with. Restart the assistant's session afterwards.",
   ],
   howTo: [
     {

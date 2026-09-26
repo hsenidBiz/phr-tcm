@@ -45,7 +45,7 @@ export const runTests: Screen = {
   title: "Run Tests",
   group: "Running tests",
   summary:
-    "Run the PBI's test cases and record the results in Azure DevOps. Pick the cases, choose the order to run them in, " +
+    "Run the Product Backlog Item's test cases and record the results in Azure DevOps. Pick the cases, choose the order to run them in, " +
     "then step through them in the runner: a small window that stays beside whatever you are testing.",
   shots: [
     { id: LIST, route: [NAV], alt: "Run Tests listing the PBI's test cases with their last outcomes" },
@@ -86,7 +86,7 @@ export const runTests: Screen = {
     },
   ],
   groups: [
-    { id: "choose", title: "Choose what to run", summary: "The PBI's test cases with their last outcomes; open one to see its history." },
+    { id: "choose", title: "Choose what to run", summary: "The Product Backlog Item's test cases with their last outcomes; open one to see its history." },
     { id: "order", title: "Set the run order", summary: "Put the cases in the order you want to run them, for yourself or for everyone." },
     { id: "work-through", title: "Work through a case", summary: "The runner window: the case, its steps, and what you found on the way." },
     { id: "wrap-up", title: "Record the outcome and move on", summary: "Mark the case, then go to the next one or finish the run." },
@@ -107,7 +107,7 @@ export const runTests: Screen = {
       group: "choose",
       locate: { text: 'Plan "Release 2.4" / suite 91' },
       name: "Plan and suite",
-      does: "The test plan and the PBI's test suite the results are recorded in. The first time you open a PBI here, the app finds its suite, or creates one when it has none.",
+      does: "The test plan and the Product Backlog Item's test suite the results are recorded in. The first time you open a Product Backlog Item here, the app finds its suite, or creates one when it has none.",
     },
     {
       id: "refresh-outcomes",
@@ -115,7 +115,7 @@ export const runTests: Screen = {
       group: "choose",
       locate: { role: "button", name: "Refresh outcomes" },
       name: "Refresh outcomes",
-      does: "Reads the latest outcomes, history and run order from Azure DevOps. [[Shift]]+click looks for the PBI's test suite again from scratch.",
+      does: "Reads the latest outcomes, history and run order from Azure DevOps. [[Shift]]+click looks for the Product Backlog Item's test suite again from scratch.",
     },
     {
       id: "set-order",
@@ -284,7 +284,7 @@ export const runTests: Screen = {
       locate: { role: "combobox", name: "Start from" },
       name: "Start from",
       does:
-        "The order to begin with: **Suggested run order** (the one saved for this PBI for every tester, when there is one), **Spec order** (the suite's own order), " +
+        "The order to begin with: **Suggested run order** (the one saved for this Product Backlog Item for every tester, when there is one), **Spec order** (the suite's own order), " +
         "**My order** (one you set before on this computer), or the tester order of a draft file you imported and uploaded.",
     },
     {
@@ -345,7 +345,7 @@ export const runTests: Screen = {
       locate: { role: "button", name: "Save for everyone" },
       name: "Save for everyone",
       does:
-        "Saves this order with the PBI in Azure DevOps as its suggested run order, the one every tester starts from. It asks you to confirm first. " +
+        "Saves this order with the Product Backlog Item in Azure DevOps as its suggested run order, the one every tester starts from. It asks you to confirm first. " +
         "It is greyed out while the list is the saved suggested order, unchanged.",
     },
     {
@@ -436,7 +436,7 @@ export const runTests: Screen = {
       shot: RUNNER,
       group: "work-through",
       locate: { role: "button", name: "Mark step 1 passed" },
-      name: "P (step passed)",
+      name: "Pass (this step)",
       does: "Marks this step Passed. Click it again to clear it. Marking steps is optional.",
     },
     {
@@ -444,7 +444,7 @@ export const runTests: Screen = {
       shot: RUNNER,
       group: "work-through",
       locate: { role: "button", name: "Mark step 1 failed" },
-      name: "F (step failed)",
+      name: "Fail (this step)",
       does: "Marks this step Failed, which also offers **File bug**. Click it again to clear it.",
     },
     {
@@ -591,7 +591,7 @@ export const runTests: Screen = {
       locate: { text: "Links to test case #5001 and PBI #1001. Paste (Ctrl+V) to add more." },
       name: "Links and screenshots",
       does:
-        "The bug is linked to the test case and the PBI, and carries the pictures attached to this case in the runner. " +
+        "The bug is linked to the test case and the Product Backlog Item, and carries the pictures attached to this case in the runner. " +
         "Press [[Ctrl]]+[[V]] in the window to add more. **File bug** creates it in Azure DevOps and notes its number on the case.",
     },
     {
@@ -613,7 +613,7 @@ export const runTests: Screen = {
     {
       title: "Run test cases",
       steps: [
-        "Choose the PBI in the bar at the top.",
+        "Choose the Product Backlog Item in the bar at the top.",
         "Click the cases to run, or press **Select all**.",
         "Press **Run N in runner**.",
         "For each case, follow the steps, mark a verdict, add a comment or a screenshot if needed, and press **Next**.",

@@ -82,7 +82,7 @@ export function renderHero(
   const quick = h(
     "section",
     { class: "quickstart", "aria-labelledby": "quickstart-title" },
-    h("div", { class: "quickstart-head" }, h("h2", { id: "quickstart-title" }, "Quick start"), h("p", {}, "From an empty PBI to a finished run, in six steps.")),
+    h("div", { class: "quickstart-head" }, h("h2", { id: "quickstart-title" }, "Quick start"), h("p", {}, "From an empty Product Backlog Item to a finished run, in six steps.")),
     h("ol", { class: "qs-steps" }, ...steps),
   );
 
