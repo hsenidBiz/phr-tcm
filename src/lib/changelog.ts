@@ -132,7 +132,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       "AI Bridge: the Company database connection is always shown now, since it is what the app's own database tools use. Switching database takes effect on the assistant's next call, with no need to restart its session.",
       "The connection picker has \"Your own database\": choose it and enter the server, database, user and password of a database the app did not ship with. A connection you enter yourself is read only unless its user is a dev login.",
-      "The separate PHR X database server is no longer offered by default; the app's own database tools replace it. Turn it back on in Settings if you still need it. If an AI tool still has it registered, the AI Bridge tab lists that tool with an Unregister button, since that registration keeps a copy of the database password in the tool's settings file.",
+      "The separate company database server is no longer offered by default; the app's own database tools replace it.",
     ],
   },
   {
@@ -465,7 +465,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Updates now come only from the company repository (hsenidBiz/phr-tcm); the old personal feed was mirrored through 1.23.6 so every install had crossed over. Nothing to do on your side.",
       "Importing a file you had picked before, with new content, now replaces the copy the app follows instead of writing it to a numbered file beside it. The obvious name used to keep the OLDEST content - on a set carrying work item ids, importing it would have silently undone corrections in Azure DevOps. The previous copy is kept under .test-cases/.history.",
       "AI Bridge: begin_test_case_writing, get_writing_guide, get_test_cases, check_spec_coverage and transform_cases are always on - they no longer have switches. The two Auto Run script tools are no longer offered to assistants; the Auto Run screen itself is unchanged.",
-      "Settings has a switch to hide the company database (PHR-X) section on the AI Bridge tab.",
+      "Settings has a switch to hide the company database section on the AI Bridge tab.",
       "The runner's header now shows the number of the test case on screen instead of the PBI.",
       "Switching to or away from a queue of a hundred cases no longer stalls the window. Each queued row is rendered once and left alone until something about it changes; before, every row was rebuilt on each of the several renders a tab switch triggers.",
       "Pressing Review, and then Confirm, brings the next button to you. Both steps grow the row of controls under a long queue, which used to push the button you needed next below the fold and leave you scrolling for it - the final Yes especially, since its warning is meant to be read and so never had a floating copy.",

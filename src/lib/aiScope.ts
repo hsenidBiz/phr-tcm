@@ -87,3 +87,36 @@ export function dropRetiredAiSwitches(): void {
     // storage unavailable -> nothing was stored to drop either
   }
 }
+
+/** The old separate database server's registrations the AI Bridge tab has
+ * already removed, one per tool and config ("tool|repository" or
+ * "tool|global"). The removal happens once: an entry someone adds back by
+ * hand afterwards is theirs, and is left alone. */
+const LEGACY_CLEANED_KEY = "tcm-v2-ai-legacy-db-cleaned";
+
+export function legacyCleanupKey(toolId: string, repository: string | null): string {
+  return `${toolId}|${repository ?? "global"}`;
+}
+
+function loadLegacyCleaned(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(LEGACY_CLEANED_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function legacyDbCleaned(key: string): boolean {
+  return loadLegacyCleaned().includes(key);
+}
+
+export function markLegacyDbCleaned(key: string): void {
+  const all = loadLegacyCleaned();
+  if (all.includes(key)) return;
+  try {
+    localStorage.setItem(LEGACY_CLEANED_KEY, JSON.stringify([...all, key]));
+  } catch {
+    // storage unavailable -> the next scan removes it again, which is harmless
+  }
+}

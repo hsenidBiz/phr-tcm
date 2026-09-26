@@ -6,8 +6,8 @@
 // and components/BridgeStatusBadge.tsx. In capture mode the sample data
 // seeds one working repository, two detected tools (one registered, one
 // with a machine-wide copy left over) and two databases with the dev one
-// chosen (src/dev/demo.ts). The options shot turns on the two Settings
-// switches that change this tab; every capture boot turns them off again.
+// chosen (src/dev/demo.ts). The options shot turns on the Settings switch
+// that changes this tab; every capture boot turns it off again.
 
 import type { Screen, Step } from "../types";
 

@@ -4,7 +4,7 @@
 //! for them.
 //!
 //! Shipping credentials in a public binary is a deliberate owner call,
-//! same as storing the connection string locally (see lib/dbServer.ts):
+//! same as keeping each saved login on this machine (db/credentials.rs):
 //! the database is reachable only from the company network, behind its
 //! own sign-in, and device locked - a string extracted from the installer
 //! is not a usable credential anywhere else.

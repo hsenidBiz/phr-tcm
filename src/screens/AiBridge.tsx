@@ -33,7 +33,15 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "../lib/workingDir";
-import { globalAllowedSnapshot, saveScope, scopeSnapshot, subscribeAiScope } from "../lib/aiScope";
+import {
+  globalAllowedSnapshot,
+  legacyCleanupKey,
+  legacyDbCleaned,
+  markLegacyDbCleaned,
+  saveScope,
+  scopeSnapshot,
+  subscribeAiScope,
+} from "../lib/aiScope";
 import {
   IconConfirm,
   IconCopy,
@@ -164,26 +172,32 @@ export default function AiBridge() {
   // Earlier versions could register a separate database server beside ours;
   // the app's own database tools replaced it. A tool that still carries that
   // entry has it removed here, quietly: it is a registration this app made,
-  // and nothing on the tab mentions it. At most once per tool per scan - a
-  // failure is logged and waits for the next scan, and a removal never
-  // triggers a rescan of its own, so nothing here can loop.
+  // and nothing on the tab mentions it. Once per tool and config, ever: a
+  // removal that worked is remembered (legacyDbCleaned), so an entry
+  // someone adds back by hand afterwards is theirs and is left alone. A
+  // failure is logged and waits for the next scan, a call already on its
+  // way is not made twice, and a removal never triggers a rescan of its
+  // own, so nothing here can loop.
   const legacyScanned = useRef(0);
+  const legacyInFlight = useRef(new Set<string>());
   useEffect(() => {
     if (!tools.data || legacyScanned.current === tools.dataUpdatedAt) return;
     legacyScanned.current = tools.dataUpdatedAt;
     const removeLegacy = (id: string, where: string, workingDir: string | null, machineWide: boolean) => {
+      const key = legacyCleanupKey(id, machineWide ? null : workingDir);
+      if (legacyDbCleaned(key) || legacyInFlight.current.has(key)) return;
+      legacyInFlight.current.add(key);
+      const failed = (why: string) =>
+        logUi(`AI tools: could not remove the old database server from ${id} (${where} config): ${why}`);
       commands
         .removeLegacyDbServer(id, workingDir, machineWide)
         .then((res) => {
-          if (res.status === "error") {
-            logUi(`AI tools: could not remove the old database server from ${id} (${where} config): ${res.error}`);
-          } else {
-            logUi(`AI tools: removed the old database server from ${id} (${where} config)`);
-          }
+          if (res.status === "error") return failed(res.error);
+          markLegacyDbCleaned(key);
+          logUi(`AI tools: removed the old database server from ${id} (${where} config)`);
         })
-        .catch((e: unknown) => {
-          logUi(`AI tools: could not remove the old database server from ${id} (${where} config): ${String(e)}`);
-        });
+        .catch((e: unknown) => failed(String(e)))
+        .finally(() => legacyInFlight.current.delete(key));
     };
     for (const t of tools.data) {
       if (!t.installed) continue;

@@ -8,7 +8,7 @@ use v2_lib::ai_tools::{
     remove_entry, tcm_server, McpServer, COMMAND_MARKER, COMMANDS, LEGACY_DB_SERVER, TCM_SERVER,
     TOOL_SPECS,
 };
-use v2_lib::commands::ai_tools::{mcp_add_args, mcp_add_command, project_root, remove_legacy_db_server};
+use v2_lib::commands::ai_tools::{mcp_add_args, mcp_add_command, project_root, remove_legacy_db_server_now};
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
 /// dependency of this project). Unique per-call via time + an atomic
@@ -976,8 +976,8 @@ fn removing_the_legacy_db_server_takes_only_its_entry() {
     .unwrap();
     let root = repo.path().to_string_lossy().to_string();
 
-    remove_legacy_db_server("cursor".into(), Some(root.clone()), false).unwrap();
-    remove_legacy_db_server("vscode".into(), Some(root.clone()), false).unwrap();
+    remove_legacy_db_server_now("cursor", Some(root.as_str()), false).unwrap();
+    remove_legacy_db_server_now("vscode", Some(root.as_str()), false).unwrap();
 
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
     assert!(v["mcpServers"][LEGACY_DB_SERVER].is_null(), "{v}");
@@ -1001,18 +1001,18 @@ fn removing_the_legacy_db_server_takes_only_its_entry() {
 fn removing_the_legacy_db_server_where_there_is_none_is_a_no_op() {
     let repo = TempDir::new();
     let root = repo.path().to_string_lossy().to_string();
-    remove_legacy_db_server("cursor".into(), Some(root.clone()), false).unwrap();
+    remove_legacy_db_server_now("cursor", Some(root.as_str()), false).unwrap();
     assert!(!repo.path().join(".cursor").exists(), "nothing is created to remove nothing");
 
     let cursor = repo.path().join(".cursor").join("mcp.json");
     std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
     let only_ours = r#"{"mcpServers":{"tcm-testcases":{"command":"v2.exe"}}}"#;
     std::fs::write(&cursor, only_ours).unwrap();
-    remove_legacy_db_server("cursor".into(), Some(root), false).unwrap();
+    remove_legacy_db_server_now("cursor", Some(root.as_str()), false).unwrap();
     assert_eq!(std::fs::read_to_string(&cursor).unwrap(), only_ours, "a file without it is left as it was");
 }
 
 #[test]
 fn removing_the_legacy_db_server_refuses_an_unknown_tool() {
-    assert!(remove_legacy_db_server("not-a-tool".into(), None, false).is_err());
+    assert!(remove_legacy_db_server_now("not-a-tool", None, false).is_err());
 }

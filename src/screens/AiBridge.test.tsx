@@ -760,6 +760,23 @@ test("a failed removal is logged once per scan and never loops", async () => {
   expect(removed).toHaveLength(2);
 });
 
+/// The cleanup happens once per tool and config. An entry that is back
+/// after a removal that worked was added by hand - someone still runs that
+/// server - and is theirs: later scans leave it alone.
+test("an entry added back by hand after the cleanup is left alone", async () => {
+  const { removed, scans } = legacyMocks([
+    { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "project" },
+  ]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(removed).toHaveLength(1));
+  // The mock's scan still lists it, as a hand-added entry would.
+  fireEvent.click(screen.getByRole("button", { name: /Rescan/ }));
+  await waitFor(() => expect(scans()).toBe(2));
+  await new Promise((r) => setTimeout(r, 300));
+  expect(removed).toHaveLength(1);
+});
+
 /// The same leftover in the machine-wide config while the row reads the
 /// repository's is removed from there - and it alone does not make the row
 /// say "also registered globally", which is about our own server.

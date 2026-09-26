@@ -753,6 +753,9 @@ export const commands = {
 	 *  removal `unregister_ai_tool` does for our own server, and nothing else in
 	 *  the config is touched. Nothing registers that server any more; the AI
 	 *  Bridge tab calls this, quietly, for a tool whose scan still lists it.
+	 *  Off the main thread: for Claude Code it runs the `claude` CLI, and it
+	 *  fires on opening the tab rather than on a click, so a slow CLI must not
+	 *  stall the window.
 	 */
 	removeLegacyDbServer: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("remove_legacy_db_server", { id, workingDir, global })),
 	/**  Create `<root>/.test-cases` if needed and return its path. */

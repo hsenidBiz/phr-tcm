@@ -173,14 +173,25 @@ pub fn import_legacy_db_connection(
 /// removal `unregister_ai_tool` does for our own server, and nothing else in
 /// the config is touched. Nothing registers that server any more; the AI
 /// Bridge tab calls this, quietly, for a tool whose scan still lists it.
+/// Off the main thread: for Claude Code it runs the `claude` CLI, and it
+/// fires on opening the tab rather than on a click, so a slow CLI must not
+/// stall the window.
 #[tauri::command]
 #[specta::specta]
-pub fn remove_legacy_db_server(
+pub async fn remove_legacy_db_server(
     id: String,
     working_dir: Option<String>,
     global: bool,
 ) -> Result<(), String> {
-    unregister_server(&id, LEGACY_DB_SERVER, working_dir.as_deref(), global)
+    tauri::async_runtime::spawn_blocking(move || remove_legacy_db_server_now(&id, working_dir.as_deref(), global))
+        .await
+        .map_err(|e| format!("could not remove the old database server: {e}"))?
+}
+
+/// The removal itself, on the calling thread. Public for
+/// `tests/suite/ai_tools.rs`.
+pub fn remove_legacy_db_server_now(id: &str, working_dir: Option<&str>, global: bool) -> Result<(), String> {
+    unregister_server(id, LEGACY_DB_SERVER, working_dir, global)
 }
 
 /// The repository a registration for `spec` targets: a tool with a project
