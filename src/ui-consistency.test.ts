@@ -140,15 +140,6 @@ describe("action placement", () => {
   // spelling of the pattern, not the pattern itself.
   test("no fixed + right- floating element outside ActionDock", () => {
     const re = /\bfixed\b[^\n]*\bright-|\bright-\S*[^\n]*\bfixed\b/;
-    // Run Tests' selection bar (Run N in runner / Clear selection) is the
-    // same bottom-right floating-actions idea, predating ActionDock and out
-    // of scope for this pass (Task 4: Import File, Suite Management, Update
-    // Test Cases only). Allowed by this EXACT class string, not its whole
-    // file, so a genuinely new `fixed`+`right-` anywhere else in RunPanel -
-    // or a change to this one's classes - still fails.
-    const knownRunPanelClasses =
-      "fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl";
-
     const hits: string[] = [];
     for (const { file, text } of files) {
       if (file === "components/ActionDock.tsx") continue; // the one approved implementation
@@ -156,7 +147,6 @@ describe("action placement", () => {
         if (line.trimStart().startsWith("//") || line.trimStart().startsWith("*")) return;
         const m = line.match(re);
         if (!m) return;
-        if (file === "screens/RunPanel/index.tsx" && line.includes(knownRunPanelClasses)) return;
         hits.push(`${file}:${i + 1}  ${m[0]}`);
       });
     }
