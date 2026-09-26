@@ -89,8 +89,9 @@ test("the changelog shows the latest version, and Show more unfolds the history"
 });
 
 /// The settings that used to sit alone at the bottom of the left column now
-/// sit under the changelog, in the right column.
-test("Backup and Updates sit under the changelog, in the same column", async () => {
+/// sit under the changelog, in the right column, with the acknowledgements
+/// closing it.
+test("Backup, Updates and Acknowledgements sit under the changelog, in the same column", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
@@ -99,7 +100,7 @@ test("Backup and Updates sit under the changelog, in the same column", async () 
   const headings = within(column)
     .getAllByRole("heading", { level: 2 })
     .map((h) => h.textContent);
-  expect(headings).toEqual(["Changelog", "Backup & transfer", "Updates"]);
+  expect(headings).toEqual(["Changelog", "Backup & transfer", "Updates", "Acknowledgements"]);
   // And the left column keeps the rest, without them.
   const appearance = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
   expect(within(appearance).queryByRole("heading", { name: "Updates" })).not.toBeInTheDocument();

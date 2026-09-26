@@ -44,6 +44,7 @@ import {
   IconUndo,
 } from "../lib/actionIcons";
 import RunnerGameModal from "../components/RunnerGameModal";
+import Acknowledgements from "../components/Acknowledgements";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
   default: "var(--color-accent)", // live preview of the theme's own accent
@@ -613,6 +614,8 @@ export default function Settings({ org, project }: { org: string; project: strin
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
       </section>
+
+      <Acknowledgements />
       </div>
 
       {/* Sizing and padding belong on the Modal, not inside it: the panel
