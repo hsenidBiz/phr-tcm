@@ -91,6 +91,16 @@ wiremock = "0.6.5"
 tempfile = "3"
 
 
+# `cargo build` and `tauri dev` keep the line tables and drop the rest of
+# the debug info. Full debug info - every variable's type and location, for
+# a step debugger - is what makes the dev PDB hundreds of megabytes and
+# the relink after each edit slow, and nothing here uses one. What the
+# line tables keep is what a dev build is actually read by: `file:line` in
+# panic messages and backtraces, the same as before. Anyone who does want
+# to step through with variables can put `debug = true` back locally.
+[profile.dev]
+debug = "line-tables-only"
+
 # Every test binary links the whole crate plus Tauri, and on Windows the
 # expensive, heavily-threaded part of each link is generating the PDB -
 # which is why the process pegging the machine during `cargo test` was
