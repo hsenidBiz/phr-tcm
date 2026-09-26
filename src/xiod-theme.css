@@ -37,6 +37,8 @@
       cannot feed back into these. */
 :root {
   --xiod-accent: var(--color-accent);
+  /* Accent-coloured words - the lighter shade in dark violet (index.css). */
+  --xiod-accent-text: var(--color-accent-text);
   --xiod-muted-ink: var(--color-muted);
   /* Raw names XiodUI reads inside arbitrary values (shadows, insets). */
   --border: var(--color-border);
@@ -59,7 +61,11 @@
   --color-secondary: var(--color-surface-2);
   --color-secondary-foreground: var(--color-text);
   --color-muted-foreground: var(--xiod-muted-ink);
-  --color-accent-foreground: var(--xiod-accent);
+  --color-accent-foreground: var(--xiod-accent-text);
+  /* `text-primary` (the calendar's range middle and its "Today" link) is
+     words in the accent, so it reads the text shade; bg-primary, ring and
+     the rest keep the fill. */
+  --text-color-primary: var(--xiod-accent-text);
   --color-destructive: var(--color-danger);
   --color-destructive-foreground: var(--color-danger);
   /* Info is the app's own blue (index.css), not the accent: an info toast

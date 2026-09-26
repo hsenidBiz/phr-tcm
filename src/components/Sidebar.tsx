@@ -195,7 +195,7 @@ export default function Sidebar<T extends string = Section>({
             // collapse to an icon rail unchanged.
             <span
               aria-hidden
-              className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-accent"
+              className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
             >
               {badge > 99 ? "99+" : badge}
             </span>

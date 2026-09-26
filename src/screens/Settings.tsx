@@ -49,7 +49,7 @@ const ACCENT_SWATCH: Record<Accent, string> = {
   default: "var(--color-accent)", // live preview of the theme's own accent
   green: "#22c55e",
   blue: "#3b82f6",
-  violet: "#a78bfa",
+  violet: "#8655f6",
   amber: "#f59e0b",
   rose: "#f43f5e",
 };

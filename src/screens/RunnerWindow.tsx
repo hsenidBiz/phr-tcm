@@ -58,12 +58,12 @@ function emptyState(): CaseState {
 }
 
 const outcomeBtn: Record<string, string> = {
-  Passed: "bg-success text-on-accent",
-  Failed: "bg-danger text-on-accent",
+  Passed: "bg-success text-on-status",
+  Failed: "bg-danger text-on-status",
   // Neutral-dark, not a fourth traffic-light colour: paused is "no verdict
   // yet", and it must not read as a sibling of pass/fail at a glance.
-  Paused: "bg-muted text-on-accent",
-  Blocked: "bg-warning text-on-accent",
+  Paused: "bg-muted text-on-status",
+  Blocked: "bg-warning text-on-status",
   NotApplicable: "bg-surface-2 text-muted",
 };
 

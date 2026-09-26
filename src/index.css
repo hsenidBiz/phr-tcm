@@ -86,6 +86,21 @@
   --color-warning: #a16207;
   --color-info: #2563eb;
 
+  /* The accent is two jobs. --color-accent is the FILL: buttons, selected
+     borders, switches, focus rings, glows, the brand flask. Accent-coloured
+     WORDS (and icons that sit in a line of them) read --color-accent-text:
+     `text-accent` resolves to it (see @theme below), while bg-/border-/
+     ring-/outline-accent keep the fill. The two are the same colour in
+     every theme and accent except dark violet, whose fill is the icon's
+     vivid violet and too dark to read as text on the dark surfaces.
+     --color-on-status is the ink on a status fill (bg-danger/success/
+     warning/muted) - on-accent everywhere but dark violet, whose white
+     on-accent would sit on those light fills at under 3:1.
+     Declared once, here: var() resolves on <html>, after whichever theme
+     and accent block below has set --color-accent / --color-on-accent. */
+  --color-accent-text: var(--color-accent);
+  --color-on-status: var(--color-on-accent);
+
   /* Sidebar icon hues. Each nav item gets its own colour so the collapsed
      icon rail is scannable at a glance; the selected row still uses the
      theme accent, so only the glyph is coloured. Tokens rather than
@@ -142,6 +157,15 @@
   --color-accent-hover: var(--color-accent-hover);
   --color-accent-soft: var(--color-accent-soft);
   --color-on-accent: var(--color-on-accent);
+  --color-on-status: var(--color-on-status);
+  /* Tailwind v4's text-* colour looks up --text-color-* before --color-*,
+     so `text-accent` - and hover:, group-hover:, /opacity and every other
+     variant of it - paints --color-accent-text while bg-accent,
+     border-accent, ring-accent and outline-accent still read the fill.
+     `text-accent-fill` is for a brand mark drawn in the fill (the title
+     bar's flask), never for words. */
+  --text-color-accent: var(--color-accent-text);
+  --text-color-accent-fill: var(--color-accent);
   --color-danger: var(--color-danger);
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
@@ -234,8 +258,8 @@
    getAccent()), the others override the accent family only, all with
    per-mode values chosen for 4.5:1 button text and 4.5:1 as body text on
    every theme's own surfaces (computed against light/graphite explicitly;
-   dark violet is a shade lighter than its light counterpart's hue-mate
-   specifically to clear that bar on the darker dark themes). */
+   dark violet clears the text bar with its own lighter text shade, the
+   one accent whose fill and text differ - see its block). */
 :root[data-accent="green"] {
   --color-accent: #15803d; --color-accent-hover: #166534;
   --color-accent-soft: rgb(21 128 61 / 0.1); --color-on-accent: #ffffff;
@@ -256,15 +280,21 @@
   --color-accent: #6d28d9; --color-accent-hover: #5b21b6;
   --color-accent-soft: rgb(109 40 217 / 0.1); --color-on-accent: #ffffff;
 }
-/* #8b5cf6 (the icon's own flask colour) reads as accent text at only
-   3.45:1-4.35:1 across the dark themes' surfaces - short of AA's 4.5:1 for
-   normal text on Slate and Graphite specifically. #a78bfa (one shade
-   lighter, still the icon's violet family - see src-tauri/icon-source.svg)
-   clears 4.5:1 everywhere dark (5.38:1 on Slate, 6.17:1 on Graphite) while
-   staying clearly the same hue. */
+/* Dark violet is the one accent split in two (see --color-accent-text in
+   :root). The FILL is the icon's own vivid violet (#8b5cf6, the flask in
+   src-tauri/icons) taken a hair deeper at the same hue and saturation,
+   #8655f6, the most vivid shade that carries WHITE button text at 4.5:1
+   (4.52:1; #8b5cf6 itself is 4.23:1). Against the dark backgrounds it is
+   3.2:1-4.6:1 on bg and surface, so rings and selected borders stay
+   visible. Hover goes deeper (#7c3aed, white 5.70:1), as light mode's does.
+   TEXT stays #a78bfa, one shade lighter in the same family: 4.75:1 or
+   better on every dark theme's bg, surface and surface-2 (Slate's
+   surface-2 is the lowest), where the fill would read at 2.9:1-4.6:1.
+   Status fills keep dark ink (on-status), as every other dark accent has. */
 .dark[data-accent="violet"] {
-  --color-accent: #a78bfa; --color-accent-hover: #c4b5fd;
-  --color-accent-soft: rgb(167 139 250 / 0.18); --color-on-accent: #0f172a;
+  --color-accent: #8655f6; --color-accent-hover: #7c3aed;
+  --color-accent-soft: rgb(134 85 246 / 0.16); --color-on-accent: #ffffff;
+  --color-accent-text: #a78bfa; --color-on-status: #0f172a;
 }
 :root[data-accent="amber"] {
   --color-accent: #b45309; --color-accent-hover: #92400e;
@@ -558,7 +588,7 @@ body {
   overflow-x: auto;
 }
 .md-preview pre code { background: transparent; padding: 0; }
-.md-preview a { color: var(--color-accent); text-decoration: underline; }
+.md-preview a { color: var(--color-accent-text); text-decoration: underline; }
 .md-preview table {
   border-collapse: collapse;
   margin: 0 0 0.5rem;
