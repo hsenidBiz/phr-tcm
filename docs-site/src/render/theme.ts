@@ -1,6 +1,7 @@
-// Light / dark. Follows the system until the person picks one; the pick is
-// remembered (storage can be blocked on file:// or in private windows, so
-// every access is guarded). Screenshots swap with the theme.
+// Light / dark. Light until the person picks dark, whatever the system is
+// set to - as the app itself, whose default look is Light with violet; the
+// pick is remembered (storage can be blocked on file:// or in private
+// windows, so every access is guarded). Screenshots swap with the theme.
 
 import { h } from "./dom";
 import { icon } from "./icons";
@@ -25,16 +26,8 @@ function store(t: Theme) {
   }
 }
 
-function systemDark(): MediaQueryList | null {
-  try {
-    return typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  } catch {
-    return null;
-  }
-}
-
 export function initialTheme(): Theme {
-  return stored() ?? (systemDark()?.matches ? "dark" : "light");
+  return stored() ?? "light";
 }
 
 export function shotSrc(theme: Theme, shot: string): string {
@@ -53,7 +46,7 @@ export function currentTheme(): Theme {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
-/** The top bar's toggle. Returns the button and a cleanup for the system listener. */
+/** The top bar's toggle. Returns the button and a cleanup (nothing to undo now; kept for the caller). */
 export function themeToggle(scope: ParentNode): { button: HTMLButtonElement; dispose: () => void } {
   const button = h("button", { type: "button", class: "icon-btn theme-toggle" });
   const sync = () => {
@@ -69,14 +62,6 @@ export function themeToggle(scope: ParentNode): { button: HTMLButtonElement; dis
     sync();
   });
 
-  // Follow the system while the person has not chosen.
-  const mq = systemDark();
-  const onSystem = (e: MediaQueryListEvent) => {
-    if (stored()) return;
-    applyTheme(e.matches ? "dark" : "light", scope);
-    sync();
-  };
-  mq?.addEventListener?.("change", onSystem);
   sync();
-  return { button, dispose: () => mq?.removeEventListener?.("change", onSystem) };
+  return { button, dispose: () => {} };
 }

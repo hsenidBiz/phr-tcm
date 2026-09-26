@@ -506,19 +506,28 @@ describe("search", () => {
 });
 
 describe("theme", () => {
-  test("follows the system by default, and the toggle switches data-theme and every screenshot", () => {
+  test("opens light by default, even on a system set to dark, as the app does", () => {
     mockMatchMedia(["(prefers-color-scheme: dark)"]);
     mount();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.querySelector("button.theme-toggle")?.getAttribute("aria-label")).toBe("Switch to dark theme");
+  });
+
+  test("the toggle switches data-theme and every screenshot, both ways", () => {
+    mount();
     const html = document.documentElement;
-    expect(html.dataset.theme).toBe("dark");
     const imgs = () => [...document.querySelectorAll<HTMLImageElement>("img[data-shot]")].map((i) => i.getAttribute("src"));
     expect(imgs().length).toBeGreaterThan(0);
+    expect(imgs().every((s) => s?.startsWith("img/light/"))).toBe(true);
+
+    document.querySelector<HTMLButtonElement>("button.theme-toggle")!.click();
+    expect(html.dataset.theme).toBe("dark");
     expect(imgs().every((s) => s?.startsWith("img/dark/"))).toBe(true);
+    expect(imgs()).toContain("img/dark/alpha-main.jpg");
 
     document.querySelector<HTMLButtonElement>("button.theme-toggle")!.click();
     expect(html.dataset.theme).toBe("light");
     expect(imgs().every((s) => s?.startsWith("img/light/"))).toBe(true);
-    expect(imgs()).toContain("img/light/alpha-main.jpg");
   });
 
   test("the choice is remembered", () => {

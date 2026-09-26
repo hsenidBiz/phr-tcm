@@ -1,8 +1,9 @@
 /* How To Use - the help site's look.
-   The app's own palette (slate + run-green dark, its light mirror), Fira
-   Sans and Fira Code bundled locally (inlined by the build, so the page
-   needs no network), glass panels over a soft accent glow. Every
-   animation is off under prefers-reduced-motion. */
+   The app's own palette - Light with the violet accent by default, and
+   Graphite with violet in dark, as the app itself (src/index.css) and its
+   violet flask icon - Fira Sans and Fira Code bundled locally (inlined by
+   the build, so the page needs no network), glass panels over a soft
+   accent glow. Every animation is off under prefers-reduced-motion. */
 
 /* ---------- fonts (latin, woff2 only - inlined into the page) ---------- */
 @font-face { font-family: "Fira Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("../../node_modules/@fontsource/fira-sans/files/fira-sans-latin-400-normal.woff2") format("woff2"); }
@@ -18,30 +19,38 @@
   --font-sans: "Fira Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Fira Code", "Cascadia Code", Consolas, monospace;
 
+  /* The app's Light theme (src/index.css :root): its bg, surfaces, text
+     and muted; its border as the strong border, a step lighter for the
+     quiet one. */
   --bg: #f8fafc;
   --surface: #ffffff;
   --surface-2: #f1f5f9;
   --glass: rgb(255 255 255 / 0.66);
   --glass-strong: rgb(255 255 255 / 0.9);
-  --border: rgb(15 23 42 / 0.08);
-  --border-strong: rgb(15 23 42 / 0.15);
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
   --text: #0f172a;
   --muted: #475569;
   --faint: #64748b;
-  --accent: #15803d;
-  --accent-hover: #166534;
-  --accent-2: #0f766e;
-  --accent-soft: rgb(21 128 61 / 0.09);
-  --accent-line: rgb(21 128 61 / 0.35);
-  --accent-glow: rgb(34 197 94 / 0.32);
+  /* The app's light violet (data-accent="violet"). Two jobs, as in the
+     app: --accent is the FILL (buttons, markers, the spotlight ring, focus
+     rings, glows); --accent-text is violet WORDS and the icons in a line of
+     them. The same colour in light; split in dark. */
+  --accent: #6d28d9;
+  --accent-hover: #5b21b6;
+  --accent-text: #6d28d9;
+  --accent-2: #4f46e5;
+  --accent-soft: rgb(109 40 217 / 0.1);
+  --accent-line: rgb(109 40 217 / 0.35);
+  --accent-glow: rgb(139 92 246 / 0.34);
   --on-accent: #ffffff;
   --dim: rgb(15 23 42 / 0.42);
   --highlight: rgb(255 255 255 / 0.9);
   --grid-line: rgb(15 23 42 / 0.045);
   --sk: rgb(15 23 42 / 0.065);
   --sk-strong: rgb(15 23 42 / 0.12);
-  --aura-1: rgb(34 197 94 / 0.16);
-  --aura-2: rgb(20 184 166 / 0.1);
+  --aura-1: rgb(139 92 246 / 0.16);
+  --aura-2: rgb(99 102 241 / 0.1);
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.05), 0 1px 1px rgb(15 23 42 / 0.03);
   --shadow-md: 0 12px 32px -14px rgb(15 23 42 / 0.2), 0 2px 6px -2px rgb(15 23 42 / 0.06);
   --shadow-lg: 0 48px 96px -36px rgb(15 23 42 / 0.36), 0 18px 36px -18px rgb(15 23 42 / 0.16);
@@ -59,40 +68,42 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* The app's Graphite theme (src/index.css :root[data-theme="graphite"])
+   with its dark violet: the FILL is the icon's vivid violet taken a hair
+   deeper (#8655f6, white text 4.52:1), violet TEXT the lighter #a78bfa
+   (6.2:1 or better on bg and surface) - the app's --color-accent /
+   --color-accent-text split. --faint is lighter than the app's #71717a,
+   which reads at 3.5-3.8:1; the site sets small text in it. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f172a;
-  --surface: #1e293b;
-  --surface-2: #27314a;
-  --glass: rgb(30 41 59 / 0.5);
-  --glass-strong: rgb(24 34 52 / 0.9);
-  --border: rgb(148 163 184 / 0.11);
-  --border-strong: rgb(148 163 184 / 0.2);
-  --text: #f8fafc;
-  --muted: #a3b1c6;
-  --faint: #8494ab;
-  --accent: #22c55e;
-  --accent-hover: #4ade80;
-  --accent-2: #2dd4bf;
-  --accent-soft: rgb(34 197 94 / 0.12);
-  --accent-line: rgb(34 197 94 / 0.4);
-  --accent-glow: rgb(34 197 94 / 0.42);
-  --on-accent: #0f172a;
-  --dim: rgb(2 6 23 / 0.68);
+  --bg: #141416;
+  --surface: #1d1d21;
+  --surface-2: #27272d;
+  --glass: rgb(29 29 33 / 0.55);
+  --glass-strong: rgb(27 27 31 / 0.92);
+  --border: #333339;
+  --border-strong: #4b4b55;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --faint: #8b8b94;
+  --accent: #8655f6;
+  --accent-hover: #7c3aed;
+  --accent-text: #a78bfa;
+  --accent-2: #818cf8;
+  --accent-soft: rgb(134 85 246 / 0.16);
+  --accent-line: rgb(134 85 246 / 0.5);
+  --accent-glow: rgb(139 92 246 / 0.45);
+  --on-accent: #ffffff;
+  --dim: rgb(9 9 11 / 0.68);
   --highlight: rgb(255 255 255 / 0.06);
-  --grid-line: rgb(148 163 184 / 0.06);
-  --sk: rgb(148 163 184 / 0.13);
-  --sk-strong: rgb(148 163 184 / 0.24);
-  --aura-1: rgb(34 197 94 / 0.14);
-  --aura-2: rgb(45 212 191 / 0.08);
-  --shadow-sm: 0 1px 2px rgb(2 6 23 / 0.4);
-  --shadow-md: 0 14px 36px -14px rgb(2 6 23 / 0.7), 0 2px 6px -2px rgb(2 6 23 / 0.4);
-  --shadow-lg: 0 50px 110px -36px rgb(2 6 23 / 0.85), 0 20px 40px -20px rgb(2 6 23 / 0.6);
-}
-
-/* Before the script runs (or without it), follow the system. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) { color-scheme: dark; --bg: #0f172a; --text: #f8fafc; }
+  --grid-line: rgb(161 161 170 / 0.06);
+  --sk: rgb(161 161 170 / 0.12);
+  --sk-strong: rgb(161 161 170 / 0.22);
+  --aura-1: rgb(134 85 246 / 0.16);
+  --aura-2: rgb(99 102 241 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 14px 36px -14px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 50px 110px -36px rgb(0 0 0 / 0.85), 0 20px 40px -20px rgb(0 0 0 / 0.6);
 }
 
 /* ---------- base ---------- */
@@ -174,7 +185,7 @@ kbd {
 .brand-text { display: flex; align-items: baseline; gap: 10px; }
 .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
 .brand-sub {
-  font-size: 12px; font-weight: 500; color: var(--accent);
+  font-size: 12px; font-weight: 500; color: var(--accent-text);
   padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); border: 1px solid var(--accent-line);
 }
 .topbar-spacer { flex: 1; }
@@ -250,7 +261,7 @@ li[data-open] > .nav-sub { display: grid; }
   transition: color 0.15s, background 0.15s;
 }
 .nav-sublink:hover { color: var(--text); background: var(--sk); }
-.nav-sublink[aria-current] { color: var(--accent); font-weight: 500; }
+.nav-sublink[aria-current] { color: var(--accent-text); font-weight: 500; }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -292,7 +303,7 @@ li[data-open] > .nav-sub { display: grid; }
   font-size: clamp(2.5rem, 5vw, 4.1rem);
   line-height: 1.03;
   letter-spacing: -0.038em;
-  background: linear-gradient(180deg, var(--text) 35%, color-mix(in srgb, var(--text) 62%, var(--accent)));
+  background: linear-gradient(180deg, var(--text) 35%, color-mix(in srgb, var(--text) 62%, var(--accent-text)));
   -webkit-background-clip: text; background-clip: text; color: transparent;
   padding-bottom: 0.08em;
 }
@@ -372,7 +383,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .qs-num {
   display: inline-grid; place-items: center; align-self: flex-start;
   height: 26px; min-width: 34px; padding: 0 8px; margin-bottom: 8px; border-radius: 999px;
-  font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--accent);
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--accent-text);
   background: color-mix(in srgb, var(--surface) 70%, var(--accent-soft)); border: 1px solid var(--accent-line);
 }
 .qs-label { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
@@ -385,7 +396,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
   background: linear-gradient(90deg, var(--border-strong), var(--border) 40%, transparent);
 }
 .screen-head { max-width: 760px; }
-.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-text); }
 .screen-head h2 { margin: 8px 0 14px; font-size: clamp(1.85rem, 2.8vw, 2.4rem); line-height: 1.12; letter-spacing: -0.028em; }
 .summary { font-size: 1.07rem; line-height: 1.7; color: var(--muted); }
 
@@ -488,7 +499,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
   transition: opacity 0.2s, color 0.2s, border-color 0.2s, transform 0.2s var(--ease-out);
 }
 .shot:hover .shot-expand, .shot-expand:focus-visible { opacity: 1; }
-.shot-expand:hover { color: var(--accent); border-color: var(--accent-line); transform: scale(1.06); }
+.shot-expand:hover { color: var(--accent-text); border-color: var(--accent-line); transform: scale(1.06); }
 @media (hover: none) { .shot-expand { opacity: 0.92; } }
 
 .caption {
@@ -577,7 +588,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .region:hover, .region:focus-visible { z-index: 1; }
 .region:hover .region-label, .region:focus-visible .region-label { max-width: none; }
 .overview-caption { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
-.overview-caption svg { color: var(--accent); flex: none; }
+.overview-caption svg { color: var(--accent-text); flex: none; }
 
 .subsection { position: relative; margin-top: 72px; outline: none; }
 .subsection-head { max-width: 760px; }
@@ -589,7 +600,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 /* ---------- full-screen view ---------- */
 .viewer { position: fixed; inset: 0; z-index: 110; }
 .viewer[hidden] { display: none; }
-.viewer-backdrop { position: absolute; inset: 0; background: rgb(2 6 23 / 0.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.viewer-backdrop { position: absolute; inset: 0; background: rgb(9 9 11 / 0.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .viewer-dialog {
   position: absolute; inset: 16px;
   display: grid; grid-template-rows: auto minmax(0, 1fr);
@@ -600,7 +611,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 }
 .viewer-head { display: flex; align-items: center; gap: 16px; padding: 12px 14px 12px 22px; border-bottom: 1px solid var(--border); }
 .viewer-heading { flex: 1; min-width: 0; }
-.viewer-context { font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.viewer-context { font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); }
 .viewer-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
 .viewer-body.has-list { grid-template-columns: minmax(0, 1fr) 340px; }
@@ -648,21 +659,21 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 }
 .callout-icon {
   position: relative; flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
-  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line);
+  color: var(--accent-text); background: var(--accent-soft); border: 1px solid var(--accent-line);
 }
 .callout-body { position: relative; }
-.callout-title { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-top: 2px; }
+.callout-title { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); margin-top: 2px; }
 .callout ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 .callout li { font-size: 14.5px; line-height: 1.6; color: var(--muted); }
-.callout li::marker { color: var(--accent); }
+.callout li::marker { color: var(--accent-text); }
 .howto h3 { display: flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.howto h3 svg { color: var(--accent); }
+.howto h3 svg { color: var(--accent-text); }
 .howto ol, .recipe ol { list-style: none; counter-reset: step; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
 .howto li, .recipe li { counter-increment: step; position: relative; padding-left: 34px; font-size: 14.5px; line-height: 1.55; color: var(--muted); }
 .howto li::before, .recipe li::before {
   content: counter(step); position: absolute; left: 0; top: 0;
   display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px;
-  font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--accent);
+  font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--accent-text);
   background: var(--accent-soft); border: 1px solid var(--accent-line);
 }
 
@@ -678,8 +689,8 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .recipe:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md), inset 0 1px 0 var(--highlight); }
 .recipe h3 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
 .recipe a { display: inline-flex; align-items: flex-start; gap: 6px; color: var(--text); text-decoration: none; border-radius: 6px; }
-.recipe a svg { flex: none; margin-top: 4px; color: var(--accent); transition: transform 0.2s var(--ease-out); }
-.recipe a:hover { color: var(--accent); }
+.recipe a svg { flex: none; margin-top: 4px; color: var(--accent-text); transition: transform 0.2s var(--ease-out); }
+.recipe a:hover { color: var(--accent-text); }
 .recipe a:hover svg { transform: translateX(3px); }
 
 .footer {
@@ -731,7 +742,7 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 /* ---------- search palette ---------- */
 .palette { position: fixed; inset: 0; z-index: 100; display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }
 .palette[hidden] { display: none; }
-.palette-backdrop { position: absolute; inset: 0; background: rgb(2 6 23 / 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.palette-backdrop { position: absolute; inset: 0; background: rgb(9 9 11 / 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .palette-panel {
   position: relative; width: min(660px, 100%); max-height: min(560px, 76vh);
   display: flex; flex-direction: column; overflow: hidden;
@@ -757,10 +768,10 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .option[aria-selected="true"] .option-icon { background: var(--accent); color: var(--on-accent); }
 .option-body { display: grid; min-width: 0; }
 .option-title { font-size: 14.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.option-title mark { background: none; color: var(--accent); font-weight: 600; }
+.option-title mark { background: none; color: var(--accent-text); font-weight: 600; }
 .option-context { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .option-kind { font-size: 11.5px; color: var(--faint); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
-.option-go { color: var(--accent); opacity: 0; transition: opacity 0.15s; }
+.option-go { color: var(--accent-text); opacity: 0; transition: opacity 0.15s; }
 .option[aria-selected="true"] .option-go { opacity: 1; }
 .palette-empty { padding: 28px 20px 30px; text-align: center; color: var(--muted); font-size: 14px; }
 .palette-empty[hidden] { display: none; }
@@ -784,7 +795,7 @@ h2.flash, h3.flash { animation: flash-text 1.6s var(--ease-out); }
   60% { box-shadow: 0 0 0 12px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-@keyframes flash-text { 0% { color: var(--accent); } 100% { color: inherit; } }
+@keyframes flash-text { 0% { color: var(--accent-text); } 100% { color: inherit; } }
 @keyframes pop { from { opacity: 0; transform: translateY(-8px) scale(0.975); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
