@@ -997,16 +997,20 @@ export default function RunnerWindow() {
                       the ids of the steps inside them, which the app does
                       not have (see build_iteration_details). */}
                   {step.shared == null && (
-                    <div className="flex gap-1">
+                    <div className="flex shrink-0 gap-1.5">
                       {(["Passed", "Failed"] as const).map((o) => (
                         <button
                           key={o}
                           title={o}
                           aria-label={`Mark step ${i + 1} ${o.toLowerCase()}`}
                           aria-pressed={st.stepOutcomes[i] === o}
+                          // Words and a real hit area: single letters on a
+                          // 16px chip were hard to read and harder to hit.
                           className={cn(
-                            "pill-label rounded px-1.5 text-[10px] font-semibold",
-                            st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",
+                            "inline-flex h-7 min-w-14 items-center justify-center rounded-md px-3 text-xs font-semibold transition-colors",
+                            st.stepOutcomes[i] === o
+                              ? outcomeBtn[o]
+                              : "border border-border bg-surface-2 text-muted hover:border-border-strong hover:text-text",
                           )}
                           onClick={() => {
                             // Same toggle as the overall verdict: clicking the
@@ -1018,7 +1022,7 @@ export default function RunnerWindow() {
                             patch(current.id, { stepOutcomes: next });
                           }}
                         >
-                          {o[0]}
+                          {o === "Passed" ? "Pass" : "Fail"}
                         </button>
                       ))}
                     </div>
