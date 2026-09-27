@@ -72,8 +72,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-// The window itself has been on screen since launch, painted the splash
-// colour (tauri.conf.json), so the splash covers the load instead of an
+// The main window is created hidden and Rust setup shows it straight away,
+// before this page loads, painted the splash colour (tauri.conf.json) -
+// unless the app started in the tray (`--hidden`), when it stays hidden
+// until opened from there. So the splash covers the load instead of an
 // invisible window hiding it. The main window keeps it until App knows who
 // is signed in; the runner window has nothing to wait for.
 if (Root !== App) requestAnimationFrame(hideSplash);
