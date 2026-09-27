@@ -13,6 +13,25 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.0",
+    date: "2026-09-27",
+    items: [
+      "A new look: the app now opens in Light with a violet accent, and dark mode uses Graphite with violet. You can still pick any theme and accent in Settings.",
+      "Closing the window now keeps the app running in the notification area (the ^ on the taskbar), so the tools your AI assistant uses stay available. Click its icon to open the window again, or right-click it and choose Quit. You can turn this off in Settings.",
+      "Settings has a Start with Windows switch, and with it Start minimized: the app can start when you sign in, either opening its window or waiting quietly in the notification area.",
+      "Beta builds: turn on Download beta builds in Settings to get new features sooner. Turn it off again and your beta build stays until the next regular release.",
+      "Settings is organised into cards, one setting per row with its control beside it. Report a bug now sits under Help & support, and when you open the full changelog the cards slide aside to make room.",
+      "Import File is now called Import Test Cases.",
+      "The separate company database server option is gone: AI tools use the app's own database tools. If an AI tool still had that server registered, the app removes it for you.",
+      "In the test runner, each step's marks now read Pass and Fail on bigger buttons, and the verdict buttons are outlined in their colour. The result from the previous run is shown with a soft tint instead of a dot.",
+      "Sidebar icons come to life when you point at them, the notification bell swings when clicked, and the Settings gear turns as Settings opens and closes.",
+      "Switching Group by title on or off is now one smooth motion.",
+      "Suite Management is no longer marked In Development.",
+      "The How To Use guide has bigger, sharper screenshots you can open full screen, subsections for the busier screens, labels that point at each part of a screen without covering it, and it says Product Backlog Item in full.",
+      "Pull request badges keep updating while the app is running in the notification area.",
+    ],
+  },
+  {
     version: "1.25.30",
     date: "2026-09-26",
     items: [
