@@ -33,6 +33,13 @@ export const shotSize = (shot) => shot.size ?? MAIN_SIZE;
 /** Playwright's viewport shape for a size. */
 export const viewportOf = (size) => ({ width: size.w, height: size.h });
 
+/** How many image pixels a shot has per CSS pixel. At 1 a shot zoomed in
+ *  the guide (or shown full screen, or on a high-DPI screen) went soft and
+ *  pixelated; at 2 it stays sharp. Layout, positions and markers are all in
+ *  CSS pixels and do not change. Must match SHOT_SCALE in
+ *  docs-site/src/types.ts (docs-shots-lib.test.mjs checks). */
+export const SHOT_SCALE = 2;
+
 /** Time for transitions to finish after the network settles. */
 export const SETTLE_MS = 400;
 

@@ -269,7 +269,7 @@ export const updateTestCases: Screen = {
       locate: { role: "button", name: "Rename" },
       name: "Rename",
       does:
-        "Opens the rename window, the same one the queue uses on Import File. Here **Rename** saves the new titles to Azure DevOps straight away, and **Undo rename** puts them back.",
+        "Opens the rename window, the same one the queue uses on Import Test Cases. Here **Rename** saves the new titles to Azure DevOps straight away, and **Undo rename** puts them back.",
     },
     {
       id: "export-json",

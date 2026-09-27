@@ -1,6 +1,6 @@
 //! The `specs` list: where the cases' specifications live - file paths
 //! (absolute, or relative to the JSON file) and Azure DevOps wiki URLs.
-//! Read for the review page's spec pane; written by the Import File tab's
+//! Read for the review page's spec pane; written by the Import Test Cases tab's
 //! Attach control. Same read-patch-write discipline as `comments.rs`: the
 //! app owns this key, and nothing else in the file.
 

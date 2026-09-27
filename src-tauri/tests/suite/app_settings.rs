@@ -13,7 +13,7 @@ fn a_missing_file_is_the_defaults() {
     let d = dir();
     assert_eq!(
         load(d.path()),
-        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: false }
+        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true }
     );
 }
 
@@ -32,14 +32,14 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
     std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true,"from_the_future":1}"#).unwrap();
     assert_eq!(
         load(d.path()),
-        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: true }
+        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: true, start_minimized: true }
     );
 }
 
 #[test]
 fn saved_settings_read_back() {
     let d = dir();
-    let s = AppSettings { close_to_tray: false, close_notice_shown: true, beta_updates: true };
+    let s = AppSettings { close_to_tray: false, close_notice_shown: true, beta_updates: true, start_minimized: false };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);
 }
@@ -59,4 +59,13 @@ fn start_with_windows_asks_for_a_hidden_start() {
     use v2_lib::tray::{start_hidden, AUTOSTART_ARGS};
     let launch = std::iter::once("v2.exe".to_string()).chain(AUTOSTART_ARGS.iter().map(|a| a.to_string()));
     assert!(start_hidden(launch));
+}
+
+/// A settings file from before Start minimized existed keeps today's
+/// behaviour: the sign-in start stays in the tray.
+#[test]
+fn an_older_file_starts_minimized() {
+    let d = dir();
+    std::fs::write(d.path().join("app-settings.json"), r#"{"close_to_tray":true,"close_notice_shown":true,"beta_updates":false}"#).unwrap();
+    assert!(load(d.path()).start_minimized);
 }

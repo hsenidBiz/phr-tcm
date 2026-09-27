@@ -288,7 +288,7 @@ test("the header checkbox carries the group's selection state through a collapse
 
 /// Export as JSON follows the View-in-browser scope rule: the selection
 /// when rows are highlighted, otherwise everything shown - written through
-/// the same Import File format so a re-import UPDATES these cases.
+/// the same Import Test Cases format so a re-import UPDATES these cases.
 test("Export JSON writes the chosen cases through the save dialog", async () => {
   const exported: Array<{ path: string; count: number; firstId: number | null }> = [];
   mockIPC((cmd, args) => {

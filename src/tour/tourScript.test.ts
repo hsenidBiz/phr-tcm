@@ -84,7 +84,7 @@ test("the script visits Suite Management, the review controls and the three Sett
   );
 
   expect(stops).toContainEqual({ where: "manage", anchor: "manage-plans" });
-  // Import File gets a second stop, on the controls that review and send.
+  // Import Test Cases gets a second stop, on the controls that review and send.
   expect(stops.filter((s) => s.where === "import").map((s) => s.anchor)).toEqual([
     "import-drop",
     "queue-review",
@@ -101,9 +101,9 @@ test("the script visits Suite Management, the review controls and the three Sett
   }
 });
 
-test("the Manual Entry queue stop no longer speaks for the Import File tab", () => {
+test("the Manual Entry queue stop no longer speaks for the Import Test Cases tab", () => {
   const queue = TOUR_STEPS.find((s) => s.anchor === "queue")!;
-  expect(queue.body).not.toMatch(/Import File/);
+  expect(queue.body).not.toMatch(/Import Test Cases/);
 });
 
 test("every anchor a stop names is a declared anchor", () => {
@@ -146,7 +146,7 @@ const AFTER_MANUAL = [
   "Run your tests",
   "Find any set of tests",
   "Arrange a PBI's suite",
-  // Back to Import File for the review controls, so this is a move again.
+  // Back to Import Test Cases for the review controls, so this is a move again.
   "Review before you upload",
   "Working repositories",
   "The other half of the app",

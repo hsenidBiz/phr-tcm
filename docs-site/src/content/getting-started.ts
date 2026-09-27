@@ -69,7 +69,7 @@ export const gettingStarted: Screen = {
       locate: { testId: "nav-manual" },
       name: "Sidebar",
       does:
-        "Lists the test case screens: Manual Entry, Import File, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
+        "Lists the test case screens: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
         "Click one to open it. The highlighted row is the screen you are on.",
       tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed."],
     },
@@ -96,7 +96,7 @@ export const gettingStarted: Screen = {
       locate: { testId: "pbi" },
       name: "Product Backlog Item",
       does:
-        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import File, Update Test Cases, View Test Cases and Run Tests all work on this Product Backlog Item.",
+        "The Product Backlog Item you are working on, with its number and title. Manual Entry, Import Test Cases, Update Test Cases, View Test Cases and Run Tests all work on this Product Backlog Item.",
     },
     {
       id: "clear-pbi",

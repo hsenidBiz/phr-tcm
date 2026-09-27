@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { SHOT_SCALE as LIB_SHOT_SCALE } from "./docs-shots-lib.mjs";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   boxDrift,
   boxInShot,
@@ -373,4 +376,13 @@ describe("boxDrift", () => {
   test("a box that only grew is caught by its far edge", () => {
     expect(boxDrift(a, { ...a, w: 26 })).toBe(6);
   });
+});
+
+/// The capture and the guide agree on how many image pixels a shot has per
+/// CSS pixel: the guard test checks every image against the guide's value.
+test("SHOT_SCALE is the same in the capture and in the guide", () => {
+  const types = readFileSync(resolve(__dirname, "../docs-site/src/types.ts"), "utf8");
+  const m = types.match(/export const SHOT_SCALE = (\d+);/);
+  expect(Number(m?.[1])).toBe(LIB_SHOT_SCALE);
+  expect(LIB_SHOT_SCALE).toBeGreaterThanOrEqual(2);
 });

@@ -56,3 +56,15 @@ pub fn set_beta_updates(on: bool) -> Result<AppSettings, String> {
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
 }
+
+/// Whether a start at sign-in stays hidden in the tray (on) or opens the
+/// window (off). Read at start-up, so the Windows startup entry itself never
+/// changes with it.
+#[tauri::command]
+#[specta::specta]
+pub fn set_start_minimized(on: bool) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.start_minimized = on).map_err(|e| {
+        crate::applog::warn(format!("saving the start minimized setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}

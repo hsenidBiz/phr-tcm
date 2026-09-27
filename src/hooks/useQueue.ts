@@ -53,7 +53,7 @@ function loadFor(tour: boolean, org: string, pbiId: number | null): TestCase[] {
   return pbiId != null ? loadDraft(org, pbiId) : [];
 }
 
-/** The ONE pending-creation queue, shared by Manual Entry and Import File
+/** The ONE pending-creation queue, shared by Manual Entry and Import Test Cases
  * (v1: every tab feeds the same queue) and persisted per PBI so a closed
  * app never loses queued work.
  *

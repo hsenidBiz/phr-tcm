@@ -243,6 +243,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::open_help,
             app_settings::get_app_settings,
             app_settings::set_close_to_tray,
+            app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,
             app_settings::set_beta_updates
@@ -423,7 +424,12 @@ pub fn run() {
             if let Err(e) = tray::build(app) {
                 applog::warn(format!("the tray icon could not be created - closing the window will quit: {e}"));
             }
-            if !tray::start_hidden(std::env::args()) || !tray::tray_ok() {
+            // A start at sign-in opens the window unless Start minimized is on.
+            let hidden = tray::launch_hidden(
+                tray::start_hidden(std::env::args()),
+                crate::app_settings::current().start_minimized,
+            );
+            if !hidden || !tray::tray_ok() {
                 tray::show_main(app.handle());
             } else {
                 applog::info("started hidden in the tray");

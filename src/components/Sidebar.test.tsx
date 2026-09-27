@@ -144,7 +144,7 @@ test("while the tour runs only the row it is waiting for answers", () => {
   const picked: string[] = [];
   render(<Sidebar section="manual" onSelect={(s) => picked.push(s)} locked liveItem="import" />);
 
-  const importRow = screen.getByRole("button", { name: "Import File" });
+  const importRow = screen.getByRole("button", { name: "Import Test Cases" });
   const update = screen.getByRole("button", { name: "Update Test Cases" });
   expect(importRow).toBeEnabled();
   expect(update).toBeDisabled();

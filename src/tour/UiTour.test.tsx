@@ -175,11 +175,11 @@ test("a stop somewhere else asks for the click instead of moving the app", async
   expect(onAwait).toHaveBeenLastCalledWith(null);
 
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  // Stop 2 lives on Import File and the app is on Manual Entry: it asks,
+  // Stop 2 lives on Import Test Cases and the app is on Manual Entry: it asks,
   // by the name the rail actually shows, and does NOT navigate.
   expect(waiting()).toBe(true);
-  expect(screen.getByText("Go to Import File")).toBeInTheDocument();
-  expect(screen.getByText(/Click Import File in the menu on the left/)).toBeInTheDocument();
+  expect(screen.getByText("Go to Import Test Cases")).toBeInTheDocument();
+  expect(screen.getByText(/Click Import Test Cases in the menu on the left/)).toBeInTheDocument();
   expect(onNavigate).not.toHaveBeenCalled();
   expect(onAwait).toHaveBeenLastCalledWith(IMPORT_WHERE);
   // Next is gone - if it still advanced, the ask would be decorative.
@@ -283,7 +283,7 @@ test("Escape does not end the tour - leaving is a deliberate click", () => {
 // destination, not to undefined (which would strand the app on whatever
 // tab the later stop left it on). Mirrors the real bug: stop 5 (queue) has
 // no `where` of its own and inherits Manual Entry from stop 1; stop 6
-// (Import File) declares its own. Back from 6 into 5 must land back on
+// (Import Test Cases) declares its own. Back from 6 into 5 must land back on
 // Manual Entry, not fall through to undefined.
 const SINGLE_HOP_STEPS: TourStep[] = [
   { where: MANUAL_WHERE, anchor: "case-form", title: "Write a test case", body: "Fill in the steps." },

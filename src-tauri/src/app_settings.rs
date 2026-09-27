@@ -24,11 +24,14 @@ pub struct AppSettings {
     pub close_notice_shown: bool,
     /// Update checks include beta (prerelease) builds.
     pub beta_updates: bool,
+    /// A start at sign-in (Start with Windows) stays hidden in the tray
+    /// instead of opening the window.
+    pub start_minimized: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self { close_to_tray: true, close_notice_shown: false, beta_updates: false }
+        Self { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true }
     }
 }
 

@@ -1,6 +1,6 @@
 //! The `specs` list in a draft file: where the cases' specifications live,
 //! read by the app for the review page's spec pane and written back by the
-//! Import File tab's Attach control.
+//! Import Test Cases tab's Attach control.
 
 use v2_lib::import_parser::specs::{ignored_spec_entries, patch_specs, read_specs};
 

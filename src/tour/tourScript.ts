@@ -100,7 +100,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "queue",
     title: "Build up a batch",
-    // The Import File tab has its own stop on this panel's controls now,
+    // The Import Test Cases tab has its own stop on this panel's controls now,
     // so this one no longer has to speak for it.
     body: "Your finished test cases queue up here, ready to upload to Azure DevOps in one go.",
   },
@@ -141,7 +141,7 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Every plan that holds the PBI's cases, with the suites and cases underneath. Tick cases to copy them into another suite, and drag to set the order testers see.",
   },
   {
-    // Back to Import File, for the half of that panel the first stop there
+    // Back to Import Test Cases, for the half of that panel the first stop there
     // did not cover: nothing leaves this app without going through here.
     where: cases("import"),
     anchor: "queue-review",

@@ -72,7 +72,7 @@ function makeCase(title: string): TestCase {
   };
 }
 
-/** Owns the queue the way Import File does: empty on arrival, filled when
+/** Owns the queue the way Import Test Cases does: empty on arrival, filled when
  * a file lands. */
 function Harness() {
   const [queue, setQueue] = useState<TestCase[]>([]);

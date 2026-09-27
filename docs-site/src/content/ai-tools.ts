@@ -348,7 +348,7 @@ export const aiBridge: Screen = {
     },
   ],
   tips: [
-    "None of the tools an assistant gets through this app can create, update or delete anything in Azure DevOps. You import what it writes yourself, on Import File.",
+    "None of the tools an assistant gets through this app can create, update or delete anything in Azure DevOps. You import what it writes yourself, on Import Test Cases.",
     "The AI Bridge only works while this app is open and signed in.",
   ],
   howTo: [

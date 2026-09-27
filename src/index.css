@@ -955,7 +955,7 @@ table {
     64%, 100% { stroke-dasharray: 1 2; stroke-dashoffset: 0; }
   }
 
-  /* Import File: the arrow lifts, then the file shoots up out of its box
+  /* Import Test Cases: the arrow lifts, then the file shoots up out of its box
      with trail lines under it, and pops back in. */
   .group:hover .ng-import .ng-arrow { animation: ng-arrow-lift 1.1s ease; }
   .group:hover .ng-import .ng-file { animation: ng-file-rise 1.1s; transform-origin: 12px 12px; }

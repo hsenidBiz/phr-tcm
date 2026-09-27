@@ -29,7 +29,7 @@ the board's test count.
   applies when none is configured. Tags autocomplete from the tags your
   project already uses.
 
-### Import File
+### Import Test Cases
 - JSON is the import and export format. Export JSON writes the same file
   you import, so an AI assistant edits the same shape you read. A kept id
   updates a work item. A blank id creates a new case.

@@ -3,7 +3,7 @@
 // CURRENT - the one files go to and registration targets - and each has
 // its own AI-tools switch. `loadWorkingDir()` is what the rest of the app
 // reads: the current repository while its switch is on, else "" - so the
-// bridge push, Import File's copy-in and the AI Bridge gate never had to
+// bridge push, Import Test Cases' copy-in and the AI Bridge gate never had to
 // learn about the list. Observable so they all react the moment it moves.
 
 const LIST_KEY = "tcm-v2-repositories";

@@ -1,4 +1,4 @@
-// Import File: bringing cases in (a JSON file, a share link), the queue and
+// Import Test Cases: bringing cases in (a JSON file, a share link), the queue and
 // everything it does, the review before upload, and the results.
 //
 // Locates come from ImportFile.tsx, QueueSection.tsx, QueueRow.tsx,
@@ -32,27 +32,27 @@ const THIRD = "Login - valid credentials";
 
 export const importFile: Screen = {
   id: "import-file",
-  title: "Import File",
+  title: "Import Test Cases",
   group: "Test cases",
   summary:
     "Bring test cases in from a JSON file or a teammate's share link, check them in the queue, then upload them to the Product Backlog Item. " +
     "A case that carries an id updates that exact work item; a case without one is created new.",
   shots: [
-    { id: QUEUE, route: [{ nav: "Import File" }], alt: "Import File with three cases in the queue" },
+    { id: QUEUE, route: [{ nav: "Import Test Cases" }], alt: "Import Test Cases with three cases in the queue" },
     {
       id: OPEN,
-      route: [{ nav: "Import File" }, { click: { role: "button", name: `Expand steps of ${FIRST}` } }],
+      route: [{ nav: "Import Test Cases" }, { click: { role: "button", name: `Expand steps of ${FIRST}` } }],
       alt: "A queued case opened to its steps",
     },
     {
       id: CHANGES,
-      route: [{ nav: "Import File" }, { click: { role: "button", nameRe: "^Click to view" } }],
+      route: [{ nav: "Import Test Cases" }, { click: { role: "button", nameRe: "^Click to view" } }],
       alt: "An update opened to what will change",
     },
     {
       id: EDIT,
       route: [
-        { nav: "Import File" },
+        { nav: "Import Test Cases" },
         { click: { role: "button", name: `Edit ${FIRST}` } },
         { waitFor: { role: "button", name: "Save to queue" } },
         { scrollTo: { role: "button", name: "Save to queue" } },
@@ -62,7 +62,7 @@ export const importFile: Screen = {
     {
       id: SELECTED,
       route: [
-        { nav: "Import File" },
+        { nav: "Import Test Cases" },
         { click: { role: "checkbox", name: `Select ${FIRST}` } },
         { click: { role: "checkbox", name: `Select ${THIRD}` } },
       ],
@@ -71,7 +71,7 @@ export const importFile: Screen = {
     {
       id: BULK,
       route: [
-        { nav: "Import File" },
+        { nav: "Import Test Cases" },
         { click: { role: "checkbox", name: `Select ${FIRST}` } },
         { click: { role: "checkbox", name: `Select ${THIRD}` } },
         { click: { role: "button", name: "Bulk edit" } },
@@ -81,13 +81,13 @@ export const importFile: Screen = {
     },
     {
       id: RENAME,
-      route: [{ nav: "Import File" }, { click: { role: "button", name: "Rename" } }, { waitFor: { role: "textbox", name: "Find" } }],
+      route: [{ nav: "Import Test Cases" }, { click: { role: "button", name: "Rename" } }, { waitFor: { role: "textbox", name: "Find" } }],
       alt: "The rename window for the queued cases",
     },
     {
       id: REVIEW,
       route: [
-        { nav: "Import File" },
+        { nav: "Import Test Cases" },
         { click: { role: "button", nameRe: "^Review \\d+ test cases?$" } },
         { waitFor: { role: "button", name: "Create duplicates anyway" } },
         { scrollTo: { role: "button", nameRe: "^Yes . create" } },
@@ -97,7 +97,7 @@ export const importFile: Screen = {
     {
       id: RESULTS,
       route: [
-        { nav: "Import File" },
+        { nav: "Import Test Cases" },
         { click: { role: "checkbox", name: `Select ${FIRST}` } },
         { click: { role: "checkbox", name: `Select ${THIRD}` } },
         { click: { role: "button", name: "Remove 2" } },

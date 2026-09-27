@@ -80,6 +80,13 @@ pub fn tray_ok() -> bool {
     TRAY_OK.load(Ordering::SeqCst)
 }
 
+/// Whether this launch stays hidden: only a start that asked for it
+/// (`--hidden`, the Start with Windows entry) and only while Start
+/// minimized is on. Off, the sign-in start opens the window like any other.
+pub fn launch_hidden(asked: bool, start_minimized: bool) -> bool {
+    asked && start_minimized
+}
+
 /// Show, unminimize and focus the main window.
 pub fn show_main<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {

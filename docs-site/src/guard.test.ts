@@ -16,7 +16,7 @@ import { describe, expect, test } from "vitest";
 import positionsJson from "../shots/positions.json";
 import { intro, recipes, screens } from "./content";
 import { helpSourceHash, readSourceMeta } from "./sourceHash";
-import { shotSize, type Positions, type Size } from "./types";
+import { SHOT_SCALE, shotSize, type Positions, type Size } from "./types";
 
 const DOCS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SHOTS = join(DOCS, "shots");
@@ -153,10 +153,11 @@ describe("the shipped screenshots", () => {
     expect(orphans).toEqual([]);
   });
 
-  test("every image is the size its shot is captured at (the runner at its real size)", () => {
+  test("every image is its shot's size at SHOT_SCALE (the runner at its real size)", () => {
     const wrong: string[] = [];
     for (const shot of shots) {
-      const want = shotSize(shot);
+      const css = shotSize(shot);
+      const want = { w: css.w * SHOT_SCALE, h: css.h * SHOT_SCALE };
       for (const t of THEMES) {
         const file = join(HELP, "img", t, `${shot.id}.jpg`);
         if (!existsSync(file)) continue; // named by the test above

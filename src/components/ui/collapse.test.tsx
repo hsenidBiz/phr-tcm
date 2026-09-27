@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { Collapse, EASE, EASE_TALL, foldMs, useSettled } from "./collapse";
+import { Collapse, EASE, EASE_TALL, foldMs, useRegroupMotion, useSettled, type FoldMotion } from "./collapse";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -427,4 +427,202 @@ test("closing mid-grow leaves no marked row behind, in the copy or the page", ()
       m.restore();
     }
   });
+});
+
+/// Group by title switched on again: the groups it mounts are already open,
+/// so none plays its own unfold after the regroup - the list plays one
+/// entrance instead. A plain re-render replays nothing.
+test("regrouping mounts groups open and plays one entrance for the list", () => {
+  function Harness() {
+    const [grouped, setGrouped] = useState(true);
+    const [tick, setTick] = useState(0);
+    const settled = useSettled(true);
+    const regroup = useRegroupMotion(grouped);
+    return (
+      <>
+        <button onClick={() => setGrouped((g) => !g)}>toggle</button>
+        <button onClick={() => setTick((t) => t + 1)}>rerender {tick}</button>
+        <div data-testid="list" ref={regroup.ref}>
+          {grouped ? (
+            ["A", "B"].map((g) => (
+              <Collapse key={g} open animateIn={settled && !regroup.regrouping}>
+                <p>group {g}</p>
+              </Collapse>
+            ))
+          ) : (
+            <p>flat</p>
+          )}
+        </div>
+      </>
+    );
+  }
+  render(<Harness />);
+  const list = screen.getByTestId("list");
+  expect(list).not.toHaveClass("t-panel-in");
+
+  fireEvent.click(screen.getByText("toggle")); // flat
+  expect(list).toHaveClass("t-panel-in");
+  fireEvent.click(screen.getByText("toggle")); // grouped again
+  expect(list).toHaveClass("t-panel-in");
+  for (const panel of document.querySelectorAll(".t-collapse")) {
+    expect(panel).not.toHaveClass("is-entering");
+  }
+
+  list.classList.remove("t-panel-in");
+  fireEvent.click(screen.getByText(/rerender/));
+  expect(list).not.toHaveClass("t-panel-in");
+});
+
+// ---- Reporting the motion, for motion planned around it ---------------------
+// Settings' cards slide in step with the changelog's fold: the fold says how
+// its edge will move (onGrow / onShrink), and the grow can be held shut
+// while a card clears the way.
+
+function Reporting({
+  onGrow,
+  onShrink,
+}: {
+  onGrow?: (g: FoldMotion) => number | void;
+  onShrink?: (s: FoldMotion) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+      <Collapse open={open} onGrow={onGrow} onShrink={onShrink}>
+        <p>Row one</p>
+      </Collapse>
+    </div>
+  );
+}
+
+test("onGrow hears the grow's measure, and the time it returns holds the fold shut first", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  const onGrow = vi.fn(() => 150);
+  try {
+    render(<Reporting onGrow={onGrow} />);
+    expect(onGrow).toHaveBeenCalledWith({ span: 120, margin: 0, ms: foldMs(120), easing: EASE });
+    const grow = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"))!;
+    expect(grow.opts).toMatchObject({ duration: foldMs(120), delay: 150, fill: "backwards" });
+    // The content's fade waits with it.
+    const fade = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse-inner"))!;
+    expect(fade.opts).toMatchObject({ delay: 150, fill: "backwards" });
+  } finally {
+    m.restore();
+  }
+});
+
+test("without a hold the grow starts at once, as before", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  try {
+    render(<Reporting onGrow={() => undefined} />);
+    const grow = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"))!;
+    expect(grow.opts).toEqual({ duration: foldMs(120), easing: EASE });
+  } finally {
+    m.restore();
+  }
+});
+
+test("onShrink hears the closing copy's measure", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(20_000);
+  const onShrink = vi.fn();
+  try {
+    render(<Reporting onShrink={onShrink} />);
+    fireEvent.click(screen.getByText("Toggle"));
+    expect(onShrink).toHaveBeenCalledWith({ span: 668, margin: 0, ms: foldMs(668), easing: EASE });
+  } finally {
+    m.restore();
+  }
+});
+
+test("the closing copy shrinks its outer margin away with it, so nothing below jumps at the end", () => {
+  window.innerHeight = 768;
+  const style = document.createElement("style");
+  style.textContent = ".t-collapse { margin-bottom: 16px; }";
+  document.head.appendChild(style);
+  const m = stubMotion(120);
+  const onShrink = vi.fn();
+  try {
+    render(<Reporting onShrink={onShrink} />);
+    m.calls.length = 0;
+    fireEvent.click(screen.getByText("Toggle"));
+    const ghost = document.querySelector(".t-collapse.is-closing") as HTMLElement;
+    const shrink = m.calls.find((c) => c.el === ghost)!;
+    expect(shrink.frames).toEqual([
+      { height: "120px", marginTop: "0px", marginBottom: "16px" },
+      { height: "0px", marginTop: "0px", marginBottom: "0px" },
+    ]);
+    expect(onShrink).toHaveBeenCalledWith(expect.objectContaining({ span: 120, margin: 16 }));
+  } finally {
+    m.restore();
+    style.remove();
+  }
+});
+
+/** A fold in a spaced list, as Tailwind's space-y spells it: every child
+ * but the last gets the gap. `last` puts the fold at the end. */
+function Spaced({ last }: { last: boolean }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+      <div className="spaced">
+        <p>Before</p>
+        <Collapse open={open}>
+          <p>Row one</p>
+        </Collapse>
+        {!last && <p>After</p>}
+      </div>
+    </div>
+  );
+}
+
+test.each([
+  [true, 0],
+  [false, 16],
+])("the closing copy starts from the fold's own margin in a spaced list (last child: %s)", (last, margin) => {
+  window.innerHeight = 768;
+  const style = document.createElement("style");
+  style.textContent = ".spaced > :not(:last-child) { margin-bottom: 16px; }";
+  document.head.appendChild(style);
+  const m = stubMotion(120);
+  try {
+    render(<Spaced last={last} />);
+    m.calls.length = 0;
+    fireEvent.click(screen.getByText("Toggle"));
+    const ghost = document.querySelector(".t-collapse.is-closing") as HTMLElement;
+    const shrink = m.calls.find((c) => c.el === ghost)!;
+    // Read before the copy went in: a last child is not spaced, even though
+    // the copy briefly follows it - reading it then started the close with
+    // a 16px jump.
+    expect(shrink.frames[0]).toEqual(
+      margin ? { height: "120px", marginTop: "0px", marginBottom: `${margin}px` } : { height: "120px" },
+    );
+  } finally {
+    m.restore();
+    style.remove();
+  }
+});
+
+test("under StrictMode the grow keeps the hold onGrow gave it, though the effect runs twice", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  // The caller plans once: asked again, it has nothing left to hold for.
+  const onGrow = vi.fn().mockReturnValueOnce(150).mockReturnValue(0);
+  try {
+    render(
+      <StrictMode>
+        <Reporting onGrow={onGrow} />
+      </StrictMode>,
+    );
+    expect(onGrow).toHaveBeenCalledTimes(1);
+    const grows = m.calls.filter((c) => (c.el as HTMLElement).classList.contains("t-collapse"));
+    expect(grows.length).toBeGreaterThan(1);
+    expect(grows[grows.length - 1].opts).toMatchObject({ delay: 150, fill: "backwards" });
+  } finally {
+    m.restore();
+  }
 });

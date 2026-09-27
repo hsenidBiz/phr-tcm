@@ -9,7 +9,7 @@ import { isCaptureMode } from "../../dev/capture";
 import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Collapse, useSettled } from "../../components/ui/collapse";
+import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -109,6 +109,9 @@ export default function ViewCases({
 
   const list = cases.data ?? [];
   const settled = useSettled(list.length > 0);
+  // Switching Group by title is one motion, not a regroup then an unfold
+  // per open group (components/ui/collapse.tsx).
+  const regroup = useRegroupMotion(grouped);
   const q = search.trim().toLowerCase();
   const visible = useMemo(
     () =>
@@ -203,7 +206,7 @@ export default function ViewCases({
 
   // Same scope rule as the browser view: the selection when there is one,
   // otherwise everything the filter shows. The exported JSON is the
-  // Import File format, ids included - so re-importing it updates these
+  // Import Test Cases format, ids included - so re-importing it updates these
   // exact cases rather than creating copies.
   const exportJson = useMutation({
     mutationFn: async () => {
@@ -305,7 +308,7 @@ export default function ViewCases({
           <Button
             variant="outline"
             size="sm"
-            title="Save as an Import File JSON - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
+            title="Save as JSON for Import Test Cases - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
             disabled={chosen.length === 0 || exportJson.isPending}
             onClick={() => exportJson.mutate()}
           >
@@ -372,119 +375,121 @@ export default function ViewCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      {ordered.map(({ group, items }) => (
-        <div key={group || "__all"} className="space-y-1">
-          {group && (
-            <div className="flex w-full items-center gap-3 pb-1 pt-2">
-              {/* Left-anchored, controls at fixed x, the rule trails to the
-                  right edge: rows are scanned down a shared left edge, and a
-                  centered header put the chevron and checkbox at a different
-                  x every row. */}
-              <button
-                aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
-                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
-                className="text-muted transition-colors hover:text-accent"
-                onClick={() => toggleCollapsed(group)}
-              >
-                {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-              </button>
-              {/* Selection is the checkbox's job; the TITLE toggles the
-                  fold, same as the chevron - clicking the name is how
-                  people expect to open a group. */}
-              <Checkbox
-                ariaLabel={`Select all in ${group}`}
-                checked={items.length > 0 && selectedInGroup(items) === items.length}
-                indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
-                onCheckedChange={() => toggleGroup(items)}
-              />
-              <button
-                className="group flex items-center gap-2"
-                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
-                onClick={() => toggleCollapsed(group)}
-              >
-                <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                  {group} ({items.length})
-                </span>
-              </button>
-              {/* Solid where it meets the title, dissolved long before the
-                  window edge - the rule belongs to the heading, not the
-                  viewport. */}
-              <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-            </div>
-          )}
-          {/* A collapsed group hides its LIST, not the case someone is
-              reading: rows with an open detail stay rendered until the
-              reader closes them - their own chevron, or the sticky Close
-              all. Collapsing is tidying, and tidying must not snatch away
-              the thing being studied. */}
-          {(() => {
-            const folded = Boolean(group) && collapsedGroups.has(group);
-            const shown = folded ? items.filter((c) => openIds.has(c.id)) : items;
-            // The fold animates the list away only when nothing in it is
-            // held open: a row being read stays, so its list stays with it.
-            return (
-            <Collapse open={shown.length > 0} animateIn={settled}>
-            <ul className="space-y-1">
-              {shown.map((c) => (
-                <li
-                  key={c.id}
-                  className={cn(
-                    "cv-row cursor-pointer select-none rounded-md border transition-colors",
-                    selected.has(c.id)
-                      ? "border-accent bg-accent-soft"
-                      : "border-border hover:border-border-strong",
-                  )}
-                  onClick={(e) => handleCardClick(c, e)}
-                  onDoubleClick={() => toggleOpen(c.id)}
+      <div ref={regroup.ref} className="space-y-2">
+        {ordered.map(({ group, items }) => (
+          <div key={group || "__all"} className="space-y-1">
+            {group && (
+              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                {/* Left-anchored, controls at fixed x, the rule trails to the
+                    right edge: rows are scanned down a shared left edge, and a
+                    centered header put the chevron and checkbox at a different
+                    x every row. */}
+                <button
+                  aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
+                  title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                  className="text-muted transition-colors hover:text-accent"
+                  onClick={() => toggleCollapsed(group)}
                 >
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm">
-                    <button
-                      aria-label={`Expand #${c.id}`}
-                      className="text-muted hover:text-accent"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleOpen(c.id);
-                      }}
-                    >
-                      {openIds.has(c.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    </button>
-                    <span className="id-mono text-faint">#{c.id}</span>
-                    <span className="text-text">{c.title}</span>
-                    {notes[String(c.id)] && (
+                  {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                </button>
+                {/* Selection is the checkbox's job; the TITLE toggles the
+                    fold, same as the chevron - clicking the name is how
+                    people expect to open a group. */}
+                <Checkbox
+                  ariaLabel={`Select all in ${group}`}
+                  checked={items.length > 0 && selectedInGroup(items) === items.length}
+                  indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
+                  onCheckedChange={() => toggleGroup(items)}
+                />
+                <button
+                  className="group flex items-center gap-2"
+                  title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                  onClick={() => toggleCollapsed(group)}
+                >
+                  <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                    {group} ({items.length})
+                  </span>
+                </button>
+                {/* Solid where it meets the title, dissolved long before the
+                    window edge - the rule belongs to the heading, not the
+                    viewport. */}
+                <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+              </div>
+            )}
+            {/* A collapsed group hides its LIST, not the case someone is
+                reading: rows with an open detail stay rendered until the
+                reader closes them - their own chevron, or the sticky Close
+                all. Collapsing is tidying, and tidying must not snatch away
+                the thing being studied. */}
+            {(() => {
+              const folded = Boolean(group) && collapsedGroups.has(group);
+              const shown = folded ? items.filter((c) => openIds.has(c.id)) : items;
+              // The fold animates the list away only when nothing in it is
+              // held open: a row being read stays, so its list stays with it.
+              return (
+              <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
+              <ul className="space-y-1">
+                {shown.map((c) => (
+                  <li
+                    key={c.id}
+                    className={cn(
+                      "cv-row cursor-pointer select-none rounded-md border transition-colors",
+                      selected.has(c.id)
+                        ? "border-accent bg-accent-soft"
+                        : "border-border hover:border-border-strong",
+                    )}
+                    onClick={(e) => handleCardClick(c, e)}
+                    onDoubleClick={() => toggleOpen(c.id)}
+                  >
+                    <div className="flex items-center gap-2 px-3 py-2 text-sm">
                       <button
-                        aria-label="Has a local comment"
-                        title={notes[String(c.id)]}
-                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
+                        aria-label={`Expand #${c.id}`}
+                        className="text-muted hover:text-accent"
                         onClick={(e) => {
-                          // A focused dialog for the comment - no need to
-                          // expand the whole case.
                           e.stopPropagation();
-                          setCommentCase(c);
+                          toggleOpen(c.id);
                         }}
                       >
-                        <MessageSquare size={11} />
-                        Comment
+                        {openIds.has(c.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </button>
-                    )}
-                    <span className="ml-auto text-xs text-faint">
-                      {c.steps.length} steps · {c.automation_status}
-                    </span>
-                  </div>
-                  <Collapse open={openIds.has(c.id)}>
-                    <CaseDetail
-                      c={c}
-                      note={notes[String(c.id)] ?? ""}
-                      onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
-                    />
-                  </Collapse>
-                </li>
-              ))}
-            </ul>
-            </Collapse>
-            );
-          })()}
-        </div>
-      ))}
+                      <span className="id-mono text-faint">#{c.id}</span>
+                      <span className="text-text">{c.title}</span>
+                      {notes[String(c.id)] && (
+                        <button
+                          aria-label="Has a local comment"
+                          title={notes[String(c.id)]}
+                          className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
+                          onClick={(e) => {
+                            // A focused dialog for the comment - no need to
+                            // expand the whole case.
+                            e.stopPropagation();
+                            setCommentCase(c);
+                          }}
+                        >
+                          <MessageSquare size={11} />
+                          Comment
+                        </button>
+                      )}
+                      <span className="ml-auto text-xs text-faint">
+                        {c.steps.length} steps · {c.automation_status}
+                      </span>
+                    </div>
+                    <Collapse open={openIds.has(c.id)}>
+                      <CaseDetail
+                        c={c}
+                        note={notes[String(c.id)] ?? ""}
+                        onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
+                      />
+                    </Collapse>
+                  </li>
+                ))}
+              </ul>
+              </Collapse>
+              );
+            })()}
+          </div>
+        ))}
+      </div>
 
       {/* Sticky whenever anything is open - the reader may be several
           screens deep in a long detail when they want it all gone, and a

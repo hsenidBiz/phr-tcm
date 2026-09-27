@@ -1,18 +1,26 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
 import { CHANGELOG } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
+import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../components/settings/useTileLayout";
+import { planClose, planOpen } from "../components/settings/tileSchedule";
+import { EASE, foldMs } from "../components/ui/collapse";
+import { parseEasing } from "../lib/cubicBezier";
 
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
+const realMatchMedia = window.matchMedia;
+
 afterEach(() => {
+  window.matchMedia = realMatchMedia;
   clearMocks();
   vi.clearAllMocks();
   resetExtrasStore();
@@ -91,22 +99,18 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 });
 
-/// Settings is two columns: the settings grouped into cards on the left, and
-/// the changelog/log panel on its own on the right.
-test("the left column holds the setting cards in order; the right only the changelog", async () => {
+/// Below the wide breakpoint (jsdom's default: no media query matches)
+/// Settings is one column: every card in its natural order, then the
+/// changelog/log panel on its own.
+test("a narrow window lists the setting cards in order, then only the changelog", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  const changelog = await screen.findByRole("heading", { name: "Changelog" });
-  const right = changelog.closest("section")!.parentElement!;
-  const left = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
+  await screen.findByRole("heading", { name: "Changelog" });
+  const { left, right } = columns();
   expect(left).not.toBe(right);
 
-  const headings = (col: HTMLElement) =>
-    within(col)
-      .getAllByRole("heading", { level: 2 })
-      .map((h) => h.textContent);
-  expect(headings(left)).toEqual(["Appearance", "General", "AI tools", "Updates", "Backup & transfer", "Help & support"]);
+  expect(headings(left)).toEqual(ALL_CARDS);
   expect(headings(right)).toEqual(["Changelog"]);
   // No settings in the right column: no switch, and none of the buttons
   // that moved into cards.
@@ -120,6 +124,454 @@ test("the left column holds the setting cards in order; the right only the chang
   expect(within(general).getByRole("switch", { name: "Keep running in the tray when closed" })).toBeInTheDocument();
   expect(within(general).getByRole("switch", { name: "Start with Windows" })).toBeInTheDocument();
   expect(within(general).getByRole("button", { name: /^Full speed/ })).toBeInTheDocument();
+
+  // Nothing moves on a narrow window: Show more only unfolds the history.
+  fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+  expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
+  expect(headings(columns().left)).toEqual(ALL_CARDS);
+  expect(headings(columns().right)).toEqual(["Changelog"]);
+});
+
+// ---- The wide layout: cards under the changelog, sliding aside ------------
+
+/** The wide layout's media query matches (and reduced motion, if asked).
+ * `resize(wide)` crosses the breakpoint, telling whoever listens. */
+function wideWindow({ reduced = false } = {}) {
+  let wide = true;
+  const listeners = new Set<() => void>();
+  window.matchMedia = ((q: string) => ({
+    get matches() {
+      return (wide && q === WIDE_QUERY) || (reduced && q.includes("prefers-reduced-motion"));
+    },
+    media: q,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: (_: string, cb: () => void) => listeners.add(cb),
+    removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return {
+    resize: (to: boolean) => {
+      wide = to;
+      for (const cb of [...listeners]) cb();
+    },
+  };
+}
+
+/**
+ * jsdom does no layout and has no Web Animations. This gives the screen a
+ * small geometry - the left column at x=0 and the right one at x=600, each
+ * card 400x90 on a 100px row by its order in its column, the changelog
+ * panel 90px tall plus the history's fold (`foldHeight`) while a fold (or
+ * its closing copy) is in it, and the cards under it pushed down by that
+ * fold - and records the animations played, each one finishing only when
+ * the test says so.
+ */
+function stubMotion({ foldHeight = 0 } = {}) {
+  type Fake = {
+    el: Element;
+    frames: Keyframe[];
+    opts: KeyframeAnimationOptions;
+    cancelled: boolean;
+    finish: () => void;
+  };
+  const played: Fake[] = [];
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  const hadAnimate = Object.prototype.hasOwnProperty.call(proto, "animate");
+  const realAnimate = proto.animate;
+  proto.animate = function (this: Element, frames: Keyframe[], opts: KeyframeAnimationOptions = {}) {
+    let resolve!: () => void;
+    const finished = new Promise<void>((r) => (resolve = r));
+    const a = {
+      finished,
+      onfinish: null as null | (() => void),
+      oncancel: null as null | (() => void),
+      cancel() {
+        record.cancelled = true;
+        resolve();
+        // As a browser does: the cancel event arrives later, not in the call.
+        queueMicrotask(() => a.oncancel?.());
+      },
+      effect: { getTiming: () => ({ duration: opts.duration, delay: opts.delay ?? 0 }) },
+    };
+    const record: Fake = {
+      el: this,
+      frames,
+      opts,
+      cancelled: false,
+      finish: () => {
+        resolve();
+        a.onfinish?.();
+      },
+    };
+    played.push(record);
+    return a;
+  };
+  const realRect = Element.prototype.getBoundingClientRect;
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, x: left, y: top, right: left + width, bottom: top + height, toJSON: () => ({}) }) as DOMRect;
+  const panel = () => document.querySelector('[data-visual-mask="release-notes"]');
+  const folded = () => (panel()?.querySelector(".t-collapse") ? foldHeight : 0);
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    if (this.hasAttribute("data-settings-card")) {
+      const col = this.parentElement!;
+      const inRight = col.contains(panel());
+      return rect(inRight ? 600 : 0, [...col.children].indexOf(this) * 100 + (inRight ? folded() : 0), 400, 90);
+    }
+    if (this === panel()) return rect(600, 0, 400, 90 + folded());
+    if (this === panel()?.parentElement) return rect(600, 0, 400, 500);
+    if (this.classList.contains("t-collapse")) return rect(600, 90, 400, foldHeight);
+    return realRect.call(this);
+  };
+  return {
+    cards: () => played.filter((p) => p.el.hasAttribute("data-settings-card")),
+    /** The fold's own grow or shrink (the box, not its fading content). */
+    fold: () => played.filter((p) => p.el.classList.contains("t-collapse")),
+    /** When a card's animation actually sets it moving: its delay, or for a
+     * drawn path the time its first keyframe changes. */
+    setsOff: (p: Fake) => {
+      if (p.opts.delay !== undefined) return p.opts.delay;
+      const xs = p.frames.map((f) => Number(/translate\((-?[\d.e-]+)px/.exec(String(f.transform))?.[1] ?? 0));
+      const k = xs.findIndex((x) => Math.abs(x - xs[0]) > 0.5);
+      return k <= 0 ? 0 : (p.frames[k - 1].offset as number) * Number(p.opts.duration);
+    },
+    finishAll: () => played.forEach((p) => p.finish()),
+    restore: () => {
+      if (hadAnimate) proto.animate = realAnimate;
+      else delete proto.animate;
+      Element.prototype.getBoundingClientRect = realRect;
+    },
+  };
+}
+
+const ALL_CARDS = ["Appearance", "General", "AI tools", "Updates", "Backup & transfer", "Help & support"];
+const LOOKS = ["Appearance", "General", "AI tools"];
+const MOVERS = ["Updates", "Backup & transfer", "Help & support"];
+
+/** The two columns: the one the Appearance card is in, and the changelog's. */
+function columns() {
+  const left = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
+  const right = document.querySelector('[data-visual-mask="release-notes"]')!.parentElement!;
+  return { left, right };
+}
+const headings = (col: HTMLElement) =>
+  within(col)
+    .getAllByRole("heading", { level: 2 })
+    .map((h) => h.textContent);
+const history = () => document.getElementById("changelog-history");
+
+/// The approved layout: while the changelog shows only its latest version,
+/// Updates, Backup & transfer and Help & support sit under it; opening the
+/// history moves them to the foot of the left column, and closing it brings
+/// them back.
+test("a wide window puts three cards under the changelog, and Show more moves them left", async () => {
+  wideWindow();
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  await screen.findByRole("heading", { name: "Changelog" });
+
+  expect(headings(columns().left)).toEqual(LOOKS);
+  expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+  // The right column scrolls with the page now: sticky would ride over the
+  // cards beneath the panel.
+  expect(columns().right.className).not.toMatch(/sticky/);
+
+  fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+  const less = await screen.findByRole("button", { name: "Show less" });
+  expect(less).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
+  expect(headings(columns().left)).toEqual(ALL_CARDS);
+  expect(headings(columns().right)).toEqual(["Changelog"]);
+  // Every card keeps its tour anchor wherever it sits.
+  expect(columns().left.querySelector('[data-tour="settings-updates"]')).not.toBeNull();
+  expect(columns().left.querySelector('[data-tour="settings-backup"]')).not.toBeNull();
+
+  fireEvent.click(less);
+  const more = await screen.findByRole("button", { name: /^Show more/ });
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  await waitFor(() => expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]));
+  expect(headings(columns().left)).toEqual(LOOKS);
+  expect(history()).toBeNull();
+});
+
+/// One motion, not two: Show more moves the cards and opens the history on
+/// the click. The cards set off top-down, and the history's grow is held
+/// only until Updates, right under the panel, is clear of the column - far
+/// less than the whole slide the first version waited for.
+test("Show more moves the cards and grows the history as one motion, Updates first", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+    expect(history()).not.toBeNull();
+    expect(headings(columns().left)).toEqual(ALL_CARDS);
+
+    const slides = motion.cards();
+    expect(slides.map((s) => s.el.getAttribute("data-settings-card"))).toEqual(["updates", "backup", "help"]);
+    const starts = slides.map(motion.setsOff);
+    expect(starts[0]).toBe(0);
+    expect(starts[1]).toBeGreaterThan(starts[0]);
+    expect(starts[2]).toBeGreaterThan(starts[1]);
+    const grow = motion.fold()[0];
+    const hold = Number(grow.opts.delay);
+    expect(hold).toBeGreaterThan(0);
+    expect(hold).toBeLessThan(TILE_MS);
+    expect(grow.opts.fill).toBe("backwards");
+    // Exactly the plan for this geometry: a 300px grow on EASE from the
+    // panel's foot at 90px, the cards leaving rows 1-3 on the right for
+    // rows 3-5 on the left.
+    const ms = foldMs(300);
+    const ease = parseEasing(EASE);
+    const plan = planOpen(
+      [100, 200, 300].map((top, i) => ({ from: { left: 600, top }, to: { left: 0, top: 100 * (i + 3) }, width: 400 })),
+      600,
+      (t) => (t < 0 ? 90 : t < ms ? 90 + 300 * ease(t / ms) : 390),
+      ms,
+      { ease, tileMs: TILE_MS, staggerMs: TILE_STAGGER_MS, safetyMs: TILE_SAFETY_MS },
+    );
+    expect(hold).toBeCloseTo(plan.fold, 6);
+    starts.forEach((start, i) => expect(start).toBeCloseTo(plan.starts[i], 6));
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Show less runs the other way in one motion: the history folds on the
+/// click, and the cards come back bottom-up - Help & support, whose spot the
+/// shrinking fold frees first, sets off first.
+test("Show less folds the history and brings the cards back bottom-up as their spots free", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    await act(async () => motion.finishAll());
+    // The sequence also waits out the held grow on its own clock.
+    await act(() => new Promise((r) => window.setTimeout(r, 800)));
+
+    const before = motion.cards().length;
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    expect(history()).toBeNull();
+    expect(screen.getByRole("button", { name: /^Show more/ })).toHaveAttribute("aria-expanded", "false");
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+
+    const back = motion.cards().slice(before);
+    expect(back.map((s) => s.el.getAttribute("data-settings-card"))).toEqual(["updates", "backup", "help"]);
+    const [updates, backup, help] = back.map(motion.setsOff);
+    expect(help).toBeLessThan(backup);
+    expect(backup).toBeLessThan(updates);
+    // Exactly the plan for this geometry: the copy shrinks 300px on EASE
+    // from the panel's foot at 90px, and the cards return from the left
+    // column (rows 3-5) to rows 1-3 on the right. Keyframes are 1/60s apart.
+    const ms = foldMs(300);
+    const ease = parseEasing(EASE);
+    const plan = planClose(
+      [300, 400, 500].map((top, i) => ({ from: { left: 0, top }, to: { left: 600, top: 100 * (i + 1) }, width: 400 })),
+      600,
+      (t) => 90 + 300 * (1 - ease(Math.min(1, t / ms))),
+      ms,
+      { ease, tileMs: TILE_MS, staggerMs: TILE_STAGGER_MS, safetyMs: TILE_SAFETY_MS },
+    );
+    [updates, backup, help].forEach((start, i) => expect(Math.abs(start - plan[i])).toBeLessThan(17));
+    // Drawn on a path that starts where each card was, in the left column.
+    for (const s of back) expect(String(s.frames[0].transform)).toMatch(/^translate\(-600px/);
+  } finally {
+    motion.restore();
+  }
+});
+
+/// A second click while the motion runs is ignored, so the cards and the
+/// history cannot end up out of step.
+test("a rapid double click leaves the cards and the history in step", async () => {
+  wideWindow();
+  const motion = stubMotion();
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    // The label flips on the first click; the second lands on Show less.
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    await act(async () => {});
+    expect(history()).not.toBeNull();
+    expect(headings(columns().left)).toEqual(ALL_CARDS);
+    await act(async () => motion.finishAll());
+
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: /^Show more/ })).toHaveAttribute("aria-expanded", "false");
+    expect(history()).toBeNull();
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+    await act(async () => motion.finishAll());
+
+    // Once it has finished, the next click is taken.
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+  } finally {
+    motion.restore();
+  }
+});
+
+/// In dev the app runs under StrictMode, which runs a new fold's grow effect
+/// twice - the second time after this screen has spent its plan. The grow
+/// must keep the hold it was given, or the history grows across Updates.
+test("under StrictMode Show more still holds the grow for Updates", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <StrictMode>
+        <QueryClientProvider client={qc}>
+          <Settings org="acme" project="Web" />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+    await screen.findByRole("heading", { name: "Changelog" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    const grows = motion.fold().filter((f) => String(f.frames[1]?.height ?? "") !== "0px");
+    const last = grows[grows.length - 1];
+    expect(Number(last.opts.delay)).toBeGreaterThan(0);
+    expect(last.opts.fill).toBe("backwards");
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Switching to Logs while the cards come back: the fold (and the copy the
+/// returning cards were drawn against) goes with the changelog, so the
+/// cards settle under the log panel at once instead of finishing a path
+/// planned for a layout that is gone.
+test("switching to Logs during Show less settles the returning cards at once", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC((cmd) => {
+      if (cmd === "app_logs") return [];
+      if (cmd === "app_log_dir") return "C:\\logs";
+      return undefined;
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    await act(async () => motion.finishAll());
+    await act(() => new Promise((r) => window.setTimeout(r, 800)));
+
+    const before = motion.cards().length;
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    const returning = motion.cards().slice(before);
+    expect(returning).toHaveLength(3);
+    expect(returning.some((r) => r.cancelled)).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(returning.every((r) => r.cancelled)).toBe(true);
+    expect(headings(columns().right)).toEqual(["App log", ...MOVERS]);
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Crossing the breakpoint mid-slide: the two-column layout the slide was
+/// planned against is gone, so the cards settle in the one column at once.
+test("crossing the wide breakpoint mid-slide settles the cards at once", async () => {
+  const win = wideWindow();
+  const motion = stubMotion();
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    const slides = motion.cards();
+    expect(slides).toHaveLength(3);
+
+    act(() => win.resize(false));
+    expect(slides.every((s) => s.cancelled)).toBe(true);
+    expect(headings(columns().left)).toEqual(ALL_CARDS);
+    expect(headings(columns().right)).toEqual(["Changelog"]);
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Reduced motion: no slide and no waiting - the layout and the history
+/// change together, on the click.
+test("under reduced motion Show more moves the cards and opens the history at once", async () => {
+  wideWindow({ reduced: true });
+  const motion = stubMotion();
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+    expect(history()).not.toBeNull();
+    expect(headings(columns().left)).toEqual(ALL_CARDS);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    expect(history()).toBeNull();
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+    expect(motion.cards()).toHaveLength(0);
+  } finally {
+    motion.restore();
+  }
+});
+
+/// The rule is only "right column unless the changelog is expanded": the
+/// app log keeps the cards under it.
+test("on a wide window the cards stay under the app log", async () => {
+  wideWindow();
+  mockIPC((cmd) => {
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  await screen.findByRole("heading", { name: "Changelog" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+  await screen.findByRole("button", { name: "Copy log" });
+  expect(headings(columns().right)).toEqual(["App log", ...MOVERS]);
+  expect(headings(columns().left)).toEqual(LOOKS);
+});
+
+/// Extras, when shown, is always last on the left - the moving cards land
+/// above it.
+test("the Extras card stays last on the left as the cards come and go", async () => {
+  wideWindow();
+  mockIPC((cmd) => {
+    if (cmd === "set_extras_unlocked") return null;
+    if (cmd === "get_extras_unlocked") return true;
+  });
+  await act(() => setExtrasUnlocked(true));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  await screen.findByRole("heading", { name: "Extras" });
+  expect(headings(columns().left)).toEqual([...LOOKS, "Extras"]);
+
+  fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+  await screen.findByRole("button", { name: "Show less" });
+  expect(headings(columns().left)).toEqual([...ALL_CARDS, "Extras"]);
 });
 
 /// The request rate is a compact three-way choice: only the chosen level's

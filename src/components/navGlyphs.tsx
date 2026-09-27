@@ -55,7 +55,7 @@ export function GlyphManual(p: GlyphProps) {
   );
 }
 
-/** Import File: the arrow lifts, the file rises out of the top with trail
+/** Import Test Cases: the arrow lifts, the file rises out of the top with trail
  *  lines behind it, and the icon pops back in. */
 export function GlyphImport(p: GlyphProps) {
   return (

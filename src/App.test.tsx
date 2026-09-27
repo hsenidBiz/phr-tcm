@@ -144,7 +144,7 @@ test("sidebar shows the v1 tabs and switches screens", async () => {
   expect(await screen.findByText("a@b.com")).toBeInTheDocument();
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
-  for (const tab of ["Import File", "Update Test Cases", "Run Tests", "Search Suites"]) {
+  for (const tab of ["Import Test Cases", "Update Test Cases", "Run Tests", "Search Suites"]) {
     fireEvent.click(screen.getByRole("button", { name: tab }));
     expect(await screen.findByRole("heading", { name: tab })).toBeInTheDocument();
   }
@@ -322,7 +322,7 @@ test("prefs restore section, scope and selected PBI", async () => {
   expect(await screen.findByText("Login flow")).toBeInTheDocument();
 });
 
-test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () => {
+test("Ctrl+2 jumps to Import Test Cases; Ctrl+Shift+M toggles Work Manager", async () => {
   // A returning user: the first-run tour opens after sign-in and locks the
   // rail, and these tests wait for each lazily loaded screen, which gives
   // it time to arrive before the next tab click.
@@ -334,13 +334,13 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
   await screen.findByText("a@b.com");
 
   fireEvent.keyDown(window, { key: "2", ctrlKey: true });
-  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
   expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
-  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
 });
 
 // The sidebar's CASE_ITEMS order is manual, import, edit, view, run,
@@ -368,10 +368,8 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Suite Management" })).toBeInTheDocument();
-  // Suite Management ships in release builds but is not finished, and the
-  // tab says so beside its heading. The sidebar row is deliberately left
-  // without a note: it is offered to everyone, unlike Auto Run.
-  expect(screen.getByText("In Development")).toBeInTheDocument();
+  // Suite Management is finished too: no pill.
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "9", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
@@ -1294,7 +1292,7 @@ test("the app is locked while the tour runs", async () => {
   await startTour();
 
   // Stops 1-5 all live on Manual Entry, where the app already is; stop 6
-  // lives on Import File, so the tour stops and asks for that one click.
+  // lives on Import Test Cases, so the tour stops and asks for that one click.
   await walkToStop(5);
   next();
   await waitFor(() => expect(tourWaiting()).toBe(true));
@@ -1316,11 +1314,11 @@ test("the app is locked while the tour runs", async () => {
   // row - and the collapse toggle - is disabled, and a disabled button
   // does not run its handler however it is pressed.
   const row = (name: string) => within(nav).getByRole("button", { name });
-  expect(row("Import File")).toBeEnabled();
+  expect(row("Import Test Cases")).toBeEnabled();
   expect(row("Update Test Cases")).toBeDisabled();
   expect(row("Manual Entry")).toBeDisabled();
   expect(within(nav).getByRole("button", { name: "Close sidebar" })).toBeDisabled();
-  expect(liveControl()).toBe(row("Import File"));
+  expect(liveControl()).toBe(row("Import Test Cases"));
 
   fireEvent.click(row("Update Test Cases"));
   await act(async () => {});
@@ -1329,7 +1327,7 @@ test("the app is locked while the tour runs", async () => {
   expect(tourWaiting()).toBe(true);
   expect(screen.getByText(`6 / ${TOUR_STEPS.length}`)).toBeInTheDocument();
 
-  // And the tab shortcuts are off: Ctrl+2 would normally open Import File.
+  // And the tab shortcuts are off: Ctrl+2 would normally open Import Test Cases.
   // The click above is the only way past this stop - a shortcut must not
   // skip the sequence it enforces.
   await act(async () => {
@@ -1349,7 +1347,7 @@ test("the app is locked while the tour runs", async () => {
   await act(async () => {
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
   });
-  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
 });
 
 // The other half of the lock: the one row it does leave live has to
@@ -1367,13 +1365,13 @@ test("clicking the tab the tour asks for moves the app and carries the tour on",
   next();
   await waitFor(() => expect(tourWaiting()).toBe(true));
   // While it waits, the card asks for the row by the name the rail shows.
-  expect(screen.getByText("Go to Import File")).toBeInTheDocument();
+  expect(screen.getByText("Go to Import Test Cases")).toBeInTheDocument();
   // ...and takes Next away, so the ask cannot be shrugged off.
   expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
 
-  fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Import File" }));
+  fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Import Test Cases" }));
 
-  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
   await waitFor(() => expect(tourWaiting()).toBe(false));
   expect(screen.getByText("Bring cases in from a file")).toBeInTheDocument();
   // Arrived, so Next is back.

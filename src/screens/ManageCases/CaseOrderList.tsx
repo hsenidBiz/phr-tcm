@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import { Button } from "../../components/ui/button";
-import { Collapse, useSettled } from "../../components/ui/collapse";
+import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
 import { IconClear, IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { moveBlock, moveBlockBefore, nudgeBlock, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
@@ -50,6 +50,9 @@ export default function CaseOrderList({
   // Where a Shift+click range starts: the last row clicked without Shift.
   const [anchor, setAnchor] = useState<number | null>(null);
   const settled = useSettled(cases.length > 0);
+  // Switching Group by title is one motion, not a regroup then an unfold
+  // per open group (components/ui/collapse.tsx).
+  const regroup = useRegroupMotion<HTMLOListElement>(grouped);
   const sections = grouped ? sectionsOf(cases) : [];
   const isFolded = (name: string) => collapsed.has(sectionLabel(name));
 
@@ -236,7 +239,7 @@ export default function CaseOrderList({
         )}
         <span className="ml-auto text-faint">Ctrl+click to add · Shift+click for a range</span>
       </div>
-      <ol aria-label={ariaLabel} className="divide-y divide-border">
+      <ol ref={regroup.ref} aria-label={ariaLabel} className="divide-y divide-border">
         {!grouped && cases.map((c, i) => row(c, i))}
         {grouped &&
           sections.map((s, si) => {
@@ -336,7 +339,7 @@ export default function CaseOrderList({
               // The section's rows fold as one, in a nested list so the
               // fold has one box to grow and shrink.
               <li key={`rows-${si}-${firstId}`} role="presentation">
-                <Collapse open={!folded} animateIn={settled}>
+                <Collapse open={!folded} animateIn={settled && !regroup.regrouping}>
                   <ol className="divide-y divide-border">
                     {s.ids.map((id) => row(cases.find((c) => c.id === id)!, indexOf(id)))}
                   </ol>

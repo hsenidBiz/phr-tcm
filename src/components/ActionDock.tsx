@@ -3,7 +3,7 @@
  * for actions, bottom-left for view controls (Collapse all). This is the
  * one approved way to build a bottom-right action row: render it in place,
  * and once that row is off screen, show the same actions again as a
- * floating copy pinned to the window - exactly the pattern Import File's
+ * floating copy pinned to the window - exactly the pattern Import Test Cases'
  * queue review button used, now shared by Suite Management and Update
  * Test Cases too. `src/ui-consistency.test.ts` enforces that nothing else
  * builds this pattern by hand.
@@ -14,7 +14,7 @@
  * would pin to the SCROLL REGION instead of the window without the portal.
  *
  * `children` is a function so the floating copy can render a simplified
- * or differently-wired version of the same actions (Import File's floating
+ * or differently-wired version of the same actions (Import Test Cases' floating
  * button arms a confirmation instead of submitting outright) while still
  * sharing one row of markup for the common case.
  *
@@ -56,7 +56,7 @@ export default function ActionDock({
   stack?: number;
   /** Wraps the floating copy in the surface pill
    * (`rounded-full border border-border bg-surface p-2.5 shadow-2xl`) that
-   * Suite Management's and Run Tests' floating bars use. Import File's
+   * Suite Management's and Run Tests' floating bars use. Import Test Cases'
    * floating button has never had one and stays bare - omit it there. */
   surface?: boolean;
   /** Extra classes for the in-place row. */

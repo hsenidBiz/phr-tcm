@@ -44,7 +44,7 @@ type Item<T extends string> = {
 
 export const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: GlyphManual, tone: "nav-ico nav-ico-manual" },
-  { id: "import", label: "Import File", icon: GlyphImport, tone: "nav-ico nav-ico-import" },
+  { id: "import", label: "Import Test Cases", icon: GlyphImport, tone: "nav-ico nav-ico-import" },
   // A circular arrow, not a second pencil: Manual Entry already owns the
   // pencil, and two pencils in one rail are indistinguishable at 16px.
   { id: "edit", label: "Update Test Cases", icon: RotateCcw, tone: "nav-ico nav-ico-edit" },

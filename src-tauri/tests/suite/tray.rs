@@ -63,3 +63,14 @@ fn the_uninstaller_removes_the_value_start_with_windows_writes() {
     let main = read("src/main.rs");
     assert!(main.contains(".on_before_uninstall_fast_callback(|_version| v2_lib::tray::remove_autostart_entry())"));
 }
+
+/// Only a start at sign-in that asked for it stays hidden, and only while
+/// Start minimized is on; every other launch opens the window.
+#[test]
+fn a_launch_stays_hidden_only_when_asked_and_start_minimized_is_on() {
+    use v2_lib::tray::launch_hidden;
+    assert!(launch_hidden(true, true));
+    assert!(!launch_hidden(true, false));
+    assert!(!launch_hidden(false, true));
+    assert!(!launch_hidden(false, false));
+}
