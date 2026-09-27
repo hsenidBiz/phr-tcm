@@ -10,6 +10,7 @@ import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import BackgroundSettings from "../components/BackgroundSettings";
+import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Collapse } from "../components/ui/collapse";
@@ -699,10 +700,7 @@ export default function Settings({ org, project }: { org: string; project: strin
 function ChangelogVersion({ entry }: { entry: (typeof CHANGELOG)[number] }) {
   return (
     <div className="space-y-1.5">
-      <h3 className="text-xs font-semibold text-text">
-        Version {entry.version}
-        <span className="ml-2 font-normal text-faint">{entry.date}</span>
-      </h3>
+      <ChangelogVersionTitle entry={entry} />
       <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
         {entry.items.map((item, i) => (
           <li key={i}>{item}</li>

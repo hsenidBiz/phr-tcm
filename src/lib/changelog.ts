@@ -1451,17 +1451,44 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-/** Numeric semver compare: -1 / 0 / 1 for a < b / a == b / a > b.
- * Non-numeric parts (e.g. "dev") compare as 0-padded numbers -> equal-ish,
- * which safely disables the modal in dev builds. */
+/** Semver compare: -1 / 0 / 1 for a < b / a == b / a > b. A prerelease
+ * (`1.26.0-beta.2`) sorts below its release (`1.26.0`), and its numeric
+ * parts compare as numbers (`beta.10` > `beta.9`). Anything that is not
+ * X.Y.Z (e.g. "dev") reads as 0.0.0, which keeps What's new shut in dev. */
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d < 0 ? -1 : 1;
+  const parse = (v: string) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim());
+    if (!m) return { core: [0, 0, 0], pre: [] as string[] };
+    return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split(".") : [] };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] < pb.core[i] ? -1 : 1;
+  }
+  // No prerelease outranks any prerelease of the same X.Y.Z.
+  if (!pa.pre.length || !pb.pre.length) return pa.pre.length === pb.pre.length ? 0 : pa.pre.length ? -1 : 1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const nx = /^\d+$/.test(x) ? Number(x) : null;
+    const ny = /^\d+$/.test(y) ? Number(y) : null;
+    if (nx !== null && ny !== null) {
+      if (nx !== ny) return nx < ny ? -1 : 1;
+    } else if (nx !== null || ny !== null) {
+      return nx !== null ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
   }
   return 0;
+}
+
+/** Whether `v` is a beta build's version (`X.Y.Z-beta.N`). */
+export function isBetaVersion(v: string): boolean {
+  return /^\d+\.\d+\.\d+-beta\.\d+$/.test(v.trim());
 }
 
 /** Entries strictly newer than `seen`, up to and including `current`. */

@@ -3,6 +3,7 @@ import {
   CHANGELOG,
   compareVersions,
   entriesSince,
+  isBetaVersion,
   markChangelogSeen,
   pendingChangelog,
 } from "./changelog";
@@ -54,4 +55,24 @@ test("every entry has a version, a date, and at least one item", () => {
   for (let i = 1; i < CHANGELOG.length; i++) {
     expect(compareVersions(CHANGELOG[i - 1].version, CHANGELOG[i].version)).toBe(1);
   }
+});
+
+test("compareVersions orders betas below the stable they lead to", () => {
+  const order = ["1.25.31", "1.26.0-beta.1", "1.26.0-beta.2", "1.26.0-beta.10", "1.26.0", "1.26.1-beta.1"];
+  for (let i = 0; i < order.length - 1; i++) {
+    expect(compareVersions(order[i], order[i + 1]), `${order[i]} < ${order[i + 1]}`).toBe(-1);
+    expect(compareVersions(order[i + 1], order[i])).toBe(1);
+  }
+  expect(compareVersions("1.26.0-beta.2", "1.26.0-beta.2")).toBe(0);
+});
+
+test("a dev build still compares equal-ish, so What's new stays shut", () => {
+  expect(compareVersions("dev", "dev")).toBe(0);
+  expect(compareVersions("dev", "0.0.0")).toBe(0);
+});
+
+test("isBetaVersion", () => {
+  expect(isBetaVersion("1.26.0-beta.1")).toBe(true);
+  expect(isBetaVersion("1.26.0")).toBe(false);
+  expect(isBetaVersion("dev")).toBe(false);
 });
