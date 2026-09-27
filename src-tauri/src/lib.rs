@@ -43,6 +43,7 @@ pub mod state;
 pub mod steps_xml;
 pub mod test_map;
 pub mod transform;
+pub mod tray;
 pub mod updater;
 pub mod webtheme;
 pub mod workspace;
@@ -253,12 +254,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
 /// worth failing over.
 #[cfg(desktop)]
 fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use tauri::Manager;
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    tray::show_main(app);
 }
 
 /// Step out of the install's `current\` directory before anything can
@@ -346,6 +342,7 @@ pub fn run() {
         // bridge's context carries the same store to its database tools.
         .manage(db::DbSecrets(std::sync::Arc::new(db::CredentialManager)))
         .invoke_handler(builder.invoke_handler())
+        .on_window_event(tray::on_window_event)
         // Once, for the main window's first load: the gap between the
         // set-up line and this one is WebView2 starting and fetching the
         // page; the frontend logs when its first screen is drawn.
@@ -404,6 +401,17 @@ pub fn run() {
                 applog::error(format!("panic: {info}"));
                 previous(info);
             }));
+            // The tray icon, then the main window: created hidden by the
+            // config, shown here at once unless this launch is a start at
+            // sign-in (`--hidden`) - see tests/suite/startup_window.rs.
+            if let Err(e) = tray::build(app) {
+                applog::warn(format!("the tray icon could not be created - closing the window will quit: {e}"));
+            }
+            if !tray::start_hidden(std::env::args()) {
+                tray::show_main(app.handle());
+            } else {
+                applog::info("started hidden in the tray");
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

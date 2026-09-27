@@ -100,6 +100,7 @@ mod test_map;
 mod throttle_backoff;
 mod throttle_default;
 mod transform;
+mod tray;
 mod updater;
 mod upload_timeout;
 mod webtheme;
