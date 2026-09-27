@@ -10,6 +10,7 @@ import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands, type AppSettings } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import BackgroundSettings from "../components/BackgroundSettings";
+import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -215,27 +216,28 @@ export default function Settings({ org, project }: { org: string; project: strin
   });
 
 
+  const selectedRate = RATE_LEVELS.find((l) => l.id === rate) ?? RATE_LEVELS[0];
+
   return (
-    // Two columns on wide windows; below lg everything stacks into the
-    // original single column.
+    // Two columns on wide windows; below lg everything stacks into one
+    // column: the cards, then the changelog/log panel.
     //
-    // The settings column stops growing at 28rem - none of its controls get
-    // better with more room - and the right panel takes whatever is left, so
-    // a wide window turns dead space into visible changelog/log lines rather
-    // than margin. The 24rem floor on the right track matters at the lg
-    // boundary: without it the fixed left track would claim its full 28rem
-    // first and squeeze the panel narrower than the old even split.
+    // Left: the settings, grouped into cards of one row per setting. It stops
+    // growing at 32rem - none of its rows get better with more room - and the
+    // right panel takes whatever is left, so a wide window turns dead space
+    // into visible changelog/log lines rather than margin. The 24rem floor on
+    // the right track matters at the lg boundary: without it the fixed left
+    // track would claim its full width first and squeeze the panel narrower
+    // than an even split.
     <div
       ref={panelRef}
-      className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,28rem)_minmax(24rem,1fr)] lg:items-start"
+      className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,32rem)_minmax(24rem,1fr)] lg:items-start"
     >
-      <div className="space-y-8">
-      {/* The tour walks the user here and rings this block so the theme is
+      <div className="space-y-4">
+      {/* The tour walks the user here and rings this card so the theme is
           picked on the real screen, not on a copy in a card. */}
-      <section data-tour="theme" className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Appearance</h2>
-        <div>
-          <p className="mb-2 text-xs text-muted">Theme - changes the entire UI palette</p>
+      <SettingsCard title="Appearance" data-tour="theme">
+        <SettingRow name="Theme" description="Changes the entire UI palette.">
           <div className="flex flex-wrap gap-2">
             {THEMES.map((t) => (
               <button
@@ -278,9 +280,8 @@ export default function Settings({ org, project }: { org: string; project: strin
               <span className="mt-1 block text-center text-xs text-muted">System</span>
             </button>
           </div>
-        </div>
-        <div>
-          <p className="mb-2 text-xs text-muted">Accent - overrides the theme's accent color</p>
+        </SettingRow>
+        <SettingRow name="Accent" description="Overrides the theme's accent colour.">
           <div className="flex gap-2">
             {ACCENTS.map((a) => (
               <button
@@ -310,104 +311,180 @@ export default function Settings({ org, project }: { org: string; project: strin
               </button>
             ))}
           </div>
-        </div>
-      </section>
+        </SettingRow>
+      </SettingsCard>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Azure DevOps request rate</h2>
-        <p className="text-sm text-muted">
-          Azure DevOps limits requests per user, not per app - so this app
-          shares your budget with your browser. Slow it down if Azure DevOps
-          starts warning you about usage.
-        </p>
-        <div className="space-y-1.5">
-          {RATE_LEVELS.map((l) => (
-            <button
-              key={l.id}
-              aria-pressed={rate === l.id}
-              className={cn(
-                "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left transition-colors",
-                rate === l.id
-                  ? "border-accent bg-accent-soft"
-                  : "border-border hover:border-border-strong",
-              )}
-              onClick={() => {
-                setRate(l.id);
-                setRateLevel(l.id);
+      <SettingsCard title="General">
+        <BackgroundSettings />
+        {/* Three levels, one pressed. Only the chosen level's explanation
+            shows, under the row - the three used to be stacked as large
+            buttons with all three hints at once. */}
+        <SettingRow
+          name="Azure DevOps request rate"
+          description="Azure DevOps limits requests per user, and your browser shares that budget."
+          control={
+            <div className="flex rounded-md border border-border p-0.5">
+              {RATE_LEVELS.map((l) => (
+                <button
+                  key={l.id}
+                  aria-pressed={rate === l.id}
+                  className={cn(
+                    "rounded px-2 py-1 text-xs transition-colors",
+                    rate === l.id ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+                  )}
+                  onClick={() => {
+                    setRate(l.id);
+                    setRateLevel(l.id);
+                  }}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          <p aria-live="polite" className="text-xs text-muted">
+            {selectedRate.hint}
+          </p>
+        </SettingRow>
+      </SettingsCard>
+
+      <SettingsCard title="AI tools">
+        <SettingRow
+          asLabel
+          name="Allow registering AI tools machine-wide"
+          description="For a machine without a repository. Writing test cases still needs one."
+          control={
+            <Switch
+              checked={globalAllowed}
+              onCheckedChange={(on) => {
+                saveGlobalAllowed(on);
+                setGlobalAllowed(on);
               }}
-            >
-              <span className={cn("text-sm", rate === l.id ? "text-accent" : "text-text")}>
-                {l.label}
-              </span>
-              <span className="text-xs text-muted">{l.hint}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+              ariaLabel="Allow registering AI tools machine-wide"
+            />
+          }
+        />
+      </SettingsCard>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">How To Use</h2>
-        <p className="text-sm text-muted">
-          A guide to every screen and button, in your browser.
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={openingHelp}
-          onClick={() => {
-            setOpeningHelp(true);
-            commands
-              .openHelp()
-              .then((r) => {
-                if (r.status === "error") toast.error(r.error);
-              })
-              .catch(() =>
-                toast.error("Could not open the help pages. Settings, Logs has the details."),
-              )
-              .finally(() => setOpeningHelp(false));
-          }}
+      <SettingsCard title="Updates" data-tour="settings-updates">
+        <SettingRow
+          name={`Version ${version.data ?? "-"}${onBeta ? " (beta)" : ""}`}
+          description="Updates install automatically from the releases feed."
+          control={
+            <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
+              <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
+              {check.isPending ? "Checking" : "Check for updates"}
+            </Button>
+          }
+        />
+        <SettingRow
+          asLabel
+          name="Download beta builds"
+          description="New features sooner, before the stable release."
+          control={
+            <Switch
+              checked={appSettings.data?.beta_updates ?? false}
+              disabled={!appSettings.data}
+              onCheckedChange={(on) => void setBeta(on)}
+              ariaLabel="Download beta builds"
+            />
+          }
         >
-          <IconHelp aria-hidden />
-          {openingHelp ? "Opening" : "How To Use"}
-        </Button>
-      </section>
+          {onBeta && appSettings.data && !appSettings.data.beta_updates && (
+            <p className="text-xs text-muted">You&apos;re on a beta build. It stays until the next stable release.</p>
+          )}
+        </SettingRow>
+      </SettingsCard>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Interface tour</h2>
-        <p className="text-sm text-muted">
-          Replay the walkthrough that highlights each area of the app.
-        </p>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
-        >
-          <IconTour aria-hidden />
-          Show UI tour
-        </Button>
-      </section>
+      <SettingsCard title="Backup & transfer" data-tour="settings-backup">
+        <SettingRow
+          name="Move to another computer"
+          description="Settings and local data in one file. Your sign-in and database logins stay on this computer."
+          control={
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={exportBackup.isPending}
+                onClick={() => exportBackup.mutate()}
+              >
+                {exportBackup.isPending ? "Exporting" : "Export to file"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={pickImport}>
+                Import from file
+              </Button>
+            </>
+          }
+        />
+        {importPath && (
+          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
+            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
+            <p className="text-sm text-muted">
+              This replaces the settings and local data on this machine with
+              the backup&apos;s copy, then reloads the app. Anything you
+              changed here since the backup was made will be overwritten.
+            </p>
+            <p className="break-all text-xs text-faint">{importPath}</p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={importBackup.isPending}
+                onClick={() => importBackup.mutate(importPath)}
+              >
+                {importBackup.isPending ? "Importing" : "Import and reload"}
+              </Button>
+            </div>
+          </Modal>
+        )}
+      </SettingsCard>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">AI tools</h2>
-        <p className="text-sm text-muted">
-          AI tools register into the working repository picked on the AI Bridge tab. Allow
-          machine-wide registration for a machine that does not work from a repository - the
-          AI Bridge tab then offers the choice. Writing test cases still needs a repository.
-        </p>
-        <label className="flex items-center gap-2 text-sm text-text">
-          <Switch
-            checked={globalAllowed}
-            onCheckedChange={(on) => {
-              saveGlobalAllowed(on);
-              setGlobalAllowed(on);
-            }}
-            ariaLabel="Allow registering AI tools machine-wide"
-          />
-          Allow registering AI tools machine-wide
-        </label>
-      </section>
-
-      <BackgroundSettings />
+      <SettingsCard title="Help & support">
+        {/* Report a bug used to sit in the changelog panel's header; it is
+            still one click from the gear, beside the other two ways of
+            getting help. The report reads the log itself. */}
+        <SettingRow
+          control={
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={openingHelp}
+                onClick={() => {
+                  setOpeningHelp(true);
+                  commands
+                    .openHelp()
+                    .then((r) => {
+                      if (r.status === "error") toast.error(r.error);
+                    })
+                    .catch(() =>
+                      toast.error("Could not open the help pages. Settings, Logs has the details."),
+                    )
+                    .finally(() => setOpeningHelp(false));
+                }}
+              >
+                <IconHelp aria-hidden />
+                {openingHelp ? "Opening" : "How To Use"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
+              >
+                <IconTour aria-hidden />
+                Show UI tour
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setReporting(true)}>
+                <IconBug aria-hidden />
+                Report a bug
+              </Button>
+            </>
+          }
+        />
+      </SettingsCard>
 
       {/* Only on a machine where the optional extras are unlocked (a key
           sequence typed on this screen - see settingsExtras.ts). The
@@ -415,22 +492,22 @@ export default function Settings({ org, project }: { org: string; project: strin
       {/* Capture mode: the owner's machine can be unlocked, but a shot must
           never show it - see dev/capture.ts. */}
       {extrasUnlocked && !isCaptureMode() && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-text">Extras</h2>
-          <p className="text-sm text-muted">
-            Optional extras on this machine. While they are on, Auto Run shows in the
-            sidebar and its tools are offered on the AI Bridge tab.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
-              <IconPlayGame aria-hidden />
-              Play the dino game
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
-              <IconUndo aria-hidden />
-              Reset to default
-            </Button>
-          </div>
+        <SettingsCard title="Extras">
+          <SettingRow
+            description="Optional extras on this machine. While they are on, Auto Run shows in the sidebar and its tools are offered on the AI Bridge tab."
+            control={
+              <>
+                <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
+                  <IconPlayGame aria-hidden />
+                  Play the dino game
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
+                  <IconUndo aria-hidden />
+                  Reset to default
+                </Button>
+              </>
+            }
+          />
           {confirmReset && (
             <Modal onClose={() => setConfirmReset(false)} className="w-full max-w-sm space-y-4 p-5">
               <h3 className="text-sm font-semibold text-text">Hide these extras again?</h3>
@@ -445,12 +522,12 @@ export default function Settings({ org, project }: { org: string; project: strin
             </Modal>
           )}
           {gameOpen && <RunnerGameModal onClose={() => setGameOpen(false)} />}
-        </section>
+        </SettingsCard>
       )}
 
       {/* The Module / Preconditions field mapping is auto-detected
           (useFieldRefs ranked match) and deliberately NOT user-editable -
-          re-add a "Test case fields" section here if that ever needs a
+          re-add a "Test case fields" row here if that ever needs a
           manual override. */}
 
       {/* Default tags used to live here. They moved to Manual Entry, which
@@ -459,9 +536,11 @@ export default function Settings({ org, project }: { org: string; project: strin
 
       </div>
 
-      {/* The right column: the changelog (or the app log) kept short, with
-          the remaining settings under it rather than a column of history. */}
-      <div className="space-y-8">
+      {/* The right column: the changelog (or the app log) on its own. On
+          wide windows it stays in view while the settings scroll past it -
+          sticky within the screen's scroll container, and capped to the
+          window so its own lower edge is always reachable. */}
+      <div className="lg:sticky lg:top-0 lg:max-h-[calc(100vh-9rem)] lg:overflow-y-auto">
       {/* Masked in the visual regression suite: this panel's content
           changes with every release (and every log line), which would
           otherwise invalidate the Settings golden on each ship. */}
@@ -470,13 +549,7 @@ export default function Settings({ org, project }: { org: string; project: strin
           <h2 className="text-sm font-semibold text-text">
             {rightPanel === "changelog" ? "Changelog" : "App log"}
           </h2>
-          {/* One click from the gear: reporting a bug must not need a trip
-              through the Logs panel first. The report reads the log itself. */}
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setReporting(true)}>
-            <IconBug aria-hidden />
-            Report a bug
-          </Button>
-          <div className="flex rounded-md border border-border p-0.5">
+          <div className="ml-auto flex rounded-md border border-border p-0.5">
             {(["changelog", "logs"] as const).map((p) => (
               <button
                 key={p}
@@ -551,7 +624,7 @@ export default function Settings({ org, project }: { org: string; project: strin
             <ChangelogVersion key={e.version} entry={e} />
           ))}
           {/* Earlier versions unfold in place, in a box of their own so a
-              long history scrolls without pushing the settings below it
+              long history scrolls without pushing the panel's own edge
               off the screen. */}
           <Collapse open={allChanges}>
             <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
@@ -573,78 +646,6 @@ export default function Settings({ org, project }: { org: string; project: strin
           )}
           </div>
         )}
-      </section>
-
-      <section data-tour="settings-backup" className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
-        <p className="text-sm text-muted">
-          Moving to a new computer? Export your settings and local data -
-          theme, default tags, drafts and cached lists - to a single file,
-          then import it on the other machine. Your Microsoft sign-in is
-          never included; you simply sign in again there. Database logins
-          stay on this computer and are not included either.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={exportBackup.isPending}
-            onClick={() => exportBackup.mutate()}
-          >
-            {exportBackup.isPending ? "Exporting" : "Export to file"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={pickImport}>
-            Import from file
-          </Button>
-        </div>
-        {importPath && (
-          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
-            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
-            <p className="text-sm text-muted">
-              This replaces the settings and local data on this machine with
-              the backup&apos;s copy, then reloads the app. Anything you
-              changed here since the backup was made will be overwritten.
-            </p>
-            <p className="break-all text-xs text-faint">{importPath}</p>
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={importBackup.isPending}
-                onClick={() => importBackup.mutate(importPath)}
-              >
-                {importBackup.isPending ? "Importing" : "Import and reload"}
-              </Button>
-            </div>
-          </Modal>
-        )}
-      </section>
-
-      <section data-tour="settings-updates" className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Updates</h2>
-        <p className="text-sm text-muted">
-          Version {version.data ?? "-"}
-          {onBeta ? " (beta)" : ""} - updates install automatically from
-          the releases feed.
-        </p>
-        <label className="flex items-center gap-2 text-sm text-text">
-          <Switch
-            checked={appSettings.data?.beta_updates ?? false}
-            disabled={!appSettings.data}
-            onCheckedChange={(on) => void setBeta(on)}
-            ariaLabel="Download beta builds"
-          />
-          Download beta builds
-        </label>
-        {onBeta && appSettings.data && !appSettings.data.beta_updates && (
-          <p className="text-xs text-muted">You&apos;re on a beta build. It stays until the next stable release.</p>
-        )}
-        <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-          <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
-          {check.isPending ? "Checking" : "Check for updates"}
-        </Button>
       </section>
 
       </div>

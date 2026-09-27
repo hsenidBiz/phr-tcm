@@ -41,3 +41,14 @@ test("false when localStorage throws (no storage available)", () => {
   expect(isCaptureMode()).toBe(false);
   spy.mockRestore();
 });
+
+// A plain `tauri dev` shares the app's local storage with `npm run
+// docs:dev`, so a flag left on by an interrupted capture used to open the
+// ordinary dev app with sample names and no DEV panel. Only docs:dev sets
+// the marker; without it the flag means nothing.
+test("false in a dev build that docs:dev did not start, even with the flag on", () => {
+  vi.stubEnv("DEV", true);
+  vi.stubEnv("VITE_DOCS_CAPTURE", "");
+  localStorage.setItem(CAPTURE_KEY, "on");
+  expect(isCaptureMode()).toBe(false);
+});

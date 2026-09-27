@@ -1,6 +1,5 @@
-// Settings: the look of the app, how fast it talks to Azure DevOps, this
-// guide, the interface tour, the AI tool options, the changelog and log,
-// bug reports, backup and updates.
+// Settings: cards of settings on the left (appearance, general, AI tools,
+// updates, backup, help and support) and the changelog and log on the right.
 //
 // Locates come from screens/Settings.tsx and lib/adoRate.ts. Settings opens
 // from the gear in the context bar, not the sidebar. No route clicks a
@@ -23,11 +22,11 @@ export const settings: Screen = {
   summary:
     "Open Settings with the gear at the top right; press it again to go back. Everything here is saved on this computer as soon as you change it.",
   shots: [
-    { id: MAIN, route: [OPEN], alt: "Settings: appearance and request rate on the left, the changelog, backup and updates on the right" },
+    { id: MAIN, route: [OPEN], alt: "Settings: the Appearance and General cards on the left, the changelog on the right" },
     {
       id: MORE,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Start with Windows" } }],
-      alt: "Settings scrolled down to How To Use, the interface tour, AI tools and Background",
+      route: [OPEN, { scrollTo: { role: "button", name: "Show UI tour" } }],
+      alt: "Settings scrolled down to the AI tools, Updates, Backup and Help cards",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -45,11 +44,12 @@ export const settings: Screen = {
   ],
   groups: [
     { id: "appearance", title: "Appearance", summary: "The theme and the accent colour." },
-    { id: "rate", title: "Azure DevOps request rate", summary: "How fast the app may call Azure DevOps." },
-    { id: "changelog-logs", title: "Changelog, logs and bug reports", summary: "What changed in each version, the app's own log, and a way to report a problem." },
-    { id: "backup-updates", title: "Backup and updates", summary: "Move your settings to another computer, and check for a new version." },
-    { id: "help-and-options", title: "Help, the tour and AI tools options", summary: "Further down: this guide, the interface tour, and a switch for AI Bridge." },
-    { id: "background", title: "Running in the background", summary: "Keep the app running in the tray when its window is closed, and start it with Windows." },
+    { id: "general", title: "General", summary: "Running in the tray, starting with Windows, and how fast the app may call Azure DevOps." },
+    { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
+    { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
+    { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
+    { id: "help", title: "Help and support", summary: "This guide, the interface tour, and reporting a problem with the app." },
+    { id: "changelog-logs", title: "Changelog and logs", summary: "What changed in each version, and the app's own log." },
   ],
   controls: [
     // --- Appearance and request rate ------------------------------------------
@@ -80,19 +80,19 @@ export const settings: Screen = {
     {
       id: "request-rate",
       shot: MAIN,
-      group: "rate",
+      group: "general",
       locate: { role: "button", nameRe: "^Full speed" },
       name: "Azure DevOps request rate",
       does:
-        "How quickly the app sends requests. Azure DevOps limits requests per person, and your browser uses the same allowance. **Full speed** is the default; " +
-        "choose **Balanced** if Azure DevOps warns you about usage, or **Gentle** while you are working in Azure DevOps too.",
+        "How quickly the app sends requests: **Full speed**, **Balanced** or **Gentle**, with the chosen one explained underneath. Azure DevOps limits requests per person, and your browser uses the same allowance. " +
+        "**Full speed** is the default; choose **Balanced** if Azure DevOps warns you about usage, or **Gentle** while you are working in Azure DevOps too.",
     },
 
     // --- Changelog, backup, updates -------------------------------------------
     {
       id: "report-bug",
-      shot: MAIN,
-      group: "changelog-logs",
+      shot: MORE,
+      group: "help",
       locate: { role: "button", name: "Report a bug" },
       name: "Report a bug",
       does: "Opens a window for reporting a problem with this app (see below). Problems in the product you test are filed from the runner instead.",
@@ -123,8 +123,8 @@ export const settings: Screen = {
     },
     {
       id: "export-backup",
-      shot: MAIN,
-      group: "backup-updates",
+      shot: MORE,
+      group: "backup",
       locate: { role: "button", name: "Export to file" },
       name: "Export to file",
       does:
@@ -133,8 +133,8 @@ export const settings: Screen = {
     },
     {
       id: "import-backup",
-      shot: MAIN,
-      group: "backup-updates",
+      shot: MORE,
+      group: "backup",
       locate: { role: "button", name: "Import from file" },
       name: "Import from file",
       does:
@@ -143,17 +143,17 @@ export const settings: Screen = {
     },
     {
       id: "check-updates",
-      shot: MAIN,
-      group: "backup-updates",
+      shot: MORE,
+      group: "updates",
       locate: { role: "button", name: "Check for updates" },
       name: "Check for updates",
       does:
-        "Asks whether a newer version is out. The version you have is shown above it. The app also checks by itself when it starts and every hour; when a version is ready, a bar at the top offers **Restart to update**.",
+        "Asks whether a newer version is out. The version you have is shown beside it. The app also checks by itself when it starts and every hour; when a version is ready, a bar at the top offers **Restart to update**.",
     },
     {
       id: "beta-builds",
-      shot: MAIN,
-      group: "backup-updates",
+      shot: MORE,
+      group: "updates",
       locate: { role: "switch", name: "Download beta builds" },
       name: "Download beta builds",
       does:
@@ -164,7 +164,7 @@ export const settings: Screen = {
     {
       id: "how-to-use",
       shot: MORE,
-      group: "help-and-options",
+      group: "help",
       locate: { role: "button", name: "How To Use" },
       name: "How To Use",
       does: "Opens this guide in your browser. It comes with the app, so it works offline and always matches the version you have.",
@@ -172,7 +172,7 @@ export const settings: Screen = {
     {
       id: "show-tour",
       shot: MORE,
-      group: "help-and-options",
+      group: "help",
       locate: { role: "button", name: "Show UI tour" },
       name: "Show UI tour",
       does: "Replays the walkthrough that highlights each area of the app.",
@@ -180,7 +180,7 @@ export const settings: Screen = {
     {
       id: "allow-machine-wide",
       shot: MORE,
-      group: "help-and-options",
+      group: "ai-tools",
       locate: { role: "switch", name: "Allow registering AI tools machine-wide" },
       name: "Allow registering AI tools machine-wide",
       does:
@@ -190,8 +190,8 @@ export const settings: Screen = {
     // --- Background ---------------------------------------------------------------
     {
       id: "close-to-tray",
-      shot: MORE,
-      group: "background",
+      shot: MAIN,
+      group: "general",
       locate: { role: "switch", name: "Keep running in the tray when closed" },
       name: "Keep running in the tray when closed",
       does:
@@ -199,8 +199,8 @@ export const settings: Screen = {
     },
     {
       id: "start-with-windows",
-      shot: MORE,
-      group: "background",
+      shot: MAIN,
+      group: "general",
       locate: { role: "switch", name: "Start with Windows" },
       name: "Start with Windows",
       does: "Starts the app in the notification area when you sign in to Windows, without opening its window.",

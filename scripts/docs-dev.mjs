@@ -20,7 +20,14 @@ const child = spawn("npm run tauri dev", {
   cwd: repo,
   shell: true,
   stdio: "inherit",
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` },
+  // VITE_DOCS_CAPTURE lets the app honour the capture flag at all
+  // (src/dev/capture.ts): a plain `tauri dev` never has it, so a flag left
+  // behind by an interrupted capture cannot leak into ordinary dev work.
+  env: {
+    ...process.env,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
+    VITE_DOCS_CAPTURE: "1",
+  },
 });
 
 child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
