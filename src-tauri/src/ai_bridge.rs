@@ -2138,7 +2138,7 @@ fn parse_cases_with_warnings(
 }
 
 /// Run a draft through the app's REAL importer to get `TestCase`s, so
-/// these tools accept exactly what the Import File tab accepts (bare
+/// these tools accept exactly what the Import Test Cases tab accepts (bare
 /// array, `test_cases` wrapper, the lot).
 /// The project's existing tag names, for suggesting tags that match what
 /// the team already uses instead of inventing near-duplicates.
@@ -2310,7 +2310,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
     format!(
         "# Writing test cases for Test Case Manager ({org}/{project})\n\n\
         Produce a JSON array of test cases. The developer imports it via the\n\
-        Import File tab, reviews, then creates - you never write to Azure DevOps.\n\n\
+        Import Test Cases tab, reviews, then creates - you never write to Azure DevOps.\n\n\
         ## Use these tools; do not rebuild them\n\
         Do NOT write your own script, generator or one-off parser to produce,\n\
         transform, validate or reformat test cases. Use the tools: they carry\n\

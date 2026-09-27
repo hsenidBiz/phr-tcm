@@ -206,7 +206,7 @@ export default function ViewCases({
 
   // Same scope rule as the browser view: the selection when there is one,
   // otherwise everything the filter shows. The exported JSON is the
-  // Import File format, ids included - so re-importing it updates these
+  // Import Test Cases format, ids included - so re-importing it updates these
   // exact cases rather than creating copies.
   const exportJson = useMutation({
     mutationFn: async () => {
@@ -308,7 +308,7 @@ export default function ViewCases({
           <Button
             variant="outline"
             size="sm"
-            title="Save as an Import File JSON - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
+            title="Save as JSON for Import Test Cases - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
             disabled={chosen.length === 0 || exportJson.isPending}
             onClick={() => exportJson.mutate()}
           >

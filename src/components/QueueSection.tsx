@@ -85,7 +85,7 @@ const HOLD_REFUSAL =
   "Some cases from the last upload have an unknown outcome - check them before uploading again.";
 
 /** The shared pending-creation queue with the review gate, live progress and
- * exports. Manual Entry and Import File both render this under their own
+ * exports. Manual Entry and Import Test Cases both render this under their own
  * input areas (v1: every tab feeds one queue). */
 /** One recently imported file. The row asks the disk whether the file
  * still exists (fileStamp is null for a missing one) and says so instead
@@ -1889,7 +1889,7 @@ export default function QueueSection({
           actionRowEl.current = el;
         }}
         // The dock's default row is right-aligned for the standard case;
-        // this row has always read left-to-right instead, and Import File
+        // this row has always read left-to-right instead, and Import Test Cases
         // has to look unchanged.
         className="justify-start gap-3"
         // The floating copy stands down for the armed warning and the

@@ -73,7 +73,7 @@ function renderQueue(initial: TestCase[]) {
 }
 
 /** Six full renders of QueueSection happened on every tab switch, and each
- * rebuilt every row - 104 rows made switching to or from Import File take
+ * rebuilt every row - 104 rows made switching to or from Import Test Cases take
  * a quarter of a second. Rows must render once on mount and then only
  * when their own inputs change. */
 test("a re-render of the queue's owner does not re-render the rows", async () => {

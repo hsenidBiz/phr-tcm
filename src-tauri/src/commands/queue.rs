@@ -422,7 +422,7 @@ pub fn save_general_comment(
     write_general_comment(&app, &path, &text)
 }
 
-/// Save the `specs` list from the Import File tab's Attach control. Returns
+/// Save the `specs` list from the Import Test Cases tab's Attach control. Returns
 /// the file's new fingerprint so the caller can move its watch forward.
 #[tauri::command]
 #[specta::specta]

@@ -113,7 +113,7 @@ test("a duplicate title warns in review and holds the write until accepted", asy
   await waitFor(() => expect(go).toBeEnabled());
 });
 
-test("draft queue persists across remounts (shared with Import File)", async () => {
+test("draft queue persists across remounts (shared with Import Test Cases)", async () => {
   baseMocks();
   const first = renderScreen();
   addCase("Persistent case");

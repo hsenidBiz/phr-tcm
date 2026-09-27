@@ -1,6 +1,6 @@
 // Manual Entry: the form for writing one test case by hand, and the
 // Default tags window it opens. The queue below the form is the same
-// QueueSection Import File shows, and is documented there.
+// QueueSection Import Test Cases shows, and is documented there.
 //
 // Locates come from ManualEntry.tsx ("Automation status"), StepsEditor.tsx
 // ("Reorder step N", "Step N action/expected", "Remove step N"), TagsField ("Tags"),
@@ -18,7 +18,7 @@ export const manualEntry: Screen = {
   group: "Test cases",
   summary:
     "Write a test case by hand: a title, its steps and the optional fields, then add it to the queue. " +
-    "The queue is the same one Import File shows, so cases you write and cases you import are reviewed and uploaded together.",
+    "The queue is the same one Import Test Cases shows, so cases you write and cases you import are reviewed and uploaded together.",
   shots: [
     { id: FORM, route: [{ nav: "Manual Entry" }], alt: "Manual Entry with an empty form and three cases in the queue" },
     {
@@ -138,7 +138,7 @@ export const manualEntry: Screen = {
       group: "queue-it",
       locate: { text: "Queue for PBI #1001 (3 queued)" },
       name: "Queue",
-      does: "The cases waiting to be uploaded to this Product Backlog Item. It is the same queue as on Import File, where every part of it is explained.",
+      does: "The cases waiting to be uploaded to this Product Backlog Item. It is the same queue as on Import Test Cases, where every part of it is explained.",
     },
     {
       id: "default-tags-field",
@@ -166,7 +166,7 @@ export const manualEntry: Screen = {
     },
   ],
   tips: [
-    "Nothing reaches Azure DevOps until you review the queue and confirm the upload on Import File or here.",
+    "Nothing reaches Azure DevOps until you review the queue and confirm the upload on Import Test Cases or here.",
     "A case written here is always created new. To change a case already in Azure DevOps, use Update Test Cases, or import a file that carries its id.",
     "The queue is kept on this computer for each Product Backlog Item, so closing the app never loses it.",
   ],

@@ -13,13 +13,13 @@ export const sample: SiteContent = {
   screens: [
     {
       id: "sample-import",
-      title: "Import File",
+      title: "Import Test Cases",
       group: "Test cases",
       summary:
         "Bring in test cases from a JSON file, check them in the queue, then upload them to the selected PBI. A case with an id updates that work item; a blank id creates a new one.",
       shots: [
-        { id: "sample-import-queue", route: [], alt: "Import File with three cases in the queue" },
-        { id: "sample-import-review", route: [], alt: "Import File with the review panel open" },
+        { id: "sample-import-queue", route: [], alt: "Import Test Cases with three cases in the queue" },
+        { id: "sample-import-review", route: [], alt: "Import Test Cases with the review panel open" },
       ],
       controls: [
         { id: "choose-file", shot: "sample-import-queue", locate: { role: "button", name: "Choose file" }, name: "Choose file", does: "Opens a JSON file of test cases and adds them to the queue." },

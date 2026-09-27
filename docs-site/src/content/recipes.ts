@@ -34,7 +34,7 @@ export const recipes: Recipe[] = [
     steps: [
       { text: "With the cases in the queue, press **Share for review**. The link is copied for you.", link: "import-file/share-for-review" },
       { text: "Send the link to your reviewer. It works once." },
-      { text: "The reviewer pastes it into **Share link** on Import File and presses **Import shared**.", link: "import-file/import-shared" },
+      { text: "The reviewer pastes it into **Share link** on Import Test Cases and presses **Import shared**.", link: "import-file/import-shared" },
       { text: "They read the cases and leave comments with **View in browser**.", link: "import-file/view-in-browser" },
     ],
   },
@@ -109,7 +109,7 @@ export const recipes: Recipe[] = [
       { text: "On AI Bridge, press **Add repository** and pick the repository the cases belong to.", link: "ai-bridge/add-repository" },
       { text: "Press **Register** beside your assistant, then start its session in that repository.", link: "ai-bridge/register" },
       { text: "Ask it to write test cases for your Product Backlog Item. It saves them as a file in the repository's .test-cases folder.", link: "ai-bridge/breakdown" },
-      { text: "Import the file on Import File, review the queue and upload it.", link: "import-file/import-json" },
+      { text: "Import the file on Import Test Cases, review the queue and upload it.", link: "import-file/import-json" },
     ],
   },
 ];

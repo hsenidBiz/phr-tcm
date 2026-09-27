@@ -162,7 +162,7 @@ function detach(unlisten: (() => void) | undefined): void {
 
 const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
-  import: "Import File",
+  import: "Import Test Cases",
   edit: "Update Test Cases",
   view: "View Test Cases",
   run: "Run Tests",

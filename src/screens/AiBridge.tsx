@@ -720,7 +720,7 @@ export default function AiBridge() {
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some
           example cases, have it draft cases for your PBI, have it build the run
-          sheet, then import the result yourself via the Import File tab. Keep
+          sheet, then import the result yourself via the Import Test Cases tab. Keep
           the file watched and any problems appear here as it saves — the AI
           never has to ask whether the draft is valid.
         </p>

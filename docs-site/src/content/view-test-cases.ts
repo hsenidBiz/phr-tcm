@@ -61,7 +61,7 @@ export const viewTestCases: Screen = {
       locate: { role: "button", name: "Export JSON" },
       name: "Export JSON",
       does:
-        "Saves the cases to a JSON file in the Import File format: the selected ones, or every case shown when none is selected. " +
+        "Saves the cases to a JSON file in the Import Test Cases format: the selected ones, or every case shown when none is selected. " +
         "Their ids are included, so importing the file later updates these cases instead of creating copies.",
     },
     {
@@ -70,7 +70,7 @@ export const viewTestCases: Screen = {
       locate: { role: "button", name: "View All Test Cases in Browser" },
       name: "View All Test Cases in Browser",
       does:
-        "Opens the cases as a page in your browser: the selected ones, or every case shown when none is selected. It is the same page as **View in browser** on Import File. " +
+        "Opens the cases as a page in your browser: the selected ones, or every case shown when none is selected. It is the same page as **View in browser** on Import Test Cases. " +
         "Comments typed on it are kept as the cases' local comments here.",
       tips: ["While the page is open, it keeps up with what you select here and offers to refresh."],
     },

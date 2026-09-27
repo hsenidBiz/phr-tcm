@@ -468,7 +468,7 @@ function mockWatched(contents: unknown[], stampNow: string) {
 const fileChanged = (stamp: string) =>
   emit("watched-file-changed", { path: CASE_PATH, stamp });
 
-/// Field report 2026-09-02: Import File was already open during intake,
+/// Field report 2026-09-02: Import Test Cases was already open during intake,
 /// the "Watching …" toast appeared, the assistant wrote the file - and
 /// nothing imported. App had saved the watch to storage, but the mounted
 /// tab only re-reads storage on mount or a scope switch, so no OS watcher

@@ -540,7 +540,7 @@ export const commands = {
 	 */
 	saveGeneralComment: (path: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_general_comment", { path, text })),
 	/**
-	 *  Save the `specs` list from the Import File tab's Attach control. Returns
+	 *  Save the `specs` list from the Import Test Cases tab's Attach control. Returns
 	 *  the file's new fingerprint so the caller can move its watch forward.
 	 */
 	saveSpecs: (path: string, specs: string[]) => typedError<string, string>(__TAURI_INVOKE("save_specs", { path, specs })),
