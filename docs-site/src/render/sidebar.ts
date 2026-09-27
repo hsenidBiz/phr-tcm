@@ -5,6 +5,7 @@
 // hovering or focusing a screen's link opens its list as well (styles.css).
 
 import { GROUPS, type SiteContent } from "../types";
+import { ACKNOWLEDGEMENTS_ID } from "./acknowledgements";
 import { h } from "./dom";
 
 export function renderSidebar(content: SiteContent): HTMLElement {
@@ -53,6 +54,10 @@ export function renderSidebar(content: SiteContent): HTMLElement {
       ),
     );
   }
+  // The credits close the page, and the contents with it.
+  groups.appendChild(
+    h("ul", { class: "nav-list nav-end" }, h("li", {}, h("a", { href: `#${ACKNOWLEDGEMENTS_ID}`, class: "nav-link", "data-spy": ACKNOWLEDGEMENTS_ID }, "Acknowledgements"))),
+  );
   nav.appendChild(groups);
   return nav;
 }
