@@ -215,7 +215,7 @@ use v2_lib::updater::{resolve, sources, Attempt, UpdateState};
 /// `latest/download`, which moves.
 #[test]
 fn the_sources_are_the_two_github_ones_in_order() {
-    let list = sources();
+    let list = sources(false);
     let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
     assert_eq!(names, ["github api", "latest/download"]);
 }
@@ -312,4 +312,79 @@ fn an_empty_feed_from_every_source_is_blocked_not_up_to_date() {
         "must not silently become up to date: {:?}",
         s.blocked
     );
+}
+
+#[test]
+fn versions_order_with_the_beta_suffix() {
+    use v2_lib::updater::parse_version;
+    let order = ["1.25.31", "1.26.0-beta.1", "1.26.0-beta.2", "1.26.0-beta.10", "1.26.0", "1.26.1-beta.1"];
+    let parsed: Vec<_> = order.iter().map(|v| parse_version(v).unwrap_or_else(|| panic!("{v} parses"))).collect();
+    for pair in parsed.windows(2) {
+        assert!(pair[0] < pair[1], "{} < {}", pair[0], pair[1]);
+    }
+    assert!(parse_version("dev").is_none());
+    assert!(parse_version("1.26").is_none());
+}
+
+#[test]
+fn a_beta_is_a_version_with_the_beta_suffix() {
+    use v2_lib::updater::is_beta;
+    assert!(is_beta("1.26.0-beta.1"));
+    assert!(!is_beta("1.26.0"));
+    assert!(!is_beta("dev"));
+}
+
+/// A failed "Restart to update" from a beta to the stable above it is still
+/// recognised, and one that landed is not.
+#[test]
+fn a_failed_update_is_recognised_across_a_beta() {
+    use v2_lib::updater::{failed_attempt, note_attempt};
+    let d = tempfile::tempdir().unwrap();
+    note_attempt(d.path(), "1.26.0");
+    assert_eq!(failed_attempt(d.path(), "1.26.0-beta.3"), Some("1.26.0".into()));
+    assert_eq!(failed_attempt(d.path(), "1.26.0"), None);
+}
+
+/// Stable installs read stable releases only; the beta switch adds
+/// prereleases on the GitHub source. The `latest/download` mirror never
+/// includes them - GitHub points it at the newest non-prerelease.
+#[test]
+fn the_sources_follow_the_beta_setting() {
+    use v2_lib::updater::source_plan;
+    assert_eq!(source_plan(false), vec![("github api", false), ("latest/download", false)]);
+    assert_eq!(source_plan(true), vec![("github api", true), ("latest/download", false)]);
+    // The sources that run are built from that plan, in its order - so the
+    // plan above is what a check actually uses.
+    for beta in [false, true] {
+        let names: Vec<_> = sources(beta).iter().map(|(n, _)| *n).collect();
+        let planned: Vec<_> = source_plan(beta).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, planned, "beta={beta}");
+    }
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/updater/mod.rs")).unwrap();
+    let flat = src.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("source_plan(beta) .into_iter()"), "sources() is built from the plan");
+    assert!(
+        flat.contains("GithubSource::new(REPO_URL, None, prerelease)"),
+        "the GitHub source takes the plan's prerelease flag"
+    );
+}
+
+/// A source whose answer names no release (e.g. the GitHub API's last ten
+/// releases were all betas, on a stable install) is not "up to date": the
+/// check moves on to the next source.
+#[test]
+fn an_empty_answer_moves_on_to_the_next_source() {
+    use v2_lib::updater::{attempt_from, Attempt};
+    use velopack::UpdateCheck;
+    assert!(matches!(attempt_from("github api", Ok(UpdateCheck::RemoteIsEmpty)), Attempt::Failed(_)));
+    assert!(matches!(attempt_from("github api", Ok(UpdateCheck::NoUpdateAvailable)), Attempt::UpToDate));
+}
+
+/// Opting out of betas on a beta build must never offer the older stable:
+/// the managers never allow a downgrade.
+#[test]
+fn no_update_manager_allows_a_downgrade() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/updater/mod.rs")).unwrap();
+    assert!(!src.contains("AllowVersionDowngrade: true"), "downgrades stay off");
+    assert!(src.contains("UpdateManager::new_boxed(src, None, None)"), "managers use Velopack's default options");
 }

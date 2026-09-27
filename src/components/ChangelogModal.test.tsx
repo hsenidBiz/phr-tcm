@@ -25,3 +25,24 @@ test("Got it and the backdrop both dismiss", () => {
   fireEvent.click(screen.getByText("Version 1.9.0"));
   expect(onClose).toHaveBeenCalledTimes(1);
 });
+
+test("beta entries carry a Beta tag, stable ones do not", () => {
+  render(
+    <ChangelogModal
+      entries={[
+        { version: "1.26.0", date: "2026-10-05", items: ["Stable."] },
+        { version: "1.26.0-beta.1", date: "2026-10-01", items: ["Beta."] },
+      ]}
+      onClose={() => {}}
+    />,
+  );
+  const headings = screen.getAllByRole("heading", { level: 3 });
+  // No literal whitespace separates "Version {version}" from the date span
+  // in the rendered DOM (spacing is CSS margin, ml-2, not text) - this
+  // matches today's stable heading exactly, so existing getByText("Version
+  // 1.9.0")-style assertions elsewhere are unaffected by this change.
+  expect(headings.map((h) => h.textContent)).toEqual([
+    "Version 1.26.02026-10-05",
+    "Version 1.26.0-beta.1 Beta2026-10-01",
+  ]);
+});

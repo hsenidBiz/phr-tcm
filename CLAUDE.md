@@ -162,7 +162,10 @@ v1 and went with it. The suites above are the gate.
   `hsenidBiz/phr-tcm` (the real one) and the old personal repo as a mirror.
   Never publish without the source pushed. A failure on either upload is
   fatal — half-published is what strands people — and the fix is to re-run
-  the one named upload, never the whole release.
+  the one named upload, never the whole release. A version `X.Y.Z-beta.N`
+  is published as a GitHub prerelease that only installs with Download
+  beta builds on receive; its changelog entry uses the same version
+  string.
 - **The version lives in three places** and the release script refuses if
   they disagree: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
   and a matching entry in `src/lib/changelog.ts`.

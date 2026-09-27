@@ -1,13 +1,12 @@
-//! The main window is visible from the moment the process creates it,
-//! painted the splash's colour until the page draws.
+//! The main window is shown by Rust in setup - immediately, long before the
+//! page loads - painted the splash's colour until the page draws. The
+//! config creates it hidden only so a start at sign-in (`--hidden`, Start
+//! with Windows) can stay in the tray without a window flashing up.
 //!
-//! It used to start hidden and wait for the frontend to call `show()` once
-//! React had mounted, to avoid a white flash. On a slow machine that wait -
-//! WebView2's cold start plus loading and running the whole bundle - was
-//! several seconds of a process in Task Manager and nothing on screen, and
-//! the splash in index.html, made for exactly that wait, was drawn into a
-//! window nobody could see. A background colour on the window and webview
-//! avoids the flash without hiding anything.
+//! It must never go back to waiting for the FRONTEND to show it: that was
+//! several seconds of nothing on screen on a slow machine (WebView2's cold
+//! start plus the whole bundle), with the splash drawn into a window nobody
+//! could see.
 
 use std::path::Path;
 
@@ -39,12 +38,20 @@ fn splash_background() -> String {
 }
 
 #[test]
-fn the_main_window_is_shown_at_once() {
-    assert_eq!(
-        main_window()["visible"],
-        serde_json::Value::Bool(true),
-        "a hidden main window leaves a slow machine with nothing on screen until the whole bundle has run"
+fn the_main_window_is_created_hidden_and_shown_by_setup_not_by_the_page() {
+    assert_eq!(main_window()["visible"], serde_json::json!(false));
+    let lib = std::fs::read_to_string(manifest_dir().join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains("tray::start_hidden(std::env::args())") && lib.contains("tray::show_main("),
+        "setup shows the main window unless the launch asked to start hidden"
     );
+    assert!(
+        lib.contains("|| !tray::tray_ok()"),
+        "a hidden start with no tray icon still shows the window - nothing else could"
+    );
+    // The page never shows the window itself.
+    let src = std::fs::read_to_string(manifest_dir().join("../src/main.tsx")).unwrap();
+    assert!(!src.contains(".show()"), "main.tsx must not show the window");
 }
 
 #[test]

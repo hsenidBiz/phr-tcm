@@ -7,7 +7,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [switch]$SkipChecks,
-    [switch]$AlsoLegacy
+    [switch]$AlsoLegacy,
+    [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
 trap {
@@ -23,7 +24,9 @@ $repoUrl = "https://github.com/hsenidBiz/phr-tcm"
 # straggler ever needs it.
 $legacyRepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
+if ($Version -notmatch '^\d+\.\d+\.\d+(-beta\.\d+)?$') { throw "Version must be X.Y.Z or X.Y.Z-beta.N, got '$Version'" }
+$IsBeta = $Version -match '-beta\.\d+$'
+if ($IsBeta -and $AlsoLegacy) { throw "-AlsoLegacy does not take a beta: the old feed has no beta readers." }
 
 
 # -Version is only the Velopack tag. The version the APP reports - in the
@@ -51,6 +54,22 @@ if ($Matches[1] -ne $Version) {
 $changelog = Get-Content (Join-Path $v2 "src\lib\changelog.ts") -Raw
 if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
     throw "src/lib/changelog.ts has no entry for $Version - without one the update installs silently."
+}
+
+# A beta is published as a GitHub PRERELEASE on the same feed: installs
+# read prereleases only when Settings > Download beta builds is on, so
+# nothing on the stable line ever moves to a beta.
+$uploadArgs = @("upload", "github", "--repoUrl", $repoUrl, "--publish", "--releaseName", "v$Version", "--tag", "v$Version")
+if ($IsBeta) { $uploadArgs += "--pre" }
+# Velopack packs only target\release\v2.exe. A beta skips Tauri's own
+# installers (the MSI one refuses a non-numeric prerelease label).
+$buildArgs = @("run", "tauri", "build")
+if ($IsBeta) { $buildArgs += @("--", "--no-bundle") }
+if ($DryRun) {
+    Write-Host "Dry run: $Version (beta: $IsBeta)"
+    Write-Host "  npm $($buildArgs -join ' ')"
+    Write-Host "  vpk $($uploadArgs -join ' ') --token *** --outputDir Releases"
+    return
 }
 
 # --- Keep the machine usable -----------------------------------------------
@@ -109,7 +128,7 @@ foreach ($remote in @("origin", "personal")) {
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git push $remote failed - source must be pushed to both repositories before publishing" }
 }
 
-npm run tauri build
+& npm @buildArgs
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tauri build failed" }
 Pop-Location
 
@@ -122,7 +141,7 @@ Pop-Location
 # half-published is the state that strands people.
 $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
-vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
+& vpk @uploadArgs --token $token --outputDir (Join-Path $v2 "Releases")
 if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
 if ($AlsoLegacy) {
     vpk upload github --repoUrl $legacyRepoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")

@@ -486,3 +486,37 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   expect(offRender.getByRole("button", { name: "Reset to default" })).toBeInTheDocument();
   offRender.unmount();
 });
+
+test("Download beta builds is off by default and turning it on checks for updates", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:app|version") return "1.26.0";
+    if (cmd === "get_app_settings") return { close_to_tray: true, close_notice_shown: true, beta_updates: false };
+    if (cmd === "set_beta_updates") {
+      calls.push(`beta:${(args as { on: boolean }).on}`);
+      return { close_to_tray: true, close_notice_shown: true, beta_updates: (args as { on: boolean }).on };
+    }
+    if (cmd === "check_update") {
+      calls.push("check");
+      return { available: null, blocked: null, failed_attempt: null };
+    }
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const beta = await screen.findByRole("switch", { name: "Download beta builds" });
+  await waitFor(() => expect(beta).toHaveAttribute("aria-checked", "false"));
+  expect(screen.queryByText(/You're on a beta build/)).not.toBeInTheDocument();
+  fireEvent.click(beta);
+  await waitFor(() => expect(calls).toEqual(["beta:true", "check"]));
+});
+
+test("a beta build says so, and says it stays when betas are off", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:app|version") return "1.26.0-beta.2";
+    if (cmd === "get_app_settings") return { close_to_tray: true, close_notice_shown: true, beta_updates: false };
+    return undefined;
+  });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  expect(await screen.findByText(/Version 1\.26\.0-beta\.2 \(beta\)/)).toBeInTheDocument();
+  expect(screen.getByText("You're on a beta build. It stays until the next stable release.")).toBeInTheDocument();
+});

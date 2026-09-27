@@ -45,25 +45,46 @@ pub struct UpdateState {
 /// The old mirror stays as a second try: it needs only github.com, so a
 /// network that allows the site but blocks `api.github.com` keeps working
 /// exactly as well as it did before.
-pub fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
-    vec![
-        (
-            "github api",
-            // No token: hsenidBiz/phr-tcm is public (checked 2026-09-08: gh
-            // repo view --json isPrivate -> false) and MUST stay so - both
-            // sources are this host, so a private repo takes every install
-            // to FEED_UNREACHABLE. This ships to machines we do not
-            // control; there is nothing safe to embed.
-            Box::new(sources::GithubSource::new(REPO_URL, None, false)),
-        ),
-        ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),
-    ]
+///
+/// Built from `source_plan`, so the tested plan is what actually runs.
+pub fn sources(beta: bool) -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
+    source_plan(beta)
+        .into_iter()
+        .map(|(name, prerelease)| -> (&'static str, Box<dyn sources::UpdateSource>) {
+            if name == GITHUB_API {
+                // No token: hsenidBiz/phr-tcm is public (checked 2026-09-08: gh
+                // repo view --json isPrivate -> false) and MUST stay so - both
+                // sources are this host, so a private repo takes every install
+                // to FEED_UNREACHABLE. This ships to machines we do not
+                // control; there is nothing safe to embed.
+                //
+                // `prerelease` (the plan's reading of `beta`) adds prereleases
+                // - the Settings switch; stable installs never see a beta.
+                (name, Box::new(sources::GithubSource::new(REPO_URL, None, prerelease)))
+            } else {
+                // The mirror takes no prerelease flag: GitHub points
+                // `latest/download` at the newest non-prerelease, so it
+                // never serves a beta whatever the plan says.
+                (name, Box::new(sources::HttpSource::new(RELEASES_URL)))
+            }
+        })
+        .collect()
+}
+
+const GITHUB_API: &str = "github api";
+const LATEST_DOWNLOAD: &str = "latest/download";
+
+/// Each source's name and whether it reads prereleases (betas), in the
+/// order they are tried. Pure, so the beta switch's effect is tested -
+/// and `sources` is built from it, so the test covers what runs.
+pub fn source_plan(beta: bool) -> Vec<(&'static str, bool)> {
+    vec![(GITHUB_API, beta), (LATEST_DOWNLOAD, false)]
 }
 
 /// One manager per reachable source. Empty means "not a Velopack install"
 /// (a dev build), which is the app's cue to offer no update UX at all.
-fn managers() -> Vec<(&'static str, UpdateManager)> {
-    sources()
+fn managers(beta: bool) -> Vec<(&'static str, UpdateManager)> {
+    sources(beta)
         .into_iter()
         .filter_map(|(name, src)| UpdateManager::new_boxed(src, None, None).ok().map(|um| (name, um)))
         .collect()
@@ -124,14 +145,16 @@ pub fn failed_attempt(data_dir: &std::path::Path, running: &str) -> Option<Strin
     }
 }
 
-/// "1.20.8" as an orderable triple. Anything else is None - a marker this
-/// cannot read is a marker not worth alarming anyone over.
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.trim().split('.').map(|p| p.parse::<u64>().ok());
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(Some(a)), Some(Some(b)), Some(Some(c)), None) => Some((a, b, c)),
-        _ => None,
-    }
+/// A version as Velopack orders it: semver, so `1.26.0-beta.2` sits
+/// between `1.26.0-beta.1` and `1.26.0`. Anything else is None - a marker
+/// this cannot read is not worth alarming anyone over.
+pub fn parse_version(v: &str) -> Option<semver::Version> {
+    semver::Version::parse(v.trim()).ok()
+}
+
+/// Whether `v` is a beta build (`X.Y.Z-beta.N`).
+pub fn is_beta(v: &str) -> bool {
+    parse_version(v).is_some_and(|p| p.pre.as_str().starts_with("beta."))
 }
 
 /// A source could not be reached.
@@ -159,28 +182,34 @@ pub enum Attempt {
     Failed(String),
 }
 
+/// What one source's answer means. `RemoteIsEmpty` is a failed attempt, not
+/// "up to date", so the next source is asked - see `check`.
+pub fn attempt_from(name: &str, r: Result<UpdateCheck, velopack::Error>) -> Attempt {
+    match r {
+        Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
+        // The feed parsed but named no `Full` asset - not the same as
+        // "checked and you're current". Treat it as a failed attempt so
+        // `resolve` falls through to the next source instead of telling
+        // someone whose feed just came back empty that they're up to
+        // date, a claim this has not actually verified.
+        Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed(FEED_EMPTY.into()),
+        Ok(_) => Attempt::UpToDate,
+        Err(e) => {
+            crate::applog::warn(format!("update check failed via {name}: {e}"));
+            Attempt::Failed(FEED_UNREACHABLE.into())
+        }
+    }
+}
+
 /// Ask each source in turn, stopping at the first that answers.
 ///
 /// A source that ANSWERS settles it, whichever way it answers - "you are up
 /// to date" is a real answer and the fallback is not asked to second-guess
 /// it. Only a source that could not be reached moves on to the next.
-pub fn check(state: &UpdateState) -> UpdateStatus {
+pub fn check(state: &UpdateState, beta: bool) -> UpdateStatus {
     let mut attempts = Vec::new();
-    for (name, um) in managers() {
-        let a = match um.check_for_updates() {
-            Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
-            // The feed parsed but named no `Full` asset - not the same as
-            // "checked and you're current". Treat it as a failed attempt so
-            // `resolve` falls through to the next source instead of telling
-            // someone whose feed just came back empty that they're up to
-            // date, a claim this has not actually verified.
-            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed(FEED_EMPTY.into()),
-            Ok(_) => Attempt::UpToDate,
-            Err(e) => {
-                crate::applog::warn(format!("update check failed via {name}: {e}"));
-                Attempt::Failed(FEED_UNREACHABLE.into())
-            }
-        };
+    for (name, um) in managers(beta) {
+        let a = attempt_from(name, um.check_for_updates());
         let stop = !matches!(a, Attempt::Failed(_));
         attempts.push((name, a));
         if stop {
@@ -273,9 +302,10 @@ pub fn bytes_at(percent: i16, total: u64) -> u64 {
 pub fn download_and_apply(
     state: &UpdateState,
     data_dir: Option<std::path::PathBuf>,
+    beta: bool,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let mans = managers();
+    let mans = managers(beta);
     if mans.is_empty() {
         return Err("not a Velopack install".into());
     }

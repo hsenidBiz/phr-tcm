@@ -26,8 +26,8 @@ export const settings: Screen = {
     { id: MAIN, route: [OPEN], alt: "Settings: appearance and request rate on the left, the changelog, backup and updates on the right" },
     {
       id: MORE,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Allow registering AI tools machine-wide" } }],
-      alt: "Settings scrolled down to How To Use, the interface tour and the AI tools option",
+      route: [OPEN, { scrollTo: { role: "switch", name: "Start with Windows" } }],
+      alt: "Settings scrolled down to How To Use, the interface tour, AI tools and Background",
     },
     { id: LOGS, route: [OPEN, { click: { role: "button", name: "Logs" } }, { waitFor: { role: "button", name: "Copy log" } }], alt: "The app log in place of the changelog" },
     {
@@ -42,6 +42,7 @@ export const settings: Screen = {
     { id: "changelog-logs", title: "Changelog, logs and bug reports", summary: "What changed in each version, the app's own log, and a way to report a problem." },
     { id: "backup-updates", title: "Backup and updates", summary: "Move your settings to another computer, and check for a new version." },
     { id: "help-and-options", title: "Help, the tour and AI tools options", summary: "Further down: this guide, the interface tour, and a switch for AI Bridge." },
+    { id: "background", title: "Running in the background", summary: "Keep the app running in the tray when its window is closed, and start it with Windows." },
   ],
   controls: [
     // --- Appearance and request rate ------------------------------------------
@@ -142,6 +143,15 @@ export const settings: Screen = {
       does:
         "Asks whether a newer version is out. The version you have is shown above it. The app also checks by itself when it starts and every hour; when a version is ready, a bar at the top offers **Restart to update**.",
     },
+    {
+      id: "beta-builds",
+      shot: MAIN,
+      group: "backup-updates",
+      locate: { role: "switch", name: "Download beta builds" },
+      name: "Download beta builds",
+      does:
+        "Off by default. On: the app also installs beta builds, which bring new features sooner. Turn it off and a beta build stays until the next stable release arrives.",
+    },
 
     // --- How To Use, tour, AI tools -------------------------------------------------
     {
@@ -168,6 +178,25 @@ export const settings: Screen = {
       name: "Allow registering AI tools machine-wide",
       does:
         "For a computer that does not work from a repository: the AI Bridge tab then offers **Register in: This repository** or **Machine-wide**. Writing test cases still needs a repository.",
+    },
+
+    // --- Background ---------------------------------------------------------------
+    {
+      id: "close-to-tray",
+      shot: MORE,
+      group: "background",
+      locate: { role: "switch", name: "Keep running in the tray when closed" },
+      name: "Keep running in the tray when closed",
+      does:
+        "On by default. Closing the window leaves the app running in the notification area (the ^ on the taskbar), so your AI assistant's tools stay available. Click the icon to open the window again; right-click it and choose Quit to close the app. Off: closing the window closes the app.",
+    },
+    {
+      id: "start-with-windows",
+      shot: MORE,
+      group: "background",
+      locate: { role: "switch", name: "Start with Windows" },
+      name: "Start with Windows",
+      does: "Starts the app in the notification area when you sign in to Windows, without opening its window.",
     },
 
     // --- The app log ------------------------------------------------------------------

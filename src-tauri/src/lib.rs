@@ -13,6 +13,7 @@ pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod app_settings;
 pub mod assigned_watch;
 pub mod db;
 pub mod db_defaults;
@@ -42,6 +43,7 @@ pub mod state;
 pub mod steps_xml;
 pub mod test_map;
 pub mod transform;
+pub mod tray;
 pub mod updater;
 pub mod webtheme;
 pub mod workspace;
@@ -60,8 +62,8 @@ pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        ai_bridge, ai_tools, auth, autorun, autorun_publish, autorun_record, autorun_replay, board, bugs, cases,
-        discovery, misc, prs, queue, run_order, runs, testplan, workspace,
+        ai_bridge, ai_tools, app_settings, auth, autorun, autorun_publish, autorun_record, autorun_replay, board,
+        bugs, cases, discovery, misc, prs, queue, run_order, runs, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -238,7 +240,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             run_order::save_run_order,
             misc::get_extras_unlocked,
             misc::set_extras_unlocked,
-            misc::open_help
+            misc::open_help,
+            app_settings::get_app_settings,
+            app_settings::set_close_to_tray,
+            app_settings::get_autostart,
+            app_settings::set_autostart,
+            app_settings::set_beta_updates
         ])
 }
 
@@ -250,12 +257,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
 /// worth failing over.
 #[cfg(desktop)]
 fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use tauri::Manager;
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    tray::show_main(app);
 }
 
 /// Step out of the install's `current\` directory before anything can
@@ -334,6 +336,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        // Start with Windows (Settings, off by default): a Run key entry
+        // that launches the exe with --hidden, so it starts in the tray.
+        // The exe path is Velopack's `current\` folder, which stays the
+        // same across updates. The value is named from `tray` so the
+        // uninstall hook (main.rs) removes exactly this entry.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(tray::AUTOSTART_ARGS.iter().copied())
+                .app_name(tray::AUTOSTART_APP_NAME)
+                .build(),
+        )
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())
@@ -343,6 +356,7 @@ pub fn run() {
         // bridge's context carries the same store to its database tools.
         .manage(db::DbSecrets(std::sync::Arc::new(db::CredentialManager)))
         .invoke_handler(builder.invoke_handler())
+        .on_window_event(tray::on_window_event)
         // Once, for the main window's first load: the gap between the
         // set-up line and this one is WebView2 starting and fetching the
         // page; the frontend logs when its first screen is drawn.
@@ -382,6 +396,8 @@ pub fn run() {
                 // This machine's optional extras switch (see extras.rs):
                 // read once here, so the AI bridge can answer from memory.
                 extras::init(dir.clone());
+                // Close-to-tray and beta updates: read before any page (see app_settings.rs).
+                crate::app_settings::init(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
@@ -399,6 +415,19 @@ pub fn run() {
                 applog::error(format!("panic: {info}"));
                 previous(info);
             }));
+            // The tray icon, then the main window: created hidden by the
+            // config, shown here at once unless this launch is a start at
+            // sign-in (`--hidden`) - see tests/suite/startup_window.rs. A
+            // hidden start with no tray icon shows the window anyway, or the
+            // app would be running with no way to reach it.
+            if let Err(e) = tray::build(app) {
+                applog::warn(format!("the tray icon could not be created - closing the window will quit: {e}"));
+            }
+            if !tray::start_hidden(std::env::args()) || !tray::tray_ok() {
+                tray::show_main(app.handle());
+            } else {
+                applog::info("started hidden in the tray");
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

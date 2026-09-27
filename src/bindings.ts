@@ -802,6 +802,23 @@ export const commands = {
 	 *  first open after every update.
 	 */
 	openHelp: () => typedError<null, string>(__TAURI_INVOKE("open_help")),
+	/**  The settings as the app is using them now. */
+	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
+	/**  Whether closing the main window keeps the app running in the tray. */
+	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
+	/**
+	 *  Whether the app is registered to start at sign-in. Read from the
+	 *  registry each time, so the switch always shows the truth.
+	 */
+	getAutostart: () => __TAURI_INVOKE<boolean>("get_autostart"),
+	/**  Register or unregister the start at sign-in. Answers the state after. */
+	setAutostart: (on: boolean) => typedError<boolean, string>(__TAURI_INVOKE("set_autostart", { on })),
+	/**
+	 *  Whether update checks include beta builds. Turning it off on a beta
+	 *  build keeps that build until a newer stable one ships - the updater
+	 *  never downgrades.
+	 */
+	setBetaUpdates: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_beta_updates", { on })),
 };
 
 /** Events */
@@ -880,6 +897,15 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 	status: number,
 	body: string,
 } } | { kind: "Network"; detail: string };
+
+export type AppSettings = {
+	/**  Closing the main window hides it to the tray instead of quitting. */
+	close_to_tray?: boolean,
+	/**  The "still running in the tray" notice has been shown once. */
+	close_notice_shown?: boolean,
+	/**  Update checks include beta (prerelease) builds. */
+	beta_updates?: boolean,
+};
 
 export type AssignedItem = {
 	id: number,

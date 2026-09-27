@@ -18,7 +18,10 @@ import { notePrComments, notePrOverview } from "../lib/notifications";
 import { logUi } from "../lib/uiLog";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
- * exactly when the user is heads-down elsewhere in the app. */
+ * exactly when the user is heads-down elsewhere in the app. Every poll here
+ * also runs while the window is hidden in the tray or minimised
+ * (`refetchIntervalInBackground`): that is the app's usual resting state,
+ * and the bell's OS notifications are then the only way news is seen. */
 const POLL_MS = 5 * 60_000;
 
 export function usePrAttention(org: string, project: string): number {
@@ -27,6 +30,7 @@ export function usePrAttention(org: string, project: string): number {
     queryFn: () => unwrap(commands.prOverview(org, project)),
     enabled: Boolean(org && project),
     refetchInterval: POLL_MS,
+    refetchIntervalInBackground: true,
     retry: false,
   });
 
@@ -53,6 +57,7 @@ export function usePrAttention(org: string, project: string): number {
       queryFn: () => unwrap(commands.prThreads(org, project, pr.repo, pr.id)),
       staleTime: 2 * 60_000,
       refetchInterval: POLL_MS,
+      refetchIntervalInBackground: true,
       retry: false,
     })),
   });
@@ -81,6 +86,7 @@ export function usePrAttention(org: string, project: string): number {
     enabled: Boolean(org),
     staleTime: Infinity,
     refetchInterval: (q) => (q.state.status === "error" ? POLL_MS : false),
+    refetchIntervalInBackground: true,
     retry: false,
   });
   const myId = me.data?.id ?? "";
