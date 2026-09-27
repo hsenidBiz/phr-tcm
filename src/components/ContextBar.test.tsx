@@ -3,7 +3,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import ContextBar from "./ContextBar";
 
@@ -44,18 +44,18 @@ test("the context bar checks for mentions in the picked project", async () => {
   expect(calls.some((c) => c.cmd === "pr_overview")).toBe(true);
 });
 
-/// Each click on the Settings gear turns it (index.css, ico-cog-turn), and
-/// the icon is a fresh element per click so the turn plays again.
-test("the Settings gear turns when it is clicked, every time", () => {
+/// The gear turns forward as Settings opens and back as it closes, however
+/// it closes (index.css, ico-cog-turn / ico-cog-turn-back). Each change is a
+/// fresh icon, so the turn plays again; a first render plays nothing.
+test("the Settings gear turns forward as Settings opens and back as it closes", () => {
   mockIPC((cmd) => {
     if (cmd === "list_orgs") return [];
     if (cmd === "list_projects") return [];
     if (cmd === "pr_overview") return { mine: [], awaiting: [] };
     if (cmd === "recent_mentions") return [];
   });
-  let opened = 0;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const bar = (settingsOpen: boolean) => (
     <QueryClientProvider client={qc}>
       <ContextBar
         org="acme"
@@ -67,17 +67,26 @@ test("the Settings gear turns when it is clicked, every time", () => {
         account={null}
         workMode={false}
         onToggleWork={() => {}}
-        onOpenSettings={() => (opened += 1)}
+        onOpenSettings={() => {}}
+        settingsOpen={settingsOpen}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  const gear = screen.getByRole("button", { name: "Settings" });
-  expect(gear.querySelector("svg")).not.toHaveClass("ico-cog-turn");
-  fireEvent.click(gear);
-  const first = gear.querySelector("svg");
-  expect(first).toHaveClass("ico-cog-turn");
-  fireEvent.click(gear);
-  expect(gear.querySelector("svg")).toHaveClass("ico-cog-turn");
-  expect(gear.querySelector("svg")).not.toBe(first);
-  expect(opened).toBe(2);
+  const { rerender } = render(bar(false));
+  const icon = () => screen.getByRole("button", { name: /settings/i }).querySelector("svg")!;
+  expect(icon()).not.toHaveClass("ico-cog-turn");
+  expect(icon()).not.toHaveClass("ico-cog-turn-back");
+
+  rerender(bar(true));
+  const opened = icon();
+  expect(opened).toHaveClass("ico-cog-turn");
+
+  rerender(bar(false));
+  expect(icon()).toHaveClass("ico-cog-turn-back");
+  expect(icon()).not.toBe(opened);
+
+  // A re-render that changes nothing does not replay it.
+  const closed = icon();
+  rerender(bar(false));
+  expect(icon()).toBe(closed);
 });
