@@ -807,6 +807,12 @@ export const commands = {
 	/**  Whether closing the main window keeps the app running in the tray. */
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
 	/**
+	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
+	 *  window (off). Read at start-up, so the Windows startup entry itself never
+	 *  changes with it.
+	 */
+	setStartMinimized: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_start_minimized", { on })),
+	/**
 	 *  Whether the app is registered to start at sign-in. Read from the
 	 *  registry each time, so the switch always shows the truth.
 	 */
@@ -905,6 +911,11 @@ export type AppSettings = {
 	close_notice_shown?: boolean,
 	/**  Update checks include beta (prerelease) builds. */
 	beta_updates?: boolean,
+	/**
+	 *  A start at sign-in (Start with Windows) stays hidden in the tray
+	 *  instead of opening the window.
+	 */
+	start_minimized?: boolean,
 };
 
 export type AssignedItem = {
