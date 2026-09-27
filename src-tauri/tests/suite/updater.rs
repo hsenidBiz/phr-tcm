@@ -313,3 +313,34 @@ fn an_empty_feed_from_every_source_is_blocked_not_up_to_date() {
         s.blocked
     );
 }
+
+#[test]
+fn versions_order_with_the_beta_suffix() {
+    use v2_lib::updater::parse_version;
+    let order = ["1.25.31", "1.26.0-beta.1", "1.26.0-beta.2", "1.26.0-beta.10", "1.26.0", "1.26.1-beta.1"];
+    let parsed: Vec<_> = order.iter().map(|v| parse_version(v).unwrap_or_else(|| panic!("{v} parses"))).collect();
+    for pair in parsed.windows(2) {
+        assert!(pair[0] < pair[1], "{} < {}", pair[0], pair[1]);
+    }
+    assert!(parse_version("dev").is_none());
+    assert!(parse_version("1.26").is_none());
+}
+
+#[test]
+fn a_beta_is_a_version_with_the_beta_suffix() {
+    use v2_lib::updater::is_beta;
+    assert!(is_beta("1.26.0-beta.1"));
+    assert!(!is_beta("1.26.0"));
+    assert!(!is_beta("dev"));
+}
+
+/// A failed "Restart to update" from a beta to the stable above it is still
+/// recognised, and one that landed is not.
+#[test]
+fn a_failed_update_is_recognised_across_a_beta() {
+    use v2_lib::updater::{failed_attempt, note_attempt};
+    let d = tempfile::tempdir().unwrap();
+    note_attempt(d.path(), "1.26.0");
+    assert_eq!(failed_attempt(d.path(), "1.26.0-beta.3"), Some("1.26.0".into()));
+    assert_eq!(failed_attempt(d.path(), "1.26.0"), None);
+}

@@ -124,14 +124,16 @@ pub fn failed_attempt(data_dir: &std::path::Path, running: &str) -> Option<Strin
     }
 }
 
-/// "1.20.8" as an orderable triple. Anything else is None - a marker this
-/// cannot read is a marker not worth alarming anyone over.
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = v.trim().split('.').map(|p| p.parse::<u64>().ok());
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(Some(a)), Some(Some(b)), Some(Some(c)), None) => Some((a, b, c)),
-        _ => None,
-    }
+/// A version as Velopack orders it: semver, so `1.26.0-beta.2` sits
+/// between `1.26.0-beta.1` and `1.26.0`. Anything else is None - a marker
+/// this cannot read is not worth alarming anyone over.
+pub fn parse_version(v: &str) -> Option<semver::Version> {
+    semver::Version::parse(v.trim()).ok()
+}
+
+/// Whether `v` is a beta build (`X.Y.Z-beta.N`).
+pub fn is_beta(v: &str) -> bool {
+    parse_version(v).is_some_and(|p| p.pre.as_str().starts_with("beta."))
 }
 
 /// A source could not be reached.
