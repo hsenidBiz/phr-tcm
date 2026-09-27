@@ -2,10 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { commands, type AppSettings } from "../bindings";
 import { toast } from "../lib/toast";
 import { Switch } from "./ui/switch";
+import { SettingRow } from "./settings/SettingsCard";
 
-/** Settings' Background section: whether closing the window keeps the app
- *  running in the tray (so the AI tools stay available), and whether it
- *  starts in the tray at sign-in. Both are kept by Rust. */
+/** The two background rows of Settings' General card: whether closing the
+ *  window keeps the app running in the tray (so the AI tools stay
+ *  available), and whether it starts in the tray at sign-in. Both are kept
+ *  by Rust. Rendered as rows, not a section, so they sit inside the card's
+ *  divided list beside the other General settings. */
 export default function BackgroundSettings() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
@@ -38,30 +41,33 @@ export default function BackgroundSettings() {
   };
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-text">Background</h2>
-      <p className="text-sm text-muted">
-        Closing the window can leave the app running in the notification area, so the tools your
-        AI assistant uses stay available. Right-click its icon there to quit.
-      </p>
-      <label className="flex items-center gap-2 text-sm text-text">
-        <Switch
-          checked={settings.data?.close_to_tray ?? true}
-          disabled={!settings.data}
-          onCheckedChange={(on) => void setTray(on)}
-          ariaLabel="Keep running in the tray when closed"
-        />
-        Keep running in the tray when closed
-      </label>
-      <label className="flex items-center gap-2 text-sm text-text">
-        <Switch
-          checked={autostart.data ?? false}
-          disabled={autostart.data === undefined}
-          onCheckedChange={(on) => void setAutostart(on)}
-          ariaLabel="Start with Windows"
-        />
-        Start with Windows
-      </label>
-    </section>
+    <>
+      <SettingRow
+        asLabel
+        name="Keep running in the tray when closed"
+        description="Keeps your AI tools available. Right-click the tray icon to quit."
+        control={
+          <Switch
+            checked={settings.data?.close_to_tray ?? true}
+            disabled={!settings.data}
+            onCheckedChange={(on) => void setTray(on)}
+            ariaLabel="Keep running in the tray when closed"
+          />
+        }
+      />
+      <SettingRow
+        asLabel
+        name="Start with Windows"
+        description="Starts in the tray when you sign in, without opening the window."
+        control={
+          <Switch
+            checked={autostart.data ?? false}
+            disabled={autostart.data === undefined}
+            onCheckedChange={(on) => void setAutostart(on)}
+            ariaLabel="Start with Windows"
+          />
+        }
+      />
+    </>
   );
 }

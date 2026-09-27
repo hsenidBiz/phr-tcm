@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
 import { CHANGELOG } from "../lib/changelog";
+import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
 
@@ -27,13 +28,15 @@ function renderSettings(qc: QueryClient) {
 }
 
 /// Reporting a bug is one click from the gear: the button sits in the
-/// Changelog header, not behind the Logs panel.
-test("Report a bug opens its dialog straight from the Changelog view", async () => {
+/// Help & support card beside How To Use and the tour, not behind the Logs
+/// panel (it used to sit in the Changelog header).
+test("Report a bug opens its dialog straight from Help & support", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   expect(screen.getByRole("button", { name: "Changelog", pressed: true })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+  const help = screen.getByRole("heading", { name: "Help & support" }).closest("section")!;
+  fireEvent.click(within(help).getByRole("button", { name: "Report a bug" }));
   expect(await screen.findByText("Report a bug in this app")).toBeInTheDocument();
 });
 
@@ -88,22 +91,68 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 });
 
-/// The settings that used to sit alone at the bottom of the left column now
-/// sit under the changelog, in the right column.
-test("Backup and Updates sit under the changelog, in the same column", async () => {
+/// Settings is two columns: the settings grouped into cards on the left, and
+/// the changelog/log panel on its own on the right.
+test("the left column holds the setting cards in order; the right only the changelog", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   const changelog = await screen.findByRole("heading", { name: "Changelog" });
-  const column = changelog.closest("section")!.parentElement!;
-  const headings = within(column)
-    .getAllByRole("heading", { level: 2 })
-    .map((h) => h.textContent);
-  expect(headings).toEqual(["Changelog", "Backup & transfer", "Updates"]);
-  // And the left column keeps the rest, without them.
-  const appearance = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
-  expect(within(appearance).queryByRole("heading", { name: "Updates" })).not.toBeInTheDocument();
-  expect(appearance).not.toBe(column);
+  const right = changelog.closest("section")!.parentElement!;
+  const left = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
+  expect(left).not.toBe(right);
+
+  const headings = (col: HTMLElement) =>
+    within(col)
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+  expect(headings(left)).toEqual(["Appearance", "General", "AI tools", "Updates", "Backup & transfer", "Help & support"]);
+  expect(headings(right)).toEqual(["Changelog"]);
+  // No settings in the right column: no switch, and none of the buttons
+  // that moved into cards.
+  expect(within(right).queryAllByRole("switch")).toHaveLength(0);
+  for (const name of ["Report a bug", "Export to file", "Check for updates", "How To Use"]) {
+    expect(within(right).queryByRole("button", { name })).not.toBeInTheDocument();
+  }
+
+  // The General card carries the tray switches and the request rate.
+  const general = screen.getByRole("heading", { name: "General" }).closest("section")!;
+  expect(within(general).getByRole("switch", { name: "Keep running in the tray when closed" })).toBeInTheDocument();
+  expect(within(general).getByRole("switch", { name: "Start with Windows" })).toBeInTheDocument();
+  expect(within(general).getByRole("button", { name: /^Full speed/ })).toBeInTheDocument();
+});
+
+/// The request rate is a compact three-way choice: only the chosen level's
+/// explanation shows, and picking another level swaps it.
+test("the request rate shows only the chosen level's explanation, and switching changes it", async () => {
+  localStorage.removeItem("tcm-v2-ado-rate");
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "set_ado_rate_level") calls.push(String((args as { level: string }).level));
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const [full, balanced, gentle] = RATE_LEVELS;
+
+  expect(screen.getByRole("button", { name: /^Full speed/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText(full.hint)).toBeInTheDocument();
+  expect(screen.queryByText(balanced.hint)).not.toBeInTheDocument();
+  expect(screen.queryByText(gentle.hint)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Gentle" }));
+  expect(screen.getByRole("button", { name: "Gentle" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /^Full speed/ })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByText(gentle.hint)).toBeInTheDocument();
+  expect(screen.queryByText(full.hint)).not.toBeInTheDocument();
+  expect(screen.queryByText(balanced.hint)).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-ado-rate")).toBe("gentle");
+  await waitFor(() => expect(calls).toContain("gentle"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Balanced" }));
+  expect(screen.getByText(balanced.hint)).toBeInTheDocument();
+  expect(screen.queryByText(gentle.hint)).not.toBeInTheDocument();
+  localStorage.removeItem("tcm-v2-ado-rate");
 });
 
 /// Machine-wide registration is an explicit opt-in, and this switch is the
