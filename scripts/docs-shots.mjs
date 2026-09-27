@@ -46,6 +46,7 @@ import {
   PASSES,
   RELOAD_NOTICE,
   SETTLE_MS,
+  SHOT_SCALE,
   START_APP_HINT,
   START_APP_MESSAGE,
   USAGE,
@@ -173,6 +174,35 @@ async function hasEmptyRunnerWindow(browser, main) {
   if (allPages(browser).some(isRunner)) return false;
   const labels = await main.evaluate(() => window.__TAURI_INTERNALS__?.invoke("plugin:window|get_all_windows")).catch(() => null);
   return Array.isArray(labels) && labels.includes("runner");
+}
+
+/** Saves `page` as a JPEG at SHOT_SCALE image pixels per CSS pixel, at
+ *  `size`. The layout is unchanged - only the density - so the boxes
+ *  measured afterwards are the same CSS pixels as before.
+ *
+ *  Captured through the browser itself, not Playwright's screenshot:
+ *  Playwright re-applies its own viewport emulation for a screenshot, which
+ *  put the density back to 1 and saved the shot at 1440x900 again. */
+async function captureSharp(page, size, path) {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: size.w,
+      height: size.h,
+      deviceScaleFactor: SHOT_SCALE,
+      mobile: false,
+    });
+    // Let the page re-raster at the new density before the picture.
+    await sleep(SETTLE_MS);
+    const { data } = await cdp.send("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 82,
+      clip: { x: 0, y: 0, width: size.w, height: size.h, scale: 1 },
+    });
+    writeFileSync(path, Buffer.from(data, "base64"));
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
 }
 
 /** The runner window, once the route has opened it, at the shot's size. */
@@ -531,7 +561,7 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
       if (staging) {
         const dir = join(staging, pass.dir);
         mkdirSync(dir, { recursive: true });
-        await target.screenshot({ path: join(dir, `${shot.id}.jpg`), type: "jpeg", quality: 88, scale: "css" });
+        await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
       }
 
       let placed = 0;

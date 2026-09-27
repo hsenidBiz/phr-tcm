@@ -112,6 +112,11 @@ export type SiteContent = {
   available: string[];
 };
 
+/** Image pixels per CSS pixel in every shot: a shot's image is its size
+ *  times this, so zooming in stays sharp. Positions stay in CSS pixels.
+ *  Must match SHOT_SCALE in scripts/docs-shots-lib.mjs. */
+export const SHOT_SCALE = 2;
+
 /** The main window's shot size - every shot's, unless it sets `size`. */
 export const SHOT_WIDTH = 1440;
 export const SHOT_HEIGHT = 900;

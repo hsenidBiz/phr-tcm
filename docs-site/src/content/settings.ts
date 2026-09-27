@@ -22,7 +22,7 @@ export const settings: Screen = {
   summary:
     "Open Settings with the gear at the top right; press it again to go back. Everything here is saved on this computer as soon as you change it.",
   shots: [
-    { id: MAIN, route: [OPEN], alt: "Settings: the Appearance and General cards on the left, the changelog on the right" },
+    { id: MAIN, route: [OPEN], alt: "Settings: Appearance, General and AI tools on the left; the changelog with Updates, Backup and Help under it on the right" },
     {
       id: MORE,
       route: [OPEN, { scrollTo: { role: "button", name: "Show UI tour" } }],
@@ -203,7 +203,16 @@ export const settings: Screen = {
       group: "general",
       locate: { role: "switch", name: "Start with Windows" },
       name: "Start with Windows",
-      does: "Starts the app in the notification area when you sign in to Windows, without opening its window.",
+      does: "Starts the app when you sign in to Windows. **Start minimized** below decides whether it opens its window or waits in the notification area.",
+    },
+    {
+      id: "start-minimized",
+      shot: MAIN,
+      group: "general",
+      locate: { role: "switch", name: "Start minimized" },
+      name: "Start minimized",
+      does:
+        "On by default, and only available while **Start with Windows** is on. On: the app starts at sign-in in the notification area (the ^ on the taskbar), without opening its window. Off: the window opens as usual.",
     },
 
     // --- The app log ------------------------------------------------------------------
