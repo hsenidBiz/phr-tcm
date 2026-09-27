@@ -6,6 +6,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    // The suite exercises capture mode as `npm run docs:dev` runs it
+    // (src/dev/capture.ts); capture.test.ts covers the unmarked case.
+    env: { VITE_DOCS_CAPTURE: "1" },
     // `.claude/worktrees/` holds whole checkouts of this repository, each
     // with its own node_modules. Without this exclude vitest collected
     // their test files as part of THIS suite, and every one that mounts

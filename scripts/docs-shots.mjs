@@ -74,6 +74,10 @@ const docsRoot = join(repo, "docs-site");
 const shotsDir = join(docsRoot, "shots");
 const BACKUP = join(tmpdir(), "tcm-docs-shots-settings-backup.json");
 
+/** How long to leave the app running after the restore, so WebView2 has
+ *  written it to disk (it batches local storage writes a few seconds). */
+const RESTORE_FLUSH_MS = 10_000;
+
 class Interrupted extends Error {}
 
 // ------------------------------------------------------------- content
@@ -375,6 +379,13 @@ async function drive(browser, mode, shots, backup, only) {
     const cdp = await main.context().newCDPSession(main).catch(() => null);
     await cdp?.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
     await cdp?.detach().catch(() => {});
+    // WebView2 writes local storage to disk in batches, seconds after a
+    // change. An app stopped straight after a capture (docs:dev's terminal
+    // closed, its task killed) lost the whole restore that way, and the
+    // next `tauri dev` opened in capture mode with the capture's theme.
+    // Wait out the batch before saying the settings are back.
+    console.log("Saving the restored settings...");
+    await sleep(RESTORE_FLUSH_MS);
     // The settings are back: a snapshot file that will not delete is a
     // warning, never a failed restore.
     try {
