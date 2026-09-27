@@ -41,3 +41,15 @@ pub fn set_autostart(app: tauri::AppHandle, on: bool) -> Result<bool, String> {
     })?;
     Ok(launcher.is_enabled().unwrap_or(on))
 }
+
+/// Whether update checks include beta builds. Turning it off on a beta
+/// build keeps that build until a newer stable one ships - the updater
+/// never downgrades.
+#[tauri::command]
+#[specta::specta]
+pub fn set_beta_updates(on: bool) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.beta_updates = on).map_err(|e| {
+        crate::applog::warn(format!("saving the beta updates setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}

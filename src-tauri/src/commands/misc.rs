@@ -72,7 +72,8 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
             .ok()
             .and_then(|dir| updater::failed_attempt(&dir, &running));
         let state = app.state::<updater::UpdateState>();
-        updater::UpdateStatus { failed_attempt, ..updater::check(&state) }
+        let beta = crate::app_settings::current().beta_updates;
+        updater::UpdateStatus { failed_attempt, ..updater::check(&state, beta) }
     })
     .await
     .unwrap_or_else(|e| updater::UpdateStatus {
@@ -102,7 +103,8 @@ pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
         let emitter = app.clone();
         let data_dir = app.path().app_data_dir().ok();
         let state = app.state::<updater::UpdateState>();
-        updater::download_and_apply(&state, data_dir, move |p| {
+        let beta = crate::app_settings::current().beta_updates;
+        updater::download_and_apply(&state, data_dir, beta, move |p| {
             use tauri_specta::Event as _;
             let _ = crate::events::UpdateProgress {
                 percent: p.percent as i32,

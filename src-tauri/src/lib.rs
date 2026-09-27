@@ -244,7 +244,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::get_app_settings,
             app_settings::set_close_to_tray,
             app_settings::get_autostart,
-            app_settings::set_autostart
+            app_settings::set_autostart,
+            app_settings::set_beta_updates
         ])
 }
 

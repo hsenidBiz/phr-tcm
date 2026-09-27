@@ -45,7 +45,7 @@ pub struct UpdateState {
 /// The old mirror stays as a second try: it needs only github.com, so a
 /// network that allows the site but blocks `api.github.com` keeps working
 /// exactly as well as it did before.
-pub fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
+pub fn sources(beta: bool) -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
     vec![
         (
             "github api",
@@ -54,16 +54,25 @@ pub fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
             // sources are this host, so a private repo takes every install
             // to FEED_UNREACHABLE. This ships to machines we do not
             // control; there is nothing safe to embed.
-            Box::new(sources::GithubSource::new(REPO_URL, None, false)),
+            //
+            // `beta` adds prereleases - the Settings switch; stable installs
+            // never see a beta.
+            Box::new(sources::GithubSource::new(REPO_URL, None, beta)),
         ),
         ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),
     ]
 }
 
+/// Each source's name and whether it reads prereleases (betas), in the
+/// order they are tried. Pure, so the beta switch's effect is tested.
+pub fn source_plan(beta: bool) -> Vec<(&'static str, bool)> {
+    vec![("github api", beta), ("latest/download", false)]
+}
+
 /// One manager per reachable source. Empty means "not a Velopack install"
 /// (a dev build), which is the app's cue to offer no update UX at all.
-fn managers() -> Vec<(&'static str, UpdateManager)> {
-    sources()
+fn managers(beta: bool) -> Vec<(&'static str, UpdateManager)> {
+    sources(beta)
         .into_iter()
         .filter_map(|(name, src)| UpdateManager::new_boxed(src, None, None).ok().map(|um| (name, um)))
         .collect()
@@ -161,28 +170,34 @@ pub enum Attempt {
     Failed(String),
 }
 
+/// What one source's answer means. `RemoteIsEmpty` is a failed attempt, not
+/// "up to date", so the next source is asked - see `check`.
+pub fn attempt_from(name: &str, r: Result<UpdateCheck, velopack::Error>) -> Attempt {
+    match r {
+        Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
+        // The feed parsed but named no `Full` asset - not the same as
+        // "checked and you're current". Treat it as a failed attempt so
+        // `resolve` falls through to the next source instead of telling
+        // someone whose feed just came back empty that they're up to
+        // date, a claim this has not actually verified.
+        Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed(FEED_EMPTY.into()),
+        Ok(_) => Attempt::UpToDate,
+        Err(e) => {
+            crate::applog::warn(format!("update check failed via {name}: {e}"));
+            Attempt::Failed(FEED_UNREACHABLE.into())
+        }
+    }
+}
+
 /// Ask each source in turn, stopping at the first that answers.
 ///
 /// A source that ANSWERS settles it, whichever way it answers - "you are up
 /// to date" is a real answer and the fallback is not asked to second-guess
 /// it. Only a source that could not be reached moves on to the next.
-pub fn check(state: &UpdateState) -> UpdateStatus {
+pub fn check(state: &UpdateState, beta: bool) -> UpdateStatus {
     let mut attempts = Vec::new();
-    for (name, um) in managers() {
-        let a = match um.check_for_updates() {
-            Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
-            // The feed parsed but named no `Full` asset - not the same as
-            // "checked and you're current". Treat it as a failed attempt so
-            // `resolve` falls through to the next source instead of telling
-            // someone whose feed just came back empty that they're up to
-            // date, a claim this has not actually verified.
-            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed(FEED_EMPTY.into()),
-            Ok(_) => Attempt::UpToDate,
-            Err(e) => {
-                crate::applog::warn(format!("update check failed via {name}: {e}"));
-                Attempt::Failed(FEED_UNREACHABLE.into())
-            }
-        };
+    for (name, um) in managers(beta) {
+        let a = attempt_from(name, um.check_for_updates());
         let stop = !matches!(a, Attempt::Failed(_));
         attempts.push((name, a));
         if stop {
@@ -275,9 +290,10 @@ pub fn bytes_at(percent: i16, total: u64) -> u64 {
 pub fn download_and_apply(
     state: &UpdateState,
     data_dir: Option<std::path::PathBuf>,
+    beta: bool,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let mans = managers();
+    let mans = managers(beta);
     if mans.is_empty() {
         return Err("not a Velopack install".into());
     }

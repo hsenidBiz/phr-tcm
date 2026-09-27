@@ -813,6 +813,12 @@ export const commands = {
 	getAutostart: () => __TAURI_INVOKE<boolean>("get_autostart"),
 	/**  Register or unregister the start at sign-in. Answers the state after. */
 	setAutostart: (on: boolean) => typedError<boolean, string>(__TAURI_INVOKE("set_autostart", { on })),
+	/**
+	 *  Whether update checks include beta builds. Turning it off on a beta
+	 *  build keeps that build until a newer stable one ships - the updater
+	 *  never downgrades.
+	 */
+	setBetaUpdates: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_beta_updates", { on })),
 };
 
 /** Events */

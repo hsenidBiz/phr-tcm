@@ -215,7 +215,7 @@ use v2_lib::updater::{resolve, sources, Attempt, UpdateState};
 /// `latest/download`, which moves.
 #[test]
 fn the_sources_are_the_two_github_ones_in_order() {
-    let list = sources();
+    let list = sources(false);
     let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
     assert_eq!(names, ["github api", "latest/download"]);
 }
@@ -343,4 +343,34 @@ fn a_failed_update_is_recognised_across_a_beta() {
     note_attempt(d.path(), "1.26.0");
     assert_eq!(failed_attempt(d.path(), "1.26.0-beta.3"), Some("1.26.0".into()));
     assert_eq!(failed_attempt(d.path(), "1.26.0"), None);
+}
+
+/// Stable installs read stable releases only; the beta switch adds
+/// prereleases on the GitHub source. The `latest/download` mirror never
+/// includes them - GitHub points it at the newest non-prerelease.
+#[test]
+fn the_sources_follow_the_beta_setting() {
+    use v2_lib::updater::source_plan;
+    assert_eq!(source_plan(false), vec![("github api", false), ("latest/download", false)]);
+    assert_eq!(source_plan(true), vec![("github api", true), ("latest/download", false)]);
+}
+
+/// A source whose answer names no release (e.g. the GitHub API's last ten
+/// releases were all betas, on a stable install) is not "up to date": the
+/// check moves on to the next source.
+#[test]
+fn an_empty_answer_moves_on_to_the_next_source() {
+    use v2_lib::updater::{attempt_from, Attempt};
+    use velopack::UpdateCheck;
+    assert!(matches!(attempt_from("github api", Ok(UpdateCheck::RemoteIsEmpty)), Attempt::Failed(_)));
+    assert!(matches!(attempt_from("github api", Ok(UpdateCheck::NoUpdateAvailable)), Attempt::UpToDate));
+}
+
+/// Opting out of betas on a beta build must never offer the older stable:
+/// the managers never allow a downgrade.
+#[test]
+fn no_update_manager_allows_a_downgrade() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/updater/mod.rs")).unwrap();
+    assert!(!src.contains("AllowVersionDowngrade: true"), "downgrades stay off");
+    assert!(src.contains("UpdateManager::new_boxed(src, None, None)"), "managers use Velopack's default options");
 }
