@@ -1,13 +1,13 @@
 import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
-import { CHANGELOG } from "../lib/changelog";
+import { CHANGELOG, isBetaVersion } from "../lib/changelog";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
 import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
-import { commands } from "../bindings";
+import { commands, type AppSettings } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import BackgroundSettings from "../components/BackgroundSettings";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
@@ -141,6 +141,22 @@ export default function Settings({ org, project }: { org: string; project: strin
       reportUpdateCheck(v);
     },
   });
+
+  const appSettings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
+  const onBeta = isBetaVersion(version.data ?? "");
+  const setBeta = async (on: boolean) => {
+    const before = appSettings.data;
+    if (before) qc.setQueryData<AppSettings>(["app-settings"], { ...before, beta_updates: on });
+    try {
+      const r = await commands.setBetaUpdates(on);
+      if (r.status === "error") throw r.error;
+      qc.setQueryData(["app-settings"], r.data);
+      check.mutate();
+    } catch (e) {
+      if (before) qc.setQueryData(["app-settings"], before);
+      toast.error(String(e));
+    }
+  };
 
   const pick = (t: ThemeChoice) => {
     setChoiceState(t);
@@ -610,9 +626,22 @@ export default function Settings({ org, project }: { org: string; project: strin
       <section data-tour="settings-updates" className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Updates</h2>
         <p className="text-sm text-muted">
-          Version {version.data ?? "-"} - updates install automatically from
+          Version {version.data ?? "-"}
+          {onBeta ? " (beta)" : ""} - updates install automatically from
           the releases feed.
         </p>
+        <label className="flex items-center gap-2 text-sm text-text">
+          <Switch
+            checked={appSettings.data?.beta_updates ?? false}
+            disabled={!appSettings.data}
+            onCheckedChange={(on) => void setBeta(on)}
+            ariaLabel="Download beta builds"
+          />
+          Download beta builds
+        </label>
+        {onBeta && appSettings.data && !appSettings.data.beta_updates && (
+          <p className="text-xs text-muted">You&apos;re on a beta build. It stays until the next stable release.</p>
+        )}
         <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
           <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
           {check.isPending ? "Checking" : "Check for updates"}
