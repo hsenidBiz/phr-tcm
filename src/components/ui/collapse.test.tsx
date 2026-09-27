@@ -561,3 +561,68 @@ test("the closing copy shrinks its outer margin away with it, so nothing below j
     style.remove();
   }
 });
+
+/** A fold in a spaced list, as Tailwind's space-y spells it: every child
+ * but the last gets the gap. `last` puts the fold at the end. */
+function Spaced({ last }: { last: boolean }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+      <div className="spaced">
+        <p>Before</p>
+        <Collapse open={open}>
+          <p>Row one</p>
+        </Collapse>
+        {!last && <p>After</p>}
+      </div>
+    </div>
+  );
+}
+
+test.each([
+  [true, 0],
+  [false, 16],
+])("the closing copy starts from the fold's own margin in a spaced list (last child: %s)", (last, margin) => {
+  window.innerHeight = 768;
+  const style = document.createElement("style");
+  style.textContent = ".spaced > :not(:last-child) { margin-bottom: 16px; }";
+  document.head.appendChild(style);
+  const m = stubMotion(120);
+  try {
+    render(<Spaced last={last} />);
+    m.calls.length = 0;
+    fireEvent.click(screen.getByText("Toggle"));
+    const ghost = document.querySelector(".t-collapse.is-closing") as HTMLElement;
+    const shrink = m.calls.find((c) => c.el === ghost)!;
+    // Read before the copy went in: a last child is not spaced, even though
+    // the copy briefly follows it - reading it then started the close with
+    // a 16px jump.
+    expect(shrink.frames[0]).toEqual(
+      margin ? { height: "120px", marginTop: "0px", marginBottom: `${margin}px` } : { height: "120px" },
+    );
+  } finally {
+    m.restore();
+    style.remove();
+  }
+});
+
+test("under StrictMode the grow keeps the hold onGrow gave it, though the effect runs twice", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  // The caller plans once: asked again, it has nothing left to hold for.
+  const onGrow = vi.fn().mockReturnValueOnce(150).mockReturnValue(0);
+  try {
+    render(
+      <StrictMode>
+        <Reporting onGrow={onGrow} />
+      </StrictMode>,
+    );
+    expect(onGrow).toHaveBeenCalledTimes(1);
+    const grows = m.calls.filter((c) => (c.el as HTMLElement).classList.contains("t-collapse"));
+    expect(grows.length).toBeGreaterThan(1);
+    expect(grows[grows.length - 1].opts).toMatchObject({ delay: 150, fill: "backwards" });
+  } finally {
+    m.restore();
+  }
+});

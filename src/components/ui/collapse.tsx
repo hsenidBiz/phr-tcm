@@ -163,11 +163,24 @@ export function Collapse({
   ) : null;
 }
 
+/** A fold's own outer margins, read while it is still alone in its place. */
+type Margins = { top: number; bottom: number };
+
+function marginsOf(el: HTMLElement | null): Margins {
+  if (!el) return { top: 0, bottom: 0 };
+  const cs = getComputedStyle(el);
+  return { top: parseFloat(cs.marginTop) || 0, bottom: parseFloat(cs.marginBottom) || 0 };
+}
+
 /** Shrink the copy a fold leaves behind, from its visible height to
- * nothing. Returns how long that takes, for the copy's removal. */
+ * nothing. Returns how long that takes, for the copy's removal. `margins`
+ * are the original's, read BEFORE the copy was placed beside it: a spaced
+ * list (space-y) gives every child but the last a margin, so once the copy
+ * follows it the original would read as spaced even when it was last. */
 function shrinkCopy(
   ghost: HTMLElement,
   original: HTMLElement,
+  margins: Margins,
   report?: (shrink: FoldMotion) => void,
 ): number | undefined {
   const pick = (n: HTMLElement) => (n.classList.contains("t-collapse") ? n : n.querySelector<HTMLElement>(".t-collapse"));
@@ -183,14 +196,12 @@ function shrinkCopy(
   // Its outer margin (a spaced list gives it one) shrinks with it: left in
   // place, it vanished with the copy at the end and everything below
   // jumped up by it.
-  const cs = getComputedStyle(from);
-  const mt = parseFloat(cs.marginTop) || 0;
-  const mb = parseFloat(cs.marginBottom) || 0;
-  const margins = mt || mb;
+  const { top: mt, bottom: mb } = margins;
+  const spaced = mt || mb;
   box.animate(
     [
-      { height: `${span}px`, ...(margins ? { marginTop: `${mt}px`, marginBottom: `${mb}px` } : {}) },
-      { height: "0px", ...(margins ? { marginTop: "0px", marginBottom: "0px" } : {}) },
+      { height: `${span}px`, ...(spaced ? { marginTop: `${mt}px`, marginBottom: `${mb}px` } : {}) },
+      { height: "0px", ...(spaced ? { marginTop: "0px", marginBottom: "0px" } : {}) },
     ],
     { duration: ms, easing: EASE, fill: "forwards" },
   );
@@ -231,8 +242,12 @@ function Panel({
   // The long-list rows rendered up front for this grow (see revealRows).
   const revealed = useRef<HTMLElement[]>([]);
   // How long the grow is held shut first (onGrow), which the clip's
-  // safety timer waits out too. The shrink reads the latest onShrink.
+  // safety timer waits out too. Asked once per mount: StrictMode runs the
+  // grow effect twice, and by the second run the caller's plan for this
+  // opening is spent - asking again would drop the hold. The shrink reads
+  // the latest onShrink.
   const hold = useRef(0);
+  const asked = useRef(false);
   const shrinkReport = useRef(onShrink);
   shrinkReport.current = onShrink;
   const unreveal = () => {
@@ -254,9 +269,11 @@ function Panel({
     revealed.current = revealRows(node, span);
     const ms = foldMs(span);
     const easing = span > TALL_PX ? EASE_TALL : EASE;
-    const cs = getComputedStyle(node);
-    const margin = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-    hold.current = Math.max(0, onGrow?.({ span, margin, ms, easing }) || 0);
+    if (!asked.current) {
+      asked.current = true;
+      const m = marginsOf(node);
+      hold.current = Math.max(0, onGrow?.({ span, margin: m.top + m.bottom, ms, easing }) || 0);
+    }
     // Held shut (at the first frame) while it waits, when it waits at all.
     const held = hold.current > 0 ? { delay: hold.current, fill: "backwards" as const } : {};
     const grow = node.animate([{ height: "0px" }, { height: `${span}px` }], { duration: ms, easing, ...held });
@@ -303,11 +320,14 @@ function Panel({
     ghost.current?.();
     ghost.current = null;
     const node = outer.current ?? el.current;
+    const box = el.current;
     return () => {
-      if (node)
-        ghost.current = leaveExitGhost(node, foldMs(0), "after", (copy, original) =>
-          shrinkCopy(copy, original, shrinkReport.current),
-        );
+      if (!node) return;
+      // Before the copy goes in beside it (see shrinkCopy).
+      const margins = marginsOf(box);
+      ghost.current = leaveExitGhost(node, foldMs(0), "after", (copy, original) =>
+        shrinkCopy(copy, original, margins, shrinkReport.current),
+      );
     };
   }, []);
 
