@@ -390,8 +390,8 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .qs-hint { font-size: 13px; line-height: 1.45; color: var(--muted); }
 
 /* ---------- screen sections ---------- */
-.screen, .recipes, .acks { position: relative; margin-top: 120px; padding-top: 64px; outline: none; }
-.screen::before, .recipes::before, .acks::before {
+.screen, .recipes { position: relative; margin-top: 120px; padding-top: 64px; outline: none; }
+.screen::before, .recipes::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
   background: linear-gradient(90deg, var(--border-strong), var(--border) 40%, transparent);
 }
@@ -710,20 +710,6 @@ a.qs-card:hover { transform: translateY(-3px); border-color: var(--accent-line);
 .recipe a:hover { color: var(--accent-text); }
 .recipe a:hover svg { transform: translateX(3px); }
 
-/* ---------- acknowledgements ---------- */
-.ack-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 32px; align-items: start; }
-.ack-card {
-  padding: 20px 22px 22px; border-radius: 16px;
-  background: var(--glass); border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--highlight);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-}
-.ack-card h3 { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-text); }
-.ack-names { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; font-size: 15px; font-weight: 500; }
-.ack-card.is-thanks p { margin-top: 12px; font-size: 14.5px; line-height: 1.6; color: var(--muted); }
-.ack-card.is-thanks strong { color: var(--text); font-weight: 600; }
-.nav-end { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-
 .footer {
   margin-top: 140px; padding: 28px 0 8px;
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
@@ -872,7 +858,7 @@ html[data-motion="reduce"] .window { transform: none; }
   .brand-sub, .search-trigger .search-label, .search-trigger .keys { display: none; }
   .search-trigger { width: 36px; padding: 0; justify-content: center; }
   .qs-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .screen, .recipes, .acks { margin-top: 72px; padding-top: 44px; }
+  .screen, .recipes { margin-top: 72px; padding-top: 44px; }
   .caption { max-width: 86%; padding: 8px 10px; }
   .caption-does { display: none; }
 }

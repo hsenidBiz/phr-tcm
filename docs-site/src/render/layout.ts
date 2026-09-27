@@ -2,9 +2,7 @@
 // tasks - and wires the behaviour that spans them: deep links
 // (#screen, #screen/control), the search palette, the theme, reveals.
 
-import { acknowledgements } from "../content/acknowledgements";
 import type { SiteContent } from "../types";
-import { ACKNOWLEDGEMENTS_ID, renderAcknowledgements } from "./acknowledgements";
 import { h, reducedMotion, rich } from "./dom";
 import { icon } from "./icons";
 import { PRODUCT, renderHero } from "./hero";
@@ -57,7 +55,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const recipeIds = new Set(content.recipes.map((r) => `common-tasks/${r.id}`));
   const subsectionIds = new Set(sections.flatMap((s) => s.subsections.map((sub) => sub.id)));
   const exists = (id: string) =>
-    content.screens.some((s) => s.id === id) || refs.has(id) || subsectionIds.has(id) || (id === "common-tasks" && content.recipes.length > 0) || recipeIds.has(id) || id === ACKNOWLEDGEMENTS_ID;
+    content.screens.some((s) => s.id === id) || refs.has(id) || subsectionIds.has(id) || (id === "common-tasks" && content.recipes.length > 0) || recipeIds.has(id);
 
   // ---- chrome ---------------------------------------------------------
   const palette = createPalette(content, (href) => go(href, { push: true }));
@@ -91,7 +89,6 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const main = h("main", { id: "main", class: "content", tabindex: "-1" }, ...heroParts);
   for (const s of sections) main.appendChild(s.section);
   if (content.recipes.length) main.appendChild(renderRecipes(content, exists));
-  main.appendChild(renderAcknowledgements(acknowledgements));
   main.appendChild(
     h(
       "footer",
@@ -286,8 +283,6 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const spyTargets = [heroParts[0], ...sections.map((s) => s.section)];
   const recipesSection = main.querySelector<HTMLElement>("#common-tasks");
   if (recipesSection) spyTargets.push(recipesSection);
-  const acksSection = main.querySelector<HTMLElement>(`#${ACKNOWLEDGEMENTS_ID}`);
-  if (acksSection) spyTargets.push(acksSection);
   cleanups.push(scrollSpy(sidebar, spyTargets, sections.flatMap((s) => s.subsections)));
 
   if (motion && typeof IntersectionObserver !== "undefined") {
@@ -301,7 +296,7 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
       },
       { rootMargin: "0px 0px -8% 0px", threshold: 0.04 },
     );
-    for (const el of main.querySelectorAll<HTMLElement>(".screen, .quickstart, .recipes, .acks")) {
+    for (const el of main.querySelectorAll<HTMLElement>(".screen, .quickstart, .recipes")) {
       el.classList.add("reveal");
       io.observe(el);
     }
