@@ -609,8 +609,10 @@ export default function Settings({ org, project }: { org: string; project: strin
                   rightPanel === p ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
                 )}
                 // Through the layout: with the history open, leaving the
-                // changelog brings the cards back under the panel.
-                onClick={() => tiles.flip(() => setRightPanel(p))}
+                // changelog brings the cards back under the panel. The
+                // pressed one does nothing - a switch that never renders
+                // would leave the layout waiting on it.
+                onClick={() => rightPanel !== p && tiles.flip(() => setRightPanel(p))}
               >
                 {p === "changelog" ? "Changelog" : "Logs"}
               </button>

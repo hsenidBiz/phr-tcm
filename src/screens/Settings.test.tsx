@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
 import { CHANGELOG } from "../lib/changelog";
@@ -133,18 +134,29 @@ test("a narrow window lists the setting cards in order, then only the changelog"
 
 // ---- The wide layout: cards under the changelog, sliding aside ------------
 
-/** The wide layout's media query matches (and reduced motion, if asked). */
+/** The wide layout's media query matches (and reduced motion, if asked).
+ * `resize(wide)` crosses the breakpoint, telling whoever listens. */
 function wideWindow({ reduced = false } = {}) {
+  let wide = true;
+  const listeners = new Set<() => void>();
   window.matchMedia = ((q: string) => ({
-    matches: q === WIDE_QUERY || (reduced && q.includes("prefers-reduced-motion")),
+    get matches() {
+      return (wide && q === WIDE_QUERY) || (reduced && q.includes("prefers-reduced-motion"));
+    },
     media: q,
     onchange: null,
     addListener: () => {},
     removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (_: string, cb: () => void) => listeners.add(cb),
+    removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
+  return {
+    resize: (to: boolean) => {
+      wide = to;
+      for (const cb of [...listeners]) cb();
+    },
+  };
 }
 
 /**
@@ -157,7 +169,13 @@ function wideWindow({ reduced = false } = {}) {
  * the test says so.
  */
 function stubMotion({ foldHeight = 0 } = {}) {
-  type Fake = { el: Element; frames: Keyframe[]; opts: KeyframeAnimationOptions; finish: () => void };
+  type Fake = {
+    el: Element;
+    frames: Keyframe[];
+    opts: KeyframeAnimationOptions;
+    cancelled: boolean;
+    finish: () => void;
+  };
   const played: Fake[] = [];
   const proto = Element.prototype as unknown as Record<string, unknown>;
   const hadAnimate = Object.prototype.hasOwnProperty.call(proto, "animate");
@@ -170,20 +188,24 @@ function stubMotion({ foldHeight = 0 } = {}) {
       onfinish: null as null | (() => void),
       oncancel: null as null | (() => void),
       cancel() {
+        record.cancelled = true;
         resolve();
-        a.oncancel?.();
+        // As a browser does: the cancel event arrives later, not in the call.
+        queueMicrotask(() => a.oncancel?.());
       },
       effect: { getTiming: () => ({ duration: opts.duration, delay: opts.delay ?? 0 }) },
     };
-    played.push({
+    const record: Fake = {
       el: this,
       frames,
       opts,
+      cancelled: false,
       finish: () => {
         resolve();
         a.onfinish?.();
       },
-    });
+    };
+    played.push(record);
     return a;
   };
   const realRect = Element.prototype.getBoundingClientRect;
@@ -399,6 +421,91 @@ test("a rapid double click leaves the cards and the history in step", async () =
     // Once it has finished, the next click is taken.
     fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
     expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+  } finally {
+    motion.restore();
+  }
+});
+
+/// In dev the app runs under StrictMode, which runs a new fold's grow effect
+/// twice - the second time after this screen has spent its plan. The grow
+/// must keep the hold it was given, or the history grows across Updates.
+test("under StrictMode Show more still holds the grow for Updates", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <StrictMode>
+        <QueryClientProvider client={qc}>
+          <Settings org="acme" project="Web" />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+    await screen.findByRole("heading", { name: "Changelog" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    const grows = motion.fold().filter((f) => String(f.frames[1]?.height ?? "") !== "0px");
+    const last = grows[grows.length - 1];
+    expect(Number(last.opts.delay)).toBeGreaterThan(0);
+    expect(last.opts.fill).toBe("backwards");
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Switching to Logs while the cards come back: the fold (and the copy the
+/// returning cards were drawn against) goes with the changelog, so the
+/// cards settle under the log panel at once instead of finishing a path
+/// planned for a layout that is gone.
+test("switching to Logs during Show less settles the returning cards at once", async () => {
+  wideWindow();
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    mockIPC((cmd) => {
+      if (cmd === "app_logs") return [];
+      if (cmd === "app_log_dir") return "C:\\logs";
+      return undefined;
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    await act(async () => motion.finishAll());
+    await act(() => new Promise((r) => window.setTimeout(r, 800)));
+
+    const before = motion.cards().length;
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    const returning = motion.cards().slice(before);
+    expect(returning).toHaveLength(3);
+    expect(returning.some((r) => r.cancelled)).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(returning.every((r) => r.cancelled)).toBe(true);
+    expect(headings(columns().right)).toEqual(["App log", ...MOVERS]);
+  } finally {
+    motion.restore();
+  }
+});
+
+/// Crossing the breakpoint mid-slide: the two-column layout the slide was
+/// planned against is gone, so the cards settle in the one column at once.
+test("crossing the wide breakpoint mid-slide settles the cards at once", async () => {
+  const win = wideWindow();
+  const motion = stubMotion();
+  try {
+    mockIPC(() => undefined);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSettings(qc);
+    await screen.findByRole("heading", { name: "Changelog" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    const slides = motion.cards();
+    expect(slides).toHaveLength(3);
+
+    act(() => win.resize(false));
+    expect(slides.every((s) => s.cancelled)).toBe(true);
+    expect(headings(columns().left)).toEqual(ALL_CARDS);
+    expect(headings(columns().right)).toEqual(["Changelog"]);
   } finally {
     motion.restore();
   }

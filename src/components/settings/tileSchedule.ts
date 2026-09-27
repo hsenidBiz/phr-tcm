@@ -26,7 +26,13 @@ export type TileTiming = {
   /** The cards' own curve and length. */
   ease: Easing;
   tileMs: number;
-  /** The least gap between one card setting off and the next. */
+  /** The gap between a card and its neighbour when nothing else times it:
+   * on the way out, a card the edge never reaches follows the one above
+   * it by this; on the way back, a card whose spot is free from the start
+   * follows the one below it by this. Cards the edge does time are NOT
+   * held to it - on the way out a gap could only be kept by holding the
+   * grow longer, and on the way back only by sending a card later than its
+   * spot frees, which is what the one motion is meant to avoid. */
   staggerMs: number;
   /** Slack kept between a card clearing a spot and the edge reaching it. */
   safetyMs: number;

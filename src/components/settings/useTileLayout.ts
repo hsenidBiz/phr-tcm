@@ -109,6 +109,9 @@ function journeys(
   return moves;
 }
 
+/** Each card's current slide - see `done` in glide. */
+const playing = new WeakMap<HTMLElement, Animation>();
+
 /** How the close runs: when each moving card sets off, and how far (and
  * for how long) the fold's copy still pushes the returning cards down. */
 type ClosePlan = { starts: number[]; drift: (t: number) => number; driftMs: number };
@@ -169,7 +172,12 @@ function glide(
       el.style.zIndex = "1";
     }
     const a = el.animate(frames, opts);
+    playing.set(el, a);
+    // A cancelled slide reports it later, after a newer one on the same card
+    // may have set these again: only the card's current slide clears them.
     const done = () => {
+      if (playing.get(el) !== a) return;
+      playing.delete(el);
       el.style.position = "";
       el.style.zIndex = "";
     };
@@ -271,13 +279,22 @@ export function useTileLayout({
     latest.current = { placement, wide };
   });
 
-  useEffect(
-    () => () => {
-      for (const a of running.current) a.cancel();
-      running.current = [];
-    },
-    [],
-  );
+  /** Stop any slide under way: the cards settle where they are laid out. */
+  const stop = useCallback(() => {
+    for (const a of running.current) a.cancel();
+    running.current = [];
+  }, []);
+
+  useEffect(() => stop, [stop]);
+
+  // Across the breakpoint the layout the slide was planned against is gone
+  // (one column, or two where there was one): settle at once.
+  const wasWide = useRef(wide);
+  useLayoutEffect(() => {
+    if (wasWide.current === wide) return;
+    wasWide.current = wide;
+    stop();
+  }, [wide, stop]);
 
   /**
    * Collapse's grow is measured (Show more): plan the whole motion now,
@@ -326,12 +343,16 @@ export function useTileLayout({
     if (!p) return;
     const root = rootRef.current;
     if (!root || !wide || p.placement === placement || p.placement === "single") {
+      // Changelog <-> Logs mid-slide, the cards staying in the right column:
+      // the fold (and the copy a returning card was drawn against) went with
+      // the changelog, so the planned paths no longer fit - settle at once.
+      if (p.kind === "switch") stop();
       p.done?.();
       return;
     }
     // A slide still under way gives way to this one, which starts from
     // wherever the cards were caught (the snapshot included the motion).
-    for (const a of running.current) a.cancel();
+    stop();
     let anims: Animation[];
     let until = 0;
     if (p.kind === "open") {
