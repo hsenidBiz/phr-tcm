@@ -6,6 +6,7 @@ import {
   isBetaVersion,
   markChangelogSeen,
   pendingChangelog,
+  type ChangelogEntry,
 } from "./changelog";
 
 afterEach(() => localStorage.clear());
@@ -45,16 +46,35 @@ test("a downgrade or dev build never shows the modal", () => {
   expect(pendingChangelog("dev")).toEqual([]);
 });
 
-test("every entry has a version, a date, and at least one item", () => {
-  for (const e of CHANGELOG) {
-    expect(e.version).toMatch(/^\d+\.\d+\.\d+$/);
+/** The shape every changelog must have: a stable (`X.Y.Z`) or beta
+ * (`X.Y.Z-beta.N`) version, a date, at least one item, newest first. */
+function expectWellFormed(entries: readonly ChangelogEntry[]) {
+  for (const e of entries) {
+    expect(e.version).toMatch(/^\d+\.\d+\.\d+(-beta\.\d+)?$/);
     expect(e.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(e.items.length).toBeGreaterThan(0);
   }
   // Newest first - the modal and Settings render in array order.
-  for (let i = 1; i < CHANGELOG.length; i++) {
-    expect(compareVersions(CHANGELOG[i - 1].version, CHANGELOG[i].version)).toBe(1);
+  for (let i = 1; i < entries.length; i++) {
+    expect(
+      compareVersions(entries[i - 1].version, entries[i].version),
+      `${entries[i - 1].version} is listed above ${entries[i].version}`,
+    ).toBe(1);
   }
+}
+
+test("every entry has a version, a date, and at least one item", () => {
+  expectWellFormed(CHANGELOG);
+});
+
+test("a beta's entry passes the same checks, between the stables around it", () => {
+  const entry = (version: string): ChangelogEntry => ({ version, date: "2026-09-27", items: ["x"] });
+  expectWellFormed([entry("1.26.0"), entry("1.26.0-beta.2"), entry("1.26.0-beta.1"), entry("1.25.31")]);
+  // A beta listed above the stable it leads to is out of order.
+  expect(() => expectWellFormed([entry("1.26.0-beta.1"), entry("1.26.0")])).toThrow();
+  // Only the beta suffix is allowed on top of X.Y.Z.
+  expect(() => expectWellFormed([entry("1.26.0-rc.1")])).toThrow();
+  expect(() => expectWellFormed([entry("1.26")])).toThrow();
 });
 
 test("compareVersions orders betas below the stable they lead to", () => {
