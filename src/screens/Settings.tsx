@@ -9,6 +9,7 @@ import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
+import BackgroundSettings from "../components/BackgroundSettings";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Collapse } from "../components/ui/collapse";
@@ -389,6 +390,8 @@ export default function Settings({ org, project }: { org: string; project: strin
           Allow registering AI tools machine-wide
         </label>
       </section>
+
+      <BackgroundSettings />
 
       {/* Only on a machine where the optional extras are unlocked (a key
           sequence typed on this screen - see settingsExtras.ts). The
