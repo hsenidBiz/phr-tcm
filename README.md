@@ -207,6 +207,15 @@ the board's test count.
   a bug. Report a bug opens a prefilled GitHub issue with your log
   attached. Organization, project and work item names are removed from
   the log first.
+- Keep running in the tray when closed (on by default): closing the
+  window leaves the app running in the notification area so your AI
+  assistant's tools stay available; click the tray icon to reopen the
+  window, or right-click it and choose Quit to close the app for good.
+  Start with Windows (off by default) starts the app in the tray when you
+  sign in, without opening its window.
+- Download beta builds (off by default): the app also installs beta
+  builds, which bring new features sooner. Turn it off and a beta build
+  stays until the next stable release arrives.
 
 ---
 
@@ -293,6 +302,10 @@ Rust and regenerate. Never edit the file by hand.
 Add an entry to `src/lib/changelog.ts` before you run the script. The
 post-update What's new dialog only opens when an entry newer than the
 last-seen version exists.
+
+Running the script with a version like `X.Y.Z-beta.N` instead publishes a
+GitHub prerelease. Only installs with Download beta builds turned on in
+Settings receive it.
 
 ---
 
