@@ -242,7 +242,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::set_extras_unlocked,
             misc::open_help,
             app_settings::get_app_settings,
-            app_settings::set_close_to_tray
+            app_settings::set_close_to_tray,
+            app_settings::get_autostart,
+            app_settings::set_autostart
         ])
 }
 
@@ -333,6 +335,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        // Start with Windows (Settings, off by default): a Run key entry
+        // that launches the exe with --hidden, so it starts in the tray.
+        // The exe path is Velopack's `current\` folder, which stays the
+        // same across updates.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(tray::AUTOSTART_ARGS.to_vec()),
+        ))
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())

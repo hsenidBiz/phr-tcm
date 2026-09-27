@@ -806,6 +806,13 @@ export const commands = {
 	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
 	/**  Whether closing the main window keeps the app running in the tray. */
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
+	/**
+	 *  Whether the app is registered to start at sign-in. Read from the
+	 *  registry each time, so the switch always shows the truth.
+	 */
+	getAutostart: () => __TAURI_INVOKE<boolean>("get_autostart"),
+	/**  Register or unregister the start at sign-in. Answers the state after. */
+	setAutostart: (on: boolean) => typedError<boolean, string>(__TAURI_INVOKE("set_autostart", { on })),
 };
 
 /** Events */

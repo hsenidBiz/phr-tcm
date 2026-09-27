@@ -51,3 +51,12 @@ fn save_creates_the_folder() {
     save(&nested, &AppSettings::default()).unwrap();
     assert_eq!(load(&nested), AppSettings::default());
 }
+
+/// Start with Windows registers the app with the argument that makes it
+/// start in the tray - the same one `start_hidden` looks for.
+#[test]
+fn start_with_windows_asks_for_a_hidden_start() {
+    use v2_lib::tray::{start_hidden, AUTOSTART_ARGS};
+    let launch = std::iter::once("v2.exe".to_string()).chain(AUTOSTART_ARGS.iter().map(|a| a.to_string()));
+    assert!(start_hidden(launch));
+}

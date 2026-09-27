@@ -41,6 +41,9 @@ pub fn start_hidden<I: IntoIterator<Item = String>>(args: I) -> bool {
     args.into_iter().any(|a| a == "--hidden")
 }
 
+/// What Start with Windows launches the app with: straight to the tray.
+pub const AUTOSTART_ARGS: &[&str] = &["--hidden"];
+
 /// Show, unminimize and focus the main window.
 pub fn show_main<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
