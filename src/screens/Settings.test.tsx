@@ -7,7 +7,10 @@ import { CHANGELOG } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
-import { WIDE_QUERY } from "../components/settings/useTileLayout";
+import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../components/settings/useTileLayout";
+import { planClose, planOpen } from "../components/settings/tileSchedule";
+import { EASE, foldMs } from "../components/ui/collapse";
+import { parseEasing } from "../lib/cubicBezier";
 
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -145,18 +148,21 @@ function wideWindow({ reduced = false } = {}) {
 }
 
 /**
- * jsdom does no layout and has no Web Animations. This gives every card a
- * place (a column's x, and a row's y by its order in the column) and the
- * history's fold a height, and records the animations played, each one
- * finishing only when the test says so.
+ * jsdom does no layout and has no Web Animations. This gives the screen a
+ * small geometry - the left column at x=0 and the right one at x=600, each
+ * card 400x90 on a 100px row by its order in its column, the changelog
+ * panel 90px tall plus the history's fold (`foldHeight`) while a fold (or
+ * its closing copy) is in it, and the cards under it pushed down by that
+ * fold - and records the animations played, each one finishing only when
+ * the test says so.
  */
 function stubMotion({ foldHeight = 0 } = {}) {
-  type Fake = { el: Element; opts: KeyframeAnimationOptions; finish: () => void };
+  type Fake = { el: Element; frames: Keyframe[]; opts: KeyframeAnimationOptions; finish: () => void };
   const played: Fake[] = [];
   const proto = Element.prototype as unknown as Record<string, unknown>;
   const hadAnimate = Object.prototype.hasOwnProperty.call(proto, "animate");
   const realAnimate = proto.animate;
-  proto.animate = function (this: Element, _k: Keyframe[], opts: KeyframeAnimationOptions = {}) {
+  proto.animate = function (this: Element, frames: Keyframe[], opts: KeyframeAnimationOptions = {}) {
     let resolve!: () => void;
     const finished = new Promise<void>((r) => (resolve = r));
     const a = {
@@ -171,6 +177,7 @@ function stubMotion({ foldHeight = 0 } = {}) {
     };
     played.push({
       el: this,
+      frames,
       opts,
       finish: () => {
         resolve();
@@ -182,17 +189,31 @@ function stubMotion({ foldHeight = 0 } = {}) {
   const realRect = Element.prototype.getBoundingClientRect;
   const rect = (left: number, top: number, width: number, height: number) =>
     ({ left, top, width, height, x: left, y: top, right: left + width, bottom: top + height, toJSON: () => ({}) }) as DOMRect;
+  const panel = () => document.querySelector('[data-visual-mask="release-notes"]');
+  const folded = () => (panel()?.querySelector(".t-collapse") ? foldHeight : 0);
   Element.prototype.getBoundingClientRect = function (this: Element) {
     if (this.hasAttribute("data-settings-card")) {
       const col = this.parentElement!;
-      const inRight = col.querySelector('[data-visual-mask="release-notes"]') != null;
-      return rect(inRight ? 600 : 0, [...col.children].indexOf(this) * 100, 400, 90);
+      const inRight = col.contains(panel());
+      return rect(inRight ? 600 : 0, [...col.children].indexOf(this) * 100 + (inRight ? folded() : 0), 400, 90);
     }
-    if (this.classList.contains("t-collapse")) return rect(0, 0, 400, foldHeight);
+    if (this === panel()) return rect(600, 0, 400, 90 + folded());
+    if (this === panel()?.parentElement) return rect(600, 0, 400, 500);
+    if (this.classList.contains("t-collapse")) return rect(600, 90, 400, foldHeight);
     return realRect.call(this);
   };
   return {
     cards: () => played.filter((p) => p.el.hasAttribute("data-settings-card")),
+    /** The fold's own grow or shrink (the box, not its fading content). */
+    fold: () => played.filter((p) => p.el.classList.contains("t-collapse")),
+    /** When a card's animation actually sets it moving: its delay, or for a
+     * drawn path the time its first keyframe changes. */
+    setsOff: (p: Fake) => {
+      if (p.opts.delay !== undefined) return p.opts.delay;
+      const xs = p.frames.map((f) => Number(/translate\((-?[\d.e-]+)px/.exec(String(f.transform))?.[1] ?? 0));
+      const k = xs.findIndex((x) => Math.abs(x - xs[0]) > 0.5);
+      return k <= 0 ? 0 : (p.frames[k - 1].offset as number) * Number(p.opts.duration);
+    },
     finishAll: () => played.forEach((p) => p.finish()),
     restore: () => {
       if (hadAnimate) proto.animate = realAnimate;
@@ -253,11 +274,13 @@ test("a wide window puts three cards under the changelog, and Show more moves th
   expect(history()).toBeNull();
 });
 
-/// Phase order: the cards slide first - one after another - and the history
-/// unfolds only once they have landed.
-test("Show more slides the cards across in turn, then unfolds the history", async () => {
+/// One motion, not two: Show more moves the cards and opens the history on
+/// the click. The cards set off top-down, and the history's grow is held
+/// only until Updates, right under the panel, is clear of the column - far
+/// less than the whole slide the first version waited for.
+test("Show more moves the cards and grows the history as one motion, Updates first", async () => {
   wideWindow();
-  const motion = stubMotion();
+  const motion = stubMotion({ foldHeight: 300 });
   try {
     mockIPC(() => undefined);
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -265,27 +288,44 @@ test("Show more slides the cards across in turn, then unfolds the history", asyn
     await screen.findByRole("heading", { name: "Changelog" });
 
     fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
-    // Moved at once, played back from the right column...
+    expect(screen.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+    expect(history()).not.toBeNull();
     expect(headings(columns().left)).toEqual(ALL_CARDS);
+
     const slides = motion.cards();
     expect(slides.map((s) => s.el.getAttribute("data-settings-card"))).toEqual(["updates", "backup", "help"]);
-    expect(slides.map((s) => s.opts.delay)).toEqual([0, 70, 140]);
-    // ...and the history waits for them.
-    await act(async () => {});
-    expect(history()).toBeNull();
-    expect(screen.getByRole("button", { name: /^Show more/ })).toHaveAttribute("aria-expanded", "false");
-
-    await act(async () => motion.finishAll());
-    expect(await screen.findByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
-    expect(history()).not.toBeNull();
+    const starts = slides.map(motion.setsOff);
+    expect(starts[0]).toBe(0);
+    expect(starts[1]).toBeGreaterThan(starts[0]);
+    expect(starts[2]).toBeGreaterThan(starts[1]);
+    const grow = motion.fold()[0];
+    const hold = Number(grow.opts.delay);
+    expect(hold).toBeGreaterThan(0);
+    expect(hold).toBeLessThan(TILE_MS);
+    expect(grow.opts.fill).toBe("backwards");
+    // Exactly the plan for this geometry: a 300px grow on EASE from the
+    // panel's foot at 90px, the cards leaving rows 1-3 on the right for
+    // rows 3-5 on the left.
+    const ms = foldMs(300);
+    const ease = parseEasing(EASE);
+    const plan = planOpen(
+      [100, 200, 300].map((top, i) => ({ from: { left: 600, top }, to: { left: 0, top: 100 * (i + 3) }, width: 400 })),
+      600,
+      (t) => (t < 0 ? 90 : t < ms ? 90 + 300 * ease(t / ms) : 390),
+      ms,
+      { ease, tileMs: TILE_MS, staggerMs: TILE_STAGGER_MS, safetyMs: TILE_SAFETY_MS },
+    );
+    expect(hold).toBeCloseTo(plan.fold, 6);
+    starts.forEach((start, i) => expect(start).toBeCloseTo(plan.starts[i], 6));
   } finally {
     motion.restore();
   }
 });
 
-/// Show less runs the other way: the history folds, and only after its fold
-/// has played do the cards slide back under the changelog.
-test("Show less folds the history first, then slides the cards back", async () => {
+/// Show less runs the other way in one motion: the history folds on the
+/// click, and the cards come back bottom-up - Help & support, whose spot the
+/// shrinking fold frees first, sets off first.
+test("Show less folds the history and brings the cards back bottom-up as their spots free", async () => {
   wideWindow();
   const motion = stubMotion({ foldHeight: 300 });
   try {
@@ -295,25 +335,41 @@ test("Show less folds the history first, then slides the cards back", async () =
     await screen.findByRole("heading", { name: "Changelog" });
     fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
     await act(async () => motion.finishAll());
-    fireEvent.click(await screen.findByRole("button", { name: "Show less" }));
+    // The sequence also waits out the held grow on its own clock.
+    await act(() => new Promise((r) => window.setTimeout(r, 800)));
 
+    const before = motion.cards().length;
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
     expect(history()).toBeNull();
     expect(screen.getByRole("button", { name: /^Show more/ })).toHaveAttribute("aria-expanded", "false");
-    // A 300px fold plays for about 300ms: a third of the way in, the cards
-    // have not moved yet.
-    await act(() => new Promise((r) => window.setTimeout(r, 100)));
-    expect(headings(columns().left)).toEqual(ALL_CARDS);
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
 
-    await waitFor(() => expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]), { timeout: 2000 });
-    expect(headings(columns().left)).toEqual(LOOKS);
-    const back = motion.cards().slice(-3);
+    const back = motion.cards().slice(before);
     expect(back.map((s) => s.el.getAttribute("data-settings-card"))).toEqual(["updates", "backup", "help"]);
+    const [updates, backup, help] = back.map(motion.setsOff);
+    expect(help).toBeLessThan(backup);
+    expect(backup).toBeLessThan(updates);
+    // Exactly the plan for this geometry: the copy shrinks 300px on EASE
+    // from the panel's foot at 90px, and the cards return from the left
+    // column (rows 3-5) to rows 1-3 on the right. Keyframes are 1/60s apart.
+    const ms = foldMs(300);
+    const ease = parseEasing(EASE);
+    const plan = planClose(
+      [300, 400, 500].map((top, i) => ({ from: { left: 0, top }, to: { left: 600, top: 100 * (i + 1) }, width: 400 })),
+      600,
+      (t) => 90 + 300 * (1 - ease(Math.min(1, t / ms))),
+      ms,
+      { ease, tileMs: TILE_MS, staggerMs: TILE_STAGGER_MS, safetyMs: TILE_SAFETY_MS },
+    );
+    [updates, backup, help].forEach((start, i) => expect(Math.abs(start - plan[i])).toBeLessThan(17));
+    // Drawn on a path that starts where each card was, in the left column.
+    for (const s of back) expect(String(s.frames[0].transform)).toMatch(/^translate\(-600px/);
   } finally {
     motion.restore();
   }
 });
 
-/// A second click while a sequence runs is ignored, so the cards and the
+/// A second click while the motion runs is ignored, so the cards and the
 /// history cannot end up out of step.
 test("a rapid double click leaves the cards and the history in step", async () => {
   wideWindow();
@@ -324,26 +380,25 @@ test("a rapid double click leaves the cards and the history in step", async () =
     renderSettings(qc);
     await screen.findByRole("heading", { name: "Changelog" });
 
-    const more = screen.getByRole("button", { name: /^Show more/ });
-    fireEvent.click(more);
-    fireEvent.click(more);
-    await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
-    await act(async () => motion.finishAll());
-    await act(async () => motion.finishAll());
-
-    const less = await screen.findByRole("button", { name: "Show less" });
+    // The label flips on the first click; the second lands on Show less.
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    await act(async () => {});
     expect(history()).not.toBeNull();
     expect(headings(columns().left)).toEqual(ALL_CARDS);
-
-    fireEvent.click(less);
-    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
-    await waitFor(() => expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]));
     await act(async () => motion.finishAll());
+
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
     await act(async () => {});
     expect(screen.getByRole("button", { name: /^Show more/ })).toHaveAttribute("aria-expanded", "false");
     expect(history()).toBeNull();
-    expect(headings(columns().left)).toEqual(LOOKS);
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+    await act(async () => motion.finishAll());
+
+    // Once it has finished, the next click is taken.
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   } finally {
     motion.restore();
   }

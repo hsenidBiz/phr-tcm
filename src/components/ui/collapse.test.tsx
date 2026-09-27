@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { Collapse, EASE, EASE_TALL, foldMs, useRegroupMotion, useSettled } from "./collapse";
+import { Collapse, EASE, EASE_TALL, foldMs, useRegroupMotion, useSettled, type FoldMotion } from "./collapse";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -471,4 +471,93 @@ test("regrouping mounts groups open and plays one entrance for the list", () => 
   list.classList.remove("t-panel-in");
   fireEvent.click(screen.getByText(/rerender/));
   expect(list).not.toHaveClass("t-panel-in");
+});
+
+// ---- Reporting the motion, for motion planned around it ---------------------
+// Settings' cards slide in step with the changelog's fold: the fold says how
+// its edge will move (onGrow / onShrink), and the grow can be held shut
+// while a card clears the way.
+
+function Reporting({
+  onGrow,
+  onShrink,
+}: {
+  onGrow?: (g: FoldMotion) => number | void;
+  onShrink?: (s: FoldMotion) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+      <Collapse open={open} onGrow={onGrow} onShrink={onShrink}>
+        <p>Row one</p>
+      </Collapse>
+    </div>
+  );
+}
+
+test("onGrow hears the grow's measure, and the time it returns holds the fold shut first", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  const onGrow = vi.fn(() => 150);
+  try {
+    render(<Reporting onGrow={onGrow} />);
+    expect(onGrow).toHaveBeenCalledWith({ span: 120, margin: 0, ms: foldMs(120), easing: EASE });
+    const grow = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"))!;
+    expect(grow.opts).toMatchObject({ duration: foldMs(120), delay: 150, fill: "backwards" });
+    // The content's fade waits with it.
+    const fade = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse-inner"))!;
+    expect(fade.opts).toMatchObject({ delay: 150, fill: "backwards" });
+  } finally {
+    m.restore();
+  }
+});
+
+test("without a hold the grow starts at once, as before", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(120);
+  try {
+    render(<Reporting onGrow={() => undefined} />);
+    const grow = m.calls.find((c) => (c.el as HTMLElement).classList.contains("t-collapse"))!;
+    expect(grow.opts).toEqual({ duration: foldMs(120), easing: EASE });
+  } finally {
+    m.restore();
+  }
+});
+
+test("onShrink hears the closing copy's measure", () => {
+  window.innerHeight = 768;
+  const m = stubMotion(20_000);
+  const onShrink = vi.fn();
+  try {
+    render(<Reporting onShrink={onShrink} />);
+    fireEvent.click(screen.getByText("Toggle"));
+    expect(onShrink).toHaveBeenCalledWith({ span: 668, margin: 0, ms: foldMs(668), easing: EASE });
+  } finally {
+    m.restore();
+  }
+});
+
+test("the closing copy shrinks its outer margin away with it, so nothing below jumps at the end", () => {
+  window.innerHeight = 768;
+  const style = document.createElement("style");
+  style.textContent = ".t-collapse { margin-bottom: 16px; }";
+  document.head.appendChild(style);
+  const m = stubMotion(120);
+  const onShrink = vi.fn();
+  try {
+    render(<Reporting onShrink={onShrink} />);
+    m.calls.length = 0;
+    fireEvent.click(screen.getByText("Toggle"));
+    const ghost = document.querySelector(".t-collapse.is-closing") as HTMLElement;
+    const shrink = m.calls.find((c) => c.el === ghost)!;
+    expect(shrink.frames).toEqual([
+      { height: "120px", marginTop: "0px", marginBottom: "16px" },
+      { height: "0px", marginTop: "0px", marginBottom: "0px" },
+    ]);
+    expect(onShrink).toHaveBeenCalledWith(expect.objectContaining({ span: 120, margin: 16 }));
+  } finally {
+    m.restore();
+    style.remove();
+  }
 });

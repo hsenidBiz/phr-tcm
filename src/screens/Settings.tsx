@@ -71,6 +71,12 @@ const ACCENT_TITLE: Record<Accent, string> = {
  * the order they set off (their `data-settings-card` ids). */
 const MOVING_CARDS = ["updates", "backup", "help"] as const;
 
+/** The left track's width - min(32rem, the grid less the 2rem gap and the
+ * right track's 24rem floor) - for the cards under the changelog, so a
+ * card is the same size in either column and does not change width as it
+ * slides. 100cqw is the grid's width (it is the @container). */
+const LEFT_TRACK_WIDTH = "lg:w-[min(32rem,calc(100cqw_-_26rem))]";
+
 export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   // The optional extras (settingsExtras.ts): the listener lives only
@@ -96,10 +102,12 @@ export default function Settings({ org, project }: { org: string; project: strin
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
   // The changelog opens on the latest version only; the rest of the
   // history is one click away rather than filling the column. Opening it
-  // also moves the cards under it aside first (useTileLayout), so whether
-  // it is open lives with the layout, not here.
+  // also moves the cards under it aside, in the same motion (useTileLayout),
+  // so whether it is open lives with the layout, not here.
+  const changelogRef = useRef<HTMLElement>(null);
   const tiles = useTileLayout({
     rootRef: panelRef,
+    changelogRef,
     moving: MOVING_CARDS,
     fold: () => document.getElementById("changelog-history")?.closest<HTMLElement>(".t-collapse") ?? null,
     changelogShown: rightPanel === "changelog",
@@ -235,7 +243,12 @@ export default function Settings({ org, project }: { org: string; project: strin
   // is open (useTileLayout). Below the breakpoint they follow AI tools.
   const movingCards = (
     <>
-      <SettingsCard title="Updates" data-tour="settings-updates" data-settings-card="updates">
+      <SettingsCard
+        title="Updates"
+        data-tour="settings-updates"
+        data-settings-card="updates"
+        className={cn(tiles.placement === "right" && LEFT_TRACK_WIDTH)}
+      >
         <SettingRow
           name={`Version ${version.data ?? "-"}${onBeta ? " (beta)" : ""}`}
           description="Updates install automatically from the releases feed."
@@ -265,7 +278,12 @@ export default function Settings({ org, project }: { org: string; project: strin
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="Backup & transfer" data-tour="settings-backup" data-settings-card="backup">
+      <SettingsCard
+        title="Backup & transfer"
+        data-tour="settings-backup"
+        data-settings-card="backup"
+        className={cn(tiles.placement === "right" && LEFT_TRACK_WIDTH)}
+      >
         <SettingRow
           name="Move to another computer"
           description="Settings and local data in one file. Your sign-in and database logins stay on this computer."
@@ -310,7 +328,11 @@ export default function Settings({ org, project }: { org: string; project: strin
         )}
       </SettingsCard>
 
-      <SettingsCard title="Help & support" data-settings-card="help">
+      <SettingsCard
+        title="Help & support"
+        data-settings-card="help"
+        className={cn(tiles.placement === "right" && LEFT_TRACK_WIDTH)}
+      >
         {/* Report a bug used to sit in the changelog panel's header; it is
             still one click from the gear, beside the other two ways of
             getting help. The report reads the log itself. */}
@@ -364,8 +386,8 @@ export default function Settings({ org, project }: { org: string; project: strin
     // Updates, Backup & transfer and Help & support under it - a collapsed
     // changelog is short, and the space under it used to sit empty. While
     // the changelog's full history is open those three move to the foot of
-    // the left column instead, sliding across before it unfolds and back
-    // after it folds (useTileLayout owns the order and the motion).
+    // the left column instead, sliding across as it unfolds and back as it
+    // folds, timed so its edge never crosses them (useTileLayout).
     //
     // Left: the settings, grouped into cards of one row per setting. It stops
     // growing at 32rem - none of its rows get better with more room - and the
@@ -376,7 +398,7 @@ export default function Settings({ org, project }: { org: string; project: strin
     // than an even split.
     <div
       ref={panelRef}
-      className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,32rem)_minmax(24rem,1fr)] lg:items-start"
+      className="@container grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,32rem)_minmax(24rem,1fr)] lg:items-start"
     >
       <div className="space-y-4">
       {/* The tour walks the user here and rings this card so the theme is
@@ -572,7 +594,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       {/* Masked in the visual regression suite: this panel's content
           changes with every release (and every log line), which would
           otherwise invalidate the Settings golden on each ship. */}
-      <section className="space-y-3" data-visual-mask="release-notes">
+      <section ref={changelogRef} className="space-y-3" data-visual-mask="release-notes">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-text">
             {rightPanel === "changelog" ? "Changelog" : "App log"}
@@ -656,7 +678,7 @@ export default function Settings({ org, project }: { org: string; project: strin
           {/* Earlier versions unfold in place, in a box of their own so a
               long history scrolls without pushing the panel's own edge
               off the screen. */}
-          <Collapse open={tiles.expanded}>
+          <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
             <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
               {CHANGELOG.slice(1).map((e) => (
                 <ChangelogVersion key={e.version} entry={e} />
