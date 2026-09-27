@@ -45,28 +45,40 @@ pub struct UpdateState {
 /// The old mirror stays as a second try: it needs only github.com, so a
 /// network that allows the site but blocks `api.github.com` keeps working
 /// exactly as well as it did before.
+///
+/// Built from `source_plan`, so the tested plan is what actually runs.
 pub fn sources(beta: bool) -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
-    vec![
-        (
-            "github api",
-            // No token: hsenidBiz/phr-tcm is public (checked 2026-09-08: gh
-            // repo view --json isPrivate -> false) and MUST stay so - both
-            // sources are this host, so a private repo takes every install
-            // to FEED_UNREACHABLE. This ships to machines we do not
-            // control; there is nothing safe to embed.
-            //
-            // `beta` adds prereleases - the Settings switch; stable installs
-            // never see a beta.
-            Box::new(sources::GithubSource::new(REPO_URL, None, beta)),
-        ),
-        ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),
-    ]
+    source_plan(beta)
+        .into_iter()
+        .map(|(name, prerelease)| -> (&'static str, Box<dyn sources::UpdateSource>) {
+            if name == GITHUB_API {
+                // No token: hsenidBiz/phr-tcm is public (checked 2026-09-08: gh
+                // repo view --json isPrivate -> false) and MUST stay so - both
+                // sources are this host, so a private repo takes every install
+                // to FEED_UNREACHABLE. This ships to machines we do not
+                // control; there is nothing safe to embed.
+                //
+                // `prerelease` (the plan's reading of `beta`) adds prereleases
+                // - the Settings switch; stable installs never see a beta.
+                (name, Box::new(sources::GithubSource::new(REPO_URL, None, prerelease)))
+            } else {
+                // The mirror takes no prerelease flag: GitHub points
+                // `latest/download` at the newest non-prerelease, so it
+                // never serves a beta whatever the plan says.
+                (name, Box::new(sources::HttpSource::new(RELEASES_URL)))
+            }
+        })
+        .collect()
 }
 
+const GITHUB_API: &str = "github api";
+const LATEST_DOWNLOAD: &str = "latest/download";
+
 /// Each source's name and whether it reads prereleases (betas), in the
-/// order they are tried. Pure, so the beta switch's effect is tested.
+/// order they are tried. Pure, so the beta switch's effect is tested -
+/// and `sources` is built from it, so the test covers what runs.
 pub fn source_plan(beta: bool) -> Vec<(&'static str, bool)> {
-    vec![("github api", beta), ("latest/download", false)]
+    vec![(GITHUB_API, beta), (LATEST_DOWNLOAD, false)]
 }
 
 /// One manager per reachable source. Empty means "not a Velopack install"

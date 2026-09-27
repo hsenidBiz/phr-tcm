@@ -353,6 +353,20 @@ fn the_sources_follow_the_beta_setting() {
     use v2_lib::updater::source_plan;
     assert_eq!(source_plan(false), vec![("github api", false), ("latest/download", false)]);
     assert_eq!(source_plan(true), vec![("github api", true), ("latest/download", false)]);
+    // The sources that run are built from that plan, in its order - so the
+    // plan above is what a check actually uses.
+    for beta in [false, true] {
+        let names: Vec<_> = sources(beta).iter().map(|(n, _)| *n).collect();
+        let planned: Vec<_> = source_plan(beta).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, planned, "beta={beta}");
+    }
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/updater/mod.rs")).unwrap();
+    let flat = src.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("source_plan(beta) .into_iter()"), "sources() is built from the plan");
+    assert!(
+        flat.contains("GithubSource::new(REPO_URL, None, prerelease)"),
+        "the GitHub source takes the plan's prerelease flag"
+    );
 }
 
 /// A source whose answer names no release (e.g. the GitHub API's last ten
