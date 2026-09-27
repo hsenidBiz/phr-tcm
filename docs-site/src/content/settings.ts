@@ -29,7 +29,14 @@ export const settings: Screen = {
       route: [OPEN, { scrollTo: { role: "switch", name: "Start with Windows" } }],
       alt: "Settings scrolled down to How To Use, the interface tour, AI tools and Background",
     },
-    { id: LOGS, route: [OPEN, { click: { role: "button", name: "Logs" } }, { waitFor: { role: "button", name: "Copy log" } }], alt: "The app log in place of the changelog" },
+    // From the top of Settings: the log is shorter than the changelog, so a page
+    // that arrived scrolled snaps up when it opens, and the two theme passes
+    // caught it in different places.
+    {
+      id: LOGS,
+      route: [OPEN, { scrollTo: { role: "heading", name: "Appearance" } }, { click: { role: "button", name: "Logs" } }, { waitFor: { role: "button", name: "Copy log" } }],
+      alt: "The app log in place of the changelog",
+    },
     {
       id: BUG,
       route: [OPEN, { click: { role: "button", name: "Report a bug" } }, { waitFor: { role: "textbox", name: "Bug title" } }],

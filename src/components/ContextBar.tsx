@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Settings as SettingsIcon } from "lucide-react";
 import { IconBoard, IconTestCases } from "../lib/actionIcons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
 import { useMentions } from "../hooks/useMentions";
@@ -62,6 +62,16 @@ export default function ContextBar({
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
   const [pbiGlow, setPbiGlow] = useState(false);
+  // The gear turns forward when Settings opens and back when it closes -
+  // however it closes (the gear, the sidebar, the command palette). `n`
+  // remounts the icon so each change plays afresh (index.css, ico-cog-turn).
+  const [turn, setTurn] = useState<{ n: number; opening: boolean } | null>(null);
+  const wasOpen = useRef(settingsOpen);
+  useEffect(() => {
+    if (wasOpen.current === settingsOpen) return;
+    wasOpen.current = settingsOpen;
+    setTurn((t) => ({ n: (t?.n ?? 0) + 1, opening: settingsOpen }));
+  }, [settingsOpen]);
   useEffect(() => {
     const onGlow = (e: Event) => setPbiGlow(Boolean((e as CustomEvent).detail));
     window.addEventListener(PBI_GLOW_EVENT, onGlow);
@@ -211,7 +221,11 @@ export default function ContextBar({
             onOpenSettings();
           }}
         >
-          <SettingsIcon size={16} />
+          <SettingsIcon
+            key={turn?.n ?? 0}
+            size={16}
+            className={turn ? (turn.opening ? "ico-cog-turn" : "ico-cog-turn-back") : undefined}
+          />
         </button>
       </div>
     </div>

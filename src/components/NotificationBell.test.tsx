@@ -196,3 +196,19 @@ test("a PR mention opens its pull request in the app", () => {
   fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on PR #12" }));
   expect(opened).toEqual([{ kind: "pr", repo: "web", id: 12, project: "Web" }]);
 });
+
+/// Each click swings the bell once more (index.css, ico-bell-swing): the
+/// icon is a fresh element per click, so a click mid-swing starts it over.
+test("the bell swings when it is clicked, every time", () => {
+  seed();
+  render(<NotificationBell org="acme" />);
+  const bell = screen.getByRole("button", { name: /Notifications/ });
+  expect(bell.querySelector("svg")).not.toHaveClass("ico-bell-swing");
+  fireEvent.click(bell);
+  const first = bell.querySelector("svg");
+  expect(first).toHaveClass("ico-bell-swing");
+  fireEvent.click(bell);
+  const second = bell.querySelector("svg");
+  expect(second).toHaveClass("ico-bell-swing");
+  expect(second).not.toBe(first);
+});

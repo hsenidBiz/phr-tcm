@@ -65,6 +65,8 @@ export default function NotificationBell({
   const items = useNotifications(org);
   const unread = unreadCount(items);
   const [open, setOpen] = useState(false);
+  // Clicks so far: the bell swings on each (index.css, ico-bell-swing).
+  const [rings, setRings] = useState(0);
   const root = useRef<HTMLDivElement>(null);
 
   // Close on a click anywhere else, or Escape - the panel is a glance,
@@ -89,6 +91,7 @@ export default function NotificationBell({
     const next = !open;
     setOpen(next);
     if (next) markAllRead(org);
+    setRings((n) => n + 1);
   };
 
   if (!org) return null;
@@ -105,7 +108,8 @@ export default function NotificationBell({
         )}
         onClick={toggle}
       >
-        <Bell size={16} aria-hidden />
+        {/* Remounted per click, so each click swings it once more. */}
+        <Bell key={rings} size={16} aria-hidden className={rings ? "ico-bell-swing" : undefined} />
         {unread > 0 && (
           <span
             aria-hidden
