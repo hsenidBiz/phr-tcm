@@ -62,6 +62,8 @@ export default function ContextBar({
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
   const [pbiGlow, setPbiGlow] = useState(false);
+  // Clicks on the gear so far: it turns on each (index.css, ico-cog-turn).
+  const [turns, setTurns] = useState(0);
   useEffect(() => {
     const onGlow = (e: Event) => setPbiGlow(Boolean((e as CustomEvent).detail));
     window.addEventListener(PBI_GLOW_EVENT, onGlow);
@@ -208,10 +210,12 @@ export default function ContextBar({
           disabled={locked && !settingsLive}
           onClick={() => {
             if (locked && !settingsLive) return;
+            setTurns((n) => n + 1);
             onOpenSettings();
           }}
         >
-          <SettingsIcon size={16} />
+          {/* Remounted per click, so each click turns it once more. */}
+          <SettingsIcon key={turns} size={16} className={turns ? "ico-cog-turn" : undefined} />
         </button>
       </div>
     </div>

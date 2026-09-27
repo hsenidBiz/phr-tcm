@@ -884,8 +884,26 @@ table {
 .group:hover .nav-ico-prs { animation: ico-pull 0.5s ease; }
 .group:hover .nav-ico-board { animation: ico-shuffle 0.5s ease; }
 .group:hover .nav-ico-create { animation: ico-pop 0.4s ease; }
+
+/* The context bar's bell swings from its top, and the Settings gear turns
+   half a turn (its teeth repeat, so it lands looking the same), each time
+   they are clicked. The components remount the icon per click, so a click
+   during a swing starts it again. */
+@keyframes ico-bell-swing {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(16deg); }
+  32% { transform: rotate(-13deg); }
+  50% { transform: rotate(8deg); }
+  68% { transform: rotate(-4deg); }
+  84% { transform: rotate(2deg); }
+}
+@keyframes ico-cog-turn { from { transform: rotate(0); } to { transform: rotate(180deg); } }
+.ico-bell-swing { transform-origin: 50% 12%; animation: ico-bell-swing 0.75s ease-in-out; }
+.ico-cog-turn { animation: ico-cog-turn 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
 @media (prefers-reduced-motion: reduce) {
-  .group:hover [class*="nav-ico-"] { animation: none; }
+  .group:hover [class*="nav-ico-"],
+  .ico-bell-swing,
+  .ico-cog-turn { animation: none; }
 }
 
 /* ── Sidebar glyph motion ────────────────────────────────────────────────
