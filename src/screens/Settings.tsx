@@ -11,6 +11,7 @@ import { commands, type AppSettings } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import BackgroundSettings from "../components/BackgroundSettings";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
+import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -66,6 +67,10 @@ const ACCENT_TITLE: Record<Accent, string> = {
   rose: "Rose",
 };
 
+/** The cards that change column when the changelog's history opens, in
+ * the order they set off (their `data-settings-card` ids). */
+const MOVING_CARDS = ["updates", "backup", "help"] as const;
+
 export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   // The optional extras (settingsExtras.ts): the listener lives only
@@ -90,8 +95,15 @@ export default function Settings({ org, project }: { org: string; project: strin
   // app's own log for when something needs reporting.
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
   // The changelog opens on the latest version only; the rest of the
-  // history is one click away rather than filling the column.
-  const [allChanges, setAllChanges] = useState(false);
+  // history is one click away rather than filling the column. Opening it
+  // also moves the cards under it aside first (useTileLayout), so whether
+  // it is open lives with the layout, not here.
+  const tiles = useTileLayout({
+    rootRef: panelRef,
+    moving: MOVING_CARDS,
+    fold: () => document.getElementById("changelog-history")?.closest<HTMLElement>(".t-collapse") ?? null,
+    changelogShown: rightPanel === "changelog",
+  });
 
   // Machine-wide AI tool registration is opt-in; the AI Bridge tab reads
   // the same store and offers the choice only while this is on.
@@ -218,9 +230,142 @@ export default function Settings({ org, project }: { org: string; project: strin
 
   const selectedRate = RATE_LEVELS.find((l) => l.id === rate) ?? RATE_LEVELS[0];
 
+  // Updates, Backup & transfer and Help & support: on a wide window they sit
+  // under the changelog, and slide over to the left column while its history
+  // is open (useTileLayout). Below the breakpoint they follow AI tools.
+  const movingCards = (
+    <>
+      <SettingsCard title="Updates" data-tour="settings-updates" data-settings-card="updates">
+        <SettingRow
+          name={`Version ${version.data ?? "-"}${onBeta ? " (beta)" : ""}`}
+          description="Updates install automatically from the releases feed."
+          control={
+            <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
+              <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
+              {check.isPending ? "Checking" : "Check for updates"}
+            </Button>
+          }
+        />
+        <SettingRow
+          asLabel
+          name="Download beta builds"
+          description="New features sooner, before the stable release."
+          control={
+            <Switch
+              checked={appSettings.data?.beta_updates ?? false}
+              disabled={!appSettings.data}
+              onCheckedChange={(on) => void setBeta(on)}
+              ariaLabel="Download beta builds"
+            />
+          }
+        >
+          {onBeta && appSettings.data && !appSettings.data.beta_updates && (
+            <p className="text-xs text-muted">You&apos;re on a beta build. It stays until the next stable release.</p>
+          )}
+        </SettingRow>
+      </SettingsCard>
+
+      <SettingsCard title="Backup & transfer" data-tour="settings-backup" data-settings-card="backup">
+        <SettingRow
+          name="Move to another computer"
+          description="Settings and local data in one file. Your sign-in and database logins stay on this computer."
+          control={
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={exportBackup.isPending}
+                onClick={() => exportBackup.mutate()}
+              >
+                {exportBackup.isPending ? "Exporting" : "Export to file"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={pickImport}>
+                Import from file
+              </Button>
+            </>
+          }
+        />
+        {importPath && (
+          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
+            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
+            <p className="text-sm text-muted">
+              This replaces the settings and local data on this machine with
+              the backup&apos;s copy, then reloads the app. Anything you
+              changed here since the backup was made will be overwritten.
+            </p>
+            <p className="break-all text-xs text-faint">{importPath}</p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={importBackup.isPending}
+                onClick={() => importBackup.mutate(importPath)}
+              >
+                {importBackup.isPending ? "Importing" : "Import and reload"}
+              </Button>
+            </div>
+          </Modal>
+        )}
+      </SettingsCard>
+
+      <SettingsCard title="Help & support" data-settings-card="help">
+        {/* Report a bug used to sit in the changelog panel's header; it is
+            still one click from the gear, beside the other two ways of
+            getting help. The report reads the log itself. */}
+        <SettingRow
+          control={
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={openingHelp}
+                onClick={() => {
+                  setOpeningHelp(true);
+                  commands
+                    .openHelp()
+                    .then((r) => {
+                      if (r.status === "error") toast.error(r.error);
+                    })
+                    .catch(() =>
+                      toast.error("Could not open the help pages. Settings, Logs has the details."),
+                    )
+                    .finally(() => setOpeningHelp(false));
+                }}
+              >
+                <IconHelp aria-hidden />
+                {openingHelp ? "Opening" : "How To Use"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
+              >
+                <IconTour aria-hidden />
+                Show UI tour
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setReporting(true)}>
+                <IconBug aria-hidden />
+                Report a bug
+              </Button>
+            </>
+          }
+        />
+      </SettingsCard>
+    </>
+  );
+
   return (
     // Two columns on wide windows; below lg everything stacks into one
     // column: the cards, then the changelog/log panel.
+    //
+    // On a wide window the right column holds the changelog/log panel with
+    // Updates, Backup & transfer and Help & support under it - a collapsed
+    // changelog is short, and the space under it used to sit empty. While
+    // the changelog's full history is open those three move to the foot of
+    // the left column instead, sliding across before it unfolds and back
+    // after it folds (useTileLayout owns the order and the motion).
     //
     // Left: the settings, grouped into cards of one row per setting. It stops
     // growing at 32rem - none of its rows get better with more room - and the
@@ -236,7 +381,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       <div className="space-y-4">
       {/* The tour walks the user here and rings this card so the theme is
           picked on the real screen, not on a copy in a card. */}
-      <SettingsCard title="Appearance" data-tour="theme">
+      <SettingsCard title="Appearance" data-tour="theme" data-settings-card="appearance">
         <SettingRow name="Theme" description="Changes the entire UI palette.">
           <div className="flex flex-wrap gap-2">
             {THEMES.map((t) => (
@@ -314,7 +459,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="General">
+      <SettingsCard title="General" data-settings-card="general">
         <BackgroundSettings />
         {/* Three levels, one pressed. Only the chosen level's explanation
             shows, under the row - the three used to be stacked as large
@@ -349,7 +494,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="AI tools">
+      <SettingsCard title="AI tools" data-settings-card="ai-tools">
         <SettingRow
           asLabel
           name="Allow registering AI tools machine-wide"
@@ -367,124 +512,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         />
       </SettingsCard>
 
-      <SettingsCard title="Updates" data-tour="settings-updates">
-        <SettingRow
-          name={`Version ${version.data ?? "-"}${onBeta ? " (beta)" : ""}`}
-          description="Updates install automatically from the releases feed."
-          control={
-            <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-              <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
-              {check.isPending ? "Checking" : "Check for updates"}
-            </Button>
-          }
-        />
-        <SettingRow
-          asLabel
-          name="Download beta builds"
-          description="New features sooner, before the stable release."
-          control={
-            <Switch
-              checked={appSettings.data?.beta_updates ?? false}
-              disabled={!appSettings.data}
-              onCheckedChange={(on) => void setBeta(on)}
-              ariaLabel="Download beta builds"
-            />
-          }
-        >
-          {onBeta && appSettings.data && !appSettings.data.beta_updates && (
-            <p className="text-xs text-muted">You&apos;re on a beta build. It stays until the next stable release.</p>
-          )}
-        </SettingRow>
-      </SettingsCard>
-
-      <SettingsCard title="Backup & transfer" data-tour="settings-backup">
-        <SettingRow
-          name="Move to another computer"
-          description="Settings and local data in one file. Your sign-in and database logins stay on this computer."
-          control={
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={exportBackup.isPending}
-                onClick={() => exportBackup.mutate()}
-              >
-                {exportBackup.isPending ? "Exporting" : "Export to file"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={pickImport}>
-                Import from file
-              </Button>
-            </>
-          }
-        />
-        {importPath && (
-          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
-            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
-            <p className="text-sm text-muted">
-              This replaces the settings and local data on this machine with
-              the backup&apos;s copy, then reloads the app. Anything you
-              changed here since the backup was made will be overwritten.
-            </p>
-            <p className="break-all text-xs text-faint">{importPath}</p>
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={importBackup.isPending}
-                onClick={() => importBackup.mutate(importPath)}
-              >
-                {importBackup.isPending ? "Importing" : "Import and reload"}
-              </Button>
-            </div>
-          </Modal>
-        )}
-      </SettingsCard>
-
-      <SettingsCard title="Help & support">
-        {/* Report a bug used to sit in the changelog panel's header; it is
-            still one click from the gear, beside the other two ways of
-            getting help. The report reads the log itself. */}
-        <SettingRow
-          control={
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={openingHelp}
-                onClick={() => {
-                  setOpeningHelp(true);
-                  commands
-                    .openHelp()
-                    .then((r) => {
-                      if (r.status === "error") toast.error(r.error);
-                    })
-                    .catch(() =>
-                      toast.error("Could not open the help pages. Settings, Logs has the details."),
-                    )
-                    .finally(() => setOpeningHelp(false));
-                }}
-              >
-                <IconHelp aria-hidden />
-                {openingHelp ? "Opening" : "How To Use"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
-              >
-                <IconTour aria-hidden />
-                Show UI tour
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setReporting(true)}>
-                <IconBug aria-hidden />
-                Report a bug
-              </Button>
-            </>
-          }
-        />
-      </SettingsCard>
+      {tiles.placement !== "right" && movingCards}
 
       {/* Only on a machine where the optional extras are unlocked (a key
           sequence typed on this screen - see settingsExtras.ts). The
@@ -492,7 +520,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       {/* Capture mode: the owner's machine can be unlocked, but a shot must
           never show it - see dev/capture.ts. */}
       {extrasUnlocked && !isCaptureMode() && (
-        <SettingsCard title="Extras">
+        <SettingsCard title="Extras" data-settings-card="extras">
           <SettingRow
             description="Optional extras on this machine. While they are on, Auto Run shows in the sidebar and its tools are offered on the AI Bridge tab."
             control={
@@ -536,11 +564,11 @@ export default function Settings({ org, project }: { org: string; project: strin
 
       </div>
 
-      {/* The right column: the changelog (or the app log) on its own. On
-          wide windows it stays in view while the settings scroll past it -
-          sticky within the screen's scroll container, and capped to the
-          window so its own lower edge is always reachable. */}
-      <div className="lg:sticky lg:top-0 lg:max-h-[calc(100vh-9rem)] lg:overflow-y-auto">
+      {/* The right column: the changelog (or the app log), and on a wide
+          window the cards under it while its history is folded. It scrolls
+          with the page - it used to be sticky when it held the panel alone,
+          but a sticky panel would ride over the cards beneath it. */}
+      <div className="space-y-4">
       {/* Masked in the visual regression suite: this panel's content
           changes with every release (and every log line), which would
           otherwise invalidate the Settings golden on each ship. */}
@@ -558,7 +586,9 @@ export default function Settings({ org, project }: { org: string; project: strin
                   "rounded px-2 py-1 text-xs transition-colors",
                   rightPanel === p ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
                 )}
-                onClick={() => setRightPanel(p)}
+                // Through the layout: with the history open, leaving the
+                // changelog brings the cards back under the panel.
+                onClick={() => tiles.flip(() => setRightPanel(p))}
               >
                 {p === "changelog" ? "Changelog" : "Logs"}
               </button>
@@ -626,7 +656,7 @@ export default function Settings({ org, project }: { org: string; project: strin
           {/* Earlier versions unfold in place, in a box of their own so a
               long history scrolls without pushing the panel's own edge
               off the screen. */}
-          <Collapse open={allChanges}>
+          <Collapse open={tiles.expanded}>
             <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
               {CHANGELOG.slice(1).map((e) => (
                 <ChangelogVersion key={e.version} entry={e} />
@@ -637,17 +667,18 @@ export default function Settings({ org, project }: { org: string; project: strin
             <Button
               size="sm"
               variant="ghost"
-              aria-expanded={allChanges}
+              aria-expanded={tiles.expanded}
               aria-controls="changelog-history"
-              onClick={() => setAllChanges((v) => !v)}
+              onClick={tiles.toggle}
             >
-              {allChanges ? "Show less" : `Show more (${CHANGELOG.length - 1} earlier versions)`}
+              {tiles.expanded ? "Show less" : `Show more (${CHANGELOG.length - 1} earlier versions)`}
             </Button>
           )}
           </div>
         )}
       </section>
 
+      {tiles.placement === "right" && movingCards}
       </div>
 
       {/* Sizing and padding belong on the Modal, not inside it: the panel
