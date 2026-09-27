@@ -4,6 +4,7 @@
 
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod app_settings;
 pub mod auth;
 pub mod autorun;
 pub mod autorun_publish;

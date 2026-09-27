@@ -13,6 +13,7 @@ pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod app_settings;
 pub mod assigned_watch;
 pub mod db;
 pub mod db_defaults;
@@ -60,8 +61,8 @@ pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        ai_bridge, ai_tools, auth, autorun, autorun_publish, autorun_record, autorun_replay, board, bugs, cases,
-        discovery, misc, prs, queue, run_order, runs, testplan, workspace,
+        ai_bridge, ai_tools, app_settings, auth, autorun, autorun_publish, autorun_record, autorun_replay, board,
+        bugs, cases, discovery, misc, prs, queue, run_order, runs, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -238,7 +239,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             run_order::save_run_order,
             misc::get_extras_unlocked,
             misc::set_extras_unlocked,
-            misc::open_help
+            misc::open_help,
+            app_settings::get_app_settings,
+            app_settings::set_close_to_tray
         ])
 }
 
@@ -382,6 +385,8 @@ pub fn run() {
                 // This machine's optional extras switch (see extras.rs):
                 // read once here, so the AI bridge can answer from memory.
                 extras::init(dir.clone());
+                // Close-to-tray and beta updates: read before any page (see app_settings.rs).
+                crate::app_settings::init(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
