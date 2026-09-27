@@ -339,11 +339,14 @@ pub fn run() {
         // Start with Windows (Settings, off by default): a Run key entry
         // that launches the exe with --hidden, so it starts in the tray.
         // The exe path is Velopack's `current\` folder, which stays the
-        // same across updates.
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(tray::AUTOSTART_ARGS.to_vec()),
-        ))
+        // same across updates. The value is named from `tray` so the
+        // uninstall hook (main.rs) removes exactly this entry.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(tray::AUTOSTART_ARGS.iter().copied())
+                .app_name(tray::AUTOSTART_APP_NAME)
+                .build(),
+        )
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())
@@ -414,11 +417,13 @@ pub fn run() {
             }));
             // The tray icon, then the main window: created hidden by the
             // config, shown here at once unless this launch is a start at
-            // sign-in (`--hidden`) - see tests/suite/startup_window.rs.
+            // sign-in (`--hidden`) - see tests/suite/startup_window.rs. A
+            // hidden start with no tray icon shows the window anyway, or the
+            // app would be running with no way to reach it.
             if let Err(e) = tray::build(app) {
                 applog::warn(format!("the tray icon could not be created - closing the window will quit: {e}"));
             }
-            if !tray::start_hidden(std::env::args()) {
+            if !tray::start_hidden(std::env::args()) || !tray::tray_ok() {
                 tray::show_main(app.handle());
             } else {
                 applog::info("started hidden in the tray");

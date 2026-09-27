@@ -6043,6 +6043,7 @@ dependencies = [
  "urlencoding",
  "velopack",
  "windows-sys 0.61.2",
+ "winreg 0.10.1",
  "wiremock",
  "xcap",
 ]

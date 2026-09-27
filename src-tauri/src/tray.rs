@@ -44,6 +44,42 @@ pub fn start_hidden<I: IntoIterator<Item = String>>(args: I) -> bool {
 /// What Start with Windows launches the app with: straight to the tray.
 pub const AUTOSTART_ARGS: &[&str] = &["--hidden"];
 
+/// The registry value name Start with Windows writes. The autostart plugin
+/// would default to the product name (tauri.conf.json `productName`); it
+/// is set explicitly from here so the uninstaller removes exactly the
+/// value the plugin wrote.
+pub const AUTOSTART_APP_NAME: &str = "Test Case Manager V2";
+
+/// Where the autostart plugin (auto-launch 0.5) keeps the entry, under
+/// HKEY_CURRENT_USER: the command line in `Run`, and Task Manager's
+/// enabled/disabled flag in `StartupApproved\Run`.
+pub const AUTOSTART_RUN_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+pub const AUTOSTART_APPROVED_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+/// Removes the Start with Windows entry, for the uninstaller - otherwise
+/// sign-in would keep trying to launch an exe that no longer exists.
+/// Runs in Velopack's uninstall hook, before logging or any window: it
+/// must be quick, never panic, and log nothing. A value that is not there
+/// (the switch was never on) is not an error.
+pub fn remove_autostart_entry() {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+        for key in [AUTOSTART_RUN_KEY, AUTOSTART_APPROVED_KEY] {
+            if let Ok(k) = hkcu.open_subkey_with_flags(key, KEY_SET_VALUE) {
+                let _ = k.delete_value(AUTOSTART_APP_NAME);
+            }
+        }
+    }
+}
+
+/// Whether the tray icon exists. Without it a window that is hidden can
+/// never be brought back.
+pub fn tray_ok() -> bool {
+    TRAY_OK.load(Ordering::SeqCst)
+}
+
 /// Show, unminimize and focus the main window.
 pub fn show_main<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
@@ -89,7 +125,7 @@ pub fn build(app: &tauri::App) -> tauri::Result<()> {
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let tauri::WindowEvent::CloseRequested { api, .. } = event else { return };
     let settings = crate::app_settings::current();
-    if close_action(window.label(), settings.close_to_tray, TRAY_OK.load(Ordering::SeqCst)) != CloseAction::Hide {
+    if close_action(window.label(), settings.close_to_tray, tray_ok()) != CloseAction::Hide {
         return;
     }
     api.prevent_close();

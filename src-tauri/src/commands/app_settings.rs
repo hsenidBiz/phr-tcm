@@ -25,7 +25,10 @@ pub fn set_close_to_tray(on: bool) -> Result<AppSettings, String> {
 #[specta::specta]
 pub fn get_autostart(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch().is_enabled().unwrap_or(false)
+    app.autolaunch().is_enabled().unwrap_or_else(|e| {
+        crate::applog::warn(format!("reading Start with Windows failed, showing it as off: {e}"));
+        false
+    })
 }
 
 /// Register or unregister the start at sign-in. Answers the state after.

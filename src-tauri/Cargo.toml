@@ -95,6 +95,9 @@ tauri-plugin-single-instance = "2"
 # in a file or the webview's storage - see db/credentials.rs.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+# The uninstaller removes the Start with Windows entry (tray.rs). The same
+# version the autostart plugin's auto-launch already uses - no new crate.
+winreg = "=0.10.1"
 
 [dev-dependencies]
 wiremock = "0.6.5"

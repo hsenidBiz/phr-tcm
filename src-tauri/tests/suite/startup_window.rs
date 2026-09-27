@@ -45,6 +45,10 @@ fn the_main_window_is_created_hidden_and_shown_by_setup_not_by_the_page() {
         lib.contains("tray::start_hidden(std::env::args())") && lib.contains("tray::show_main("),
         "setup shows the main window unless the launch asked to start hidden"
     );
+    assert!(
+        lib.contains("|| !tray::tray_ok()"),
+        "a hidden start with no tray icon still shows the window - nothing else could"
+    );
     // The page never shows the window itself.
     let src = std::fs::read_to_string(manifest_dir().join("../src/main.tsx")).unwrap();
     assert!(!src.contains(".show()"), "main.tsx must not show the window");
