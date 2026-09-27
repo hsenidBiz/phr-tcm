@@ -15,7 +15,7 @@ import CountUp from "../../components/CountUp";
 import { isCaptureMode } from "../../dev/capture";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Collapse, useSettled } from "../../components/ui/collapse";
+import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -103,6 +103,9 @@ export default function ExistingCases({
 
   const list = cases.data ?? [];
   const settled = useSettled(list.length > 0);
+  // Switching Group by title is one motion, not a regroup then an unfold
+  // per open group (components/ui/collapse.tsx).
+  const regroup = useRegroupMotion(grouped);
   const q = search.trim().toLowerCase();
   // Search narrows the visible cards (title, #id or tag); grouping and the
   // header count follow the filtered view.
@@ -358,103 +361,105 @@ export default function ExistingCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      {ordered.map(({ group, items }) => (
-        <div key={group || "__all"} className="space-y-1">
-          {group && (
-            <div className="flex w-full items-center gap-3 pb-1 pt-2">
-              {/* Left-anchored with a trailing rule - see ViewCases for why. */}
-              <button
-                aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
-                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
-                className="text-muted transition-colors hover:text-accent"
-                onClick={() => toggleCollapsed(group)}
-              >
-                {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-              </button>
-              {/* Selection is the checkbox's job; the TITLE toggles the
-                  fold, same as the chevron - clicking the name is how
-                  people expect to open a group. */}
-              <Checkbox
-                ariaLabel={`Select all in ${group}`}
-                checked={items.length > 0 && selectedInGroup(items) === items.length}
-                indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
-                onCheckedChange={() => toggleGroup(items)}
-              />
-              <button
-                className="group flex items-center gap-2"
-                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
-                onClick={() => toggleCollapsed(group)}
-              >
-                <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                  {group} ({items.length})
-                </span>
-              </button>
-              <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-            </div>
-          )}
-          {/* A collapsed group must NOT unmount an open editor: the title
-              is now a fold control, and folding away unsaved edits with it
-              would be a silent discard. Same rule as View Test Cases -
-              tidying must not snatch away the thing being worked on. */}
-          {(() => {
-            const folded = Boolean(group) && collapsedGroups.has(group);
-            const shown = folded ? items.filter((c) => c.id === openId) : items;
-            // The fold animates the list away only when nothing in it is
-            // held open: the open editor stays, so its list stays with it.
-            return (
-          <Collapse open={shown.length > 0} animateIn={settled}>
-          <ul className="space-y-1">
-            {shown.map((c) => (
-              <li
-                key={c.id}
-                className={cn(
-                  // The open editor hosts a non-portaled Combobox dropdown that must
-                  // paint past the row's box - content-visibility's paint containment
-                  // would clip it, so drop cv-row while this row is open.
-                  openId !== c.id && "cv-row",
-                  "cursor-pointer select-none rounded-md border transition-colors",
-                  selected.has(c.id)
-                    ? "border-accent bg-accent-soft"
-                    : "border-border hover:border-border-strong",
-                )}
-                onClick={(e) => handleCardClick(c, e)}
-                onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
-              >
-                <div className="flex items-center gap-2 px-3 py-2 text-sm">
-                  <button
-                    aria-label={`Expand #${c.id}`}
-                    className="text-muted hover:text-accent"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setOpenId((o) => (o === c.id ? null : c.id));
-                    }}
-                  >
-                    {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                  <span className="id-mono text-faint">#{c.id}</span>
-                  <span className="text-text">{c.title}</span>
-                  <span className="ml-auto text-xs text-faint">
-                    {c.steps.length} steps · {c.automation_status}
+      <div ref={regroup.ref} className="space-y-2">
+        {ordered.map(({ group, items }) => (
+          <div key={group || "__all"} className="space-y-1">
+            {group && (
+              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                {/* Left-anchored with a trailing rule - see ViewCases for why. */}
+                <button
+                  aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
+                  title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                  className="text-muted transition-colors hover:text-accent"
+                  onClick={() => toggleCollapsed(group)}
+                >
+                  {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                </button>
+                {/* Selection is the checkbox's job; the TITLE toggles the
+                    fold, same as the chevron - clicking the name is how
+                    people expect to open a group. */}
+                <Checkbox
+                  ariaLabel={`Select all in ${group}`}
+                  checked={items.length > 0 && selectedInGroup(items) === items.length}
+                  indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
+                  onCheckedChange={() => toggleGroup(items)}
+                />
+                <button
+                  className="group flex items-center gap-2"
+                  title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                  onClick={() => toggleCollapsed(group)}
+                >
+                  <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                    {group} ({items.length})
                   </span>
-                </div>
-                <Collapse open={openId === c.id}>
-                  <CaseEditor
-                    original={c}
-                    org={org}
-                    project={project}
-                    moduleRef={prefs.moduleRef}
-                    preconditionsRef={prefs.preconditionsRef}
-                    onSaved={refresh}
-                  />
-                </Collapse>
-              </li>
-            ))}
-          </ul>
-          </Collapse>
-            );
-          })()}
-        </div>
-      ))}
+                </button>
+                <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+              </div>
+            )}
+            {/* A collapsed group must NOT unmount an open editor: the title
+                is now a fold control, and folding away unsaved edits with it
+                would be a silent discard. Same rule as View Test Cases -
+                tidying must not snatch away the thing being worked on. */}
+            {(() => {
+              const folded = Boolean(group) && collapsedGroups.has(group);
+              const shown = folded ? items.filter((c) => c.id === openId) : items;
+              // The fold animates the list away only when nothing in it is
+              // held open: the open editor stays, so its list stays with it.
+              return (
+            <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
+            <ul className="space-y-1">
+              {shown.map((c) => (
+                <li
+                  key={c.id}
+                  className={cn(
+                    // The open editor hosts a non-portaled Combobox dropdown that must
+                    // paint past the row's box - content-visibility's paint containment
+                    // would clip it, so drop cv-row while this row is open.
+                    openId !== c.id && "cv-row",
+                    "cursor-pointer select-none rounded-md border transition-colors",
+                    selected.has(c.id)
+                      ? "border-accent bg-accent-soft"
+                      : "border-border hover:border-border-strong",
+                  )}
+                  onClick={(e) => handleCardClick(c, e)}
+                  onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
+                >
+                  <div className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <button
+                      aria-label={`Expand #${c.id}`}
+                      className="text-muted hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenId((o) => (o === c.id ? null : c.id));
+                      }}
+                    >
+                      {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    <span className="id-mono text-faint">#{c.id}</span>
+                    <span className="text-text">{c.title}</span>
+                    <span className="ml-auto text-xs text-faint">
+                      {c.steps.length} steps · {c.automation_status}
+                    </span>
+                  </div>
+                  <Collapse open={openId === c.id}>
+                    <CaseEditor
+                      original={c}
+                      org={org}
+                      project={project}
+                      moduleRef={prefs.moduleRef}
+                      preconditionsRef={prefs.preconditionsRef}
+                      onSaved={refresh}
+                    />
+                  </Collapse>
+                </li>
+              ))}
+            </ul>
+            </Collapse>
+              );
+            })()}
+          </div>
+        ))}
+      </div>
 
       {/* Sticky merged collapse: folds the open editor and every unfolded
           group. Portalled to body because AnimatedContent's GSAP transform

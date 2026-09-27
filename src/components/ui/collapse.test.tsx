@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
-import { Collapse, EASE, EASE_TALL, foldMs, useSettled } from "./collapse";
+import { Collapse, EASE, EASE_TALL, foldMs, useRegroupMotion, useSettled } from "./collapse";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -427,4 +427,48 @@ test("closing mid-grow leaves no marked row behind, in the copy or the page", ()
       m.restore();
     }
   });
+});
+
+/// Group by title switched on again: the groups it mounts are already open,
+/// so none plays its own unfold after the regroup - the list plays one
+/// entrance instead. A plain re-render replays nothing.
+test("regrouping mounts groups open and plays one entrance for the list", () => {
+  function Harness() {
+    const [grouped, setGrouped] = useState(true);
+    const [tick, setTick] = useState(0);
+    const settled = useSettled(true);
+    const regroup = useRegroupMotion(grouped);
+    return (
+      <>
+        <button onClick={() => setGrouped((g) => !g)}>toggle</button>
+        <button onClick={() => setTick((t) => t + 1)}>rerender {tick}</button>
+        <div data-testid="list" ref={regroup.ref}>
+          {grouped ? (
+            ["A", "B"].map((g) => (
+              <Collapse key={g} open animateIn={settled && !regroup.regrouping}>
+                <p>group {g}</p>
+              </Collapse>
+            ))
+          ) : (
+            <p>flat</p>
+          )}
+        </div>
+      </>
+    );
+  }
+  render(<Harness />);
+  const list = screen.getByTestId("list");
+  expect(list).not.toHaveClass("t-panel-in");
+
+  fireEvent.click(screen.getByText("toggle")); // flat
+  expect(list).toHaveClass("t-panel-in");
+  fireEvent.click(screen.getByText("toggle")); // grouped again
+  expect(list).toHaveClass("t-panel-in");
+  for (const panel of document.querySelectorAll(".t-collapse")) {
+    expect(panel).not.toHaveClass("is-entering");
+  }
+
+  list.classList.remove("t-panel-in");
+  fireEvent.click(screen.getByText(/rerender/));
+  expect(list).not.toHaveClass("t-panel-in");
 });

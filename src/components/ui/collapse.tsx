@@ -94,6 +94,34 @@ export function useSettled(ready = true): boolean {
  * a list five hundred rows tall used to cross the whole window in the same
  * quarter-second as a three-line detail, which read as no animation at all.
  */
+/**
+ * For a list that switches between grouped and flat (Group by title): makes
+ * the switch ONE motion. Without it, the groups the switch mounts each
+ * played their own unfold after the list had already regrouped - the
+ * regroup, then every open group opening, one after the other.
+ *
+ * `regrouping` is true on the render where `mode` changed: pass
+ * `animateIn={settled && !regrouping}` so the groups mount already open.
+ * `ref` goes on the element wrapping the groups, which plays the app's
+ * panel entrance (t-panel-in) once instead. Reduced motion plays nothing.
+ */
+export function useRegroupMotion<T extends HTMLElement = HTMLDivElement>(mode: unknown) {
+  const ref = useRef<T>(null);
+  const shown = useRef(mode);
+  const regrouping = shown.current !== mode;
+  useLayoutEffect(() => {
+    if (shown.current === mode) return;
+    shown.current = mode;
+    const el = ref.current;
+    if (!el || reducedMotion()) return;
+    // Restart the entrance even if the last one is still playing.
+    el.classList.remove("t-panel-in");
+    void el.offsetWidth;
+    el.classList.add("t-panel-in");
+  }, [mode]);
+  return { ref, regrouping };
+}
+
 export function Collapse({
   open,
   children,
