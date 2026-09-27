@@ -368,10 +368,8 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Suite Management" })).toBeInTheDocument();
-  // Suite Management ships in release builds but is not finished, and the
-  // tab says so beside its heading. The sidebar row is deliberately left
-  // without a note: it is offered to everyone, unlike Auto Run.
-  expect(screen.getByText("In Development")).toBeInTheDocument();
+  // Suite Management is finished too: no pill.
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "9", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
