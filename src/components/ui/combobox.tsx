@@ -1,6 +1,7 @@
 import { Check, ChevronsUpDown, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
+import { IconPinToTop } from "../../lib/actionIcons";
 
 /** Searchable single-select dropdown. Click to open a filterable list;
  * type to narrow; Enter/click selects. When `allowCustom`, a value not in
@@ -19,6 +20,7 @@ export default function Combobox({
   allowCustom = false,
   loading = false,
   details,
+  pins,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -37,6 +39,15 @@ export default function Combobox({
   /** Right-aligned faint annotation per option (e.g. a sprint's date
    * range, like Azure DevOps's iteration dropdown). */
   details?: Record<string, string>;
+  /** Rows that can be pinned to the top of the list. A pinnable row shows
+   * a pin while it is pointed at or active; a pinned one always does, and
+   * pressing it unpins. Pinned rows come first, in `pinned` order, above a
+   * divider - the ones someone picks most, out of a long list. */
+  pins?: {
+    pinned: string[];
+    canPin: (value: string) => boolean;
+    onToggle: (value: string) => void;
+  };
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -59,10 +70,16 @@ export default function Combobox({
   }, [open]);
 
   const q = query.trim().toLowerCase();
-  const rows = useMemo(
-    () => items ?? options.map((o) => ({ value: o, label: o })),
-    [items, options],
-  );
+  const pinned = pins?.pinned;
+  const rows = useMemo(() => {
+    const all = items ?? options.map((o) => ({ value: o, label: o }));
+    if (!pinned?.length) return all;
+    const byValue = new Map(all.map((r) => [r.value, r]));
+    const top = pinned.flatMap((v) => byValue.get(v) ?? []);
+    const onTop = new Set(top.map((r) => r.value));
+    return [...top, ...all.filter((r) => !onTop.has(r.value))];
+  }, [items, options, pinned]);
+  const isPinned = (v: string) => Boolean(pinned?.includes(v));
   const filtered = useMemo(
     () => (q ? rows.filter((r) => r.label.toLowerCase().includes(q)) : rows),
     [rows, q],
@@ -153,29 +170,62 @@ export default function Combobox({
             {!loading && filtered.length === 0 && !showCustom && (
               <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
             )}
-            {filtered.map((r, i) => (
-              <li key={r.value}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={r.value === value}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm",
-                    i === active ? "bg-accent-soft text-accent" : "text-text hover:bg-surface-2",
-                  )}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => commit(r.value)}
-                >
-                  <span className="truncate">{r.label}</span>
-                  <span className="ml-2 flex shrink-0 items-center gap-1.5">
-                    {details?.[r.label] && (
-                      <span className="whitespace-nowrap text-xs text-faint">{details[r.label]}</span>
+            {filtered.map((r, i) => {
+              const pinnable = Boolean(pins?.canPin(r.value));
+              const pinnedRow = isPinned(r.value);
+              // The divider under the pinned rows: before the first row
+              // that is not pinned, when a pinned one came before it.
+              const divide = i > 0 && !pinnedRow && isPinned(filtered[i - 1].value);
+              return [
+                divide && <li key={`${r.value}-divider`} role="presentation" className="mx-1 my-1 border-t border-border" />,
+                <li key={r.value} className="group relative">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={r.value === value}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm",
+                      pinnable && "pr-8",
+                      i === active ? "bg-accent-soft text-accent" : "text-text hover:bg-surface-2",
                     )}
-                    {r.value === value && <Check size={13} className="shrink-0 text-accent" />}
-                  </span>
-                </button>
-              </li>
-            ))}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => commit(r.value)}
+                  >
+                    <span className="truncate">{r.label}</span>
+                    <span className="ml-2 flex shrink-0 items-center gap-1.5">
+                      {details?.[r.label] && (
+                        <span className="whitespace-nowrap text-xs text-faint">{details[r.label]}</span>
+                      )}
+                      {r.value === value && <Check size={13} className="shrink-0 text-accent" />}
+                    </span>
+                  </button>
+                  {pinnable && pins && (
+                    <button
+                      type="button"
+                      aria-pressed={pinnedRow}
+                      aria-label={`${pinnedRow ? "Unpin" : "Pin"} ${r.label}`}
+                      title={pinnedRow ? "Unpin" : "Pin to the top"}
+                      className={cn(
+                        "absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center rounded p-1 transition-opacity hover:text-accent focus-visible:opacity-100",
+                        pinnedRow
+                          ? "text-accent opacity-100"
+                          : cn("text-muted", i === active ? "opacity-100" : "opacity-0 group-hover:opacity-100"),
+                      )}
+                      // Keep focus in the search box: pinning is a side
+                      // trip, and typing should carry on where it was.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setActive(i)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pins.onToggle(r.value);
+                      }}
+                    >
+                      <IconPinToTop aria-hidden className={cn("size-3.5", pinnedRow && "fill-current")} />
+                    </button>
+                  )}
+                </li>,
+              ];
+            })}
             {showCustom && (
               <li>
                 <button

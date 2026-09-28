@@ -40,7 +40,7 @@ export const board: Screen = {
     "edit its fields, read and add comments, and see its history. Switch the board to an area or a Product Backlog Item to see more than your own work.",
   shots: [
     { id: COLUMNS, route: [...NAV, { waitFor: { text: CARD } }], alt: "The board with its three columns and a work item's pull request chips" },
-    { id: SWIMLANES, route: [...NAV, { click: { role: "switch", name: "Swimlanes" } }, { waitFor: { role: "button", name: "Collapse all" } }], alt: "The board in swimlanes, one lane per parent work item" },
+    { id: SWIMLANES, route: [...NAV, { click: { role: "switch", name: "Swimlanes" } }, { waitFor: { role: "button", nameRe: "^Collapse all" } }], alt: "The board in swimlanes, one lane per parent work item" },
     {
       id: HIDDEN,
       route: [...NAV, { click: { role: "button", name: "Hide Done" } }, { waitFor: { role: "button", name: "Open Done" } }],
@@ -48,8 +48,14 @@ export const board: Screen = {
     },
     {
       id: SCOPE,
-      route: [...NAV, { click: { role: "combobox", name: "Board scope" } }, { waitFor: { role: "option", name: "My work" } }],
-      alt: "The board scope list: my work, by Product Backlog Item, or an area",
+      route: [
+        ...NAV,
+        { click: { role: "combobox", name: "Board scope" } },
+        { waitFor: { role: "option", name: "My work" } },
+        { click: { role: "button", nameRe: "^Pin Area: .*\\\\" } },
+        { waitFor: { role: "button", nameRe: "^Unpin Area: " } },
+      ],
+      alt: "The board scope list with an area pinned at the top, then my work, by Product Backlog Item, and the other areas",
     },
     {
       id: AREA,
@@ -168,20 +174,24 @@ export const board: Screen = {
 
     // --- Swimlanes -------------------------------------------------------------------------
     {
+      id: "open-lanes",
+      shot: SWIMLANES,
+      group: "lanes",
+      locate: { role: "switch", name: "Open lanes only" },
+      name: "Open lanes only",
+      does:
+        "Shown while **Swimlanes** is on. Hides the lanes whose cards are all Done, so the lanes still being worked on are easier to find; " +
+        "how many it hid is shown beside it. It is remembered on this computer.",
+    },
+    {
       id: "collapse-all",
       shot: SWIMLANES,
       group: "lanes",
-      locate: { role: "button", name: "Collapse all" },
+      locate: { role: "button", nameRe: "^Collapse all" },
       name: "Collapse all",
-      does: "Folds every lane to its heading.",
-    },
-    {
-      id: "expand-all",
-      shot: SWIMLANES,
-      group: "lanes",
-      locate: { role: "button", name: "Expand all" },
-      name: "Expand all",
-      does: "Opens every lane again.",
+      does:
+        "Stays at the bottom left of the window while lanes are shown. Folds every open lane to its heading; the number is how many are open. " +
+        "Once every lane is folded it becomes **Expand all**, which opens them all again.",
     },
     {
       id: "lane-toggle",
@@ -242,6 +252,16 @@ export const board: Screen = {
       locate: { role: "option", name: "Area: Customer Portal" },
       name: "Area",
       does: "Everything in that area of the project, whoever it is assigned to.",
+    },
+    {
+      id: "pin-area",
+      shot: SCOPE,
+      group: "scope-filters",
+      locate: { role: "button", nameRe: "^Unpin Area: " },
+      name: "Pin",
+      does:
+        "Point at an area to show its pin, and click the pin to keep that area at the top of the list, above **My work**. " +
+        "Pin the few teams you look at most and they are always one click away. Pins are kept for each project; click a pin again to unpin.",
     },
 
     // --- An area board --------------------------------------------------------------------------

@@ -100,3 +100,28 @@ export function saveCollapsedLanes(org: string, project: string, ids: Set<number
     // session-only
   }
 }
+
+/** Whether a lane still has work in it: at least one card not yet Done. */
+export function laneHasOpenWork(lane: Lane): boolean {
+  return lane.items.some((item) => item.column !== "Done");
+}
+
+export const OPEN_LANES_KEY = "tcm-v2-board-open-lanes";
+
+/** Open lanes only: hide the lanes whose every card is Done. Off unless
+ * turned on. */
+export function loadOpenLanesOnly(): boolean {
+  try {
+    return localStorage.getItem(OPEN_LANES_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+export function saveOpenLanesOnly(on: boolean): void {
+  try {
+    localStorage.setItem(OPEN_LANES_KEY, on ? "on" : "off");
+  } catch {
+    // session-only
+  }
+}

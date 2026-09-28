@@ -39,6 +39,10 @@ export {
   // Setting what EVERY new item starts with, not editing this one. A pin
   // because the thing it opens fixes a value in place across cases.
   Pin as IconSetDefault,
+  // Keeping a choice at the top of its list (a pinned board area). The
+  // same picture as setting a default: a pin means this one stays put
+  // where you can find it.
+  Pin as IconPinToTop,
   // One step up or down in an ordered list: the keyboard's route to the
   // same move a drag makes.
   ArrowUp as IconMoveUp,
