@@ -26,7 +26,18 @@ const THEMES = ["light", "dark"] as const;
 const positions = positionsJson as Positions;
 
 /** Never in the site: hidden features, the dev tooling, the sample data. */
-const FORBIDDEN = [/\bauto ?run\b/i, /autorun/i, /konami/i, /\bunlock/i, /\bextras\b/i, /dev panel/i, /demo data/i, /\bgames?\b/i];
+const FORBIDDEN = [
+  /\bauto ?run\b/i,
+  /autorun/i,
+  /konami/i,
+  /\bunlock/i,
+  /\bextras\b/i,
+  /dev panel/i,
+  /demo data/i,
+  /\bgames?\b/i,
+  /api ?templates?/i,
+  /api_template/i,
+];
 
 /** What a reader sees, with where it is, for a readable failure. */
 function visibleText(): { where: string; text: string }[] {
