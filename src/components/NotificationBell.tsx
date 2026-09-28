@@ -6,7 +6,8 @@
 // the shape most apps' notification areas take. Sources raise into the
 // store in ../lib/notifications; this component only reads it.
 
-import { Bell, X } from "lucide-react";
+import { X } from "lucide-react";
+import { GlyphBell } from "./navGlyphs";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../lib/toast";
@@ -65,7 +66,7 @@ export default function NotificationBell({
   const items = useNotifications(org);
   const unread = unreadCount(items);
   const [open, setOpen] = useState(false);
-  // Clicks so far: the bell swings on each (index.css, ico-bell-swing).
+  // Clicks so far: the bell rings on each (index.css, ico-bell-ring).
   const [rings, setRings] = useState(0);
   const root = useRef<HTMLDivElement>(null);
 
@@ -109,7 +110,7 @@ export default function NotificationBell({
         onClick={toggle}
       >
         {/* Remounted per click, so each click swings it once more. */}
-        <Bell key={rings} size={16} aria-hidden className={rings ? "ico-bell-swing" : undefined} />
+        <GlyphBell key={rings} size={16} className={rings ? "ico-bell-ring" : undefined} />
         {unread > 0 && (
           <span
             aria-hidden
@@ -182,7 +183,7 @@ export default function NotificationBell({
                         at all - and must not navigate anywhere blind. */}
                     {n.target?.project && onOpen ? (
                       <button
-                        className="mt-0.5 block max-w-full truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
+                        className="mt-0.5 block max-w-full break-words text-left text-sm font-medium text-text hover:text-accent hover:underline"
                         title="Open in the app"
                         onClick={() => {
                           setOpen(false);
@@ -193,7 +194,7 @@ export default function NotificationBell({
                       </button>
                     ) : n.href ? (
                       <button
-                        className="mt-0.5 block max-w-full truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
+                        className="mt-0.5 block max-w-full break-words text-left text-sm font-medium text-text hover:text-accent hover:underline"
                         title="Open in Azure DevOps"
                         onClick={() =>
                           openUrl(n.href!).catch(() => toast.error("Could not open the browser."))
@@ -202,9 +203,12 @@ export default function NotificationBell({
                         {n.title}
                       </button>
                     ) : (
-                      <div className="mt-0.5 truncate text-sm font-medium text-text">{n.title}</div>
+                      <div className="mt-0.5 break-words text-sm font-medium text-text">{n.title}</div>
                     )}
-                    {n.body && <div className="truncate text-xs text-muted">{n.body}</div>}
+                    {/* Wrapped, not truncated: an ellipsis cut the title and
+                        the context line mid-word, and the whole of both is
+                        what the notification is for. */}
+                    {n.body && <div className="break-words text-xs text-muted">{n.body}</div>}
                   </div>
                   <button
                     aria-label={`Dismiss: ${n.title}`}
