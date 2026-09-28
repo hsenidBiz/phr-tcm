@@ -1,7 +1,8 @@
 import { ToastProvider } from "xiod-ui/toast";
 
-/** Sonner's default - the length every message in the app was written to
- * be read in. A call site that needs longer passes `duration`. */
+/** Only a fallback: every toast from lib/toast.ts brings its own timing
+ * (and tells the provider "until dismissed"), because Base UI's clock
+ * stops whenever the window is not focused. See lib/toast.ts. */
 const TOAST_MS = 4_000;
 
 /**

@@ -112,3 +112,54 @@ test("dismiss() with no id clears every toast", async () => {
     expect(screen.queryByText("Two")).not.toBeInTheDocument();
   });
 });
+
+const leaving = (text: string) => {
+  const el = screen.queryByText(text);
+  return el === null || el.closest("[data-ending-style]") !== null;
+};
+
+/// Base UI stops every toast's clock while the window is not the focused
+/// one (ToastViewport's window blur handler), so a toast that arrived with
+/// the app beside a browser, or out in the tray, never left. jsdom does not
+/// reproduce that pause, so the tests below pin the fix instead: the clock
+/// is this module's own - it caps, and it waits only for the pointer.
+test("no toast stays longer than ten seconds, whatever it asked for", () => {
+  vi.useFakeTimers();
+  render(<Toaster />);
+  act(() => {
+    toast.error("Asked for thirty", { duration: 30_000 });
+  });
+  act(() => {
+    vi.advanceTimersByTime(9_900);
+  });
+  expect(leaving("Asked for thirty")).toBe(false);
+  act(() => {
+    vi.advanceTimersByTime(300);
+  });
+  expect(leaving("Asked for thirty")).toBe(true);
+});
+
+test("pointing at the toasts holds them until the pointer leaves", () => {
+  vi.useFakeTimers();
+  render(<Toaster />);
+  act(() => {
+    toast.success("Being read");
+  });
+  const title = screen.getByText("Being read");
+  act(() => {
+    vi.advanceTimersByTime(2_000);
+    fireEvent.pointerOver(title);
+    vi.advanceTimersByTime(20_000);
+  });
+  expect(leaving("Being read")).toBe(false);
+  act(() => {
+    fireEvent.pointerOut(title, { relatedTarget: document.body });
+    vi.advanceTimersByTime(1_900);
+  });
+  // Two seconds were left when the pointer arrived.
+  expect(leaving("Being read")).toBe(false);
+  act(() => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(leaving("Being read")).toBe(true);
+});
