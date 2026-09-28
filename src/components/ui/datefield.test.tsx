@@ -114,3 +114,17 @@ test("a mousedown outside closes it", () => {
   fireEvent.mouseDown(screen.getByText("elsewhere"));
   expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
 });
+
+test("a field Azure DevOps named as required is ringed", () => {
+  const { rerender } = render(<DateField ariaLabel="Target date" value="" onChange={() => {}} />);
+  expect(screen.getByRole("button", { name: "Target date" }).className).not.toContain("ring-danger");
+  rerender(<DateField ariaLabel="Target date" value="" onChange={() => {}} flagged />);
+  expect(screen.getByRole("button", { name: "Target date" }).className).toContain("ring-danger");
+});
+
+test("the open panel is placed against the window, so a narrow column cannot clip it", () => {
+  render(<Host />);
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  const panel = screen.getByRole("button", { name: "Clear" }).closest(".fixed");
+  expect(panel).not.toBeNull();
+});

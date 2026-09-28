@@ -395,7 +395,7 @@ export default function WorkItemDrawer({
               <label className="block text-xs text-muted">
                 Title
                 <Input
-                  className="mt-1 w-full"
+                  className={cn("mt-1 w-full", isFlagged("Title") && "ring-2 ring-danger")}
                   value={draft.title}
                   onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 />
@@ -405,6 +405,7 @@ export default function WorkItemDrawer({
                   State
                   <Select
                     className="mt-1 w-full"
+                    triggerClassName={cn(isFlagged("State") && "ring-2 ring-danger")}
                     value={draft.state}
                     onChange={(e) => setDraft({ ...draft, state: e.target.value })}
                   >
@@ -423,6 +424,7 @@ export default function WorkItemDrawer({
                   <Combobox
                     ariaLabel="Assigned to"
                     className="mt-1 w-full"
+                    triggerClassName={cn(isFlagged("Assigned To") && "ring-2 ring-danger")}
                     placeholder="(unassigned)"
                     loading={members.isLoading}
                     value={assignees.find((a) => a.unique === draft.assignedToUnique)?.label ?? ""}
@@ -440,6 +442,7 @@ export default function WorkItemDrawer({
                     Activity
                     <Select
                       className="mt-1 w-full"
+                      triggerClassName={cn(isFlagged("Activity") && "ring-2 ring-danger")}
                       value={draft.activity}
                       onChange={(e) => setDraft({ ...draft, activity: e.target.value })}
                     >
@@ -515,6 +518,7 @@ export default function WorkItemDrawer({
                   // somebody else's text on first render, not the user's
                   // own. `renderMarkdown` sanitises for that reason.
                   renderHtml={renderMd}
+                  flagged={isFlagged("Description")}
                 />
               ) : (
                 // An extra form page, laid out like ADO's form: each layout
@@ -670,6 +674,7 @@ export default function WorkItemDrawer({
                   <DateField
                     className="mt-1"
                     ariaLabel="Start date"
+                    flagged={isFlagged("Start Date")}
                     value={draft.startDate}
                     onChange={(v) => setDraft({ ...draft, startDate: v })}
                   />
@@ -679,6 +684,7 @@ export default function WorkItemDrawer({
                   <DateField
                     className="mt-1"
                     ariaLabel="Target date"
+                    flagged={isFlagged("Target Date")}
                     value={draft.targetDate}
                     onChange={(v) => setDraft({ ...draft, targetDate: v })}
                   />

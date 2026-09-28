@@ -193,3 +193,41 @@ test("a lane parent whose type's states cannot be read still opens, offering its
   renderDrawer([]);
   await waitFor(() => expect(optionsOf()).toEqual(["To Do"]));
 });
+
+/// Azure DevOps names the fields a state change is blocked on, and the
+/// drawer rings each one it has - the dates too. They were listed in the
+/// banner with nothing ringed below it.
+test("every field Azure DevOps names as required is ringed, the dates included", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Report 2");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return ["Development"];
+      case "work_item_comments":
+        return [];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <WorkItemDrawer
+        org="acme"
+        project="Web"
+        itemId={2003}
+        states={["To Do", "Done"]}
+        highlightFields={["Target Date", "Start Date", "Activity", "Assigned To"]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  const target = await screen.findByRole("button", { name: "Target date" });
+  expect(target.className).toContain("ring-danger");
+  expect(screen.getByRole("button", { name: "Start date" }).className).toContain("ring-danger");
+  expect(screen.getByRole("combobox", { name: "Assigned to" }).className).toContain("ring-danger");
+  // Not named: not ringed.
+  expect(screen.getByRole("textbox", { name: "Title" }).className).not.toContain("ring-danger");
+});
