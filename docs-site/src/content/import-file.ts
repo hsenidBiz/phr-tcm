@@ -35,7 +35,7 @@ export const importFile: Screen = {
   title: "Import Test Cases",
   group: "Test cases",
   summary:
-    "Bring test cases in from a JSON file or a teammate's share link, check them in the queue, then upload them to the Product Backlog Item. " +
+    "Bring test cases in from a JSON file or a colleague's share link, check them in the queue, then upload them to the Product Backlog Item. " +
     "A case that carries an id updates that exact work item; a case without one is created new.",
   shots: [
     { id: QUEUE, route: [{ nav: "Import Test Cases" }], alt: "Import Test Cases with three cases in the queue" },
@@ -109,7 +109,7 @@ export const importFile: Screen = {
     },
   ],
   groups: [
-    { id: "bring-in", title: "Import or open a shared file", summary: "Bring test cases in from a JSON file, or from a link a teammate shared." },
+    { id: "bring-in", title: "Import or open a shared file", summary: "Bring test cases in from a JSON file, or from a link a colleague shared." },
     { id: "the-queue", title: "The queue", summary: "Everything waiting to be uploaded, with what you can do to all of it." },
     { id: "queued-cases", title: "A queued case", summary: "Each row is one case: open it to see its steps, or to see what an update will change." },
     { id: "edit-case", title: "Edit a queued case", summary: "Change a case in the queue before it is uploaded." },
@@ -136,7 +136,7 @@ export const importFile: Screen = {
       group: "bring-in",
       locate: { role: "textbox", name: "Share link" },
       name: "Share link",
-      does: "Paste a share link a teammate sent you. A link works once: after the import it expires.",
+      does: "Paste a share link a colleague sent you. A link works once: after the import it expires.",
     },
     {
       id: "import-shared",
@@ -732,10 +732,11 @@ export const importFile: Screen = {
       title: "Use the review page",
       steps: [
         "Press **View in browser**. The page opens in your browser, in the app's theme, with a switch for light and dark.",
-        "Every case is listed with its **NEW** or **UPDATE** mark. Search, and narrow the search to one field (title, ID, prerequisites, steps, tags or module).",
+        "Every case is listed with its **NEW** or **UPDATE** mark. Search, and narrow the search to one field (title, ID, prerequisites, steps, tags or module). What it finds is highlighted in each case.",
+        "The switches at the end of the search box change how it matches: [[Aa]] matches case, [[ab]] matches whole words only, and [[.*]] searches with a regular expression ([[Alt+C]], [[Alt+W]] and [[Alt+R]] while typing). Put words in quotes to find them together, as written.",
         "Type in the comment box under a case, or in the notes about the whole set. They save by themselves into the file the cases came from.",
         "Press the bookmark on a case to mark where you stopped; **Go to bookmark** brings you back to it later.",
-        "**Options** hides the reviewer notes, the findings or the spec pane, and opens the Test map with **View as Tree**.",
+        "**Options** hides the reviewer notes, the findings or the spec pane, and opens the Test map with **View as Tree**. Under **Show on cards**, untick Automation Status, Module or Tags to hide them from every case.",
         "Keep the page open: when the queue changes, a bar offers to refresh it.",
       ],
     },
