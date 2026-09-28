@@ -75,13 +75,70 @@ td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
 td.num { width: 34px; text-align: center; color: var(--faint); }
 .searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
              display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 0 14px; }
-.searchbar select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
-                     border-radius: 6px; background: var(--surface); color: var(--text); }
-#tc-search { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 14px; padding: 9px 14px;
-             border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
-             color: inherit; outline: none; }
-#tc-search:focus { border-color: var(--accent);
-                   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+/* The search box: which field, the query, and how to match it, as one
+   control. The ring goes round the whole box, since all three parts are
+   one search; it turns red while a regular expression does not compile. */
+.tc-searchbox { flex: 1 1 380px; min-width: 0; position: relative; display: flex;
+                align-items: center; border: 1px solid var(--border); border-radius: 10px;
+                background: var(--surface); transition: border-color .15s, box-shadow .15s; }
+.tc-searchbox:focus-within { border-color: var(--accent);
+                             box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.tc-searchbox.invalid { border-color: var(--danger);
+                        box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent); }
+#tc-search { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 14px; padding: 9px 10px 9px 12px;
+             border: 0; background: transparent; color: inherit; outline: none; }
+/* The plain select, for a page whose script never ran. */
+.tc-searchbox > select { align-self: stretch; font: inherit; font-size: 13px; padding: 0 8px;
+                         border: 0; border-right: 1px solid var(--border); border-radius: 10px 0 0 10px;
+                         background: transparent; color: var(--text); }
+/* The field picker the script puts over that select: the page's own list,
+   in its theme, rather than the system's. */
+.tc-pick { position: relative; align-self: stretch; display: flex; }
+.tc-pick-btn { font: inherit; font-size: 13px; display: flex; align-items: center; gap: 8px;
+               padding: 0 11px 0 13px; border: 0; border-right: 1px solid var(--border);
+               border-radius: 9px 0 0 9px; background: transparent; color: var(--text);
+               cursor: pointer; white-space: nowrap; transition: background .15s; }
+.tc-pick-btn:hover, .tc-pick.open .tc-pick-btn { background: var(--surface-2); }
+.tc-pick-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tc-pick-btn::after { content: ''; width: 6px; height: 6px; margin-top: -3px; color: var(--muted);
+                      border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+                      transform: rotate(45deg); transition: transform .15s, margin .15s; }
+.tc-pick.open .tc-pick-btn::after { transform: rotate(-135deg); margin-top: 3px; }
+.tc-pick-list { position: absolute; left: 0; top: calc(100% + 6px); z-index: 7; min-width: 190px;
+                margin: 0; padding: 6px; list-style: none; background: var(--surface);
+                border: 1px solid var(--border); border-radius: 10px;
+                box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 18%, transparent);
+                animation: tc-pop .14s ease-out; }
+.tc-pick-list[hidden] { display: none; }
+.tc-pick-list li { position: relative; padding: 7px 12px 7px 30px; border-radius: 6px;
+                   font-size: 13px; color: var(--text); cursor: pointer; outline: none; }
+.tc-pick-list li:hover, .tc-pick-list li:focus { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tc-pick-list li[aria-selected='true'] { color: var(--accent); font-weight: 600; }
+.tc-pick-list li[aria-selected='true']::before { content: ''; position: absolute; left: 13px; top: 50%;
+                                                 width: 4px; height: 8px; margin-top: -6px;
+                                                 border-right: 2px solid currentColor;
+                                                 border-bottom: 2px solid currentColor;
+                                                 transform: rotate(45deg); }
+@keyframes tc-pop { from { opacity: 0; transform: translateY(-4px) scale(.98); }
+                    to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tc-pick-list { animation: none; } }
+/* Match case, whole word, regular expression: switches inside the box, lit
+   in the accent while on. */
+.tc-opts { display: flex; gap: 2px; padding: 0 6px 0 2px; }
+.tc-opt { font: 600 12px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; min-width: 27px;
+          height: 25px; padding: 0 5px; border: 1px solid transparent; border-radius: 6px;
+          background: transparent; color: var(--muted); cursor: pointer;
+          transition: background .15s, color .15s, border-color .15s; }
+.tc-opt:hover { background: var(--surface-2); color: var(--text); }
+.tc-opt[aria-pressed='true'] { color: var(--accent);
+                               background: color-mix(in srgb, var(--accent) 14%, transparent);
+                               border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.tc-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "ab" in a bracket underneath: a word with its edges. */
+.tc-word-ico { padding: 0 2px 1px; border: 1.5px solid currentColor; border-top: 0; border-radius: 0 0 2px 2px; }
+/* What the search found, marked where it is. */
+mark.tc-hit { background: color-mix(in srgb, var(--warning) 32%, transparent); color: inherit;
+              border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 45%, transparent); }
 #tc-count { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .no-match { color: var(--muted); font-size: 14px; text-align: center;
             padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
@@ -116,6 +173,19 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
                  border: 1px solid var(--border); border-radius: 10px;
                  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 18%, transparent); }
 .tc-menu-items > * { text-align: left; }
+/* Show on cards: a titled group of tick boxes under the menu's buttons. */
+.tc-menu-group { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-top: 8px;
+                 border-top: 1px solid var(--border); }
+.tc-menu-group:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.tc-menu-head { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+                color: var(--faint); padding: 2px 6px 4px; }
+.tc-check { display: flex; align-items: center; gap: 9px; font-size: 12.5px; padding: 6px;
+            border-radius: 6px; color: var(--text); cursor: pointer; white-space: nowrap; }
+.tc-check:hover { background: var(--surface-2); }
+.tc-check input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; cursor: pointer; }
+body.hide-status .metarow.m-status,
+body.hide-module .metarow.m-module,
+body.hide-tags .metarow.m-tags { display: none; }
 /* Reviewer-notes toggle. It lives in the sticky search bar rather than
    beside a case, so it is reachable from anywhere in a long page - the
    reviewer who wants the notes gone is usually halfway down when they

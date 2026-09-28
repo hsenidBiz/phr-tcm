@@ -73,6 +73,43 @@ const MARK_BUTTON: &str = "<button type='button' class='tc-mark' aria-pressed='f
      <svg viewBox='0 0 24 24' aria-hidden='true'>\
      <path d='M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'/></svg></button>";
 
+/// How the query matches, as switches inside the search box: case, whole
+/// words, a regular expression. The page's script owns their state and
+/// remembers it; each shortcut works while the search box has focus.
+const SEARCH_OPTIONS: &str = "<span class='tc-opts' role='group' aria-label='Search options'>\
+     <button type='button' class='tc-opt' id='tc-case' aria-pressed='false' \
+     aria-label='Match case' title='Match case (Alt+C)'>Aa</button>\
+     <button type='button' class='tc-opt' id='tc-word' aria-pressed='false' \
+     aria-label='Match whole word' title='Match whole word (Alt+W)'><span class='tc-word-ico'>ab</span></button>\
+     <button type='button' class='tc-opt' id='tc-regex' aria-pressed='false' \
+     aria-label='Use regular expression' title='Use regular expression (Alt+R)'>.*</button></span>";
+
+/// The Options menu's "Show on cards" switches: one per kind of metadata
+/// row, and only for a kind at least one case has - a switch that hides
+/// nothing is just another thing to read. The page's script keeps the
+/// choice; every row starts shown.
+fn show_on_cards(queue: &[TestCase]) -> String {
+    let kinds = [
+        ("status", "Automation Status", queue.iter().any(|tc| !tc.automation_status.is_empty())),
+        ("module", "Module", queue.iter().any(|tc| !tc.module_value.is_empty())),
+        ("tags", "Tags", queue.iter().any(|tc| tc.tags.split(';').any(|t| !t.trim().is_empty()))),
+    ];
+    let boxes: String = kinds
+        .iter()
+        .filter(|(_, _, present)| *present)
+        .map(|(id, label, _)| {
+            format!("<label class='tc-check'><input type='checkbox' id='tc-show-{id}' checked>{label}</label>")
+        })
+        .collect();
+    if boxes.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<div class='tc-menu-group' role='group' aria-labelledby='tc-show-head'>\
+         <div class='tc-menu-head' id='tc-show-head'>Show on cards</div>{boxes}</div>"
+    )
+}
+
 /// Which review a page is, for that bookmark. These pages are all written
 /// into the same temp directory and opened over `file://`, where every
 /// document shares one storage area - so what keeps one review's bookmark
@@ -252,7 +289,7 @@ pub fn export_queue_page(
         draft_scope(&from_files)
     };
 
-    // The four controls in one menu. Four chips beside the search box
+    // The controls in one menu. Four chips beside the search box
     // crowded it, and only one of them is ever used at a time; each keeps
     // its id and its label, because the page's script finds them by id and
     // reads those labels back out.
@@ -286,6 +323,7 @@ pub fn export_queue_page(
         } else {
             "<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>".to_string()
         },
+        show_on_cards(queue),
     ]
     .into_iter()
     .filter(|item| !item.is_empty())
@@ -317,8 +355,14 @@ pub fn export_queue_page(
         // whether the reviewer is at the top of the page or the bottom.
         "<div id='tc-stale' role='status'><span>The test cases have changed since this page was opened.</span><button type='button' id='tc-stale-go'>Refresh</button></div>".into(),
         "<div class='searchbar'>".into(),
+        // One box: which field, the query, and how to match it. The select is
+        // what the page's script reads; the script dresses it as a themed
+        // list, and without the script it is still a working select.
+        "<div class='tc-searchbox'>".into(),
         "<select id='tc-field' aria-label='Search in'><option value='all'>All fields</option><option value='title'>Title</option><option value='id'>ID</option><option value='pre'>Prerequisites</option><option value='steps'>Steps</option><option value='tags'>Tags</option><option value='module'>Module</option></select>".into(),
-        "<input id='tc-search' type='search' placeholder='Search test cases' aria-label='Search test cases'>".into(),
+        "<input id='tc-search' type='search' placeholder='Search test cases' aria-label='Search test cases' spellcheck='false' autocomplete='off'>".into(),
+        SEARCH_OPTIONS.into(),
+        "</div>".into(),
         // Back to where the review stopped. Outside the menu, because it is
         // the one control a reviewer reaches for repeatedly - and hidden
         // until a case is marked, since a button that scrolls nowhere is
@@ -380,14 +424,14 @@ pub fn export_queue_page(
         let mut rows = vec![];
         if !tc.automation_status.is_empty() {
             rows.push(format!(
-                "<div class='metarow'><span class='metalabel'>Automation Status</span>\
+                "<div class='metarow m-status'><span class='metalabel'>Automation Status</span>\
                  <span class='metavals'><span class='chip status'>{}</span></span></div>",
                 esc(&tc.automation_status)
             ));
         }
         if !tc.module_value.is_empty() {
             rows.push(format!(
-                "<div class='metarow'><span class='metalabel'>Module</span>\
+                "<div class='metarow m-module'><span class='metalabel'>Module</span>\
                  <span class='metavals'><span class='chip module'>{}</span></span></div>",
                 esc(&tc.module_value)
             ));
@@ -401,7 +445,7 @@ pub fn export_queue_page(
             .collect();
         if !tags.is_empty() {
             rows.push(format!(
-                "<div class='metarow'><span class='metalabel'>Tags</span>\
+                "<div class='metarow m-tags'><span class='metalabel'>Tags</span>\
                  <span class='metavals'>{}</span></div>",
                 tags.join("")
             ));
