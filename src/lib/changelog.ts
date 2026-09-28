@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.1",
+    date: "2026-09-28",
+    items: [
+      "View in browser: the search box can match case, whole words only, or a regular expression, and highlights what it finds in each case. Put words in quotes to find them together. The Search in list now matches the page's theme.",
+      "View in browser: Options has Show on cards, to hide Automation Status, Module or Tags from every case.",
+      "Pull request descriptions now show their headings, lists and spacing the way Azure DevOps does.",
+      "On the Board, opening or closing a swimlane now unfolds or folds it smoothly.",
+      "The Work Manager sidebar icons, and Update Test Cases, now come to life when you point at them, like the other tabs.",
+      "Share links now say they come from a colleague.",
+    ],
+  },
+  {
     version: "2.0.0",
     date: "2026-09-27",
     items: [
