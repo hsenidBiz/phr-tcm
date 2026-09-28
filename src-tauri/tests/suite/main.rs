@@ -29,6 +29,7 @@ mod ado_share;
 mod ado_testplan;
 mod ai_bridge;
 mod ai_tools;
+mod api_templates;
 mod app_settings;
 mod applog;
 mod assigned_watch;

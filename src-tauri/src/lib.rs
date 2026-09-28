@@ -14,6 +14,7 @@ pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod api_templates;
 pub mod app_settings;
 pub mod assigned_watch;
 pub mod db;
