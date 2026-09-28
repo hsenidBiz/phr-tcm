@@ -231,6 +231,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_bridge::set_bridge_context,
             ai_tools::detect_ai_tools,
             ai_tools::register_ai_tool,
+            ai_tools::set_db_auto_approve,
             ai_tools::unregister_ai_tool,
             ai_tools::retire_global_registrations,
             ai_tools::remove_legacy_db_server,

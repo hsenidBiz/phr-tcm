@@ -1016,3 +1016,54 @@ fn removing_the_legacy_db_server_where_there_is_none_is_a_no_op() {
 fn removing_the_legacy_db_server_refuses_an_unknown_tool() {
     assert!(remove_legacy_db_server_now("not-a-tool", None, false).is_err());
 }
+
+// ------------------------------------------------ run database changes unasked
+
+#[test]
+fn the_claude_code_rule_goes_in_and_out_and_touches_nothing_else() {
+    use v2_lib::ai_tools::{set_claude_allow, CLAUDE_DB_QUERY_RULE as RULE};
+    let theirs = r#"{"model":"opus","permissions":{"allow":["Bash(git status)"],"deny":["Read(.env)"]}}"#;
+    let on = set_claude_allow(theirs, RULE, true).unwrap().expect("a change");
+    let v: serde_json::Value = serde_json::from_str(&on).unwrap();
+    assert_eq!(v["model"], "opus");
+    assert_eq!(v["permissions"]["allow"], serde_json::json!(["Bash(git status)", RULE]));
+    assert_eq!(v["permissions"]["deny"], serde_json::json!(["Read(.env)"]));
+    // Already there: nothing to write.
+    assert_eq!(set_claude_allow(&on, RULE, true).unwrap(), None);
+
+    let off = set_claude_allow(&on, RULE, false).unwrap().expect("a change");
+    let v: serde_json::Value = serde_json::from_str(&off).unwrap();
+    assert_eq!(v["permissions"]["allow"], serde_json::json!(["Bash(git status)"]));
+    assert_eq!(set_claude_allow(&off, RULE, false).unwrap(), None);
+}
+
+#[test]
+fn switching_on_and_off_leaves_a_fresh_claude_file_empty_and_refuses_one_it_cannot_read() {
+    use v2_lib::ai_tools::{set_claude_allow, CLAUDE_DB_QUERY_RULE as RULE};
+    let on = set_claude_allow("", RULE, true).unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&on).unwrap(), serde_json::json!({"permissions":{"allow":[RULE]}}));
+    let off = set_claude_allow(&on, RULE, false).unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&off).unwrap(), serde_json::json!({}));
+    // The person's own file, unreadable: refused, never replaced.
+    assert!(set_claude_allow("{ not json", RULE, true).is_err());
+    assert!(set_claude_allow("[1,2]", RULE, true).is_err());
+    assert!(set_claude_allow(r#"{"permissions":{"allow":"x"}}"#, RULE, true).is_err());
+}
+
+#[test]
+fn the_cursor_entry_goes_in_and_out_of_its_allowlist() {
+    use v2_lib::ai_tools::{set_cursor_allow, CURSOR_DB_QUERY_ENTRY as ENTRY};
+    assert_eq!(ENTRY, "tcm-testcases:db_query");
+    let theirs = r#"{"mcpAllowlist":["github:list_issues"],"terminalAllowlist":["git status"]}"#;
+    let on = set_cursor_allow(theirs, ENTRY, true).unwrap().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&on).unwrap();
+    assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues", ENTRY]));
+    assert_eq!(v["terminalAllowlist"], serde_json::json!(["git status"]));
+    // Cursor matches case-insensitively, so a differently-cased copy counts.
+    assert_eq!(set_cursor_allow(r#"{"mcpAllowlist":["TCM-TestCases:DB_Query"]}"#, ENTRY, true).unwrap(), None);
+    let off = set_cursor_allow(&on, ENTRY, false).unwrap().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&off).unwrap();
+    assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues"]));
+    let emptied = set_cursor_allow(r#"{"mcpAllowlist":["tcm-testcases:db_query"]}"#, ENTRY, false).unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&emptied).unwrap(), serde_json::json!({}));
+}

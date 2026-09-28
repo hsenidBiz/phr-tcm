@@ -4,7 +4,7 @@ import { Database, FolderOpen } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
-import { commands } from "../bindings";
+import { commands, type AppSettings, type AutoApproveOutcome } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { DbCredentialsModal } from "../components/DbCredentialsModal";
 import { Button } from "../components/ui/button";
@@ -166,6 +166,28 @@ export default function AiBridge() {
     saveDbWrites(on);
   };
   const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
+  // "Run database changes without asking": kept by Rust (it writes each
+  // registered tool's own "always allow" for db_query, and re-applies it
+  // to a tool registered later), so it is read from the app settings. It
+  // means something only while writes can happen at all.
+  const appSettings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
+  const noAsk = Boolean(appSettings.data?.db_auto_approve);
+  const writesLive = dbWrites && devLogin;
+  const [noAskNotes, setNoAskNotes] = useState<AutoApproveOutcome[]>([]);
+  const setNoAsk = async (on: boolean) => {
+    const before = appSettings.data;
+    if (before) qc.setQueryData<AppSettings>(["app-settings"], { ...before, db_auto_approve: on });
+    try {
+      const r = await commands.setDbAutoApprove(on, global ? null : workingDir || null);
+      if (r.status === "error") throw r.error;
+      setNoAskNotes(on ? r.data.filter((o) => o.note) : []);
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+      logUi(`db auto-approve ${on ? "on" : "off"}`);
+    } catch (e) {
+      if (before) qc.setQueryData(["app-settings"], before);
+      toast.error(String(e));
+    }
+  };
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
 
@@ -639,6 +661,30 @@ export default function AiBridge() {
               Only on a dev login database (a user ending in _devlogin), and every
               statement is written to the log.
             </p>
+            {/* The third: whether the assistant asks first. The app sets
+                each registered tool's own "always allow" for db_query and
+                tells the assistant it need not ask; a tool that keeps that
+                setting only in its own window is named below. */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs font-medium text-muted">Run changes without asking</span>
+              <Switch
+                ariaLabel="Run database changes without asking"
+                checked={noAsk && writesLive}
+                disabled={!writesLive || appSettings.isLoading}
+                onCheckedChange={(on) => void setNoAsk(on)}
+              />
+            </div>
+            <p className="text-[11px] text-faint">
+              Your AI tools run database changes without stopping to ask you first. They
+              still try each batch as a dry run before saving it.
+            </p>
+            {noAskNotes.length > 0 && (
+              <ul className="space-y-0.5 text-[11px] text-warning">
+                {noAskNotes.map((o) => (
+                  <li key={o.tool}>{o.note}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 

@@ -217,6 +217,17 @@ export const aiBridge: Screen = {
         "Lets an assistant change data in the chosen database, not only read it. It is off until you turn it on, it can only be turned on for a dev login database (a user ending in _devlogin), and every statement is written to the app's log.",
     },
     {
+      id: "no-ask",
+      shot: TAB,
+      group: "company-database",
+      locate: { role: "switch", name: "Run database changes without asking" },
+      name: "Run changes without asking",
+      does:
+        "Lets your AI tools change the database without stopping to ask you first. Available while **Create, update and delete** is on. " +
+        "The app sets each registered tool's own \"always allow\" for the database tool where that tool keeps it in a file (Claude Code and Cursor), and names below the switch any tool you need to allow it in yourself. " +
+        "Assistants still try each set of changes as a dry run before saving it. Off until you turn it on.",
+    },
+    {
       id: "forget",
       shot: TAB,
       group: "company-database",

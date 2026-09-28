@@ -85,7 +85,11 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
             }
             result
         }
-        "tools/list" => tools_list(tool_policy(call).0),
+        "tools/list" => {
+            let reply = call("GET", "/tools", "");
+            let no_ask = db_no_ask_from(&reply);
+            tools_list(tool_policy_from(reply, crate::ai_tools::dev_build()).0, no_ask)
+        }
         "tools/call" => tools_call(&v["params"], call),
         _ => {
             return Some(
@@ -152,11 +156,30 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>, dev: bool) -> (Vec
     (crate::ai_tools::effective_disabled_for(&list, offered), offered)
 }
 
+/// Whether the person has let database changes run without being asked:
+/// the app's switch for that AND writes switched on, as the bridge's
+/// `/tools` answer says. Anything short of an explicit `true` - no app, an
+/// older app, a failed answer - is no, so the description only ever loses
+/// its "do not ask" line, never gains one by accident.
+pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
+    match reply {
+        Ok((200, body)) => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v["db_no_ask"].as_bool())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Said to the assistant, at the end of `db_query`'s description, while the
+/// person has switched on running database changes without being asked.
+pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
+
 fn tool_policy(call: BridgeCall) -> (Vec<String>, bool) {
     tool_policy_from(call("GET", "/tools", ""), crate::ai_tools::dev_build())
 }
 
-fn tools_list(disabled: Vec<String>) -> serde_json::Value {
+fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
     let ops = crate::transform::SUPPORTED_OPS.join(", ");
     let transform_ops_desc = format!(
         "Ops applied in order. Every op the server accepts: {ops}. WHICH KEYS EACH OP READS: \
@@ -436,6 +459,13 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         .filter(|t| {
             let name = t["name"].as_str().unwrap_or_default();
             !disabled.iter().any(|d| d == name)
+        })
+        .map(|mut t| {
+            if db_no_ask && t["name"] == "db_query" {
+                let said = format!("{}{DB_NO_ASK}", t["description"].as_str().unwrap_or_default());
+                t["description"] = serde_json::Value::String(said);
+            }
+            t
         })
         .collect();
     serde_json::json!({ "tools": tools })
