@@ -121,11 +121,19 @@ fn only_a_matching_state_with_a_code_is_a_sign_in() {
 
 /// A browser preconnect that never sends a request used to block the one
 /// read forever, so the real redirect behind it was never seen.
+///
+/// The per-connection budget here is a second, not the 200 ms it once was:
+/// a connection that has not sent its line within it is dropped, and on a
+/// loaded machine (the release gate, with the whole suite on a share of
+/// the cores) this test's own thread could stall that long between
+/// connecting and sending the redirect - which was dropped, and the test
+/// then waited out the whole window. The app itself gives each connection
+/// `LOOPBACK_READ_TIMEOUT` (10 s).
 #[test]
 fn a_silent_preconnect_does_not_block_the_real_redirect() {
     let (l, port) = loopback();
     let waiter = std::thread::spawn(move || {
-        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_millis(200))
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(1))
     });
     let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let _ = request(port, "GET /favicon.ico HTTP/1.1\r\n\r\n");
@@ -138,8 +146,9 @@ fn a_silent_preconnect_does_not_block_the_real_redirect() {
 #[test]
 fn a_denied_sign_in_shows_a_failure_page() {
     let (l, port) = loopback();
+    // Room to send the line on a loaded machine - see the preconnect test.
     let waiter = std::thread::spawn(move || {
-        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_millis(200))
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2))
     });
     let page = request(port, "GET /?error=access_denied&state=s1 HTTP/1.1\r\n\r\n");
     assert!(waiter.join().unwrap().is_err());
