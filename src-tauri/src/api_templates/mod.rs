@@ -9,6 +9,7 @@
 //! request building.
 
 pub mod exec;
+pub mod store;
 
 use crate::autorun::recipe::origin_of;
 use serde::{Deserialize, Serialize};
@@ -71,6 +72,13 @@ pub struct Expect {
     #[serde(default = "ok_status")]
     pub status: u16,
     #[serde(default)]
+    // `serde_json::Value`'s specta mapping pulls in `serde_json::Number`'s
+    // i64/u64 variants, which the TypeScript exporter refuses to emit
+    // (precision loss) - see the same note on `Step::json` below. This
+    // only changes what TypeScript type the field is declared as
+    // (`unknown | null`, cast before use); the wire format is still real
+    // JSON.
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub json: Option<Value>,
 }
 
@@ -80,8 +88,14 @@ impl Default for Expect {
     }
 }
 
+// `steps_xml::Step` (Azure DevOps' step XML) already owns the plain name in
+// the generated bindings; Task 4 is the first to expose ApiTemplate (and so
+// this Step) through a command, and specta refuses two types of the same
+// name in one export. `serde(rename)` on a struct container has no effect
+// on the JSON shape (only enum tags and the like read it) - it only
+// renames the type specta exports it as.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename = "ApiTemplateStep")]
 pub struct Step {
     pub name: String,
     pub method: Method,
@@ -89,6 +103,10 @@ pub struct Step {
     #[serde(default)]
     pub query: BTreeMap<String, String>,
     #[serde(default)]
+    // See `Expect::json`'s comment: specta's built-in `serde_json::Value`
+    // mapping is unexportable as-is (it includes i64/u64), so this field
+    // is declared to TypeScript as `unknown | null` rather than through it.
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub json: Option<Value>,
     #[serde(default)]
     pub form: Option<BTreeMap<String, String>>,
@@ -104,6 +122,8 @@ pub struct Proven {
     pub at: String,
     pub origin: String,
     pub account: String,
+    // See `Expect::json`'s comment on why the value side is `unknown`.
+    #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
     pub outputs: BTreeMap<String, Value>,
 }
 

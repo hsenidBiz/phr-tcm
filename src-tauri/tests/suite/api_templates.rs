@@ -7,6 +7,7 @@ use v2_lib::api_templates::exec::{
     build_request, capture, check_expect, excerpt, parse_capture_path, placeholders, substitute,
     substitute_str, Body, Seg,
 };
+use v2_lib::api_templates::store::{self, RunRecord};
 use v2_lib::api_templates::{check, check_values, parse_draft, valid_id, ApiTemplate, Expect, Method, Step};
 
 /// Builds a `BTreeMap<String, Value>` from name/value pairs - shorthand for
@@ -462,4 +463,106 @@ fn a_step_with_no_body_builds_body_none() {
     let step = plain_step("/hr/pmsv10/thing");
     let req = build_request(&step, &BTreeMap::new()).unwrap();
     assert!(matches!(req.body, Body::None));
+}
+
+// --- Task 4: the template store and its run history ---
+
+fn run_record(ok: bool) -> RunRecord {
+    RunRecord {
+        at: "2026-09-28T10:14:00Z".to_string(),
+        account: "hr.admin".to_string(),
+        ok,
+        failed_step: if ok { None } else { Some("Evaluation rules".to_string()) },
+        detail: if ok { None } else { Some("400 ...".to_string()) },
+        outputs: btree(&[("cycleId", json!(274))]),
+    }
+}
+
+#[test]
+fn save_then_load_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    let loaded = store::load(dir.path(), "Org", "Proj", &t.id).unwrap();
+    assert_eq!(loaded, Some(t));
+}
+
+#[test]
+fn list_is_grouped_by_module_then_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = parsed(&draft());
+    a.id = "zzz-template".to_string();
+    a.module = "PMS / A".to_string();
+    a.title = "Z title".to_string();
+    let mut b = parsed(&draft());
+    b.id = "aaa-template".to_string();
+    b.module = "PMS / A".to_string();
+    b.title = "A title".to_string();
+    let mut c = parsed(&draft());
+    c.id = "mmm-template".to_string();
+    c.module = "PMS / B".to_string();
+    c.title = "A title".to_string();
+    for t in [&a, &b, &c] {
+        store::save(dir.path(), "Org", "Proj", t).unwrap();
+    }
+    let listed = store::list(dir.path(), "Org", "Proj").unwrap();
+    let ids: Vec<&str> = listed.iter().map(|s| s.template.id.as_str()).collect();
+    assert_eq!(ids, vec!["aaa-template", "zzz-template", "mmm-template"]);
+}
+
+#[test]
+fn a_broken_file_is_skipped_not_fatal() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    let broken_path = store::templates_dir(dir.path(), "Org", "Proj").join("broken.json");
+    std::fs::write(&broken_path, "not json").unwrap();
+    let listed = store::list(dir.path(), "Org", "Proj").unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].template.id, t.id);
+}
+
+#[test]
+fn run_history_keeps_the_newest_twenty() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    for i in 0..25 {
+        let mut r = run_record(true);
+        r.at = format!("2026-09-28T10:{i:02}:00Z");
+        store::append_run(dir.path(), "Org", "Proj", &t.id, r).unwrap();
+    }
+    let listed = store::list(dir.path(), "Org", "Proj").unwrap();
+    assert_eq!(listed[0].runs.len(), 20);
+    assert_eq!(listed[0].runs[0].at, "2026-09-28T10:24:00Z");
+    assert_eq!(listed[0].runs[19].at, "2026-09-28T10:05:00Z");
+}
+
+#[test]
+fn remove_takes_the_template_and_its_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    store::append_run(dir.path(), "Org", "Proj", &t.id, run_record(true)).unwrap();
+    store::remove(dir.path(), "Org", "Proj", &t.id).unwrap();
+    assert_eq!(store::load(dir.path(), "Org", "Proj", &t.id).unwrap(), None);
+    let tdir = store::templates_dir(dir.path(), "Org", "Proj");
+    assert!(!tdir.join(format!("{}.json", t.id)).exists());
+    assert!(!tdir.join(format!("{}.runs.json", t.id)).exists());
+
+    // Missing id is not an error.
+    store::remove(dir.path(), "Org", "Proj", "nope-nothing-here").unwrap();
+}
+
+#[test]
+fn an_invalid_id_never_reaches_the_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = parsed(&draft());
+    t.id = "../x".to_string();
+    assert!(store::save(dir.path(), "Org", "Proj", &t).is_err());
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "save with an invalid id must not touch the disk"
+    );
 }

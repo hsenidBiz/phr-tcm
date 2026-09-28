@@ -858,6 +858,8 @@ export const commands = {
 	 *  once; on keeps the current one, so the very next launch goes straight in.
 	 */
 	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
+	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
+	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 };
 
 /** Events */
@@ -936,6 +938,59 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 	status: number,
 	body: string,
 } } | { kind: "Network"; detail: string };
+
+export type Antiforgery = {
+	page: string,
+};
+
+export type ApiTemplate = ApiTemplate_Serialize | ApiTemplate_Deserialize;
+
+export type ApiTemplateStep = {
+	name: string,
+	method: Method,
+	path: string,
+	query?: { [key in string]: string },
+	json?: unknown | null,
+	form?: { [key in string]: string } | null,
+	expect?: Expect,
+	capture?: { [key in string]: string },
+};
+
+export type ApiTemplate_Deserialize = {
+	id: string,
+	title: string,
+	module: string,
+	effect: Effect,
+	description: string,
+	sources: string[],
+	antiforgery: Antiforgery,
+	params: Param[],
+	steps: ApiTemplateStep[],
+	outputs: string[],
+	/**
+	 *  Written by the app from a successful proving run; a draft that
+	 *  carries one is refused by `check`.
+	 */
+	proven?: Proven | null,
+};
+
+export type ApiTemplate_Serialize = {
+	id: string,
+	title: string,
+	module: string,
+	effect: Effect,
+	description: string,
+	sources: string[],
+	antiforgery: Antiforgery,
+	params: Param[],
+	steps: ApiTemplateStep[],
+	outputs: string[],
+	/**
+	 *  Written by the app from a successful proving run; a draft that
+	 *  carries one is refused by `check`.
+	 */
+	proven?: Proven | null,
+};
 
 export type AppSettings = {
 	/**  Closing the main window hides it to the tray instead of quitting. */
@@ -1495,6 +1550,8 @@ export type DraftSaveResult_Serialize = {
 	cases: TestCase_Serialize[],
 };
 
+export type Effect = "create" | "edit" | "delete";
+
 export type EnsuredSuite = {
 	plan_id: number,
 	plan_name: string,
@@ -1505,6 +1562,11 @@ export type EnsuredSuite = {
 	 *  nowhere would otherwise be a mystery).
 	 */
 	created_plan: boolean,
+};
+
+export type Expect = {
+	status?: number,
+	json?: unknown | null,
 };
 
 export type ExportSummary = {
@@ -1725,6 +1787,8 @@ export type Mention = {
 	created_date: string,
 };
 
+export type Method = "GET" | "POST";
+
 export type ModuleRecordResult = {
 	saved: boolean,
 	module: string,
@@ -1810,6 +1874,17 @@ export type PagePalette = {
 	/**  True when the app is currently dark, so the page opens to match. */
 	dark_first: boolean,
 };
+
+export type Param = {
+	name: string,
+	type: ParamType,
+	required?: boolean,
+	description?: string | null,
+	/**  Guidance for the assistant only - the app never runs this. */
+	lookup?: string | null,
+};
+
+export type ParamType = "string" | "number" | "boolean" | "date" | "list";
 
 export type PbiHit = {
 	id: number,
@@ -1980,6 +2055,13 @@ export type PrWorkItem = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+export type Proven = {
+	at: string,
+	origin: string,
+	account: string,
+	outputs: { [key in string]: unknown },
 };
 
 /**
@@ -2302,6 +2384,21 @@ export type RunOutcome = {
 };
 
 /**
+ *  One proving or running of a template: when, as who, whether it
+ *  succeeded, and - on failure - which step and what the run reported.
+ *  `outputs` carries whatever had actually been captured by the time the
+ *  run stopped (empty on an early failure).
+ */
+export type RunRecord = {
+	at: string,
+	account: string,
+	ok: boolean,
+	failed_step?: string | null,
+	detail?: string | null,
+	outputs?: { [key in string]: unknown },
+};
+
+/**
  *  A live run's identity plus every point's result row, so the runner can
  *  PATCH one case at a time as the tester advances.
  */
@@ -2316,6 +2413,21 @@ export type RunStarted = {
 	 *  instead of discovering it at the end.
 	 */
 	unmatched: number[],
+};
+
+/**  A template together with its run history, as the tab lists it. */
+export type SavedTemplate = SavedTemplate_Serialize | SavedTemplate_Deserialize;
+
+/**  A template together with its run history, as the tab lists it. */
+export type SavedTemplate_Deserialize = {
+	template: ApiTemplate_Deserialize,
+	runs: RunRecord[],
+};
+
+/**  A template together with its run history, as the tab lists it. */
+export type SavedTemplate_Serialize = {
+	template: ApiTemplate_Serialize,
+	runs: RunRecord[],
 };
 
 export type ScreenShot = {
@@ -2619,6 +2731,36 @@ export type Target_Serialize = string | LocatorStep_Serialize | LocatorStep_Seri
 export type TeamRef = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  Everything the tab needs to draw itself: the recipe's origin (so the
+ *  tab can show which host these templates run against - `None` when the
+ *  project has no sign-in recipe yet), and every saved template with its
+ *  run history.
+ */
+export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_Deserialize;
+
+/**
+ *  Everything the tab needs to draw itself: the recipe's origin (so the
+ *  tab can show which host these templates run against - `None` when the
+ *  project has no sign-in recipe yet), and every saved template with its
+ *  run history.
+ */
+export type TemplatesOverview_Deserialize = {
+	origin: string | null,
+	templates: SavedTemplate_Deserialize[],
+};
+
+/**
+ *  Everything the tab needs to draw itself: the recipe's origin (so the
+ *  tab can show which host these templates run against - `None` when the
+ *  project has no sign-in recipe yet), and every saved template with its
+ *  run history.
+ */
+export type TemplatesOverview_Serialize = {
+	origin: string | null,
+	templates: SavedTemplate_Serialize[],
 };
 
 export type TestCase = TestCase_Serialize | TestCase_Deserialize;
