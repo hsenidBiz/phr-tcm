@@ -556,7 +556,20 @@ fn auto_run_tools_are_offered_in_a_dev_build_or_once_unlocked() {
     assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, false)), DEV_ONLY_TOOLS.to_vec());
 }
 
-/// The policy: the seven Auto Run tools are offered wherever Auto Run is
+/// The API template tools are offered exactly where Auto Run is: they are
+/// in the same list, so a locked release build disables them first and an
+/// unlocked or development one offers them as ordinary switchable tools.
+#[test]
+fn the_api_template_tools_are_offered_where_auto_run_is() {
+    for name in ["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"] {
+        assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
+        assert!(!CORE_TOOLS.contains(&name), "{name} must be switchable");
+        assert!(effective_disabled_for(&[], false).contains(&name.to_string()), "{name}");
+        assert!(!effective_disabled_for(&[], true).contains(&name.to_string()), "{name}");
+    }
+}
+
+/// The policy: the Auto Run and API template tools are offered wherever Auto Run is
 /// (a development build, or a release build once unlocked), and the core
 /// set can never be switched off - whatever the frontend's list says, in
 /// either build kind.
@@ -581,7 +594,11 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "probe_autorun_locator",
             "try_autorun_action",
             "get_autorun_failures",
-            "record_autorun_quirk"
+            "record_autorun_quirk",
+            "get_api_template_guide",
+            "list_api_templates",
+            "prove_api_template",
+            "run_api_template"
         ]
     );
     assert_eq!(

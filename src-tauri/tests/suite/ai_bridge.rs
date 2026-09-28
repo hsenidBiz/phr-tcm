@@ -15,6 +15,7 @@ fn ctx() -> BridgeContext {
         db_id: None,
         db_secrets: None,
         db_writes: false,
+        api_writes: false,
     }
 }
 
@@ -1558,6 +1559,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_id: None,
         db_secrets: None,
         db_writes: false,
+        api_writes: false,
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
@@ -2515,5 +2517,224 @@ fn parse_http_reads_the_proxys_version() {
     match parse_http(b"GET /ping HTTP/1.1\r\nx-bridge-token: t\r\n\r\n") {
         Parsed::Complete { proxy_version, .. } => assert_eq!(proxy_version, None),
         _ => panic!("expected a complete request"),
+    }
+}
+
+/// The four API template routes - design doc "API templates" §7 and §9.
+/// Every one of them is gated with the Auto Run routes, prove and run are
+/// refused while the person's switch is off, and guide and list answer
+/// either way.
+mod api_template_routes {
+    use super::{ctx, route, BridgeContext};
+    use serde_json::json;
+    use v2_lib::ai_bridge::{autorun_guard_for, smells_like_a_write, API_WRITES_OFF};
+    use v2_lib::autorun::accounts::save_accounts;
+    use v2_lib::autorun::recipe::save_recipe;
+
+    const PATHS: [&str; 4] = ["/api-template-guide", "/api-templates", "/api-template-prove", "/api-template-run"];
+
+    fn on() -> BridgeContext {
+        BridgeContext { api_writes: true, ..ctx() }
+    }
+
+    /// A data root holding `ctx()`'s project's sign-in recipe and one
+    /// account, set as the process-wide root the bridge reads.
+    fn root_with_recipe_and_account() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx();
+        save_recipe(dir.path(), &c.org, &c.project, &crate::common::recipe()).unwrap();
+        save_accounts(dir.path(), &[crate::common::account()]).unwrap();
+        v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+        dir
+    }
+
+    fn draft() -> serde_json::Value {
+        json!({
+            "id": "pms-create-draft-cycle",
+            "title": "Create a draft performance cycle",
+            "module": "PMS / Performance Cycle",
+            "effect": "create",
+            "description": "Cycle setup; leaves the cycle in Draft.",
+            "sources": ["Pages/PerformanceCycle/Index.CycleSetup.cshtml.cs:95"],
+            "antiforgery": { "page": "/hr/pmsv10/performancecycle?mode=create" },
+            "params": [ { "name": "cycleName", "type": "string", "required": true } ],
+            "steps": [
+                { "name": "Cycle setup", "method": "POST",
+                  "path": "/hr/pmsv10/performancecycle", "query": { "handler": "SaveProgress" },
+                  "form": { "CycleName": "{{cycleName}}" },
+                  "capture": { "cycleId": "$.cycleId" } }
+            ],
+            "outputs": ["cycleId"]
+        })
+    }
+
+    #[test]
+    fn api_template_routes_are_404_when_auto_run_is_not_offered() {
+        for path in PATHS {
+            let (status, body) = autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
+            assert_eq!(status, 404, "{path}");
+            assert_eq!(body, "not available in this build", "{path}");
+            assert!(autorun_guard_for(path, true).is_none(), "{path} refused where Auto Run is offered");
+        }
+    }
+
+    #[test]
+    fn no_api_template_route_smells_like_a_write() {
+        for path in PATHS {
+            assert!(!smells_like_a_write("POST", path), "{path}");
+            assert!(!smells_like_a_write("GET", path), "{path}");
+        }
+    }
+
+    /// Off by default, and the refusal comes before anything else is even
+    /// looked at: a body that would otherwise fail every check gets the
+    /// switch sentence alone, and the one-at-a-time slot is never taken.
+    #[tokio::test]
+    async fn prove_and_run_are_refused_while_the_switch_is_off() {
+        let _slot = crate::serial::api_template_run();
+        assert!(!BridgeContext::default().api_writes, "off by default");
+        let prove = json!({ "template": draft(), "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+        let run = json!({ "id": "pms-create-draft-cycle", "account": "admin", "values": {} }).to_string();
+        for (path, body) in
+            [("/api-template-prove", prove.as_str()), ("/api-template-run", run.as_str()), ("/api-template-prove", "not json")]
+        {
+            let (status, out) = route(&ctx(), None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 400, "{path}: {out}");
+            assert_eq!(out, API_WRITES_OFF, "{path}");
+        }
+        assert!(API_WRITES_OFF.contains("AI Bridge"), "names where to turn it on");
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched, the slot is free");
+    }
+
+    #[tokio::test]
+    async fn guide_and_list_answer_with_the_switch_off() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_recipe_and_account();
+
+        let (status, guide) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+        assert_eq!(status, 200, "{guide}");
+        assert!(guide.contains("prove_api_template"), "{guide}");
+        assert!(guide.contains("admin"), "names the account key: {guide}");
+        assert!(guide.contains("https://hr.example.internal"), "names the recipe's origin: {guide}");
+        assert!(!guide.contains(crate::common::PASSWORD), "never a password");
+
+        let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
+        assert_eq!(status, 200, "{list}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!([]));
+    }
+
+    /// The list is one row per saved template, with the newest run - or
+    /// null when it has never run since it was proven.
+    #[tokio::test]
+    async fn the_list_carries_each_templates_shape_and_last_run() {
+        use v2_lib::api_templates::store::{append_run, save, RunRecord};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let t: v2_lib::api_templates::ApiTemplate = serde_json::from_value(draft()).unwrap();
+        save(dir.path(), &c.org, &c.project, &t).unwrap();
+
+        let (status, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        assert_eq!(status, 200, "{list}");
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 1, "{v}");
+        let row = &v[0];
+        assert_eq!(row["id"], "pms-create-draft-cycle");
+        assert_eq!(row["title"], "Create a draft performance cycle");
+        assert_eq!(row["module"], "PMS / Performance Cycle");
+        assert_eq!(row["effect"], "create");
+        assert_eq!(row["params"][0]["name"], "cycleName");
+        assert_eq!(row["params"][0]["type"], "string");
+        assert_eq!(row["outputs"], json!(["cycleId"]));
+        assert_eq!(row["last_run"], serde_json::Value::Null);
+        assert!(row.get("steps").is_none(), "the list is a summary: {row}");
+
+        let at = |s: &str| RunRecord {
+            at: s.into(),
+            account: "admin".into(),
+            ok: true,
+            failed_step: None,
+            detail: None,
+            outputs: Default::default(),
+        };
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 10:00:00")).unwrap();
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 11:00:00")).unwrap();
+        let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v[0]["last_run"]["at"], "2026-09-29 11:00:00", "the newest run: {v}");
+    }
+
+    /// Every problem at once - here three, one per line - and nothing
+    /// launched.
+    #[tokio::test]
+    async fn a_prove_with_a_bad_draft_lists_every_problem() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _dir = root_with_recipe_and_account();
+        let mut bad = draft();
+        bad["steps"][0]["path"] = json!("https://elsewhere.example/hr");
+        bad["steps"][0]["form"]["Extra"] = json!("{{nobody}}");
+        bad["outputs"] = json!(["cycleId", "neverCaptured"]);
+        let body = json!({ "template": bad, "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+
+        let (status, out) = route(&on(), None, "POST", "/api-template-prove", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(lines.iter().any(|l| l.contains("safe relative path")), "{out}");
+        assert!(lines.iter().any(|l| l.contains("{{nobody}}")), "{out}");
+        assert!(lines.iter().any(|l| l.contains("neverCaptured")), "{out}");
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched");
+    }
+
+    /// A draft may arrive as a JSON string - the shape every sibling tool
+    /// on this server takes its payload in - and reads the same.
+    #[tokio::test]
+    async fn a_draft_sent_as_a_string_is_read_as_json() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _dir = root_with_recipe_and_account();
+        let mut bad = draft();
+        bad["outputs"] = json!(["neverCaptured"]);
+        let body =
+            json!({ "template": bad.to_string(), "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+        let (status, out) = route(&on(), None, "POST", "/api-template-prove", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, "output 'neverCaptured' is never captured by any step");
+    }
+
+    /// Running a template nobody has proven says so by name.
+    #[tokio::test]
+    async fn running_an_unknown_template_says_so() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _dir = root_with_recipe_and_account();
+        let body = json!({ "id": "never-proven", "account": "admin", "values": {} }).to_string();
+        let (status, out) = route(&on(), None, "POST", "/api-template-run", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("never-proven"), "{out}");
+        assert!(out.contains("list_api_templates"), "{out}");
+    }
+
+    /// Another run holding the slot is a 409 with the sentence - after
+    /// every check has passed, and without touching the other run.
+    #[tokio::test]
+    async fn a_second_run_while_one_is_going_is_refused() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _dir = root_with_recipe_and_account();
+        let held = v2_lib::api_templates::runner::claim().expect("the slot was free");
+        let body = json!({ "template": draft(), "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+        let (status, out) = route(&on(), None, "POST", "/api-template-prove", &body, "1.0.0").await;
+        assert_eq!(status, 409, "{out}");
+        assert_eq!(out, "another API template is running - wait for it to finish");
+        drop(held);
+    }
+
+    /// The context's `Debug` shows the switch like the database one.
+    #[test]
+    fn the_switch_shows_in_the_contexts_debug() {
+        let shown = format!("{:?}", on());
+        assert!(shown.contains("api_writes: true"), "{shown}");
     }
 }

@@ -180,3 +180,12 @@ pub struct RecordingEvent {
     pub detail: String,
 }
 
+/// Emitted when an assistant's prove or run of an API template changed
+/// what is saved - the template itself, or its run history - so the API
+/// Templates tab reloads its list.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct ApiTemplatesChanged {
+    /// The template's id.
+    pub id: String,
+}
+

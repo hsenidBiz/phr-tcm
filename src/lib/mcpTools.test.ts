@@ -152,12 +152,13 @@ test("validate, optimise and merge are always on and not listed", () => {
 /// Auto Run pair is one of the rows here too. The suite pair takes one
 /// switch, like the wiki pair: a reader that can never be handed a suite
 /// id is no choice at all.
-test("only the switchable tools are left, as seven rows in a development build", () => {
+test("only the switchable tools are left, as eight rows in a development build", () => {
   expect(DEV_BUILD, "this file's default env").toBe(true);
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_failures",
     "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk",
+    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template",
     "db_lookup+db_query",
     "get_tags",
     "search_pbis",
@@ -222,6 +223,27 @@ test("with DEV stubbed true, the Auto Run scripts row carries all seven tools", 
   vi.resetModules();
 });
 
+/// Building an API template is one job - guide, list, prove, run - so its
+/// four tools are one row with one switch, offered where Auto Run is.
+test("the API templates row carries all four tools and switches them together", () => {
+  const row = visibleRows().find((r) => r.label === "API templates");
+  expect(row, "the API templates row exists").toBeTruthy();
+  expect(row!.names).toEqual(["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"]);
+  expect(row!.summary).toBe(
+    "Build, prove and run templates that write test data through the application's own endpoints.",
+  );
+  for (const name of row!.names) expect(DEV_ONLY_TOOLS as readonly string[]).toContain(name);
+
+  const off = toggleRow([], row!.names);
+  expect([...off].sort()).toEqual([...row!.names].sort());
+  expect(toggleRow(off, row!.names)).toEqual([]);
+
+  // A list naming one half completes toward OFF, like every other group.
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["prove_api_template"]));
+  expect([...loadDisabledTools()].sort()).toEqual([...row!.names].sort());
+  localStorage.clear();
+});
+
 /// With DEV stubbed false, the row disappears entirely and a list saved
 /// while the app was built for development cannot carry the two names
 /// into a release build's requests, where they would be meaningless.
@@ -231,6 +253,7 @@ test("with DEV stubbed false, no row mentions Auto Run and a saved list is strip
   const mod = await import("./mcpTools");
 
   expect(mod.visibleRows().some((r) => r.label.includes("Auto Run"))).toBe(false);
+  expect(mod.visibleRows().some((r) => r.label === "API templates")).toBe(false);
   for (const name of mod.DEV_ONLY_TOOLS) {
     expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain(name);
   }
@@ -269,6 +292,7 @@ test("capture mode hides the Auto Run tools row and its tools, even in this deve
 
   expect(autoRunToolsShown()).toBe(false);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+  expect(visibleRows().some((r) => r.label === "API templates")).toBe(false);
   expect(visibleTools().some((t) => (DEV_ONLY_TOOLS as readonly string[]).includes(t.name))).toBe(false);
 
   localStorage.removeItem("tcm-v2-dev-capture");

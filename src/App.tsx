@@ -729,6 +729,9 @@ export default function App() {
             workingDir || null,
             dbId || null,
             dbWrites && devLogin,
+            // The API templates switch - not wired to a control yet, so
+            // proving and running a template stay refused.
+            false,
           ),
         )
         .catch(() => {});

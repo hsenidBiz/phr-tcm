@@ -85,7 +85,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::UpdateProgress,
             events::SlowdownRequested,
             events::ReplayProgress,
-            events::RecordingEvent
+            events::RecordingEvent,
+            events::ApiTemplatesChanged
         ])
         .commands(collect_commands![
             misc::ping,

@@ -566,3 +566,37 @@ fn an_invalid_id_never_reaches_the_disk() {
         "save with an invalid id must not touch the disk"
     );
 }
+
+/// The guide hands the assistant this project's account KEYS and the
+/// recipe's origin - so it never has to guess a host or an account - and
+/// nothing else about an account: the guide is built from the keys alone,
+/// here the ones loaded from a real accounts file whose entry carries a
+/// username and a password.
+#[test]
+fn the_guide_names_the_accounts_and_origin_but_no_password() {
+    use v2_lib::api_templates::guide;
+    let dir = tempfile::tempdir().unwrap();
+    let mut second = crate::common::account();
+    second.key = "hr.supervisor".into();
+    second.username = "supervisor.login".into();
+    v2_lib::autorun::accounts::save_accounts(dir.path(), &[crate::common::account(), second]).unwrap();
+    let keys: Vec<String> =
+        v2_lib::autorun::accounts::load_accounts(dir.path()).unwrap().into_iter().map(|a| a.key).collect();
+
+    let text = guide::text(&keys, Some("https://hr.example.internal"));
+    assert!(text.contains("\"admin\""), "{text}");
+    assert!(text.contains("\"hr.supervisor\""), "{text}");
+    assert!(text.contains("https://hr.example.internal"), "{text}");
+    assert!(!text.contains(crate::common::PASSWORD), "a password reached the guide");
+    assert!(!text.contains("supervisor.login"), "a username reached the guide");
+    // The format and the workflow are there too.
+    for part in ["antiforgery", "{{", "$.", "db_query", "prove_api_template", "run_api_template", "replace"] {
+        assert!(text.contains(part), "the guide never mentions {part}");
+    }
+
+    // Nothing set up yet: it says what the person has to do, rather than
+    // naming no accounts and no host in silence.
+    let bare = guide::text(&[], None);
+    assert!(bare.contains("Auto Run"), "{bare}");
+    assert!(!bare.contains("https://"), "{bare}");
+}

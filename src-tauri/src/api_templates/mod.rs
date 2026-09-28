@@ -9,6 +9,7 @@
 //! request building.
 
 pub mod exec;
+pub mod guide;
 pub mod runner;
 pub mod store;
 

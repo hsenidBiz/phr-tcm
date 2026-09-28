@@ -741,7 +741,7 @@ export const commands = {
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
-	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, dbWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, dbWrites }),
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, dbWrites: boolean, apiWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, dbWrites, apiWrites }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
@@ -864,6 +864,7 @@ export const commands = {
 
 /** Events */
 export const events = {
+	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
@@ -990,6 +991,16 @@ export type ApiTemplate_Serialize = {
 	 *  carries one is refused by `check`.
 	 */
 	proven?: Proven | null,
+};
+
+/**
+ *  Emitted when an assistant's prove or run of an API template changed
+ *  what is saved - the template itself, or its run history - so the API
+ *  Templates tab reloads its list.
+ */
+export type ApiTemplatesChanged = {
+	/**  The template's id. */
+	id: string,
 };
 
 export type AppSettings = {

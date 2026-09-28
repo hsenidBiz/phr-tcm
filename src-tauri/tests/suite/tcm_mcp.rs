@@ -78,9 +78,10 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the seven dev-only
-    // autorun tools are listed like any other switchable tool - between
-    // merge_case_files and optimize_cases, where they sit in the source.
+    // debug assertions on), so with nothing disabled the eleven dev-only
+    // tools (Auto Run's seven, then the four API template ones) are listed
+    // like any other switchable tool - between merge_case_files and
+    // db_lookup, where they sit in the source.
     assert_eq!(
         names,
         vec![
@@ -99,6 +100,10 @@ fn tools_list_names_every_tool() {
             "try_autorun_action",
             "get_autorun_failures",
             "record_autorun_quirk",
+            "get_api_template_guide",
+            "list_api_templates",
+            "prove_api_template",
+            "run_api_template",
             "db_lookup",
             "db_query",
             "optimize_cases",
@@ -412,10 +417,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 24 in this development build: nothing is disabled by an unreachable
-    // bridge, including the seven dev-only tools, which default to ON here
+    // 28 in this development build: nothing is disabled by an unreachable
+    // bridge, including the eleven dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 24, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 28, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -728,4 +733,103 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Ok((200, r#"{"db_no_ask":"true"}"#.into()))));
     assert!(!db_no_ask_from(&Ok((500, r#"{"db_no_ask":true}"#.into()))));
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
+}
+
+const API_TEMPLATE_TOOLS: [&str; 4] =
+    ["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"];
+
+fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> Vec<String> {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+}
+
+/// The four API template tools ride with the Auto Run ones: listed where
+/// Auto Run is offered (this development build), and - where it is not -
+/// disabled first and refused with "not available", exactly as the Auto
+/// Run tools are.
+#[test]
+fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_not() {
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    for name in API_TEMPLATE_TOOLS {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+    }
+
+    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
+    assert!(!offered);
+    for name in API_TEMPLATE_TOOLS {
+        assert!(off.iter().any(|n| n == name), "{name} not disabled in a locked release app: {off:?}");
+        let text = v2_lib::mcp::refusal_text(name, false);
+        assert!(text.contains("not available"), "{name}: {text}");
+    }
+
+    // Switched off by the person, in a development build, they leave the
+    // list like any other switchable tool.
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((
+                200,
+                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template"]}"#
+                    .into(),
+            ));
+        }
+        Ok((200, "{}".into()))
+    };
+    let names = listed_names(&call);
+    assert!(names.iter().all(|n| !n.contains("api_template")), "{names:?}");
+}
+
+/// Each tool reaches its own route; prove and run forward the arguments
+/// object as the body, untouched.
+#[test]
+fn the_api_template_tools_call_their_routes() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let run_args = serde_json::json!({ "id": "pms-create-draft-cycle", "account": "admin", "values": { "cycleName": "FY27" } });
+    let prove_args = serde_json::json!({
+        "template": { "id": "x" }, "account": "admin", "values": {}, "replace": true, "why": "the handler moved",
+        "browser": "chrome",
+    });
+    let cases = [
+        ("get_api_template_guide", serde_json::json!({}), "GET", "/api-template-guide", None),
+        ("list_api_templates", serde_json::json!({}), "GET", "/api-templates", None),
+        ("prove_api_template", prove_args.clone(), "POST", "/api-template-prove", Some(prove_args)),
+        ("run_api_template", run_args.clone(), "POST", "/api-template-run", Some(run_args)),
+    ];
+    for (name, args, method, path, body) in cases {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": args },
+        });
+        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_ne!(v["result"]["isError"], serde_json::json!(true), "{name}: {resp}");
+        let (m, p, b) = calls.borrow().last().unwrap().clone();
+        assert_eq!((m.as_str(), p.as_str()), (method, path), "{name}");
+        if let Some(body) = body {
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), body, "{name}");
+        }
+    }
+}
+
+/// A failed run comes back as a tool error that still carries the run's
+/// report - which step failed, and what had already been created.
+#[test]
+fn a_failed_api_template_run_is_a_tool_error_with_the_report() {
+    let report = r#"{"ok":false,"template":"x","created":{"cycleId":274},"failed":"Evaluation rules"}"#;
+    let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":[]}"#.into()));
+        }
+        Ok((502, report.to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_api_template","arguments":{"id":"x","account":"admin","values":{}}}}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["isError"], true);
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Evaluation rules") && text.contains("274"), "{text}");
 }

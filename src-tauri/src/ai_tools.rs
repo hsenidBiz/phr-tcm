@@ -124,6 +124,11 @@ pub const CORE_TOOLS: &[&str] = &[
 /// are not present at all - not listed, no switch, no skill file, and a
 /// direct call is refused. (The name predates the unlock; the TS mirror
 /// and its sync test read it, so it stays.)
+///
+/// The API template tools ride here too: a template runs in the same
+/// signed-in browser Auto Run drives, so it is offered exactly where Auto
+/// Run is. Proving and running one also need the person's own switch
+/// (`BridgeContext::api_writes`), which the bridge checks.
 pub const DEV_ONLY_TOOLS: &[&str] = &[
     "get_autorun_guide",
     "save_autorun_script",
@@ -132,6 +137,10 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "try_autorun_action",
     "get_autorun_failures",
     "record_autorun_quirk",
+    "get_api_template_guide",
+    "list_api_templates",
+    "prove_api_template",
+    "run_api_template",
 ];
 
 /// Whether this process is a development build: `cargo test` and

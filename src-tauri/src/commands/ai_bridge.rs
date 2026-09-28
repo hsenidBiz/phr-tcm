@@ -58,6 +58,14 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
         let _ = crate::events::IntakeOutputPath { path }.emit(&app_for_intake);
     }));
 
+    // A prove or run of an API template tells the API Templates tab, so it
+    // reloads when the template or its history changed.
+    let app_for_templates = app.clone();
+    crate::ai_bridge::set_templates_sink(Box::new(move |id| {
+        use tauri_specta::Event as _;
+        let _ = crate::events::ApiTemplatesChanged { id }.emit(&app_for_templates);
+    }));
+
     // In-place bridge writes are allowed on the files the app follows.
     let app_for_watch = app.clone();
     crate::ai_bridge::set_watch_source(Box::new(move || {
@@ -89,6 +97,7 @@ pub fn set_bridge_context(
     working_dir: Option<String>,
     db_id: Option<String>,
     db_writes: bool,
+    api_writes: bool,
 ) {
     use tauri::Manager;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -108,6 +117,7 @@ pub fn set_bridge_context(
             db_id,
             db_secrets: Some(secrets),
             db_writes,
+            api_writes,
         };
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.

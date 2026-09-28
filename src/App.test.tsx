@@ -407,6 +407,9 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
     organization: "acme",
     project: "Web",
     workingDir: "D:\\repo",
+    // Off until the API templates switch exists - never undefined, which
+    // the command would refuse.
+    apiWrites: false,
   });
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.

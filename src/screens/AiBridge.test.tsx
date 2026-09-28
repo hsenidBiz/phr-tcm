@@ -611,14 +611,16 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Six rows for fourteen tools, in this development build: the wiki
-  // search and its page reader share one switch, so do the suite search
-  // and its case reader, and so do the seven Auto Run tools.
+  // Eight rows in this development build: the wiki search and its page
+  // reader share one switch, so do the suite search and its case reader,
+  // the two database tools, the seven Auto Run tools and the four API
+  // template tools.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
   expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
-  expect(within(toolSection).getByText("7 of 7 on")).toBeInTheDocument();
+  expect(screen.getByLabelText("API templates")).toBeInTheDocument();
+  expect(within(toolSection).getByText("8 of 8 on")).toBeInTheDocument();
 });
 
 test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {

@@ -63,6 +63,26 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "One line about how this application behaves, kept for the next script.",
   },
   {
+    name: "get_api_template_guide",
+    label: "API template guide",
+    summary: "The template format, the authoring workflow, and this project's account keys and address.",
+  },
+  {
+    name: "list_api_templates",
+    label: "List API templates",
+    summary: "Every saved template for this project, with its params, outputs and last run.",
+  },
+  {
+    name: "prove_api_template",
+    label: "Prove an API template",
+    summary: "Run a draft template and save it only if every step passed.",
+  },
+  {
+    name: "run_api_template",
+    label: "Run an API template",
+    summary: "Run a saved template and return its outputs, or what had been created when it failed.",
+  },
+  {
     name: "db_lookup",
     label: "Find a table",
     summary: "The tables and columns behind a topic, or one table's whole column list.",
@@ -92,7 +112,8 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   // is a set nobody can ship.
   "validate_cases", "optimize_cases", "merge_case_files"] as const;
 
-/** The Auto Run tools: offered only where Auto Run is (autoRunToolsOffered)
+/** The Auto Run tools, and the API template tools that ride on the same
+ * signed-in browser: offered only where Auto Run is (autoRunToolsOffered)
  * - absent entirely (not listed, no switch, no skill file) elsewhere.
  * Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
 export const DEV_ONLY_TOOLS = [
@@ -103,6 +124,10 @@ export const DEV_ONLY_TOOLS = [
   "try_autorun_action",
   "get_autorun_failures",
   "record_autorun_quirk",
+  "get_api_template_guide",
+  "list_api_templates",
+  "prove_api_template",
+  "run_api_template",
 ] as const;
 
 /** True in `tauri dev` and in this test suite, false in `tauri build` - a
@@ -167,6 +192,12 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_failures",
     "record_autorun_quirk",
   ],
+  // Building an API template is one job too: read the format, see what
+  // is saved, prove a draft, run it. A list with no way to run what it
+  // lists, or a prove with no guide to the format, is half a job. Offered
+  // only where Auto Run is. Proving and running also need the separate
+  // API templates switch - a different decision, like database writes.
+  ["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"],
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose
   // answer nothing can query is a map with no road. Creating, updating
@@ -186,6 +217,10 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
     label: "Auto Run scripts",
     summary:
       "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts.",
+  },
+  get_api_template_guide: {
+    label: "API templates",
+    summary: "Build, prove and run templates that write test data through the application's own endpoints.",
   },
   db_lookup: {
     label: "Company database (read)",

@@ -359,6 +359,38 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["text"]),
         },
         {
+            "name": "get_api_template_guide",
+            "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "list_api_templates",
+            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, and the newest run. Check here before building a template - the one you need may already exist.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "prove_api_template",
+            "description": "Run a draft API template in a fresh signed-in browser and save it only if every step passed. Every problem with the draft, the values or the account comes back together before anything runs. The first failing step stops the run and nothing is rolled back: the answer says which step failed, with the start of the response, and what had already been created. Proving an id that is already saved replaces it only with replace: true and a why. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first for the format.",
+            "inputSchema": schema(serde_json::json!({
+                "template": { "type": "object", "description": "The draft, in the format get_api_template_guide describes - without `proven`, which the app writes." },
+                "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
+                "values": { "type": "object", "description": "One value per param, by name, of its declared type." },
+                "replace": { "type": "boolean", "description": "Only when a template with this id is already saved: true to replace it." },
+                "why": { "type": "string", "description": "With replace: why the saved template is being changed. Logged." },
+                "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
+            }), &["template", "account"]),
+        },
+        {
+            "name": "run_api_template",
+            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The template's id, from list_api_templates." },
+                "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
+                "values": { "type": "object", "description": "One value per param, by name, of its declared type." },
+                "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
+            }), &["id", "account"]),
+        },
+        {
             "name": "db_lookup",
             "description": "Find the tables and columns behind a topic in the company database: table and column names, types, foreign keys, ranked by how well they match the words. Use it before writing a query, and to check which table a screen reads from. A bare table name (`dbo.LeaveRequest`, or `LeaveRequest`) comes back as that table's whole column list instead of the ranked match.",
             "inputSchema": schema(serde_json::json!({
@@ -668,6 +700,13 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &target, "")
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
+        "get_api_template_guide" => call("GET", "/api-template-guide", ""),
+        "list_api_templates" => call("GET", "/api-templates", ""),
+        // The bridge reads its fields out of the body (a template or
+        // values sent as a JSON string included), so the arguments object
+        // travels whole - the same pattern as `check_spec_coverage`.
+        "prove_api_template" => call("POST", "/api-template-prove", &args.to_string()),
+        "run_api_template" => call("POST", "/api-template-run", &args.to_string()),
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

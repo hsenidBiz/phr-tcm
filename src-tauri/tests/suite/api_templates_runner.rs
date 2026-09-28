@@ -574,3 +574,190 @@ fn preflight_needs_replace_and_why_for_an_existing_id() {
     assert!(problems.iter().any(|p| p.contains("not a safe relative path")), "{problems:?}");
     assert!(problems.iter().any(|p| p.contains("no sign-in recipe")), "{problems:?}");
 }
+
+/// The bridge's prove and run, end to end against the fake page: what is
+/// saved, what is appended to the history, what is logged and announced.
+/// `api_template_prove` / `api_template_run` are the route arms with the
+/// browser factory handed in, so these reach everything but a real
+/// browser.
+mod through_the_bridge {
+    use super::*;
+    use v2_lib::ai_bridge::{api_template_prove, api_template_run, set_templates_sink, BridgeContext};
+    use v2_lib::api_templates::store;
+    use v2_lib::browser::launch::Browser;
+
+    const ID: &str = "pms-create-draft-cycle";
+
+    fn ctx() -> BridgeContext {
+        BridgeContext { org: ORG.into(), project: PROJECT.into(), api_writes: true, ..BridgeContext::default() }
+    }
+
+    /// Every id the templates-changed sink has been handed. The sink is a
+    /// process-wide `OnceLock`: every test installs the same recorder, the
+    /// first one wins, and each clears the list under the run lock it holds.
+    fn changes() -> &'static Mutex<Vec<String>> {
+        static CHANGES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        set_templates_sink(Box::new(|id| CHANGES.lock().unwrap().push(id)));
+        CHANGES.lock().unwrap().clear();
+        &CHANGES
+    }
+
+    fn proven_copy() -> ApiTemplate {
+        let mut t = template();
+        t.proven = Some(Proven {
+            at: "2026-09-01 09:00:00".into(),
+            origin: "https://hr.example.internal".into(),
+            account: "admin".into(),
+            outputs: BTreeMap::from([("cycleId".to_string(), json!(1))]),
+        });
+        t
+    }
+
+    fn body(extra: Value) -> String {
+        let mut b = json!({ "template": template(), "account": "admin", "values": { "cycleName": "FY27" } });
+        for (k, v) in extra.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        b.to_string()
+    }
+
+    fn never_opened(_: Browser) -> FakeBrowsers {
+        panic!("a browser was opened for a call that should have been refused first")
+    }
+
+    #[tokio::test]
+    async fn a_proven_draft_is_saved_with_its_evidence_and_its_first_run() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let Rig { browsers, root, .. } =
+            rig(vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+
+        let (status, out) = api_template_prove(
+            &ctx(),
+            &body(json!({})),
+            |b| {
+                assert_eq!(b, Browser::Edge, "Edge unless the call says otherwise");
+                browsers
+            },
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        let report: RunReport = serde_json::from_str(&out).unwrap();
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
+
+        let saved = store::load(root.path(), ORG, PROJECT, ID).unwrap().expect("saved");
+        let proven = saved.proven.clone().expect("carries the app's proven block");
+        assert_eq!(proven.origin, "https://hr.example.internal");
+        assert_eq!(proven.account, "admin");
+        assert_eq!(proven.outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
+        assert!(!proven.at.is_empty());
+        assert_eq!(ApiTemplate { proven: None, ..saved }, template(), "saved as sent, plus proven");
+
+        let listed = store::list(root.path(), ORG, PROJECT).unwrap();
+        let runs = &listed[0].runs;
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].ok);
+        assert_eq!(runs[0].account, "admin");
+        assert_eq!(runs[0].failed_step, None);
+        assert_eq!(runs[0].detail, None);
+        assert_eq!(runs[0].outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
+        assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()], "the tab was told");
+    }
+
+    #[tokio::test]
+    async fn a_failed_prove_of_a_new_template_writes_nothing() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+
+        let (status, out) = api_template_prove(&ctx(), &body(json!({})), |_| browsers, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let report: RunReport = serde_json::from_str(&out).unwrap();
+        assert_eq!(report.failed.as_deref(), Some("Evaluation rules"));
+        assert_eq!(report.created, BTreeMap::from([("cycleId".to_string(), json!(274))]), "says what landed");
+
+        assert_eq!(store::load(root.path(), ORG, PROJECT, ID).unwrap(), None);
+        assert!(
+            !store::templates_dir(root.path(), ORG, PROJECT).exists(),
+            "no template, and no history for a template that does not exist"
+        );
+        assert!(changed.lock().unwrap().is_empty(), "nothing changed, nothing announced");
+    }
+
+    #[tokio::test]
+    async fn proving_over_a_saved_template_needs_a_reason_and_logs_it() {
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } =
+            rig(vec![answer(200, json!({ "success": true, "cycleId": 275 })), answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        let (status, out) = api_template_prove(&ctx(), &body(json!({})), never_opened, &quick()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("replace: true"), "{out}");
+
+        let why = json!({ "replace": true, "why": "the evaluation handler was renamed" });
+        let (status, out) = api_template_prove(&ctx(), &body(why), |_| browsers, &quick()).await;
+        assert_eq!(status, 200, "{out}");
+        let saved = store::load(root.path(), ORG, PROJECT, ID).unwrap().unwrap();
+        assert_eq!(saved.proven.unwrap().outputs["cycleId"], json!(275), "the new evidence replaced the old");
+        let log = v2_lib::applog::recent(400);
+        assert!(
+            log.iter().any(|l| l.message == format!("api template {ID} replaced: the evaluation handler was renamed")),
+            "the reason was not logged: {:?}",
+            log.iter().map(|l| &l.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_appends_to_the_history_and_leaves_the_template_alone() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 276 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        let body = json!({ "id": ID, "account": "admin", "values": { "cycleName": "FY27" }, "browser": "chrome" });
+        let (status, out) = api_template_run(
+            &ctx(),
+            &body.to_string(),
+            |b| {
+                assert_eq!(b, Browser::Chrome);
+                browsers
+            },
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 502, "{out}");
+
+        assert_eq!(store::load(root.path(), ORG, PROJECT, ID).unwrap(), Some(proven_copy()), "untouched");
+        let runs = &store::list(root.path(), ORG, PROJECT).unwrap()[0].runs;
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(!runs[0].ok);
+        assert_eq!(runs[0].failed_step.as_deref(), Some("Evaluation rules"));
+        let detail = runs[0].detail.clone().expect("a failed run says why");
+        assert!(detail.contains("cycleId 276 created") && detail.contains("Evaluation rules"), "{detail}");
+        assert_eq!(runs[0].outputs, BTreeMap::from([("cycleId".to_string(), json!(276))]), "what it had created");
+        assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
+    }
+}

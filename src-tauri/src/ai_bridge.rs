@@ -46,6 +46,10 @@ pub struct BridgeContext {
     /// half the permission: `/db-query` also needs the connection's own
     /// user to be one that may write.
     pub db_writes: bool,
+    /// Whether the person has switched API templates on: proving and
+    /// running one writes to the application, so both are refused
+    /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
+    pub api_writes: bool,
 }
 
 /// Hand-written so the store - and therefore every password in it - cannot
@@ -70,6 +74,7 @@ impl std::fmt::Debug for BridgeContext {
             )
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
+            .field("api_writes", &self.api_writes)
             .finish()
     }
 }
@@ -97,6 +102,24 @@ pub fn set_intake_sink(f: IntakeSink) {
 fn announce_intake_path(path: &str) {
     if let Some(f) = INTAKE_SINK.get() {
         f(path.to_string());
+    }
+}
+
+/// Where the API template routes say a template's file or run history
+/// changed, so the API Templates tab can reload without polling. A
+/// process-wide sink for the same reason as `INTAKE_SINK`; `None` in a
+/// test that never installs one.
+type TemplatesSink = Box<dyn Fn(String) + Send + Sync>;
+static TEMPLATES_SINK: std::sync::OnceLock<TemplatesSink> = std::sync::OnceLock::new();
+
+/// Called once by the app when the bridge starts. Later calls are ignored.
+pub fn set_templates_sink(f: TemplatesSink) {
+    let _ = TEMPLATES_SINK.set(f);
+}
+
+fn templates_changed(id: &str) {
+    if let Some(f) = TEMPLATES_SINK.get() {
+        f(id.to_string());
     }
 }
 
@@ -263,6 +286,20 @@ pub async fn route(
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
+        // The API template routes: gated with the Auto Run ones by the
+        // guard above. Proving and running write to the application, so
+        // both also need the person's own switch (`ctx.api_writes`); the
+        // guide and the list are reads and answer either way.
+        ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
+        ("GET", "/api-templates") => api_template_list(ctx),
+        ("POST", "/api-template-prove") => {
+            api_template_prove(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
+                .await
+        }
+        ("POST", "/api-template-run") => {
+            api_template_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
+                .await
+        }
         // The database routes. Not Auto Run and not dev-only: they are
         // switchable like any ordinary tool, and what they may do is
         // decided by the connection the person chose and the write switch
@@ -314,8 +351,11 @@ pub const WRITE_REFUSAL: &str = "This action is not possible and must be done th
 /// assistant wanted to WRITE - a mutating verb, or a path named after
 /// one. Those deserve the refusal sentence rather than a bare 404,
 /// because "not found" invites the assistant to retry with a different
-/// spelling; "not possible, by design" ends the attempt.
-fn smells_like_a_write(method: &str, target: &str) -> bool {
+/// spelling; "not possible, by design" ends the attempt. `pub` so a test
+/// can hold every real route name to it: a route whose name contained one
+/// of these words would still be reached (its arm matches first), but it
+/// would read as a write to anyone checking what the bridge refuses.
+pub fn smells_like_a_write(method: &str, target: &str) -> bool {
     if matches!(method, "PUT" | "PATCH" | "DELETE") {
         return true;
     }
@@ -340,16 +380,334 @@ pub fn autorun_route_guard(offered: bool) -> Option<(u16, String)> {
 }
 
 /// The same guard, applied by PATH rather than by arm. `route` calls this
-/// once, before its match, so every `/autorun-` route is covered by the
-/// shape of its name - a route added later cannot be left ungated by
-/// forgetting to repeat the check. `offered` is explicit for the same
-/// reason `autorun_route_guard`'s is: both branches stay testable.
+/// once, before its match, so every `/autorun-` route - and every
+/// `/api-template` one, which rides on the same signed-in browser and is
+/// offered exactly where Auto Run is - is covered by the shape of its
+/// name: a route added later cannot be left ungated by forgetting to
+/// repeat the check. `offered` is explicit for the same reason
+/// `autorun_route_guard`'s is: both branches stay testable.
 pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
-    if path.starts_with("/autorun-") {
+    if path.starts_with("/autorun-") || path.starts_with("/api-template") {
         autorun_route_guard(offered)
     } else {
         None
     }
+}
+
+/// Said when a prove or a run arrives while the person's API templates
+/// switch is off - before anything else about the call is looked at.
+pub const API_WRITES_OFF: &str =
+    "API templates are switched off - turn them on under API templates on the AI Bridge tab";
+
+/// Said when a prove or a run arrives while another one holds the
+/// process-wide slot (`runner::claim`).
+const API_TEMPLATE_BUSY: &str = "another API template is running - wait for it to finish";
+
+/// The browsers a real prove or run opens: one, headless - nobody watches
+/// a template run.
+fn real_template_browsers(which: crate::browser::launch::Browser) -> crate::commands::autorun_replay::RealBrowsers {
+    crate::commands::autorun_replay::RealBrowsers::new(which, false)
+}
+
+/// The origin of this project's sign-in recipe, or None without one.
+fn recipe_origin(root: &std::path::Path, org: &str, project: &str) -> Option<String> {
+    crate::autorun::recipe::load_recipe(root, org, project)
+        .ok()
+        .flatten()
+        .and_then(|r| crate::autorun::recipe::origin_of(&r.start_url))
+}
+
+/// The API template guide, with this project's account keys and origin.
+/// Answers without a data root too - with the format alone and a sentence
+/// saying what is not set up yet.
+fn api_template_guide(ctx: &BridgeContext) -> String {
+    let Some(root) = crate::autorun::store::configured_root() else {
+        return crate::api_templates::guide::text(&[], None);
+    };
+    // Keys only: the guide never sees a username or a password.
+    let keys: Vec<String> = crate::autorun::accounts::load_accounts(&root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| a.key)
+        .collect();
+    let origin = recipe_origin(&root, &ctx.org, &ctx.project);
+    crate::api_templates::guide::text(&keys, origin.as_deref())
+}
+
+/// Every saved template for this project, as a summary: what it is, what
+/// it takes and gives back, and its newest run (null before its first).
+fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    match crate::api_templates::store::list(&root, &ctx.org, &ctx.project) {
+        Ok(saved) => {
+            let rows: Vec<serde_json::Value> = saved
+                .into_iter()
+                .map(|s| {
+                    let t = s.template;
+                    serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "module": t.module,
+                        "effect": t.effect,
+                        "params": t.params,
+                        "outputs": t.outputs,
+                        "last_run": s.runs.into_iter().next(),
+                    })
+                })
+                .collect();
+            (200, serde_json::Value::Array(rows).to_string())
+        }
+        Err(e) => {
+            crate::applog::warn(format!("api templates: the list could not be read: {e}"));
+            (500, "the saved templates could not be read - see Settings, Logs".to_string())
+        }
+    }
+}
+
+/// An argument that may arrive as JSON or as a JSON string - the shape
+/// every sibling tool on this server takes its payload in. A string that
+/// does not parse is handed on as the string, so the complaint about it
+/// names what was actually sent.
+fn json_arg(v: Option<&serde_json::Value>) -> Option<serde_json::Value> {
+    match v {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => {
+            Some(serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.clone())))
+        }
+        Some(other) => Some(other.clone()),
+    }
+}
+
+/// What a prove and a run both carry besides the template: the account
+/// key, the param values, and the browser.
+struct TemplateCall {
+    account: String,
+    values: serde_json::Map<String, serde_json::Value>,
+    browser: crate::browser::launch::Browser,
+}
+
+fn template_call(v: &serde_json::Value, shape: &str) -> Result<TemplateCall, (u16, String)> {
+    let account = match v.get("account") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => {
+            return Err((
+                400,
+                format!(
+                    "this call needs an \"account\" - one of the account keys get_api_template_guide lists. Expected {shape}."
+                ),
+            ))
+        }
+    };
+    let values = match json_arg(v.get("values")) {
+        None => serde_json::Map::new(),
+        Some(serde_json::Value::Object(m)) => m,
+        Some(_) => return Err((400, "\"values\" is an object of param names to values".to_string())),
+    };
+    let browser = match v.get("browser") {
+        None | Some(serde_json::Value::Null) => crate::browser::launch::Browser::Edge,
+        Some(serde_json::Value::String(s)) if matches!(s.trim().to_ascii_lowercase().as_str(), "edge" | "chrome") => {
+            crate::browser::launch::Browser::from_name(s)
+        }
+        Some(_) => return Err((400, "\"browser\" is \"edge\" or \"chrome\"".to_string())),
+    };
+    Ok(TemplateCall { account, values, browser })
+}
+
+const PROVE_SHAPE: &str = "{ \"template\": <the draft>, \"account\": \"<account key>\", \"values\": { <param>: <value> }, \"replace\"?: true, \"why\"?: \"<reason>\", \"browser\"?: \"edge\" | \"chrome\" }";
+const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"<account key>\", \"values\": { <param>: <value> }, \"browser\"?: \"edge\" | \"chrome\" }";
+
+/// `POST /api-template-prove`: run a draft and save it only if every step
+/// passed. The route arm with the browser factory handed in (`open`), so a
+/// test reaches all of it but a real browser.
+pub async fn api_template_prove<B: crate::autorun::replay::Browsers>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::api_templates::runner::{Mode, RunRequest};
+    use crate::api_templates::{store, valid_id, ApiTemplate};
+    if !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {PROVE_SHAPE}.")),
+    };
+    let Some(draft) = json_arg(v.get("template")) else {
+        return (400, format!("this call needs a \"template\". Expected {PROVE_SHAPE}."));
+    };
+    let template: ApiTemplate = match serde_json::from_value(draft) {
+        Ok(t) => t,
+        Err(e) => return (400, format!("that is not a template: {e} - call get_api_template_guide for the format")),
+    };
+    let call = match template_call(&v, PROVE_SHAPE) {
+        Ok(c) => c,
+        Err(refused) => return refused,
+    };
+    let replace = v["replace"].as_bool().unwrap_or(false);
+    let why = v["why"].as_str().map(str::to_string);
+    let existing = match store::load(&root, &ctx.org, &ctx.project, &template.id) {
+        Ok(found) => found,
+        // A saved file that no longer reads still stands for a template of
+        // that id, so replacing it needs the same reason a readable one
+        // does. An invalid id is one of `check`'s own problems.
+        Err(e) if valid_id(&template.id) => {
+            crate::applog::warn(format!("api template {}: the saved copy could not be read: {e}", template.id));
+            Some(template.clone())
+        }
+        Err(_) => None,
+    };
+    let req = RunRequest {
+        org: ctx.org.clone(),
+        project: ctx.project.clone(),
+        account: call.account,
+        values: call.values,
+        mode: Mode::Prove { replace, why },
+        template,
+    };
+    run_api_template_request(&root, req, existing.as_ref(), call.browser, open, timing).await
+}
+
+/// `POST /api-template-run`: run a saved template and return its outputs,
+/// or the failing step and what had been created. As
+/// `api_template_prove`, with the browser factory handed in.
+pub async fn api_template_run<B: crate::autorun::replay::Browsers>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::api_templates::runner::{Mode, RunRequest};
+    use crate::api_templates::store;
+    if !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {RUN_SHAPE}.")),
+    };
+    let id = match v.get("id") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return (400, format!("this call needs an \"id\". Expected {RUN_SHAPE}.")),
+    };
+    let call = match template_call(&v, RUN_SHAPE) {
+        Ok(c) => c,
+        Err(refused) => return refused,
+    };
+    let template = match store::load(&root, &ctx.org, &ctx.project, &id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (
+                400,
+                format!("no template called \"{id}\" is saved for this project - list_api_templates shows the ones that are"),
+            )
+        }
+        Err(e) => return (400, e),
+    };
+    let req = RunRequest {
+        org: ctx.org.clone(),
+        project: ctx.project.clone(),
+        account: call.account,
+        values: call.values,
+        mode: Mode::Run,
+        template,
+    };
+    run_api_template_request(&root, req, None, call.browser, open, timing).await
+}
+
+/// What a prove and a run share once the call is read: every check
+/// together, the one-at-a-time slot, the run, then the bookkeeping - a
+/// proven template saved with its evidence, the run appended to the
+/// template's history, and the tab told. 200 with the report when it
+/// passed, 502 with the report when it did not.
+async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
+    root: &std::path::Path,
+    req: crate::api_templates::runner::RunRequest,
+    existing: Option<&crate::api_templates::ApiTemplate>,
+    which: crate::browser::launch::Browser,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::api_templates::runner::{claim, preflight, run_template, Mode};
+    use crate::api_templates::store::{self, RunRecord};
+    use crate::api_templates::{ApiTemplate, Proven};
+    if let Err(problems) = preflight(root, &req, existing) {
+        return (400, problems.join("\n"));
+    }
+    let Some(_claim) = claim() else {
+        return (409, API_TEMPLATE_BUSY.to_string());
+    };
+    let mut browsers = open(which);
+    let report = run_template(&mut browsers, root, &req, timing).await;
+    drop(browsers);
+
+    let id = req.template.id.as_str();
+    let (org, project) = (req.org.as_str(), req.project.as_str());
+    let mut changed = false;
+    let mut not_saved = None;
+    if let (true, Mode::Prove { replace, why }) = (report.ok, &req.mode) {
+        let proven = Proven {
+            at: crate::applog::stamp(),
+            origin: recipe_origin(root, org, project).unwrap_or_default(),
+            account: req.account.clone(),
+            outputs: report.outputs.clone(),
+        };
+        let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
+        match store::save(root, org, project, &t) {
+            Ok(()) => {
+                changed = true;
+                if existing.is_some() && *replace {
+                    crate::applog::info(format!("api template {id} replaced: {}", why.as_deref().unwrap_or("").trim()));
+                }
+            }
+            Err(e) => {
+                crate::applog::warn(format!("api template {id}: the proven template could not be saved: {e}"));
+                not_saved = Some(format!(
+                    "{} - but the template could not be saved; see Settings, Logs",
+                    report.message()
+                ));
+            }
+        }
+    }
+    // Every prove and run of a template that exists gets a line in its
+    // history - but a failed prove of an id never saved has no template
+    // to hang one on.
+    if matches!(req.mode, Mode::Run) || existing.is_some() || changed {
+        let record = RunRecord {
+            at: crate::applog::stamp(),
+            account: req.account.clone(),
+            ok: report.ok,
+            failed_step: report.failed.clone(),
+            detail: (!report.ok).then(|| report.message()),
+            // What the run actually left behind: its outputs, or - when it
+            // stopped - everything it had captured by then.
+            outputs: if report.ok { report.outputs.clone() } else { report.created.clone() },
+        };
+        match store::append_run(root, org, project, id, record) {
+            Ok(()) => changed = true,
+            Err(e) => crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}")),
+        }
+    }
+    if changed {
+        templates_changed(id);
+    }
+    if let Some(sentence) = not_saved {
+        return (500, sentence);
+    }
+    let text = serde_json::to_string(&report).unwrap_or_default();
+    (if report.ok { 200 } else { 502 }, text)
 }
 
 /// Said when a page route arrives with no browser behind it. The person
@@ -3243,7 +3601,17 @@ pub async fn start_listener(
                     };
                     route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await
                 };
-                let reason = match status { 200 => "OK", 400 => "Bad Request", 401 => "Unauthorized", 503 => "Unavailable", _ => "Not Found" };
+                let reason = match status {
+                    200 => "OK",
+                    400 => "Bad Request",
+                    401 => "Unauthorized",
+                    403 => "Forbidden",
+                    409 => "Conflict",
+                    500 => "Internal Server Error",
+                    502 => "Bad Gateway",
+                    503 => "Unavailable",
+                    _ => "Not Found",
+                };
                 let resp = format!(
                     "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
                     payload.len(),
