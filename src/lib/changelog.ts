@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.4-beta.1",
+    date: "2026-09-28",
+    items: [
+      "Large uploads: the spec order is now set for every new test case, even when Azure DevOps takes longer to add them all to the suite.",
+      "AI tools that send two database statements in one go are now told how to send them together as one set of changes.",
+    ],
+  },
+  {
     version: "2.0.3",
     date: "2026-09-28",
     items: [
