@@ -6,9 +6,12 @@
  *    groups under exactly those tags. A tag set only one case uses joins a
  *    group for its FIRST tag ("[Floor Plan]") when others share it.
  * 2. Delimiter prefix: text before the first category separator
- *    (" - ", ":", "|", "/", ...) is the group key - but only a short one.
- *    A separator further in is sentence text ("Verify Format > Bring to
- *    front"), not a category.
+ *    (" - ", ":", "|", "/", ...) is the group key - a short one first. A
+ *    longer one ("Individual Detailed Evaluation Report - ...") gets a
+ *    second pass of its own, and groups only when other titles share it
+ *    word for word: that is a report or screen name, where one title's
+ *    separator further in is sentence text ("Verify Format > Bring to
+ *    front"), and a group of one falls through.
  * 3. Common word prefix: what is left buckets by first word; any bucket of
  *    >= 2 becomes a folder named after the longest shared run of leading
  *    words. A "][" counts as a word break, so a name never ends mid-tag.
@@ -40,8 +43,19 @@ const DELIMITERS = [
 ];
 
 /** A category is a word or three. Anything longer before the separator is
- * the start of a sentence that happens to contain one. */
+ * more often the start of a sentence that happens to contain one. */
 const MAX_PREFIX_WORDS = 3;
+
+/** ...but a report or screen name runs longer ("Goal Alignment and
+ * Cascading Report"), and when several titles share one it is the
+ * category. Before the long-prefix pass these went to first-word
+ * matching, which put every report starting "Individual" into one group
+ * named "Individual". */
+const MAX_LONG_PREFIX_WORDS = 8;
+
+/** Separators a word-matched name must not end on: "Report -" is
+ * "Report". */
+const TRAILING_SEPARATOR = /(\s+(?:-|–|—|:|\||>|>>|\/))+$/;
 
 /** The leading "[A][B]" tags, trimmed and space-collapsed; null when the
  * title does not start with one. */
@@ -56,7 +70,7 @@ function leadingTags(title: string): string[] | null {
 
 const tagName = (tags: string[]) => tags.map((t) => `[${t}]`).join("");
 
-function delimiterPrefix(title: string): string | null {
+function delimiterPrefix(title: string, maxWords: number): string | null {
   let bestI: number | null = null;
   let bestPrefix: string | null = null;
   for (const d of DELIMITERS) {
@@ -68,7 +82,7 @@ function delimiterPrefix(title: string): string | null {
       }
     }
   }
-  if (!bestPrefix || words(bestPrefix).length > MAX_PREFIX_WORDS) return null;
+  if (!bestPrefix || words(bestPrefix).length > maxWords) return null;
   return bestPrefix;
 }
 
@@ -91,7 +105,8 @@ function commonWordPrefix(titles: string[]): string {
       break;
     }
   }
-  return common.length ? common.join(" ") : first[0];
+  const name = common.length ? common.join(" ") : first[0];
+  return name.replace(TRAILING_SEPARATOR, "") || name;
 }
 
 export function groupIndices(titles: string[]): TitleGroup[] {
@@ -136,11 +151,14 @@ export function groupIndices(titles: string[]): TitleGroup[] {
     return tags ? { key: tags[0].toLowerCase(), name: tagName([tags[0]]) } : null;
   });
 
-  // Pass 2: a short category before a separator.
-  left = pass(left, (i) => {
-    const prefix = clean[i] ? delimiterPrefix(clean[i]) : null;
-    return prefix ? { key: prefix.toLowerCase(), name: prefix } : null;
-  });
+  // Pass 2: a short category before a separator, then a longer one that
+  // other titles share.
+  for (const maxWords of [MAX_PREFIX_WORDS, MAX_LONG_PREFIX_WORDS]) {
+    left = pass(left, (i) => {
+      const prefix = clean[i] ? delimiterPrefix(clean[i], maxWords) : null;
+      return prefix ? { key: prefix.toLowerCase(), name: prefix } : null;
+    });
+  }
 
   // Pass 3: common-word-prefix clustering.
   const ungrouped: number[] = [];
