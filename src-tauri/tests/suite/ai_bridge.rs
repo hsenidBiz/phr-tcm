@@ -1947,6 +1947,25 @@ mod db_tests {
         assert!(said.contains("sql"), "{said}");
     }
 
+    /// A batch body that is not the shape it says is named back before
+    /// anything runs - a statement dropped in parsing would change what the
+    /// transaction does.
+    #[tokio::test]
+    async fn a_batch_body_of_the_wrong_shape_is_refused_before_anything_runs() {
+        let c = with_connection("dev-read", false);
+        for (body, expect) in [
+            (r#"{"sql":"SELECT 1","statements":["SELECT 2"]}"#, "not both"),
+            (r#"{"statements":"SELECT 1"}"#, "must be a list"),
+            (r#"{"statements":[{"sql":"SELECT 1","expect_rows":"two"}]}"#, "whole number"),
+            (r#"{"statements":[{"sql":"  "}]}"#, "statement 1 has no"),
+            (r#"{"statements":[42]}"#, "statement 1 must be an object"),
+        ] {
+            let (status, said) = route(&c, None, "POST", "/db-query", body, "1.0.0").await;
+            assert_eq!(status, 400, "{body}: {said}");
+            assert!(said.contains(expect), "{body}: {said}");
+        }
+    }
+
     // ------------------------------------------------------- the statement
 
     #[tokio::test]

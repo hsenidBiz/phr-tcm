@@ -345,10 +345,23 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "db_query",
-            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP, ALTER or CREATE. Use it to verify what a test case expects against real data, or to set up test data on the dev database.",
+            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP, ALTER or CREATE. Use it to verify what a test case expects against real data, or to set up test data on the dev database. To change more than one thing, send `statements` instead of `sql`: they run as ONE transaction that the app wraps for you - all of them are saved or none is. Give each write an `expect_rows` and the batch stops and rolls back the moment a statement affects a different number of rows. Run it with dry_run: true first - everything runs, each statement's row count comes back, and it is all rolled back - then send the same statements without dry_run to save them. Never write BEGIN, COMMIT, ROLLBACK, DECLARE or THROW yourself: every statement is checked on its own, exactly like `sql`, and those are refused.",
             "inputSchema": schema(serde_json::json!({
-                "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon" },
-            }), &["sql"]),
+                "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon. Send this or `statements`, not both." },
+                "statements": {
+                    "type": "array",
+                    "description": "Up to 50 statements run in order as one all-or-nothing transaction. Each is held to the same rules as `sql`.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "sql": { "type": "string", "description": "One statement" },
+                            "expect_rows": { "type": "integer", "description": "The rows it must affect (or return); any other count stops the batch and rolls it all back" },
+                        },
+                        "required": ["sql"],
+                    },
+                },
+                "dry_run": { "type": "boolean", "description": "Run everything, report each statement's row count, then roll it all back so nothing is saved" },
+            }), &[]),
         },
         {
             "name": "optimize_cases",

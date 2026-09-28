@@ -6,7 +6,10 @@
 //! the MCP bridge calls. The shape is deliberate: `guard::allowed` is the
 //! only way a statement becomes runnable, and `sqlcmd::run_sql` asks it
 //! again itself, so there is no path to the process that skips the gate.
+//! `sqlcmd::run_batch` does the same for every statement of a batch before
+//! `batch::compose` wraps them in their transaction.
 
+pub mod batch;
 pub mod credentials;
 pub mod guard;
 pub mod query;
@@ -16,15 +19,16 @@ pub mod sqlcmd;
 pub use credentials::{
     CredentialManager, DbCredentialsForm, DbDatabase, DbSecrets, MemoryStore, SecretStore, OWN_ID,
 };
+pub use batch::{BatchStatement, Ended, MAX_BATCH_STATEMENTS};
 pub use guard::{
-    access_for, access_for_user, allowed, classify, Access, Verdict, MAX_SQL_CHARS,
-    READ_ONLY_SENTENCE,
+    access_for, access_for_user, allowed, classify, lexically_closed, Access, Verdict,
+    MAX_SQL_CHARS, READ_ONLY_SENTENCE,
 };
 pub use schema::{
     describe_sql, detail_sql, lookup_sql, parse_ranked, render_describe, render_lookup, Picked,
 };
 pub use sqlcmd::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_path, Connection,
-    Output, RealRunner, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV,
+    find_sqlcmd, parse_connection, run_batch, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_path,
+    BatchRun, Connection, Output, RealRunner, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV,
     ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };

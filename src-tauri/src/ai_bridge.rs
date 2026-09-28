@@ -756,13 +756,86 @@ async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }
 }
 
-/// One statement, if the guard and the two write doors allow it.
+/// The statements of a batch body: each either `{ "sql": ..., "expect_rows":
+/// N }` or a bare string. Anything else is named back rather than skipped -
+/// a dropped statement would change what the transaction does.
+fn batch_statements(list: &[serde_json::Value]) -> Result<Vec<crate::db::BatchStatement>, (u16, String)> {
+    list.iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let n = i + 1;
+            let (sql, expect_rows) = match item {
+                serde_json::Value::String(s) => (s.clone(), None),
+                serde_json::Value::Object(o) => {
+                    let sql = o.get("sql").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    let expect_rows = match o.get("expect_rows") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(v) => Some(v.as_i64().ok_or_else(|| {
+                            (400, format!("statement {n}: expect_rows must be a whole number"))
+                        })?),
+                    };
+                    (sql, expect_rows)
+                }
+                _ => {
+                    return Err((
+                        400,
+                        format!("statement {n} must be an object with \"sql\" (and optionally \"expect_rows\")"),
+                    ))
+                }
+            };
+            if sql.trim().is_empty() {
+                return Err((400, format!("statement {n} has no \"sql\"")));
+            }
+            Ok(crate::db::BatchStatement { sql: sql.trim().to_string(), expect_rows })
+        })
+        .collect()
+}
+
+/// One statement, or a batch of them as one transaction, if the guard and
+/// the two write doors allow it.
 async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"sql\": \"SELECT TOP (10) * FROM dbo.LeaveRequest\" }";
+    const SHAPE: &str = "{ \"sql\": \"SELECT TOP (10) * FROM dbo.LeaveRequest\" } or { \"statements\": [{ \"sql\": \"UPDATE ...\", \"expect_rows\": 2 }], \"dry_run\": true }";
     let parsed = match db_body(body, SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
     };
+    let dry_run = parsed.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    // A single `sql` with dry_run is a batch of one: ignoring the flag
+    // would run for real what the caller asked only to try.
+    let batch = match (parsed.get("statements"), parsed.get("sql")) {
+        (Some(_), Some(_)) => {
+            return (400, format!("send \"sql\" or \"statements\", not both. Expected {SHAPE}."))
+        }
+        (Some(list), None) => match list.as_array() {
+            Some(list) => Some(list.clone()),
+            None => return (400, format!("\"statements\" must be a list. Expected {SHAPE}.")),
+        },
+        (None, Some(sql)) if dry_run => Some(vec![sql.clone()]),
+        _ => None,
+    };
+    if let Some(list) = batch {
+        let statements = match batch_statements(&list) {
+            Ok(s) => s,
+            Err(refused) => return refused,
+        };
+        let (connection, exe) = match db_ready(ctx) {
+            Ok(ready) => ready,
+            Err(refused) => return refused,
+        };
+        return match crate::db::query::run_batch_query(
+            &crate::db::RealRunner,
+            &exe,
+            &connection,
+            ctx.db_writes,
+            &statements,
+            dry_run,
+        )
+        .await
+        {
+            Ok(text) => (200, text),
+            Err(refused) => refused,
+        };
+    }
     let sql = match db_body_text(&parsed, "sql", SHAPE) {
         Ok(s) => s,
         Err(refused) => return refused,

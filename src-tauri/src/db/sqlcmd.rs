@@ -385,6 +385,74 @@ pub async fn run_sql<R: Runner>(
     Ok((hide_password(&text, &c.password), capped))
 }
 
+/// What a batch that ran to its end left behind: each statement's row
+/// count, how it ended, and the rest of what sqlcmd printed (capped the
+/// same way as a single statement's answer).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchRun {
+    pub rows: Vec<Option<i64>>,
+    pub ended: Option<super::batch::Ended>,
+    pub text: String,
+    pub capped: bool,
+}
+
+/// Runs several statements as one transaction - see `db::batch`.
+///
+/// Like `run_sql`, this validates what it runs itself rather than trusting
+/// a caller to have: every statement goes through the guard with this
+/// connection's own access, plus the batch's own checks, before the
+/// wrapper is written round them. These two are the only functions that
+/// reach a `Runner`.
+///
+/// A failure - a statement's error or a row count that did not match -
+/// comes back as the server's words, the statements that had run before
+/// it, and that nothing was saved: `XACT_ABORT` rolled it all back.
+pub async fn run_batch<R: Runner>(
+    r: &R,
+    exe: &Path,
+    c: &Connection,
+    statements: &[super::batch::BatchStatement],
+    dry_run: bool,
+) -> Result<BatchRun, String> {
+    use super::batch;
+    batch::validate(statements, guard::access_for_user(&c.user))?;
+    let (sql, starts) = batch::compose(statements, dry_run);
+
+    let args = sqlcmd_args(c, &sql);
+    let out = r
+        .run(exe, &args, &sqlcmd_env(c), Duration::from_secs(TIMEOUT_SECS))
+        .await
+        .map_err(|e| hide_password(&e, &c.password))?;
+    let report = batch::read_report(&out.stdout, statements.len());
+
+    if out.status != 0 {
+        let said = if out.stderr.trim().is_empty() {
+            report.rest.trim().to_string()
+        } else {
+            out.stderr.trim().to_string()
+        };
+        let said = if said.is_empty() {
+            format!("sqlcmd stopped with status {}", out.status)
+        } else {
+            batch::name_the_statement(&undouble(&said), &starts)
+        };
+        let ran = report.rows.iter().filter(|r| r.is_some()).count();
+        let mut failed = format!("nothing was saved - the batch stopped and was rolled back: {said}");
+        if ran > 0 {
+            failed.push_str("\nBefore it stopped:\n");
+            failed.push_str(&batch::row_lines(&statements[..ran], &report.rows[..ran]));
+        }
+        return Err(hide_password(&failed, &c.password));
+    }
+    let (text, capped) = if report.rest.is_empty() { (String::new(), false) } else { cap(&report.rest) };
+    Ok(BatchRun {
+        rows: report.rows,
+        ended: report.ended,
+        text: hide_password(&text, &c.password),
+        capped,
+    })
+}
+
 /// Keeps the header line, at most `ROW_CAP` rows after it, and at most
 /// `CHAR_CAP` characters of that - then says, after the body, each cut it
 /// had to make. Both notices can appear; neither ever lands inside a row.
