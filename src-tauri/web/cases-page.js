@@ -49,16 +49,22 @@
 
   function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-  // A pattern, wrapped to match whole words when asked. Unicode-aware where
-  // the browser takes it; a pattern the unicode mode refuses gets a second
-  // try without it before it counts as invalid.
+  // What counts as part of a word for Match whole word: letters and digits,
+  // accented and non-Latin ones included, but not the punctuation block
+  // (U+2000 on: dashes, curly quotes, ellipses), so "login" is still a
+  // whole word inside quotes or beside a dash. A plain class rather than a
+  // Unicode property escape, which an older browser cannot even parse.
+  var WORD = '0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u1FFF\\u2C00-\\uD7FF';
+
+  // A pattern, wrapped to match whole words when asked. The edge before the
+  // word is CAPTURED rather than looked behind at (older browsers have no
+  // lookbehind), so a whole-word match starts one edge early; `lead` says
+  // so, and the marker steps past it.
   function compile(src, flags) {
-    if (searchOpts.wholeWord) {
-      try { return new RegExp('(?<![\\p{L}\\p{N}_])(?:' + src + ')(?![\\p{L}\\p{N}_])', flags + 'u'); } catch (e) {}
-      return new RegExp('\\b(?:' + src + ')\\b', flags);
-    }
-    try { return new RegExp(src, flags + 'u'); } catch (e) {}
-    return new RegExp(src, flags);
+    if (!searchOpts.wholeWord) return new RegExp(src, flags);
+    var re = new RegExp('(^|[^' + WORD + '])(?:' + src + ')(?=[^' + WORD + ']|$)', flags);
+    re.lead = true;
+    return re;
   }
 
   // The query as patterns. Plain text is words that must ALL appear, with
@@ -102,15 +108,18 @@
       var m;
       re.lastIndex = 0;
       while ((m = re.exec(text))) {
+        var lead = re.lead ? m[1].length : 0;
+        var start = m.index + lead;
+        var found = m[0].slice(lead);
         // A pattern that can match nothing (a*) would never move on.
-        if (!m[0]) { re.lastIndex++; continue; }
+        if (!found) { if (re.lastIndex === m.index) re.lastIndex++; continue; }
         frag = frag || document.createDocumentFragment();
-        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
         var hit = document.createElement('mark');
         hit.className = 'tc-hit';
-        hit.textContent = m[0];
+        hit.textContent = found;
         frag.appendChild(hit);
-        last = m.index + m[0].length;
+        last = start + found.length;
       }
       if (!frag) return;
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));

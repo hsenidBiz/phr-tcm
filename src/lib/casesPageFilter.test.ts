@@ -162,6 +162,15 @@ test("Match whole word needs the whole word", () => {
   expect(shown()).toEqual([]);
   search("title", "login");
   expect(shown()).toEqual(["101"]);
+  // The mark is the word alone, not the space before it.
+  search("title", "works");
+  expect(hits()).toEqual(["works"]);
+  // Punctuation is an edge too, dashes and curly quotes included.
+  document.body.innerHTML = page().replace("Login works", "Login—“works”");
+  hooks.__tcmWireSearch();
+  search("title", "works");
+  expect(shown()).toEqual(["101"]);
+  expect(hits()).toEqual(["works"]);
 });
 
 test("a quoted phrase must appear as written; loose words need only all appear", () => {
