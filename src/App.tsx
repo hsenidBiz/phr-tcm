@@ -56,6 +56,7 @@ import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
 import {
   CHANGELOG,
+  isBetaVersion,
   markChangelogSeen,
   pendingChangelog,
   SHOW_CHANGELOG_EVENT,
@@ -804,6 +805,14 @@ export default function App() {
     };
   }, [org, project]);
 
+  // The running version, for the title bar's Beta pill - the same cached
+  // query Settings reads, so asking twice costs nothing.
+  const appVersion = useQuery({
+    queryKey: ["app-version"],
+    queryFn: () => getVersion().catch(() => "dev"),
+    staleTime: Infinity,
+  });
+
   const dismissChangelog = () => {
     getVersion()
       .then(markChangelogSeen)
@@ -982,11 +991,13 @@ export default function App() {
 
       <TitleBar
         // Capture mode: the custom title bar renders on every screen, so
-        // " — DEV" would land in every shot - see dev/capture.ts.
+        // " — DEV" would land in every shot - see dev/capture.ts. The Beta
+        // pill likewise: shots taken on a beta build would all carry it.
         title={
           (workMode ? "Work Manager" : "Test Case Manager") +
           (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
         }
+        beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
       />
       {tourOpen && signedIn && (
         <UiTour
