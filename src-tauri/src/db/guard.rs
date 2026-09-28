@@ -212,9 +212,7 @@ pub fn classify(sql: &str) -> Verdict {
     }
     if let Some(at) = body.find(';') {
         if !body[at + 1..].trim().is_empty() {
-            return refused(
-                "a second statement is not allowed here: send one statement at a time".to_string(),
-            );
+            return refused(format!("a second statement is not allowed in one sql string: {USE_STATEMENTS}"));
         }
     }
 
@@ -242,10 +240,9 @@ pub fn classify(sql: &str) -> Verdict {
     // here is how a second statement gets welded onto the end of a SELECT
     // or a write without a semicolon in sight.
     if has_word(&upper, "EXEC") || has_word(&upper, "EXECUTE") {
-        return refused(
-            "EXEC/EXECUTE is only allowed as the first word of a statement: send one statement at a time"
-                .to_string(),
-        );
+        return refused(format!(
+            "EXEC/EXECUTE is only allowed as the first word of a statement: {USE_STATEMENTS}"
+        ));
     }
     // USE switches database, which is a second statement - except inside a
     // query hint, where `OPTION (USE HINT (...))` and `OPTION (USE PLAN
@@ -398,6 +395,13 @@ pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
 fn sqlcmd_lines(sql: &str) -> impl Iterator<Item = &str> {
     sql.split(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}'])
 }
+
+/// What a refusal for a second statement tells the caller to do instead.
+/// "Send one statement at a time" was the whole answer before batches; an
+/// assistant told only that stops, when the tool it holds takes a list -
+/// seen 2026-09-28 with two SELECTs joined by a semicolon in `sql`.
+pub const USE_STATEMENTS: &str =
+    "send each statement as its own entry in \"statements\" instead - they run in order as one transaction";
 
 fn refused(why: String) -> Verdict {
     Verdict::Refused(why)
@@ -758,7 +762,7 @@ fn finish_exec_args(rest: &str, verdict: Verdict, head: &str) -> Verdict {
         return verdict;
     }
     refused(format!(
-        "{head} accepts a procedure name and a comma-separated argument list only: \"{}\" is not part of that shape - send one statement at a time",
+        "{head} accepts a procedure name and a comma-separated argument list only: \"{}\" is not part of that shape - {USE_STATEMENTS}",
         shorten(leftover)
     ))
 }

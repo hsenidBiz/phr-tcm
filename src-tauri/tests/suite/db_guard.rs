@@ -177,6 +177,12 @@ fn a_byte_order_mark_does_not_hide_the_verb() {
 fn a_go_a_second_statement_and_an_empty_statement_are_refused() {
     assert!(refusal("SELECT 1; DELETE FROM t").contains("a second statement"));
     assert!(refusal("SELECT 1;SELECT 2").contains("a second statement"));
+    // And says what to do instead: the tool takes a list.
+    for chained in ["SELECT 1; SELECT 2", "SELECT 1 EXEC dbo.p", "EXEC dbo.p 1 SELECT 2"] {
+        let why = refusal(chained);
+        assert!(why.contains(v2_lib::db::guard::USE_STATEMENTS), "{chained}: {why}");
+        assert!(!why.contains("one statement at a time"), "{chained}: {why}");
+    }
     assert!(refusal("").contains("empty"));
     assert!(refusal("   \n\t ").contains("empty"));
     assert!(refusal("-- nothing but a comment").contains("empty"));
