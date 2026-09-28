@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.3",
+    date: "2026-09-28",
+    items: [
+      "Stay signed in: the app now opens straight in while your Microsoft sign-in is still valid, instead of asking you to sign in every time. Settings > General shows the signed-in account with Sign out, and a Stay signed in switch to turn this off.",
+      "Toasts now fade away on their own after at most 10 seconds, even while you are working in another window. Pointing at one keeps it until you move away.",
+      "Group by title keeps each report in its own group, named in full: cases from two reports that start with the same word are no longer lumped together.",
+      "Work items: when Azure DevOps needs a field filled in before the state can change, that field is highlighted, including the Start date and Target date. The date picker now opens in full instead of being cut off.",
+      "AI tools can make several database changes as one: all of them are saved, or none is. They can try the changes first and see how many rows each would affect before saving.",
+      "AI Bridge: a new Run changes without asking switch lets your AI tools change the database without stopping to ask you first. It is set up for Claude Code and Cursor automatically; for other tools the tab tells you what to allow.",
+      "The Alerts bell rings with a swinging clapper, and alert text wraps onto a second line instead of being cut off.",
+    ],
+  },
+  {
     version: "2.0.2",
     date: "2026-09-28",
     items: [
