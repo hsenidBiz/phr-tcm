@@ -336,14 +336,55 @@ pub async fn run_lookup<R: Runner>(
 ) -> Result<String, (u16, String)> {
     let query = query.trim();
     let conn = conn_label(c);
-    activity_log::record(Kind::Db, json!({ "connection": conn, "verdict": "lookup", "sql": query }));
-    crate::applog::info(format!("db lookup on {conn}"));
 
+    // Timed and recorded once, after every read the lookup makes has
+    // returned - not before, like the refusal-only line this replaced.
+    // `run_lookup_inner` does the actual work and hands back how many rows
+    // or tables it found, wherever that count is directly available.
+    let started = Instant::now();
+    let result = run_lookup_inner(r, exe, c, query, limit).await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok((_, rows)) => {
+            activity_log::record(
+                Kind::Db,
+                json!({
+                    "connection": conn, "verdict": "lookup", "sql": query,
+                    "ok": true, "rows": rows, "duration_ms": duration_ms,
+                }),
+            );
+            crate::applog::info(format!("db lookup on {conn}: ok, {duration_ms} ms"));
+        }
+        Err(_) => {
+            activity_log::record(
+                Kind::Db,
+                json!({ "connection": conn, "verdict": "lookup", "sql": query, "ok": false, "duration_ms": duration_ms }),
+            );
+            crate::applog::info(format!("db lookup on {conn}: failed, {duration_ms} ms"));
+        }
+    }
+
+    result.map(|(text, _rows)| text)
+}
+
+/// The lookup's own work, split out so `run_lookup` can time and record it
+/// exactly once regardless of which of the three answers below it hits.
+/// The `Option<i64>` alongside the text is the row or table count for that
+/// answer, wherever this function can say it directly - never guessed at.
+async fn run_lookup_inner<R: Runner>(
+    r: &R,
+    exe: &Path,
+    c: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<(String, Option<i64>), (u16, String)> {
     if let Some(sql) = schema::describe_sql(query) {
         let tsv = read(r, exe, c, &sql).await?;
         let described = schema::render_describe(&tsv);
         if !described.is_empty() {
-            return Ok(described);
+            // The described table's own column count.
+            return Ok((described, Some(data_row_count(&tsv) as i64)));
         }
     }
     let preferred = crate::db_defaults::DEFAULT_SCHEMA_FILTER;
@@ -353,10 +394,13 @@ pub async fn run_lookup<R: Runner>(
         picked = schema::parse_ranked(&read(r, exe, c, &schema::lookup_sql(query, "", limit)).await?);
     }
     if picked.is_empty() {
-        return Ok(schema::render_lookup(""));
+        // Zero tables matched - still a directly known count, not a guess.
+        return Ok((schema::render_lookup(""), Some(0)));
     }
     let tsv = read(r, exe, c, &schema::detail_sql(query, &picked)).await?;
-    Ok(schema::render_lookup(&tsv))
+    // The number of tables the ranking picked, not the detail statement's
+    // own row count (one table can carry several columns/foreign keys).
+    Ok((schema::render_lookup(&tsv), Some(picked.len() as i64)))
 }
 
 /// One of the lookup's own statements. Its failures read differently from

@@ -2301,6 +2301,62 @@ dbo\tLeaveRequest\t160\n\
         assert_eq!(classify(&detail), Verdict::Read, "{detail}");
     }
 
+    /// The lookup used to log its search words before any of its reads ran,
+    /// so the record never said whether it worked or how long it took. It
+    /// now records once, after the last read returns, with `ok`,
+    /// `duration_ms`, and - since the ranking's own table count is known
+    /// directly here - `rows` too.
+    #[tokio::test]
+    async fn a_lookup_records_ok_and_duration_after_it_runs() {
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
+        let fake = FakeRunner::answering_in_turn(&[RANKED, TWO_TABLES]);
+        run_lookup(&fake, &exe(), &read_only(), "leave request", 10).await.expect("a lookup runs");
+
+        let recs = crate::common::activity_records(dir.path(), "db");
+        let rec = recs
+            .iter()
+            .find(|r| r["verdict"] == "lookup" && r["sql"] == "leave request")
+            .expect("the lookup is in the activity log");
+        assert_eq!(rec["ok"], true, "{rec}");
+        assert!(rec["duration_ms"].is_u64(), "{rec}");
+        // One table was ranked and read - a directly known count, not a
+        // guess at what the rendered text contains.
+        assert_eq!(rec["rows"], 1, "{rec}");
+
+        let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+        assert!(
+            lines.iter().any(|m| m.starts_with("db lookup on ") && m.contains("ok")),
+            "no summary line in the app log: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|m| m.contains("leave request")),
+            "the search words leaked into the app log: {lines:?}"
+        );
+    }
+
+    /// A lookup that never reaches the server is recorded too, `ok: false`
+    /// - the activity log is the trail of every attempt, not just the ones
+    /// that worked.
+    #[tokio::test]
+    async fn a_failed_lookup_is_recorded_as_not_ok() {
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
+        let fake = FakeRunner::failing("Login failed (-P M5kjapL2H3bEIuZZ4YA4)");
+        run_lookup(&fake, &exe(), &read_only(), "leave request", 10).await.unwrap_err();
+
+        let recs = crate::common::activity_records(dir.path(), "db");
+        let rec = recs
+            .iter()
+            .find(|r| r["verdict"] == "lookup" && r["sql"] == "leave request")
+            .expect("the failed lookup is in the activity log");
+        assert_eq!(rec["ok"], false, "{rec}");
+        assert!(rec["duration_ms"].is_u64(), "{rec}");
+        assert!(rec.get("rows").is_none(), "a failed lookup has no countable rows: {rec}");
+    }
+
     #[tokio::test]
     async fn a_lookup_with_nothing_in_peopleshr_searches_every_schema() {
         let _act = crate::serial::activity_log();
