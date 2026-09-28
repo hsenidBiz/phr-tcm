@@ -2,67 +2,395 @@
 (function () {
   // --- Search filter. Re-runnable: after a live swap the cards are new
   // nodes, so everything node-shaped is (re)collected inside wireSearch
-  // and the listener carries a data-wired guard.
+  // and each listener carries a data-wired guard.
+
+  // How the query matches: the three switches in the search box. Kept here
+  // rather than on the buttons, because a live swap replaces the buttons.
+  function recallFlag(key) {
+    try { return localStorage.getItem(key) === '1'; } catch (e) { return false; }
+  }
+  function rememberFlag(key, on) {
+    try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
+  }
+  var OPTS = [
+    { id: 'tc-case', name: 'matchCase', key: 'tcm-report-search-case', shortcut: 'c' },
+    { id: 'tc-word', name: 'wholeWord', key: 'tcm-report-search-word', shortcut: 'w' },
+    { id: 'tc-regex', name: 'regex', key: 'tcm-report-search-regex', shortcut: 'r' }
+  ];
+  var searchOpts = {};
+  OPTS.forEach(function (o) { searchOpts[o.name] = recallFlag(o.key); });
+
+  // Text a search ignores, and so never highlights: the page's own labels
+  // and controls, not what the case says.
+  var NOT_CONTENT = 'button, script, style, svg, select, input, textarea, summary, label, ' +
+    '.seq, .metalabel, .pre > b, .note-status';
+
+  function textNodes(root) {
+    var out = [];
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    while (walker.nextNode()) {
+      var n = walker.currentNode;
+      var el = n.parentElement;
+      if (!n.nodeValue || !el || el.closest(NOT_CONTENT)) continue;
+      out.push(n);
+    }
+    return out;
+  }
+
+  // Where each field lives in a card: what it searches and what it marks.
+  var FIELD_SEL = {
+    title: '.title',
+    id: '.wid',
+    pre: '.pre',
+    steps: '.action, .expected',
+    tags: '.chip.tag',
+    module: '.chip.module'
+  };
+
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  // What counts as part of a word for Match whole word: letters and digits,
+  // accented and non-Latin ones included, but not the punctuation block
+  // (U+2000 on: dashes, curly quotes, ellipses), so "login" is still a
+  // whole word inside quotes or beside a dash. A plain class rather than a
+  // Unicode property escape, which an older browser cannot even parse.
+  var WORD = '0-9A-Za-z_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u1FFF\\u2C00-\\uD7FF';
+
+  // A pattern, wrapped to match whole words when asked. The edge before the
+  // word is CAPTURED rather than looked behind at (older browsers have no
+  // lookbehind), so a whole-word match starts one edge early; `lead` says
+  // so, and the marker steps past it.
+  function compile(src, flags) {
+    if (!searchOpts.wholeWord) return new RegExp(src, flags);
+    var re = new RegExp('(^|[^' + WORD + '])(?:' + src + ')(?=[^' + WORD + ']|$)', flags);
+    re.lead = true;
+    return re;
+  }
+
+  // The query as patterns. Plain text is words that must ALL appear, with
+  // "quoted phrases" kept whole; a regular expression is one pattern.
+  // Throws on a regular expression that does not compile.
+  function matchersFor(q) {
+    var srcs = [];
+    if (searchOpts.regex) {
+      if (q.trim()) srcs.push(q);
+    } else {
+      var re = /"([^"]*)"?|(\S+)/g;
+      var m;
+      while ((m = re.exec(q))) {
+        var term = m[1] !== undefined ? m[1].trim() : m[2];
+        if (term) srcs.push(escapeRe(term));
+      }
+    }
+    var flags = searchOpts.matchCase ? '' : 'i';
+    return {
+      tests: srcs.map(function (s) { return compile(s, flags); }),
+      mark: srcs.length ? compile(srcs.map(function (s) { return '(?:' + s + ')'; }).join('|'), flags + 'g') : null
+    };
+  }
+
+  function clearHits() {
+    var marks = document.querySelectorAll('mark.tc-hit');
+    var parents = [];
+    for (var i = 0; i < marks.length; i++) {
+      var p = marks[i].parentNode;
+      p.replaceChild(document.createTextNode(marks[i].textContent), marks[i]);
+      if (parents.indexOf(p) === -1) parents.push(p);
+    }
+    parents.forEach(function (p) { p.normalize(); });
+  }
+
+  function markHits(root, re) {
+    textNodes(root).forEach(function (n) {
+      var text = n.nodeValue;
+      var frag = null;
+      var last = 0;
+      var m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text))) {
+        var lead = re.lead ? m[1].length : 0;
+        var start = m.index + lead;
+        var found = m[0].slice(lead);
+        // A pattern that can match nothing (a*) would never move on.
+        if (!found) { if (re.lastIndex === m.index) re.lastIndex++; continue; }
+        frag = frag || document.createDocumentFragment();
+        if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+        var hit = document.createElement('mark');
+        hit.className = 'tc-hit';
+        hit.textContent = found;
+        frag.appendChild(hit);
+        last = start + found.length;
+      }
+      if (!frag) return;
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      n.parentNode.replaceChild(frag, n);
+    });
+  }
+
   function wireSearch() {
     var input = document.getElementById('tc-search');
     var count = document.getElementById('tc-count');
     var noMatch = document.getElementById('tc-no-match');
     var field = document.getElementById('tc-field');
+    var box = input ? input.closest('.tc-searchbox') : null;
     if (!input || !count) return function () {};
     var cards = Array.prototype.slice.call(document.querySelectorAll('.case'));
-    // Per card, one lower-cased haystack per field, so a search can be
-    // narrowed to just the title, ID, prerequisites, steps, tags or module
-    // instead of the whole card's text.
+    // Per card, one haystack per field, in its own case - lower-casing is
+    // the pattern's job (the i flag), so Match case has the real text.
     function fieldsOf(card) {
       var text = function (sel) {
         return Array.prototype.map.call(card.querySelectorAll(sel), function (e) { return e.textContent; }).join(' ');
       };
       var pre = card.querySelector('.pre');
+      // All fields: what the case says, not the page's labels around it -
+      // so "Module" finds a case about modules, not every card with a row
+      // called Module. Comment boxes count: they are the reviewer's text.
+      var all = textNodes(card).map(function (n) { return n.nodeValue; }).join(' ') + ' ' + text('textarea');
       return {
-        all: card.textContent.toLowerCase(),
-        title: text('.title').toLowerCase(),
+        all: all,
+        title: text('.title'),
         // Both the bare key and the #-prefixed work item id, so "157957"
         // and "#157957" both match.
-        id: ((card.getAttribute('data-key') || '') + ' ' + text('.wid')).toLowerCase(),
-        pre: (pre ? pre.textContent.replace(/^\s*Prerequisites:\s*/, '') : '').toLowerCase(),
-        steps: text('.action, .expected').toLowerCase(),
-        tags: text('.chip.tag').toLowerCase(),
-        module: text('.chip.module').toLowerCase()
+        id: (card.getAttribute('data-key') || '') + ' ' + text('.wid'),
+        pre: pre ? pre.textContent.replace(/^\s*Prerequisites:\s*/, '') : '',
+        steps: text('.action, .expected'),
+        tags: text('.chip.tag'),
+        module: text('.chip.module')
       };
     }
+    // Read before any highlight goes in, so a mark never splits a haystack.
+    clearHits();
     var fields = cards.map(fieldsOf);
     var total = cards.length;
+
+    function paintOpts() {
+      OPTS.forEach(function (o) {
+        var b = document.getElementById(o.id);
+        if (b) b.setAttribute('aria-pressed', searchOpts[o.name] ? 'true' : 'false');
+      });
+    }
+
+    function invalid(bad) {
+      if (box) box.classList.toggle('invalid', bad);
+      if (bad) input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+    }
 
     function apply() {
       // A missing select (an older cached page, or a page without one)
       // searches every field, same as before this field selector existed.
       var key = field && fields.length && field.value in fields[0] ? field.value : 'all';
-      var words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+      var found;
+      try {
+        found = matchersFor(input.value);
+      } catch (e) {
+        // A regular expression still being typed: say so, and leave the
+        // cards as the last good pattern had them rather than flashing.
+        invalid(true);
+        count.textContent = 'Invalid regular expression';
+        return;
+      }
+      invalid(false);
+      clearHits();
       var shown = 0;
       fields.forEach(function (f, i) {
-        var hit = words.every(function (w) { return f[key].indexOf(w) !== -1; });
+        var hit = found.tests.every(function (re) { return re.test(f[key]); });
         cards[i].classList.toggle('hidden', !hit);
-        if (hit) shown++;
+        if (!hit) return;
+        shown++;
+        if (!found.mark) return;
+        if (key === 'all') markHits(cards[i], found.mark);
+        else Array.prototype.forEach.call(cards[i].querySelectorAll(FIELD_SEL[key]), function (el) { markHits(el, found.mark); });
       });
-      count.textContent = words.length
+      count.textContent = found.tests.length
         ? shown + ' of ' + total + ' shown'
         : total + ' test case' + (total !== 1 ? 's' : '');
       if (noMatch) noMatch.classList.toggle('hidden', shown !== 0);
+    }
+
+    function toggle(o) {
+      searchOpts[o.name] = !searchOpts[o.name];
+      rememberFlag(o.key, searchOpts[o.name]);
+      paintOpts();
+      apply();
     }
 
     if (!input.dataset.wired) {
       input.dataset.wired = '1';
       input.addEventListener('input', apply);
       input.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { input.value = ''; apply(); }
+        if (e.key === 'Escape') { input.value = ''; apply(); return; }
+        // The editor shortcuts for the three switches, while typing.
+        if (!e.altKey || e.ctrlKey || e.metaKey) return;
+        var k = (e.key || '').toLowerCase();
+        OPTS.forEach(function (o) {
+          if (k === o.shortcut) { e.preventDefault(); toggle(o); }
+        });
       });
     }
+    OPTS.forEach(function (o) {
+      var b = document.getElementById(o.id);
+      if (!b || b.dataset.wired) return;
+      b.dataset.wired = '1';
+      b.addEventListener('click', function () { toggle(o); });
+    });
     if (field && !field.dataset.wired) {
       field.dataset.wired = '1';
       field.addEventListener('change', apply);
     }
+    dressField(field);
+    paintOpts();
     apply();
     return apply;
+  }
+
+  // --- The field picker: the select, dressed as the page's own list. The
+  // select stays the value everything reads (and a page whose script never
+  // runs keeps it as a plain select); this is a button and a listbox over
+  // it, in the page's theme instead of the system's.
+  function dressField(field) {
+    if (!field || field.dataset.dressed) return;
+    field.dataset.dressed = '1';
+    var name = field.getAttribute('aria-label') || 'Search in';
+    var wrap = document.createElement('div');
+    wrap.className = 'tc-pick';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tc-pick-btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-controls', 'tc-field-list');
+    var label = document.createElement('span');
+    label.className = 'tc-pick-label';
+    btn.appendChild(label);
+    var list = document.createElement('ul');
+    list.id = 'tc-field-list';
+    list.className = 'tc-pick-list';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', name);
+    list.hidden = true;
+    var items = Array.prototype.map.call(field.options, function (o) {
+      var li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.id = 'tc-field-' + o.value;
+      li.tabIndex = -1;
+      li.setAttribute('data-value', o.value);
+      li.textContent = o.text;
+      list.appendChild(li);
+      return li;
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(list);
+    field.parentNode.insertBefore(wrap, field);
+    field.hidden = true;
+
+    function paint() {
+      var o = field.options[field.selectedIndex];
+      var text = o ? o.text : '';
+      label.textContent = text;
+      btn.setAttribute('aria-label', name + ': ' + text);
+      items.forEach(function (li) {
+        li.setAttribute('aria-selected', li.getAttribute('data-value') === field.value ? 'true' : 'false');
+      });
+    }
+    function open() {
+      list.hidden = false;
+      wrap.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
+      var on = list.querySelector('[aria-selected="true"]') || items[0];
+      if (on) on.focus();
+    }
+    function close(refocus) {
+      if (list.hidden) return;
+      list.hidden = true;
+      wrap.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+      if (refocus) btn.focus();
+    }
+    function choose(li) {
+      var v = li.getAttribute('data-value');
+      if (field.value !== v) {
+        field.value = v;
+        field.dispatchEvent(new Event('change'));
+      }
+      paint();
+      close(false);
+      // Back to typing: picking a field is almost always followed by a query.
+      var input = document.getElementById('tc-search');
+      if (input) input.focus();
+      else btn.focus();
+    }
+    btn.addEventListener('click', function () {
+      if (list.hidden) open(); else close(true);
+    });
+    btn.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); }
+    });
+    list.addEventListener('click', function (e) {
+      var li = e.target && e.target.closest ? e.target.closest('[role="option"]') : null;
+      if (li) choose(li);
+    });
+    list.addEventListener('keydown', function (e) {
+      var i = items.indexOf(document.activeElement);
+      var to = null;
+      if (e.key === 'ArrowDown') to = items[Math.min(items.length - 1, i + 1)];
+      else if (e.key === 'ArrowUp') to = items[Math.max(0, i - 1)];
+      else if (e.key === 'Home') to = items[0];
+      else if (e.key === 'End') to = items[items.length - 1];
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i !== -1) choose(items[i]); return; }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
+      else if (e.key === 'Tab') { close(false); return; }
+      if (to) { e.preventDefault(); to.focus(); }
+    });
+    // Pointing at an option makes it the one the keyboard continues from.
+    list.addEventListener('mousemove', function (e) {
+      var li = e.target && e.target.closest ? e.target.closest('[role="option"]') : null;
+      if (li && document.activeElement !== li) li.focus();
+    });
+    // A click anywhere else closes it. Tied to this picker's nodes, which a
+    // live swap discards along with the listener's reason to act.
+    document.addEventListener('click', function (e) {
+      if (!list.hidden && !wrap.contains(e.target)) close(false);
+    });
+    field.addEventListener('change', paint);
+    paint();
+  }
+
+  // --- Show on cards: Automation Status, Module and Tags each on/off. A
+  // class on <body> hides the rows; a card left with no rows at all loses
+  // the block too, so there is no empty gap where it was.
+  var SHOW_KINDS = ['status', 'module', 'tags'];
+  function wireShowFields() {
+    function hidden(k) { return document.body.classList.contains('hide-' + k); }
+    function settle() {
+      var metas = document.querySelectorAll('.case > .meta');
+      for (var i = 0; i < metas.length; i++) {
+        var rows = metas[i].querySelectorAll('.metarow');
+        var any = false;
+        for (var j = 0; j < rows.length && !any; j++) {
+          var row = rows[j];
+          any = !SHOW_KINDS.some(function (k) { return row.classList.contains('m-' + k) && hidden(k); });
+        }
+        metas[i].classList.toggle('hidden', !any);
+      }
+    }
+    SHOW_KINDS.forEach(function (k) {
+      var key = 'tcm-report-hide-' + k;
+      // After a live swap <body> already says; on a fresh page, storage does.
+      var off = hidden(k) || recallFlag(key);
+      document.body.classList.toggle('hide-' + k, off);
+      var box = document.getElementById('tc-show-' + k);
+      if (!box) return;
+      box.checked = !off;
+      if (box.dataset.wired) return;
+      box.dataset.wired = '1';
+      box.addEventListener('change', function () {
+        document.body.classList.toggle('hide-' + k, !box.checked);
+        rememberFlag(key, !box.checked);
+        settle();
+      });
+    });
+    settle();
   }
 
   // --- Reviewer notes / findings on/off. One class on <body>; the CSS does
@@ -217,6 +545,7 @@
   // Test-only: re-wires the search filter against whatever cards are
   // currently in the document, exactly as a live swap does.
   window.__tcmWireSearch = function () { applyFilter = wireSearch(); };
+  window.__tcmWireShow = function () { wireShowFields(); };
   // Test-only: the in-memory write-through cache now genuinely outlives a
   // storage read that comes back null (that is the fix), which on a real
   // page is exactly right - it lasts for the page's own lifetime. A test
@@ -241,6 +570,7 @@
 
   var applyFilter = wireSearch();
   wireNotesToggle();
+  wireShowFields();
   wireFindingsToggle();
   wireMarks();
 
@@ -348,6 +678,7 @@
       restoreOpen(document, open);
       applyFilter = wireSearch();
       wireNotesToggle();
+      wireShowFields();
       wireFindingsToggle();
       wireMarks();
       if (window.__tcmWireNotes) window.__tcmWireNotes();

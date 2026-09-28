@@ -19,6 +19,7 @@ import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { IconCollapseAll, IconExpandAll } from "../lib/actionIcons";
+import { Collapse, useRegroupMotion, useSettled } from "../components/ui/collapse";
 import {
   NO_PARENT,
   cardCount,
@@ -468,6 +469,11 @@ export default function WorkBoard({
   // Swimlanes: the filters above apply first, so a lane they emptied never
   // appears.
   const lanes = swimlanes ? groupIntoLanes(visible) : [];
+  // A lane opened by its toggle unfolds; the lanes the board first loads
+  // with, or that switching Swimlanes on brings in, arrive already open -
+  // the switch plays one entrance for the whole set instead.
+  const lanesSettled = useSettled(Boolean(board.data));
+  const laneRegroup = useRegroupMotion(swimlanes);
   const collapseAllLanes = () =>
     updateCollapsed(new Set([...collapsedLanes, ...lanes.map((l) => l.id)]));
   const expandAllLanes = () => updateCollapsed(new Set());
@@ -825,14 +831,14 @@ export default function WorkBoard({
         )}
 
         {board.data && swimlanes && (
-          <div data-tour="board-columns" className="space-y-3">
+          <div ref={laneRegroup.ref} data-tour="board-columns" className="space-y-3">
             {lanes.map((lane) => {
               const collapsed = collapsedLanes.has(lane.id);
               return (
                 <div
                   key={lane.id}
                   data-testid={`lane-${lane.id}`}
-                  className="space-y-2 rounded-md border border-border bg-surface p-2"
+                  className="rounded-md border border-border bg-surface p-2"
                 >
                   {/* The header row. The toggle carries the lane's name,
                       its size and what a press will do; the title opens
@@ -867,7 +873,9 @@ export default function WorkBoard({
                     )}
                     <span className="shrink-0 text-xs text-faint">{cardCount(lane.items.length)}</span>
                   </div>
-                  {!collapsed && renderGrid(lane.items, lane.id)}
+                  <Collapse open={!collapsed} animateIn={lanesSettled && !laneRegroup.regrouping}>
+                    <div className="pt-2">{renderGrid(lane.items, lane.id)}</div>
+                  </Collapse>
                 </div>
               );
             })}

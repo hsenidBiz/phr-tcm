@@ -452,8 +452,7 @@ fn the_report_can_hide_its_reviewer_notes() {
     let html = std::fs::read_to_string(&path).unwrap();
 
     // The button is in the sticky bar, not beside a case.
-    let bar = html.split("class='searchbar'").nth(1).expect("search bar");
-    let bar = bar.split("</div>").next().unwrap();
+    let bar = search_bar(&html);
     assert!(bar.contains("id='tc-notes'"), "toggle belongs in the sticky bar: {bar}");
     // Pressed state is exposed, so it is a real toggle to a screen reader.
     assert!(html.contains("aria-pressed="), "{html}");
@@ -510,8 +509,7 @@ fn findings_can_be_hidden_from_the_page() {
     let html = std::fs::read_to_string(&path).unwrap();
 
     // The toggle belongs in the sticky bar, beside the notes one.
-    let bar = html.split("class='searchbar'").nth(1).expect("search bar");
-    let bar = bar.split("</div>").next().unwrap();
+    let bar = search_bar(&html);
     assert!(bar.contains("id='tc-findings'"), "toggle belongs in the sticky bar: {bar}");
     // One class on <body> does the hiding, as an animated grid collapse.
     assert!(html.contains("body.findings-off .find-wrap"), "{html}");
@@ -597,6 +595,47 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
     assert!(!std::fs::read_to_string(&path2).unwrap().contains("<details class='rev'"));
 }
 
+/// The sticky bar at the top of the review page: from its opening tag to
+/// the no-match line that follows it. (The bar holds nested boxes of its
+/// own, so its first closing tag is not its end.)
+fn search_bar(html: &str) -> &str {
+    let bar = html.split("<div class='searchbar'>").nth(1).expect("search bar");
+    bar.split("id='tc-no-match'").next().unwrap()
+}
+
+/// Show on cards offers a switch only for a kind of row some case has: a
+/// switch that hides nothing is just another thing to read.
+#[test]
+fn show_on_cards_offers_only_the_kinds_present() {
+    let case = |status: &str| TestCase {
+        title: "Login".into(),
+        steps: vec![],
+        tags: String::new(),
+        automation_status: status.into(),
+        module_value: String::new(),
+        preconditions: String::new(),
+        update_id: None,
+        comment: String::new(),
+        reviewer_notes: String::new(),
+        area: String::new(),
+        spec_order: None,
+        tester_order: None,
+        findings: vec![],
+        source: Default::default(),
+    };
+    let path = tmp_path("show-on-cards.html");
+    v2_lib::import_parser::export_queue_to_html(&[case("Planned")], &path, "", None, &Default::default())
+        .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("id='tc-show-status' checked"));
+    assert!(!html.contains("id='tc-show-module'"));
+    assert!(!html.contains("id='tc-show-tags'"));
+
+    // Nothing to hide at all: no group.
+    v2_lib::import_parser::export_queue_to_html(&[case("")], &path, "", None, &Default::default()).unwrap();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("id='tc-show-head'"));
+}
+
 #[test]
 fn html_export_carries_cases_and_search() {
     let queue = vec![TestCase {
@@ -634,6 +673,17 @@ fn html_export_carries_cases_and_search() {
     assert!(html.contains("<option value='title'>Title</option>"));
     assert!(html.contains("<option value='pre'>Prerequisites</option>"));
     assert!(html.contains("placeholder='Search test cases'"));
+    // The match switches sit in the search box with the field and query.
+    assert!(html.contains("<div class='tc-searchbox'>"));
+    for id in ["tc-case", "tc-word", "tc-regex"] {
+        assert!(html.contains(&format!("id='{id}' aria-pressed='false'")), "{id}");
+    }
+    // Each metadata row says its kind, so Show on cards can hide it.
+    for kind in ["status", "module", "tags"] {
+        assert!(html.contains(&format!("<div class='metarow m-{kind}'>")), "{kind}");
+        assert!(html.contains(&format!("id='tc-show-{kind}' checked")), "{kind}");
+    }
+    assert!(html.contains("id='tc-show-head'>Show on cards</div>"));
     assert!(html.contains("<span class='title'>"));
     assert!(html.contains("<td class='action'>"));
     assert!(html.contains("<td class='expected'>"));
@@ -974,7 +1024,7 @@ fn the_review_page_links_to_the_tree_only_when_given_one() {
         html.contains("<a id='tc-tree' href='test-map-1.html'>View as Tree</a>"),
         "{html}"
     );
-    let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();
+    let bar = search_bar(&html);
     assert!(bar.contains("id='tc-tree'"), "the link belongs in the sticky bar: {bar}");
 
     let path2 = dir.join(format!("{}-without.html", std::process::id())).to_string_lossy().to_string();
@@ -1017,7 +1067,7 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     // A source with a single quote must not break out of the attribute.
     assert!(html.contains("title='C:/o&#39;brien/Rules.md'"), "{html}");
     assert!(!html.contains("title='C:/o'brien/Rules.md'"), "a raw quote would close the attribute early: {html}");
-    let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();
+    let bar = search_bar(&html);
     assert!(bar.contains("<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>"), "{bar}");
     // The pane's own data block, for the script (titles and sources only).
     assert!(html.contains("<script type='application/json' id='tc-specs-data'>"), "{html}");

@@ -1,4 +1,4 @@
-// The sidebar's own glyphs: each test-case row draws one, every part that
+// The sidebar's own glyphs: every row draws one, every part that
 // moves is named for the stylesheet, and none of that motion exists for
 // anyone who asked the OS for less.
 
@@ -6,20 +6,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render } from "@testing-library/react";
 import { expect, test } from "vitest";
-import { CASE_ITEMS } from "./Sidebar";
+import { CASE_ITEMS, WORK_ITEMS } from "./Sidebar";
 
 const css = readFileSync(resolve(__dirname, "../index.css"), "utf8");
 
-test("every test-case row except Update Test Cases draws its own glyph", () => {
-  for (const { id, icon: Icon } of CASE_ITEMS) {
+test("every sidebar row, test-case and Work Manager, draws its own glyph", () => {
+  // Update Test Cases' glyph is the update arrow; every other row's is named for its id.
+  const kind = (id: string) => (id === "edit" ? "update" : id);
+  for (const { id, icon: Icon } of [...CASE_ITEMS, ...WORK_ITEMS]) {
     const { container, unmount } = render(<Icon size={16} className="nav-ico" />);
     const svg = container.querySelector("svg")!;
-    if (id === "edit") {
-      expect(svg.classList.contains("nav-glyph"), id).toBe(false);
-    } else {
-      expect(svg.classList.contains(`ng-${id}`), id).toBe(true);
-      expect(svg.getAttribute("aria-hidden"), id).toBe("true");
-    }
+    expect(svg.classList.contains(`ng-${kind(id)}`), id).toBe(true);
+    expect(svg.getAttribute("aria-hidden"), id).toBe("true");
     unmount();
   }
 });

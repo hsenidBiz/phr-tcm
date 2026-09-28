@@ -1592,7 +1592,7 @@ export default function QueueSection({
             variant="outline"
             size="sm"
             disabled={queue.length === 0 || share.isPending || !online}
-            title={online ? "Upload the draft as a one-time share link a teammate can import for review" : OFFLINE_HINT}
+            title={online ? "Upload the draft as a one-time share link a colleague can import for review" : OFFLINE_HINT}
             onClick={() => share.mutate()}
           >
             <IconShare aria-hidden />

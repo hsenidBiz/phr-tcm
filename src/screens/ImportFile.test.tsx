@@ -413,7 +413,7 @@ test("the share row is one line, with the one-time-use note on the input's title
 
   expect(screen.queryByText(/one-time use/)).not.toBeInTheDocument();
   const input = screen.getByLabelText("Share link");
-  expect(input).toHaveAttribute("placeholder", "Paste a share link from a teammate");
+  expect(input).toHaveAttribute("placeholder", "Paste a share link from a colleague");
   expect(input.getAttribute("title")).toContain("one-time use");
 
   const button = screen.getByRole("button", { name: "Import shared" });

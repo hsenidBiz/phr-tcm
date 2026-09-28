@@ -911,7 +911,7 @@ function applyPatches() {
             update_id: null, title: "Shared - reviewer sanity check", tags: "demo; shared",
             automation_status: "Not Automated", module_value: "",
             preconditions: "A demo user exists",
-            comment: "Shared by a teammate for review.",
+            comment: "Shared by a colleague for review.",
             // The one flow reviewer notes are written FOR: a draft sent to
             // somebody else to review. Shaped the way the guide asks - what
             // the case checks in plain words, then where the requirement
