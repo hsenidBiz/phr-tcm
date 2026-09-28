@@ -107,11 +107,24 @@ pub fn new_file(saved_by: String, cases: Vec<RunOrderCase>) -> RunOrderFile {
 // ── At upload (design §4.1, §4.2) ───────────────────────────────────────
 
 /// How many times, and how far apart, the upload reads the suite while
-/// waiting for Azure DevOps to add the new cases to it. About three
-/// seconds in all: enough for the usual lag, short enough that an upload
-/// never looks stuck on it.
+/// waiting for Azure DevOps to add the new cases to it. SETTLE_TRIES is
+/// the floor - about three seconds, enough for the usual lag on a small
+/// upload. See `settle_tries` for a big one.
 pub const SETTLE_TRIES: u32 = 5;
 pub const SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
+/// The ceiling on reads: about 24 seconds at SETTLE_DELAY.
+pub const MAX_SETTLE_TRIES: u32 = 30;
+
+/// Reads for an upload that created `created` cases: one more per five
+/// cases, between SETTLE_TRIES and MAX_SETTLE_TRIES. Azure DevOps adds a
+/// big batch to the requirement suite more slowly - a 78-case upload on
+/// 2026-09-28 was missing every one of them after the old fixed five reads,
+/// and had them all soon after. The reads stop the moment every new case is
+/// there (`settle_suite`), so a suite that keeps up costs no extra wait.
+pub fn settle_tries(created: usize) -> u32 {
+    let extra = u32::try_from(created / 5).unwrap_or(u32::MAX);
+    SETTLE_TRIES.saturating_add(extra).min(MAX_SETTLE_TRIES)
+}
 
 pub const NOTE_SUITE_BEHIND: &str = "Azure DevOps had not added every new test case to the suite yet, so the order was set for the ones it had. Set it in Suite Management if it looks wrong.";
 
@@ -284,8 +297,9 @@ pub async fn order_after_upload(
     // The requirement suite fills itself from the Tested-By links, on
     // Azure DevOps' own schedule; ordering before the new cases arrive
     // would leave them wherever they land.
+    let tries = settle_tries(created.len());
     let settled = match client
-        .settle_suite(org, project, suite_id, &created, SETTLE_TRIES, settle_delay)
+        .settle_suite(org, project, suite_id, &created, tries, settle_delay)
         .await
     {
         Ok(ids) => ids,
@@ -318,7 +332,7 @@ pub async fn order_after_upload(
     ));
     if !behind.is_empty() {
         crate::applog::warn(format!(
-            "suite {suite_id} still lacked {} new case(s) after {SETTLE_TRIES} reads: {behind:?}",
+            "suite {suite_id} still lacked {} new case(s) after {tries} reads: {behind:?}",
             behind.len()
         ));
         notes.push(NOTE_SUITE_BEHIND.to_string());

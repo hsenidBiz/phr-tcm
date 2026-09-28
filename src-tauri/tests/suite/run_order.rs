@@ -448,6 +448,25 @@ fn with_rest_appends_the_rest_in_suite_order_without_duplicates() {
 
 // ── settle_suite ─────────────────────────────────────────────────────────
 
+/// A small upload waits as long as it always did; a big one waits longer,
+/// one read per five cases, and never past the ceiling.
+#[test]
+fn a_bigger_upload_waits_longer_for_the_suite_up_to_a_ceiling() {
+    use v2_lib::run_order::{settle_tries, MAX_SETTLE_TRIES, SETTLE_TRIES};
+    assert_eq!(settle_tries(0), SETTLE_TRIES);
+    assert_eq!(settle_tries(1), SETTLE_TRIES);
+    assert_eq!(settle_tries(4), SETTLE_TRIES);
+    assert_eq!(settle_tries(5), SETTLE_TRIES + 1);
+    // The upload that went unordered on 2026-09-28.
+    assert_eq!(settle_tries(78), SETTLE_TRIES + 15);
+    assert_eq!(settle_tries(125), MAX_SETTLE_TRIES);
+    assert_eq!(settle_tries(10_000), MAX_SETTLE_TRIES);
+    assert_eq!(settle_tries(usize::MAX), MAX_SETTLE_TRIES);
+    // The ceiling is the stated ~24 seconds at the real delay.
+    let ceiling = v2_lib::run_order::SETTLE_DELAY * MAX_SETTLE_TRIES;
+    assert!(ceiling <= Duration::from_secs(25), "{ceiling:?}");
+}
+
 fn entries_json(ids: &[i32]) -> serde_json::Value {
     let value: Vec<serde_json::Value> = ids
         .iter()
