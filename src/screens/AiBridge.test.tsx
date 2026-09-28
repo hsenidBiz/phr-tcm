@@ -128,7 +128,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "Company database (read)"]) {
+  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Company database (read)"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -154,7 +154,13 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
 // registered (see mcpTools.test.ts). This is a documented, captured
 // screen; off, the tests above and below pin that this build's ordinary
 // behaviour is unchanged.
-test("capture mode hides every mention of the Auto Run tools on the AI Tools tab", async () => {
+//
+// The API templates card is gated by the very same function (Task 7), so
+// capture mode hiding it here also stands in for a locked release build -
+// autoRunToolsOffered() (DEV_BUILD || extras unlocked) is what
+// autoRunToolsShown() is built on, and that function's own DEV_BUILD=false
+// behaviour is covered in mcpTools.test.ts.
+test("capture mode hides every mention of the Auto Run tools, and the API templates card, on the AI Tools tab", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -168,6 +174,10 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
   expect(screen.queryByText("Auto Run scripts")).not.toBeInTheDocument();
   expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
+  expect(screen.queryByText("API templates")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("switch", { name: "API templates (create, edit and delete)" }),
+  ).not.toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
@@ -844,6 +854,25 @@ test("on the dev login the write switch turns on and is stored", async () => {
   expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
   expect(
     await screen.findByRole("switch", { name: "Create, update and delete" }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+/// The API templates switch is a separate decision from whether the four
+/// tools are reachable at all (the "API templates" row further up the
+/// tool list): off by default, and the stored flag is what App pushes to
+/// the bridge as apiWrites, the same shape as the database write switch.
+test("the API templates switch is off, and stored when turned on", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const writes = await screen.findByRole("switch", { name: "API templates (create, edit and delete)" });
+  expect(writes).toHaveAttribute("aria-checked", "false");
+  expect(localStorage.getItem("tcm-v2-api-writes")).toBeNull();
+
+  fireEvent.click(writes);
+  expect(localStorage.getItem("tcm-v2-api-writes")).toBe("1");
+  expect(
+    await screen.findByRole("switch", { name: "API templates (create, edit and delete)" }),
   ).toHaveAttribute("aria-checked", "true");
 });
 

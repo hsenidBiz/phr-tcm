@@ -9,6 +9,7 @@ import { TOUR_ORG } from "./tour/tourData";
 import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
+import { saveApiWrites } from "./lib/apiTemplates";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
@@ -388,6 +389,10 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
       workMode: false,
     }),
   );
+  // Otherwise the first-run tour auto-starts 800ms after sign-in and takes
+  // tourOpen true, which starves the debounced push this test asserts on
+  // a second time below.
+  localStorage.setItem("tcm-v2-tour-done", "yes");
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
     if (cmd === "set_bridge_context") {
@@ -407,13 +412,20 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
     organization: "acme",
     project: "Web",
     workingDir: "D:\\repo",
-    // Off until the API templates switch exists - never undefined, which
-    // the command would refuse.
+    // Off by default - never undefined, which the command would refuse.
     apiWrites: false,
   });
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.
   expect(bridgeStarted).toBeGreaterThan(0);
+
+  // Turning the switch on re-pushes it, the same as the database write
+  // switch does - the change reaches an assistant on its next call rather
+  // than after a restart.
+  act(() => saveApiWrites(true));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ apiWrites: true }),
+  );
 });
 
 /// Who each database signs in as - what `db_databases` answers. The login

@@ -19,6 +19,7 @@ import {
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
+import { loadApiWrites, saveApiWrites } from "../lib/apiTemplates";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
@@ -166,6 +167,15 @@ export default function AiBridge() {
     saveDbWrites(on);
   };
   const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
+  // Whether the assistant may prove and run API templates - a separate
+  // decision from whether the four tools are reachable at all (the "API
+  // templates" row above), the same shape as the database's own
+  // create/update/delete switch. Offered only where Auto Run is.
+  const [apiWrites, setApiWritesState] = useState<boolean>(loadApiWrites);
+  const setApiWrites = (on: boolean) => {
+    setApiWritesState(on);
+    saveApiWrites(on);
+  };
   // "Run database changes without asking": kept by Rust (it writes each
   // registered tool's own "always allow" for db_query, and re-applies it
   // to a tool registered later), so it is read from the app settings. It
@@ -701,6 +711,34 @@ export default function AiBridge() {
         </p>
       </section>
 
+      {/* Proving and running a template writes test data through the
+          application's own endpoints - a decision separate from whether
+          the four tools are reachable at all (the "API templates" row
+          above), the same shape as the database card's write switch.
+          Shown only where Auto Run is: capture mode and a locked release
+          build hide it, like every other Auto Run/API template control. */}
+      {autoRunToolsShown() && (
+        <section data-tour="ai-api-templates" className="space-y-3 rounded-md border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text">API templates</h2>
+          <div className="space-y-1 rounded-md border border-border/60 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted">
+                API templates (create, edit and delete)
+              </span>
+              <Switch
+                ariaLabel="API templates (create, edit and delete)"
+                checked={apiWrites}
+                onCheckedChange={setApiWrites}
+              />
+            </div>
+            <p className="text-[11px] text-faint">
+              Off by default. Templates run as your Auto Run accounts, against the
+              sign-in recipe&apos;s site.
+            </p>
+          </div>
+        </section>
+      )}
+
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
         <p className="text-sm text-muted">
@@ -760,6 +798,19 @@ export default function AiBridge() {
               application. It never signs in, never removes a check you had, and
               a script it has repaired three times comes back to you. Off, Auto Run stays
               something you drive by hand.
+            </li>
+          )}
+          {autoRunToolsShown() && (
+            <li>
+              <span className="font-medium text-text">API templates</span>: everything an
+              assistant needs to build, prove and run a template that writes test data
+              through this application&apos;s own endpoints. It reads the template format
+              and this project&apos;s account keys and address, lists every saved template
+              with its params, outputs and last run, proves a draft by running it end to
+              end and saves it only if every step passed, and runs a saved template for
+              its outputs. Proving and running also need the separate API templates
+              switch above, off by default. Off, template work stays something you drive
+              by hand.
             </li>
           )}
         </ul>

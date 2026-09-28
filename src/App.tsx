@@ -43,6 +43,7 @@ import {
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "./lib/dbServer";
+import { apiWritesSnapshot, subscribeApiWrites } from "./lib/apiTemplates";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -675,6 +676,10 @@ export default function App() {
   // that call - no login ever crosses from here.
   const dbId = useSyncExternalStore(subscribeDbSettings, selectedDbSnapshot);
   const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
+  // Whether the assistant may prove and run API templates - the AI Bridge
+  // tab's own switch, pushed the moment it changes for the same reason the
+  // database write switch is.
+  const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
   // Who each database signs in as - the same list, under the same key, the
   // AI Bridge card reads and refreshes when a login is saved.
   const databases = useQuery({
@@ -729,9 +734,7 @@ export default function App() {
             workingDir || null,
             dbId || null,
             dbWrites && devLogin,
-            // The API templates switch - not wired to a control yet, so
-            // proving and running a template stay refused.
-            false,
+            apiWrites,
           ),
         )
         .catch(() => {});
@@ -753,6 +756,7 @@ export default function App() {
     dbId,
     dbWrites,
     devLogin,
+    apiWrites,
     tourOpen,
     dbMigrated,
   ]);
