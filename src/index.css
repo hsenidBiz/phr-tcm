@@ -1,9 +1,17 @@
-/* Astryx layers are declared FIRST so they sit below Tailwind's - our
-   utility classes always win a className override on Astryx components.
+/* Astryx layers are declared FIRST so they sit below Tailwind's utilities -
+   our utility classes always win a className override on Astryx components.
    Only reset + component styles load; theming comes from a runtime
    defineTheme() built from our own tokens (lib/astryxTheme.ts), so no
-   Meta palette ever leaks in and our --color-* names never collide. */
-@layer reset, astryx-base, astryx-theme;
+   Meta palette ever leaks in and our --color-* names never collide.
+
+   Tailwind's `theme` and `base` go BELOW Astryx, though. `base` is
+   Preflight, which zeroes every margin and padding and sets headings to
+   the surrounding size and weight; above Astryx it won over the
+   components' own styles, and a pull request description rendered its
+   headings as plain text with no space between sections. Tailwind's own
+   `@layer theme, base, components, utilities` below then only appends
+   the two it has not already been placed. */
+@layer reset, theme, base, astryx-base, astryx-theme;
 @import "@astryxdesign/core/reset.css";
 @import "@astryxdesign/core/astryx.css";
 /* Tailwind reads only the app's own source for class names. Left to find
