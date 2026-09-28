@@ -1128,6 +1128,8 @@ export const CAPTURE_RESET = [
   // The board's view options and the pull request filters.
   "tcm-v2-board-swimlanes",
   "tcm-v2-board-lanes-collapsed:",
+  "tcm-v2-board-open-lanes",
+  "tcm-v2-board-pinned-areas:",
   "tcm-v2-hidden-cols",
   "tcm-v2-type-filter",
   "tcm-v2-this-sprint",

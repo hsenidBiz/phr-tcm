@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
@@ -24,14 +25,19 @@ import {
   NO_PARENT,
   cardCount,
   groupIntoLanes,
+  laneHasOpenWork,
   laneIdOf,
   laneLabel,
   laneToggleName,
   loadCollapsedLanes,
+  loadOpenLanesOnly,
   loadSwimlanes,
   saveCollapsedLanes,
+  saveOpenLanesOnly,
   saveSwimlanes,
 } from "../lib/boardLanes";
+import { loadPinnedAreas, savePinnedAreas, togglePin } from "../lib/boardPins";
+import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 
@@ -288,6 +294,23 @@ export default function WorkBoard({
     setCollapsedLanes(next);
     saveCollapsedLanes(org, project, next);
   };
+  // Open lanes only: a lane whose every card is Done is hidden, for
+  // whoever reads the board for what is still moving. Remembered here.
+  const [openLanesOnly, setOpenLanesOnly] = useState(loadOpenLanesOnly);
+  const changeOpenLanesOnly = (on: boolean) => {
+    setOpenLanesOnly(on);
+    saveOpenLanesOnly(on);
+  };
+  // Areas pinned to the top of the scope list, per org/project.
+  const [pinnedAreas, setPinnedAreas] = useState<string[]>(() => loadPinnedAreas(org, project));
+  useEffect(() => {
+    setPinnedAreas(loadPinnedAreas(org, project));
+  }, [org, project]);
+  const togglePinnedArea = (area: string) => {
+    const next = togglePin(pinnedAreas, area);
+    setPinnedAreas(next);
+    savePinnedAreas(org, project, next);
+  };
   const toggleLane = (id: number) => {
     const next = new Set(collapsedLanes);
     if (next.has(id)) next.delete(id);
@@ -468,7 +491,9 @@ export default function WorkBoard({
 
   // Swimlanes: the filters above apply first, so a lane they emptied never
   // appears.
-  const lanes = swimlanes ? groupIntoLanes(visible) : [];
+  const allLanes = swimlanes ? groupIntoLanes(visible) : [];
+  const lanes = openLanesOnly ? allLanes.filter(laneHasOpenWork) : allLanes;
+  const doneLanes = allLanes.length - lanes.length;
   // A lane opened by its toggle unfolds; the lanes the board first loads
   // with, or that switching Swimlanes on brings in, arrive already open -
   // the switch plays one entrance for the whole set instead.
@@ -477,6 +502,10 @@ export default function WorkBoard({
   const collapseAllLanes = () =>
     updateCollapsed(new Set([...collapsedLanes, ...lanes.map((l) => l.id)]));
   const expandAllLanes = () => updateCollapsed(new Set());
+  // The lanes on screen still open: while any is, the sticky button folds
+  // them; once every one is folded it turns into Expand all.
+  const openLaneCount = lanes.filter((l) => !collapsedLanes.has(l.id)).length;
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
   // A drop lands only in the dragged card's own lane: a column changes a
   // card's state, and nothing on this board changes a parent.
   const canDrop = (laneId: number | null) =>
@@ -676,6 +705,13 @@ export default function WorkBoard({
                 .filter((a) => !a.split("\\").some((seg) => seg.trim().toLowerCase() === "scrum archive"))
                 .map((a) => `Area: ${a}`),
             ]}
+            // Pinned areas sit above everything else; "My work" and
+            // "By PBI…" are one click already and cannot be pinned.
+            pins={{
+              pinned: pinnedAreas.map((a) => `Area: ${a}`),
+              canPin: (v) => v.startsWith("Area: "),
+              onToggle: (v) => togglePinnedArea(v.replace(/^Area: /, "")),
+            }}
             onChange={(v) => {
               if (v === "By PBI…") {
                 setPbiMode(true);
@@ -763,17 +799,17 @@ export default function WorkBoard({
             <Switch checked={swimlanes} onCheckedChange={changeSwimlanes} ariaLabel="Swimlanes" />
             Swimlanes
           </label>
-          {swimlanes && lanes.length > 0 && (
-            <>
-              <Button size="sm" variant="ghost" onClick={collapseAllLanes}>
-                <IconCollapseAll aria-hidden />
-                Collapse all
-              </Button>
-              <Button size="sm" variant="ghost" onClick={expandAllLanes}>
-                <IconExpandAll aria-hidden />
-                Expand all
-              </Button>
-            </>
+          {swimlanes && (
+            <label
+              className="flex items-center gap-1.5 text-xs text-muted"
+              title="Hide the lanes whose cards are all Done"
+            >
+              <Switch checked={openLanesOnly} onCheckedChange={changeOpenLanesOnly} ariaLabel="Open lanes only" />
+              Open lanes only
+              {openLanesOnly && doneLanes > 0 && (
+                <span className="text-faint">({doneLanes} done hidden)</span>
+              )}
+            </label>
           )}
           {/* Creation moved to the sidebar's "New Work Item" screen - the
               board stays a read-and-move surface. */}
@@ -826,7 +862,9 @@ export default function WorkBoard({
             fallback, so this says so instead of going blank. */}
         {board.data && swimlanes && lanes.length === 0 && board.data.items.length > 0 && (
           <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
-            No cards match these filters.
+            {allLanes.length > 0
+              ? "Every lane here is done. Turn off Open lanes only to see them."
+              : "No cards match these filters."}
           </p>
         )}
 
@@ -882,6 +920,38 @@ export default function WorkBoard({
           </div>
         )}
       </div>
+
+      {/* Collapse all, stuck bottom left like the test case screens' own:
+          one button that folds every open lane, and opens them all again
+          once every lane is folded. Portalled so it pins to the window. */}
+      {swimlanes &&
+        lanes.length > 0 &&
+        createPortal(
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-full text-text hover:bg-surface-2 hover:text-text"
+              onClick={openLaneCount > 0 ? collapseAllLanes : expandAllLanes}
+            >
+              {openLaneCount > 0 ? (
+                <>
+                  <IconCollapseAll aria-hidden />
+                  Collapse all ({openLaneCount})
+                </>
+              ) : (
+                <>
+                  <IconExpandAll aria-hidden />
+                  Expand all ({lanes.length})
+                </>
+              )}
+            </Button>
+          </div>,
+          document.body,
+        )}
 
       {openItem != null && board.data && (
         <WorkItemDrawer

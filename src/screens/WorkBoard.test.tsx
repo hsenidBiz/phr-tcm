@@ -623,7 +623,7 @@ test("swimlanes are off by default and the board is exactly as before", async ()
   await screen.findByText("Draft the form");
   expect(screen.getByRole("switch", { name: "Swimlanes" })).toHaveAttribute("aria-checked", "false");
   expect(screen.queryByTestId("lane-500")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^(Collapse|Expand) all/ })).not.toBeInTheDocument();
   expect(within(screen.getByTestId("col-To Do")).getByText("Draft the form")).toBeInTheDocument();
   expect(within(screen.getByTestId("col-To Do")).getByText("Loose task")).toBeInTheDocument();
 });
@@ -672,7 +672,7 @@ test("filtering out every card in swimlanes view shows the empty-state message, 
   expect(screen.queryByTestId(/^lane-/)).not.toBeInTheDocument();
   expect(screen.getByText("No cards match these filters.")).toBeInTheDocument();
   // Collapse all / Expand all act on lanes - none left to act on.
-  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^(Collapse|Expand) all/ })).not.toBeInTheDocument();
 });
 
 test("a lane collapses to its header and stays collapsed next time", async () => {
@@ -694,20 +694,28 @@ test("a lane collapses to its header and stays collapsed next time", async () =>
   expect(within(screen.getByTestId("lane-600")).getByText("Wire the API")).toBeInTheDocument();
 });
 
-test("Collapse all folds every lane on screen and Expand all opens them again", async () => {
+test("one sticky button folds every open lane, then turns into Expand all", async () => {
   localStorage.setItem("tcm-v2-board-swimlanes", "on");
   mockLanes();
   renderBoard();
-  await screen.findByTestId("lane-500");
+  const lane500 = await screen.findByTestId("lane-500");
 
-  fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+  // It counts the lanes still open, and folding one by hand counts down.
+  expect(screen.getByRole("button", { name: "Collapse all (4)" })).toBeInTheDocument();
+  fireEvent.click(within(lane500).getByRole("button", { name: "Leave requests, 2 cards, collapse" }));
+  expect(screen.getByRole("button", { name: "Collapse all (3)" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Expand all/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Collapse all (3)" }));
   expect(screen.getAllByRole("button", { name: /, expand$/ })).toHaveLength(4);
   expect(screen.queryByText("Draft the form")).not.toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/Web")).toBe("[0,500,600,900]");
+  expect(screen.queryByRole("button", { name: /^Collapse all/ })).not.toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand all (4)" }));
   expect(screen.getAllByRole("button", { name: /, collapse$/ })).toHaveLength(4);
   expect(screen.getByText("Draft the form")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse all (4)" })).toBeInTheDocument();
 });
 
 test("a card can be dropped only in its own lane's columns", async () => {
@@ -782,4 +790,87 @@ test("a hidden column is hidden in every lane alike", async () => {
   for (const id of ["lane-500", "lane-600", "lane-900", "lane-0"]) {
     expect(within(screen.getByTestId(id)).getByRole("button", { name: "Open Done" })).toBeInTheDocument();
   }
+});
+
+// ---- pinned areas ----------------------------------------------------------
+
+test("an area pinned in the scope list sits at the top, stays there next time, and unpins", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return ["HRM\\Alpha", "HRM\\Beta", "HRM\\Gamma"];
+  });
+  const options = () => screen.getAllByRole("option").map((o) => o.textContent);
+  const view = renderBoard();
+  await screen.findByTestId("col-To Do");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Gamma");
+  expect(options()).toEqual(["My work", "By PBI…", "Area: HRM\\Alpha", "Area: HRM\\Beta", "Area: HRM\\Gamma"]);
+  // Only areas can be pinned: My work and By PBI… are one click already.
+  expect(screen.queryByRole("button", { name: /^Pin My work/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Pin By PBI/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Pin Area: HRM\\Gamma" }));
+  expect(options()).toEqual(["Area: HRM\\Gamma", "My work", "By PBI…", "Area: HRM\\Alpha", "Area: HRM\\Beta"]);
+  expect(screen.getByRole("button", { name: "Unpin Area: HRM\\Gamma" })).toHaveAttribute("aria-pressed", "true");
+  // Pinning is not choosing: the list stays open on My work.
+  expect(screen.getByRole("combobox", { name: "Board scope" })).toHaveTextContent("My work");
+  expect(JSON.parse(localStorage.getItem("tcm-v2-board-pinned-areas:acme/Web")!)).toEqual(["HRM\\Gamma"]);
+
+  view.unmount();
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Gamma");
+  expect(options()[0]).toBe("Area: HRM\\Gamma");
+
+  fireEvent.click(screen.getByRole("button", { name: "Unpin Area: HRM\\Gamma" }));
+  expect(options()).toEqual(["My work", "By PBI…", "Area: HRM\\Alpha", "Area: HRM\\Beta", "Area: HRM\\Gamma"]);
+  expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/Web")).toBe("[]");
+});
+
+// ---- open lanes only -------------------------------------------------------
+
+test("Open lanes only hides the lanes whose cards are all Done, says how many, and is remembered", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const shipped = { id: 700, title: "Shipped feature", work_item_type: "Product Backlog Item" };
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        ...laneData,
+        items: [
+          ...laneData.items,
+          task(26, "Ship it", "Done", "2026-07-11T05:00:00Z", shipped),
+          task(27, "Announce it", "Done", "2026-07-11T04:00:00Z", shipped),
+        ],
+      };
+    if (cmd === "classification_paths") return [];
+  });
+  const view = renderBoard();
+  await screen.findByTestId("lane-700");
+  const toggle = screen.getByRole("switch", { name: "Open lanes only" });
+  expect(toggle).toHaveAttribute("aria-checked", "false");
+
+  fireEvent.click(toggle);
+  // Leave requests keeps its lane: one card is still To Do beside a Done one.
+  expect(laneIds()).toEqual(["lane-500", "lane-600", "lane-900", "lane-0"]);
+  expect(screen.getByText("(1 done hidden)")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-board-open-lanes")).toBe("on");
+
+  view.unmount();
+  renderBoard();
+  await screen.findByTestId("lane-500");
+  expect(screen.queryByTestId("lane-700")).not.toBeInTheDocument();
+});
+
+test("Open lanes only is offered with Swimlanes, and says so when every lane is done", async () => {
+  mockLanes();
+  renderBoard();
+  await screen.findByText("Draft the form");
+  expect(screen.queryByRole("switch", { name: "Open lanes only" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("switch", { name: "Swimlanes" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Open lanes only" }));
+  // Only the Done card is left after the filter, so every lane is done.
+  fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "review" } });
+  expect(screen.queryByTestId(/^lane-/)).not.toBeInTheDocument();
+  expect(screen.getByText("Every lane here is done. Turn off Open lanes only to see them.")).toBeInTheDocument();
 });

@@ -5,12 +5,15 @@ import {
   cardCount,
   collapsedLanesKey,
   groupIntoLanes,
+  laneHasOpenWork,
   laneIdOf,
   laneLabel,
   laneToggleName,
   loadCollapsedLanes,
+  loadOpenLanesOnly,
   loadSwimlanes,
   saveCollapsedLanes,
+  saveOpenLanesOnly,
   saveSwimlanes,
   type Lane,
 } from "./boardLanes";
@@ -113,4 +116,20 @@ test("the Swimlanes switch starts off and is remembered on this machine", () => 
   expect(loadSwimlanes()).toBe(true);
   saveSwimlanes(false);
   expect(loadSwimlanes()).toBe(false);
+});
+
+test("a lane has open work while any card is not Done", () => {
+  const done = (id: number) => ({ ...card(id, null), state: "Done", column: "Done" });
+  const lane = (items: BoardItem[]): Lane => ({ id: 1, parent: null, items });
+  expect(laneHasOpenWork(lane([done(1), done(2)]))).toBe(false);
+  expect(laneHasOpenWork(lane([done(1), card(2, null)]))).toBe(true);
+  expect(laneHasOpenWork(lane([{ ...card(3, null), column: "In Progress" }]))).toBe(true);
+});
+
+test("Open lanes only is off unless turned on, and is remembered", () => {
+  expect(loadOpenLanesOnly()).toBe(false);
+  saveOpenLanesOnly(true);
+  expect(loadOpenLanesOnly()).toBe(true);
+  saveOpenLanesOnly(false);
+  expect(loadOpenLanesOnly()).toBe(false);
 });
