@@ -161,3 +161,39 @@ test("a word never splits a tag in half", () => {
   const groups = named(groupIndices(["Check [Floor Plan][Nav] a", "Check [Floor Plan][Grid] b"]));
   expect(groups["Check [Floor Plan]"]).toEqual([0, 1]);
 });
+
+// ---- Report names longer than a short category -----------------------------
+// Field report 2026-09-28 (View Test Cases, Group by title): every case of
+// every "Individual ..." report landed in one group of 147 named
+// "Individual", while "Goal Alignment and Cascading Report - " showed its
+// whole name, trailing dash and all. Both names are longer than the short
+// category pass takes, so both went to first-word matching.
+
+test("a longer name before a separator groups when titles share it", () => {
+  const groups = named(
+    groupIndices([
+      "Individual Detailed Evaluation Report - Header shows the cycle",
+      "Individual Detailed Evaluation Report - Employee section",
+      "Individual Goal Summary Report - Header shows the cycle",
+      "Individual Goal Summary Report - Goals table",
+      "Goal Alignment and Cascading Report - Report 1",
+      "Goal Alignment and Cascading Report - Admin mode",
+    ]),
+  );
+  expect(groups["Individual Detailed Evaluation Report"]).toEqual([0, 1]);
+  expect(groups["Individual Goal Summary Report"]).toEqual([2, 3]);
+  expect(groups["Goal Alignment and Cascading Report"]).toEqual([4, 5]);
+  expect(groups["Individual"]).toBeUndefined();
+});
+
+test("a word-matched name never ends on a separator", () => {
+  const groups = named(
+    groupIndices([
+      "Verify that the leave request form on the self service portal - wraps long text",
+      "Verify that the leave request form on the self service portal - keeps Save disabled",
+    ]),
+  );
+  // Eleven words before the separator: past the long pass, so the words
+  // match instead - and the name stops before the dash.
+  expect(groups["Verify that the leave request form on the self service portal"]).toEqual([0, 1]);
+});
