@@ -9,6 +9,7 @@
 //! request building.
 
 pub mod exec;
+pub mod runner;
 pub mod store;
 
 use crate::autorun::recipe::origin_of;

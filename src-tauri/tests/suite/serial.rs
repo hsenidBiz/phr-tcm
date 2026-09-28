@@ -68,3 +68,10 @@ pub fn activity_log() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The one-at-a-time API template run slot (`api_templates::runner::claim`):
+/// a claim one test holds would make another test's claim come back `None`.
+pub fn api_template_run() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

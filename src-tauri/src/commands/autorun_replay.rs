@@ -93,11 +93,18 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
 }
 
 /// The `Browsers` the command hands to `replay::run_cases`: a fresh
-/// real browser per case, headless unless the person asked to watch.
-struct RealBrowsers {
+/// real browser per case, headless unless the person asked to watch. The
+/// API template runner opens its one browser through this too.
+pub(crate) struct RealBrowsers {
     which: Browser,
     watch: bool,
     current: Option<LaunchedBrowser>,
+}
+
+impl RealBrowsers {
+    pub(crate) fn new(which: Browser, watch: bool) -> Self {
+        RealBrowsers { which, watch, current: None }
+    }
 }
 
 impl Browsers for RealBrowsers {
@@ -170,8 +177,7 @@ pub async fn auto_run_replay(
         .map(|c| CaseToRun { case_id: c.case_id, title: c.title.clone(), module: c.module.clone() })
         .collect();
     let timing = replay_timing(watch);
-    let mut browsers =
-        RealBrowsers { which: Browser::from_name(&browser_name), watch, current: None };
+    let mut browsers = RealBrowsers::new(Browser::from_name(&browser_name), watch);
 
     let outcome = replay::run_cases(
         &mut browsers,
