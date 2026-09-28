@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.4-beta.2",
+    date: "2026-09-28",
+    items: [
+      "A beta build now shows a Beta pill beside the window's title, so you always know which build you are on.",
+    ],
+  },
+  {
     version: "2.0.4-beta.1",
     date: "2026-09-28",
     items: [
