@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.2",
+    date: "2026-09-28",
+    items: [
+      "Board: point at an area in the My work list and click its pin to keep it at the top of the list, above My work. Pins are kept for each project.",
+      "Board: with Swimlanes on, turn on Open lanes only to hide the lanes whose cards are all Done.",
+      "Board: Collapse all now stays at the bottom left of the window, like on the test case screens, and turns into Expand all once every lane is folded.",
+      "AI tools can sign in to the database again. On some computers every database lookup had been failing with Login failed.",
+    ],
+  },
+  {
     version: "2.0.1",
     date: "2026-09-28",
     items: [
