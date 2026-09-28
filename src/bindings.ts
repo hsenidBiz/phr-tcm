@@ -2402,6 +2402,12 @@ export type RunOutcome = {
  */
 export type RunRecord = {
 	at: string,
+	/**
+	 *  `"prove"` (a successful prove that saved the template - a failed
+	 *  one changes nothing and is not kept) or `"run"`. A history written
+	 *  before this was recorded holds runs only, so it reads as `"run"`.
+	 */
+	mode?: string,
 	account: string,
 	ok: boolean,
 	failed_step?: string | null,

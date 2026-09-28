@@ -38,6 +38,14 @@ fn invalid_id(id: &str) -> String {
     format!("'{id}' is not a valid template id")
 }
 
+/// What a history line was: the prove that saved the template, or a run.
+pub const MODE_PROVE: &str = "prove";
+pub const MODE_RUN: &str = "run";
+
+fn run_mode() -> String {
+    MODE_RUN.to_string()
+}
+
 /// One proving or running of a template: when, as who, whether it
 /// succeeded, and - on failure - which step and what the run reported.
 /// `outputs` carries whatever had actually been captured by the time the
@@ -45,6 +53,11 @@ fn invalid_id(id: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct RunRecord {
     pub at: String,
+    /// `"prove"` (a successful prove that saved the template - a failed
+    /// one changes nothing and is not kept) or `"run"`. A history written
+    /// before this was recorded holds runs only, so it reads as `"run"`.
+    #[serde(default = "run_mode")]
+    pub mode: String,
     pub account: String,
     pub ok: bool,
     #[serde(default)]

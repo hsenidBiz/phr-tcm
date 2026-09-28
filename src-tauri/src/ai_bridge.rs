@@ -435,7 +435,8 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
 }
 
 /// Every saved template for this project, as a summary: what it is, what
-/// it takes and gives back, and its newest run (null before its first).
+/// it takes and gives back, and its newest run (null before its first -
+/// the prove that saved it is history, not a run).
 fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
     let root = match autorun_root() {
         Ok(r) => r,
@@ -454,7 +455,7 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
                         "effect": t.effect,
                         "params": t.params,
                         "outputs": t.outputs,
-                        "last_run": s.runs.into_iter().next(),
+                        "last_run": s.runs.into_iter().find(|r| r.mode == crate::api_templates::store::MODE_RUN),
                     })
                 })
                 .collect();
@@ -627,6 +628,12 @@ pub async fn api_template_run<B: crate::autorun::replay::Browsers>(
     run_api_template_request(&root, req, None, call.browser, open, timing).await
 }
 
+/// An assistant's free text as one app-log line: every run of whitespace
+/// (newlines included) one space, and at most 200 characters.
+fn one_short_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect()
+}
+
 /// What a prove and a run share once the call is read: every check
 /// together, the one-at-a-time slot, the run, then the bookkeeping - a
 /// proven template saved with its evidence, the run appended to the
@@ -669,7 +676,7 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
             Ok(()) => {
                 changed = true;
                 if existing.is_some() && *replace {
-                    crate::applog::info(format!("api template {id} replaced: {}", why.as_deref().unwrap_or("").trim()));
+                    crate::applog::info(format!("api template {id} replaced: {}", one_short_line(why.as_deref().unwrap_or(""))));
                 }
             }
             Err(e) => {
@@ -681,12 +688,16 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
             }
         }
     }
-    // Every prove and run of a template that exists gets a line in its
-    // history - but a failed prove of an id never saved has no template
-    // to hang one on.
-    if matches!(req.mode, Mode::Run) || existing.is_some() || changed {
+    // Every run gets a line in its template's history, and so does the
+    // prove that saved it. A failed prove saved nothing - over an existing
+    // id the saved template is still the one proven before - so it gets
+    // no line: the assistant already has the failure, and a red "last
+    // run" on a template that never ran would be a lie.
+    let saved_by_this_prove = changed;
+    if matches!(req.mode, Mode::Run) || saved_by_this_prove {
         let record = RunRecord {
             at: crate::applog::stamp(),
+            mode: req.mode.label().to_string(),
             account: req.account.clone(),
             ok: report.ok,
             failed_step: report.failed.clone(),

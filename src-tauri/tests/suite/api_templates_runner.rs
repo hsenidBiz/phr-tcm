@@ -508,6 +508,129 @@ async fn a_failed_sign_in_names_no_host_and_no_raw_browser_error() {
     assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
 }
 
+/// The application's own pages carry anti-forgery tokens - every Razor
+/// form writes one into a hidden input, and a JSON answer can carry one
+/// too. Whether it is the token the runner read or another one entirely,
+/// its value reaches no report, no activity record and no log line.
+#[tokio::test]
+async fn a_token_in_a_response_body_reaches_no_report_record_or_log() {
+    const OTHER: &str = "other-secret-999";
+    const IN_JSON: &str = "json-secret-777";
+    const SINGLE: &str = "single-quoted-555";
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let html = format!(
+        "<html><form><input name=\"__RequestVerificationToken\" type=\"hidden\" value=\"{OTHER}\" />\
+         <input type='hidden' value='{TOKEN}' name='__RequestVerificationToken'>\
+         <input value=\"{SINGLE}\" name=\"RequestVerificationToken\"> the rating method is not set; \
+         the token was {TOKEN}</form></html>"
+    );
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "success": true, "cycleId": 274, "echo": TOKEN, "RequestVerificationToken": IN_JSON })),
+            json!({ "status": 400, "contentType": "text/html",
+                    "finalUrl": "https://hr.example.internal/hr/pmsv10/performancecycle?handler=SaveEvalRulesProgress",
+                    "redirected": false, "text": html }),
+        ],
+        None,
+    );
+    // A capture that picks the token up (a mistaken path) still hands it
+    // on to the next step - but the report only ever says "(token)".
+    let mut t = template();
+    t.steps[0].capture.insert("echo".into(), "$.echo".into());
+    t.steps[1].form.as_mut().unwrap().insert("Echo".into(), "{{echo}}".into());
+    let report = run(&mut r, t).await;
+    assert!(!report.ok);
+    assert_eq!(report.failed.as_deref(), Some("Evaluation rules"));
+    assert_eq!(report.created.get("echo"), Some(&json!("(token)")), "{:?}", report.created);
+    assert_eq!(r.fetched()[1][0]["body"]["fields"]["Echo"], json!(TOKEN), "the next step got the real value");
+    let detail = &report.steps.last().unwrap().detail;
+    assert!(detail.contains("the rating method is not set"), "the body was not shown at all: {detail}");
+    assert!(detail.contains("(token)"), "the token was not replaced: {detail}");
+
+    let secrets = [TOKEN, OTHER, IN_JSON, SINGLE];
+    let text = serde_json::to_string(&report).unwrap();
+    let message = report.message();
+    for s in secrets {
+        assert!(!text.contains(s), "{s} reached the report: {text}");
+        assert!(!message.contains(s), "{s} reached the message: {message}");
+    }
+    let records = activity_records(activity.path(), "api");
+    assert_eq!(records.len(), 2, "{records:?}");
+    for rec in &records {
+        for s in secrets {
+            assert!(!rec.to_string().contains(s), "{s} reached an activity record: {rec}");
+        }
+    }
+    assert!(records[0]["response"].as_str().unwrap().contains("274"), "{}", records[0]);
+    let log = v2_lib::applog::recent(400);
+    for line in &log {
+        for s in secrets {
+            assert!(!line.message.contains(s), "{s} reached the app log: {}", line.message);
+        }
+    }
+}
+
+/// A page answer with neither a status nor an error is logged by its
+/// keys only - never the body it may be carrying.
+#[tokio::test]
+async fn an_answer_with_no_status_logs_its_keys_not_its_body() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![json!({ "text": "BODY-SHOULD-NOT-BE-LOGGED", "weird": 1 })], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert_eq!(
+        report.steps.last().unwrap().detail,
+        "the page gave no answer for this request - see Settings, Logs"
+    );
+    let log = v2_lib::applog::recent(400);
+    let messages: Vec<&String> = log.iter().map(|l| &l.message).collect();
+    assert!(
+        messages.iter().all(|m| !m.contains("BODY-SHOULD-NOT-BE-LOGGED")),
+        "the body reached the app log: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("the page answered an object with keys: text, weird")),
+        "no keys line in {messages:?}"
+    );
+}
+
+/// The token page is only the token page on the recipe's own origin: the
+/// same path somewhere else is "another page", which gets the one more
+/// sign-in a stale session does and then fails.
+#[tokio::test]
+async fn a_token_page_on_another_origin_is_another_page() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    let elsewhere = format!("https://elsewhere.example{PAGE}");
+    r.script.lock().unwrap().hrefs.extend([elsewhere.clone(), elsewhere]);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok, "{report:?}");
+    assert_eq!(
+        report.steps.last().unwrap().detail,
+        "the token page sent us to another page - check the template's antiforgery page"
+    );
+    assert_eq!(r.sign_ins(), 2);
+    assert!(r.fetched().is_empty(), "a request was sent from a page on another origin");
+
+    // Once, then the real page: the stale-session path, and it runs.
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().hrefs.push_back(format!("https://login.elsewhere.example{PAGE}"));
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.sign_ins(), 2);
+}
+
 #[test]
 fn only_one_run_at_a_time() {
     let _g = crate::serial::api_template_run();
@@ -662,6 +785,7 @@ mod through_the_bridge {
         let runs = &listed[0].runs;
         assert_eq!(runs.len(), 1, "{runs:?}");
         assert!(runs[0].ok);
+        assert_eq!(runs[0].mode, "prove", "the history says this line was the prove");
         assert_eq!(runs[0].account, "admin");
         assert_eq!(runs[0].failed_step, None);
         assert_eq!(runs[0].detail, None);
@@ -724,6 +848,66 @@ mod through_the_bridge {
         );
     }
 
+    /// A failed prove over a saved template - a different draft sent with
+    /// replace: true - changed nothing: the saved template is still the
+    /// one proven before, so its history gets no red line from a draft
+    /// that never replaced it. The assistant already has the failure.
+    #[tokio::test]
+    async fn a_failed_replace_prove_leaves_the_history_alone() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let Rig { browsers, root, .. } = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 277 })), answer(400, json!({ "success": false }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        let why = json!({ "replace": true, "why": "trying a new handler" });
+        let (status, out) = api_template_prove(&ctx(), &body(why), |_| browsers, &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        let report: RunReport = serde_json::from_str(&out).unwrap();
+        assert_eq!(report.failed.as_deref(), Some("Evaluation rules"));
+
+        assert_eq!(store::load(root.path(), ORG, PROJECT, ID).unwrap(), Some(proven_copy()), "untouched");
+        let runs = &store::list(root.path(), ORG, PROJECT).unwrap()[0].runs;
+        assert!(runs.is_empty(), "a failed prove reached the saved template's history: {runs:?}");
+        assert!(changed.lock().unwrap().is_empty(), "nothing changed, nothing announced");
+    }
+
+    /// The reason for a replace is one line in the app log, and a short
+    /// one, whatever the assistant sent.
+    #[tokio::test]
+    async fn a_replace_reason_is_logged_on_one_short_line() {
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let Rig { browsers, root, .. } =
+            rig(vec![answer(200, json!({ "success": true, "cycleId": 278 })), answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+
+        let long = format!("the handler\n\n   was renamed\r\n{}", "x".repeat(400));
+        let why = json!({ "replace": true, "why": long });
+        let (status, out) = api_template_prove(&ctx(), &body(why), |_| browsers, &quick()).await;
+        assert_eq!(status, 200, "{out}");
+        let prefix = format!("api template {ID} replaced: ");
+        let log = v2_lib::applog::recent(400);
+        let line = log
+            .iter()
+            .map(|l| l.message.clone())
+            .find(|m| m.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("no replace line in {:?}", log.iter().map(|l| &l.message).collect::<Vec<_>>()));
+        let reason = &line[prefix.len()..];
+        assert!(reason.starts_with("the handler was renamed xxx"), "{reason}");
+        assert!(!reason.contains('\n') && !reason.contains('\r'), "{reason:?}");
+        assert_eq!(reason.chars().count(), 200, "{reason}");
+    }
+
     #[tokio::test]
     async fn a_run_appends_to_the_history_and_leaves_the_template_alone() {
         let _root = crate::serial::autorun();
@@ -754,6 +938,7 @@ mod through_the_bridge {
         let runs = &store::list(root.path(), ORG, PROJECT).unwrap()[0].runs;
         assert_eq!(runs.len(), 1, "{runs:?}");
         assert!(!runs[0].ok);
+        assert_eq!(runs[0].mode, "run");
         assert_eq!(runs[0].failed_step.as_deref(), Some("Evaluation rules"));
         let detail = runs[0].detail.clone().expect("a failed run says why");
         assert!(detail.contains("cycleId 276 created") && detail.contains("Evaluation rules"), "{detail}");

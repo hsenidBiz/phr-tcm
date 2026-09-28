@@ -104,6 +104,12 @@ function Detail({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/** What a history line was. A history written before lines said so held
+ * runs only, so a line without a mode is a run. */
+export function runMode(r: RunRecord): "prove" | "run" {
+  return r.mode === "prove" ? "prove" : "run";
+}
+
 function LastRun({ run }: { run: RunRecord | undefined }) {
   if (!run) return <span className="text-xs text-faint">never run</span>;
   const d = stampDate(run.at);
@@ -123,6 +129,7 @@ function RunLine({ run }: { run: RunRecord }) {
       <div className="flex items-center gap-2">
         <span aria-hidden className={cn("size-2 shrink-0 rounded-full", run.ok ? "bg-success" : "bg-danger")} />
         <span className="text-text">{whenLong(run.at)}</span>
+        <span className="text-faint">{runMode(run)}</span>
         <span className="text-muted">{run.account}</span>
         <span className={run.ok ? "text-success" : "text-danger"}>
           {run.ok ? "ok" : run.failed_step ? `failed at ${run.failed_step}` : "failed"}
@@ -151,6 +158,8 @@ export default function TemplateRow({
   const n = t.params.length;
   const proven = t.proven ? stampDate(t.proven.at) : null;
   const provenOutputs = outputPairs(t.proven?.outputs);
+  // The prove that saved it is history, not a run: "last run" is a run's.
+  const lastRun = saved.runs.find((r) => runMode(r) === "run");
 
   return (
     <li aria-label={t.title} className="rounded-md border border-border bg-surface">
@@ -174,7 +183,7 @@ export default function TemplateRow({
             {`proven ${proven ? dayMonth(proven) : t.proven.at} as ${t.proven.account}`}
           </span>
         )}
-        <LastRun run={saved.runs[0]} />
+        <LastRun run={lastRun} />
         <Button size="sm" variant="ghost" aria-label={`Remove ${t.title}`} onClick={onRemove}>
           <IconRemove aria-hidden />
           Remove
@@ -265,9 +274,8 @@ export default function TemplateRow({
 
           <section className="space-y-1">
             <h3 className="font-semibold text-muted">Runs</h3>
-            {saved.runs.length === 0 ? (
-              <p className="text-faint">Not run since it was proven.</p>
-            ) : (
+            {!lastRun && <p className="text-faint">Not run since it was proven.</p>}
+            {saved.runs.length > 0 && (
               <ol aria-label="Runs" className="space-y-1">
                 {saved.runs.map((r, i) => (
                   <RunLine key={`${r.at}-${i}`} run={r} />

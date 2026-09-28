@@ -272,19 +272,23 @@ fn json_placeholder_names(v: &Value, out: &mut Vec<String>) {
     }
 }
 
-/// Every placeholder name this step's request could use: path, query
-/// values, json (keys and leaf strings, recursively), form values.
+/// Every placeholder name this step's request could use: path, query keys
+/// and values, json (keys and leaf strings, recursively), form keys and
+/// values.
 fn step_placeholder_names(step: &Step) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(exec::placeholders(&step.path));
-    for v in step.query.values() {
+    // Keys as well as values: `build_request` fills in both.
+    for (k, v) in &step.query {
+        out.extend(exec::placeholders(k));
         out.extend(exec::placeholders(v));
     }
     if let Some(j) = &step.json {
         json_placeholder_names(j, &mut out);
     }
     if let Some(f) = &step.form {
-        for v in f.values() {
+        for (k, v) in f {
+            out.extend(exec::placeholders(k));
             out.extend(exec::placeholders(v));
         }
     }
@@ -349,6 +353,14 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
         if !is_safe_relative_path(&step.path) {
             problems.push(format!(
                 "step '{}' has a path that is not a safe relative path on this origin: '{}'",
+                step.name, step.path
+            ));
+        }
+        // `build_request` adds `query` after a `?` of its own, so a path
+        // with one (or a fragment) would send a second - raw or encoded.
+        if step.path.contains(['?', '#']) || fully_decode(&step.path).contains(['?', '#']) {
+            problems.push(format!(
+                "step '{}' has a '?' or '#' in its path '{}' - the path is only the address; query parameters go in query",
                 step.name, step.path
             ));
         }

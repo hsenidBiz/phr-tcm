@@ -4,8 +4,8 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use v2_lib::api_templates::exec::{
-    build_request, capture, check_expect, excerpt, parse_capture_path, placeholders, substitute,
-    substitute_str, Body, Seg,
+    build_request, capture, check_expect, excerpt, parse_capture_path, placeholders, scrub_tokens, scrub_value,
+    substitute, substitute_str, Body, Seg,
 };
 use v2_lib::api_templates::store::{self, RunRecord};
 use v2_lib::api_templates::{check, check_values, parse_draft, valid_id, ApiTemplate, Expect, Method, Step};
@@ -188,6 +188,24 @@ fn a_placeholder_must_name_a_param_or_an_earlier_capture() {
         v["steps"][0]["json"] = json!({ "{{nope}}": 1 });
     });
     refused(&|v| v["steps"][0]["form"]["CycleName"] = json!("{{nope}}"));
+    // Keys too: `build_request` fills placeholders in query and form keys.
+    refused(&|v| v["steps"][0]["query"]["{{nope}}"] = json!("x"));
+    refused(&|v| v["steps"][0]["form"]["{{nope}}"] = json!("x"));
+}
+
+/// A query string belongs in `query`: a `?` (or a `#`) in the path would
+/// have `build_request` append a second `?`. Refused raw and encoded.
+#[test]
+fn a_path_carries_no_query_or_fragment() {
+    for p in ["/hr/x?handler=Save", "/hr/x#top", "/hr/x%3Fhandler=Save", "/hr/x%23top", "/hr/x%253Fa=1"] {
+        let mut v = draft();
+        v["steps"][0]["path"] = json!(p);
+        let err = parse_draft(&v).unwrap_err();
+        assert!(
+            err.iter().any(|e| e.contains("Cycle setup") && e.contains("query parameters go in query")),
+            "path {p:?}: {err:?}"
+        );
+    }
 }
 
 #[test]
@@ -394,6 +412,45 @@ fn excerpt_collapses_whitespace() {
     assert_eq!(excerpt("a\n\n  b\t\tc"), "a b c");
 }
 
+/// Every form an anti-forgery token takes in a body loses its value: the
+/// token the runner read anywhere, and anything named for a token in
+/// either attribute order, either quote, JSON, form or header text - and
+/// one the 64 KB cut left without its closing quote.
+#[test]
+fn scrub_takes_every_anti_forgery_token_out() {
+    let cases = [
+        (r#"<input name="__RequestVerificationToken" type="hidden" value="AAA1" />"#, "AAA1"),
+        (r#"<input type="hidden" value="AAA2" name="__RequestVerificationToken">"#, "AAA2"),
+        (r#"<INPUT TYPE='hidden' VALUE='AAA3' NAME='__RequestVerificationToken'>"#, "AAA3"),
+        (r#"<input name=__RequestVerificationToken value=AAA4>"#, "AAA4"),
+        (r#"<meta name="RequestVerificationToken" content="AAA5">"#, "AAA5"),
+        (r#"{"ok":true,"RequestVerificationToken":"AAA6"}"#, "AAA6"),
+        (r#"{"__RequestVerificationToken" : "AAA7\"x"}"#, "AAA7"),
+        ("CycleName=x&__RequestVerificationToken=AAA8&b=1", "AAA8"),
+        ("RequestVerificationToken: AAA9", "AAA9"),
+        (r#"<p>ok</p><input name="__RequestVerificationToken" type="hidden" value="AAB0"#, "AAB0"),
+        ("the page said known-tok-1 twice: known-tok-1", "known-tok-1"),
+    ];
+    for (text, secret) in cases {
+        let out = scrub_tokens(text, Some("known-tok-1"));
+        assert!(!out.contains(secret), "{secret} survived in {out}");
+        assert!(out.contains("(token)"), "nothing marked where the token was: {out}");
+    }
+
+    // Everything else is left as it was.
+    let plain = r#"<input name="CycleName" value="FY27"> {"success":false,"message":"bad"}"#;
+    assert_eq!(scrub_tokens(plain, Some("known-tok-1")), plain);
+    assert_eq!(scrub_tokens(plain, None), plain);
+    assert_eq!(scrub_tokens(plain, Some("")), plain);
+
+    // A captured value: strings scrubbed, a member named for a token replaced.
+    let v = json!({ "id": 1, "echo": "known-tok-1", "RequestVerificationToken": 5, "list": ["known-tok-1"] });
+    assert_eq!(
+        scrub_value(&v, Some("known-tok-1")),
+        json!({ "id": 1, "echo": "(token)", "RequestVerificationToken": "(token)", "list": ["(token)"] })
+    );
+}
+
 // --- R5: path placeholders are percent-encoded as one segment ---
 
 #[test]
@@ -470,6 +527,7 @@ fn a_step_with_no_body_builds_body_none() {
 fn run_record(ok: bool) -> RunRecord {
     RunRecord {
         at: "2026-09-28T10:14:00Z".to_string(),
+        mode: "run".to_string(),
         account: "hr.admin".to_string(),
         ok,
         failed_step: if ok { None } else { Some("Evaluation rules".to_string()) },
@@ -536,6 +594,33 @@ fn run_history_keeps_the_newest_twenty() {
     assert_eq!(listed[0].runs.len(), 20);
     assert_eq!(listed[0].runs[0].at, "2026-09-28T10:24:00Z");
     assert_eq!(listed[0].runs[19].at, "2026-09-28T10:05:00Z");
+}
+
+/// A history written before runs said whether they were a prove or a run
+/// held runs only: it still loads, every line a run.
+#[test]
+fn a_history_written_without_modes_loads_as_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    let old = json!([
+        { "at": "2026-09-28 11:00:00", "account": "hr.admin", "ok": true, "outputs": { "cycleId": 274 } },
+        { "at": "2026-09-28 10:00:00", "account": "hr.admin", "ok": false,
+          "failed_step": "Evaluation rules", "detail": "400", "outputs": {} }
+    ]);
+    let file = store::templates_dir(dir.path(), "Org", "Proj").join(format!("{}.runs.json", t.id));
+    std::fs::write(&file, old.to_string()).unwrap();
+    let runs = &store::list(dir.path(), "Org", "Proj").unwrap()[0].runs;
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    assert!(runs.iter().all(|r| r.mode == "run"), "{runs:?}");
+
+    // And a new line added to it keeps its own mode, the old lines theirs.
+    let mut proved = run_record(true);
+    proved.mode = "prove".to_string();
+    store::append_run(dir.path(), "Org", "Proj", &t.id, proved).unwrap();
+    let runs = &store::list(dir.path(), "Org", "Proj").unwrap()[0].runs;
+    let modes: Vec<&str> = runs.iter().map(|r| r.mode.as_str()).collect();
+    assert_eq!(modes, ["prove", "run", "run"]);
 }
 
 #[test]

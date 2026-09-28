@@ -346,3 +346,61 @@ test("an empty project explains where templates come from", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open AI Bridge" }));
   expect(onOpenAiBridge).toHaveBeenCalledTimes(1);
 });
+
+test("the last run is the newest run - a newer prove is history, not a run", async () => {
+  const runs = [
+    { at: "2026-09-28 12:00:00", mode: "prove", account: "hr.admin", ok: true, outputs: { cycleId: 302 } },
+    {
+      at: "2026-09-28 11:00:00",
+      mode: "run",
+      account: "hr.manager",
+      ok: false,
+      failed_step: "save rules",
+      detail: "Expected success true, got false.",
+      outputs: {},
+    },
+  ];
+  mockOverview({ origin: OVERVIEW.origin, templates: [{ template: template(), runs }] });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  // The dot and time are the run's, which failed - not the newer prove's.
+  expect(within(row).getByText("failed")).toBeInTheDocument();
+  expect(within(row).queryByText("succeeded")).not.toBeInTheDocument();
+
+  // Every history line says which it was.
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const lines = within(within(row).getByRole("list", { name: "Runs" })).getAllByRole("listitem");
+  expect(lines).toHaveLength(2);
+  expect(within(lines[0]).getByText("prove")).toBeInTheDocument();
+  expect(within(lines[1]).getByText("run")).toBeInTheDocument();
+  expect(within(row).queryByText("Not run since it was proven.")).not.toBeInTheDocument();
+});
+
+test("a template only ever proven says it has not run since", async () => {
+  const runs = [{ at: "2026-09-28 12:00:00", mode: "prove", account: "hr.admin", ok: true, outputs: { cycleId: 302 } }];
+  mockOverview({ origin: OVERVIEW.origin, templates: [{ template: template(), runs }] });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  expect(within(row).getByText("never run")).toBeInTheDocument();
+
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const details = within(row).getByTestId("template-details");
+  expect(within(details).getByText("Not run since it was proven.")).toBeInTheDocument();
+  // The prove itself is still in the history, named as one.
+  const lines = within(within(details).getByRole("list", { name: "Runs" })).getAllByRole("listitem");
+  expect(lines).toHaveLength(1);
+  expect(within(lines[0]).getByText("prove")).toBeInTheDocument();
+});
+
+test("a history line written before modes were recorded reads as a run", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const lines = within(within(row).getByRole("list", { name: "Runs" })).getAllByRole("listitem");
+  expect(within(lines[0]).getByText("run")).toBeInTheDocument();
+  expect(within(lines[1]).getByText("run")).toBeInTheDocument();
+});

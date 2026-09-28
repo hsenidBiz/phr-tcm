@@ -2649,19 +2649,28 @@ mod api_template_routes {
         assert_eq!(row["last_run"], serde_json::Value::Null);
         assert!(row.get("steps").is_none(), "the list is a summary: {row}");
 
-        let at = |s: &str| RunRecord {
+        let at = |s: &str, mode: &str| RunRecord {
             at: s.into(),
+            mode: mode.into(),
             account: "admin".into(),
             ok: true,
             failed_step: None,
             detail: None,
             outputs: Default::default(),
         };
-        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 10:00:00")).unwrap();
-        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 11:00:00")).unwrap();
+        // The prove that saved it is not a run.
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 09:00:00", "prove")).unwrap();
+        let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v[0]["last_run"], serde_json::Value::Null, "a prove is not a run: {v}");
+
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 10:00:00", "run")).unwrap();
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 11:00:00", "run")).unwrap();
+        append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 12:00:00", "prove")).unwrap();
         let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
         let v: serde_json::Value = serde_json::from_str(&list).unwrap();
         assert_eq!(v[0]["last_run"]["at"], "2026-09-29 11:00:00", "the newest run: {v}");
+        assert_eq!(v[0]["last_run"]["mode"], "run", "{v}");
     }
 
     /// Every problem at once - here three, one per line - and nothing

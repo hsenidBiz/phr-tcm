@@ -8,9 +8,11 @@
 
 use super::{is_safe_relative_path, Expect, Method, Step};
 use crate::ado::endpoints::percent_encode_segment;
+use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 /// One segment of a parsed capture path: `.name`, `[N]` or `[*]` (every
 /// element of an array).
@@ -348,6 +350,80 @@ pub fn check_expect(e: &Expect, status: u16, body_text: &str) -> Result<Option<V
             partial_match(expected, actual)?;
             Ok(parsed)
         }
+    }
+}
+
+/// What an anti-forgery token is written as wherever one is taken out.
+pub const TOKEN_SHOWN: &str = "(token)";
+
+/// Opening tags (to their `>`, or to the end of a body cut off inside one).
+static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<[a-z][^<>]*").unwrap());
+/// A tag named for the anti-forgery token - Razor's hidden
+/// `__RequestVerificationToken` input, or a `RequestVerificationToken`
+/// meta tag - with any quoting.
+static TOKEN_TAG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\b(?:name|id)\s*=\s*["']?_{0,2}requestverificationtoken\b"#).unwrap()
+});
+/// The value a token tag carries: `value=` / `content=`, double-quoted,
+/// single-quoted or bare, and a quote the 64 KB cut left open.
+static TAG_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\b(?:value|content)\s*=\s*)(?:"[^"]*"?|'[^']*'?|[^\s"'>]+)"#).unwrap()
+});
+/// A JSON (or script-object) member named for the token, and its string.
+static TOKEN_MEMBER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)(["']_{0,2}requestverificationtoken["']\s*:\s*)(?:"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?)"#,
+    )
+    .unwrap()
+});
+/// `__RequestVerificationToken=...` in form text, `RequestVerificationToken:
+/// ...` in header text.
+static TOKEN_PAIR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\b_{0,2}requestverificationtoken\s*[=:]\s*)[^\s&"'<>,;]+"#).unwrap()
+});
+
+/// `text` - a request or response body - with every anti-forgery token
+/// taken out: `known` (the token the runner read) wherever it appears, and
+/// the value of anything named for a token, whatever it holds - a page
+/// can carry a different token than the one read, and a JSON answer can
+/// carry one too. Runs BEFORE `excerpt`, so a cap can never cut a token in
+/// half and leave the rest showing.
+pub fn scrub_tokens(text: &str, known: Option<&str>) -> String {
+    let mut out = match known {
+        Some(k) if !k.is_empty() => text.replace(k, TOKEN_SHOWN),
+        _ => text.to_string(),
+    };
+    out = TAG
+        .replace_all(&out, |c: &regex::Captures| {
+            let tag = &c[0];
+            if TOKEN_TAG.is_match(tag) {
+                TAG_VALUE.replace_all(tag, format!("${{1}}\"{TOKEN_SHOWN}\"")).into_owned()
+            } else {
+                tag.to_string()
+            }
+        })
+        .into_owned();
+    out = TOKEN_MEMBER.replace_all(&out, format!("${{1}}\"{TOKEN_SHOWN}\"")).into_owned();
+    TOKEN_PAIR.replace_all(&out, format!("${{1}}{TOKEN_SHOWN}")).into_owned()
+}
+
+/// A captured JSON value with its tokens taken out, for what a report
+/// shows - strings through `scrub_tokens`, and a member named for the
+/// token replaced whole.
+pub fn scrub_value(v: &Value, known: Option<&str>) -> Value {
+    match v {
+        Value::String(s) => Value::String(scrub_tokens(s, known)),
+        Value::Array(items) => Value::Array(items.iter().map(|i| scrub_value(i, known)).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, x)| {
+                    let named = k.trim_start_matches('_').eq_ignore_ascii_case("requestverificationtoken");
+                    let x = if named { Value::String(TOKEN_SHOWN.to_string()) } else { scrub_value(x, known) };
+                    (k.clone(), x)
+                })
+                .collect(),
+        ),
+        other => other.clone(),
     }
 }
 

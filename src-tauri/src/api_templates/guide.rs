@@ -65,7 +65,8 @@ with every problem listed together:
   app never runs it - it is there for the next person, or you, to repeat.
 - `method`: `GET` or `POST` only. A handler that deletes is still a POST.
 - `path`: relative, starting with a single `/` - never a host, never `//`,
-  a backslash or a `..` segment. Every request goes to the origin of this
+  a backslash, a `..` segment, a `?` or a `#` (query parameters go in
+  `query`). Every request goes to the origin of this
   project's sign-in recipe, named at the end of this guide. `query` values
   are URL-encoded by the app.
 - A step has at most one body: `json` (any JSON value) or `form` (string

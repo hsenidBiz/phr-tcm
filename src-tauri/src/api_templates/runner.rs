@@ -18,13 +18,15 @@
 //! This module decides nothing about saving: the caller (the bridge) saves
 //! a proven template and appends run history from the `RunReport`.
 
-use super::exec::{self, build_request, capture, check_expect, excerpt, parse_capture_path, Body};
+use super::exec::{
+    self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_tokens, scrub_value, Body,
+};
 use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
 use crate::autorun::accounts::Account;
 use crate::autorun::nav::path_of;
-use crate::autorun::recipe::SignInRecipe;
+use crate::autorun::recipe::{origin_of, SignInRecipe};
 use crate::autorun::replay::Browsers;
 use crate::autorun::sessions::forget_session;
 use crate::autorun::signin::{prepare, sign_in, SignInOutcome};
@@ -160,7 +162,8 @@ impl RunReport {
     /// errors go to the app log instead, and a sign-in detail has its
     /// addresses' hosts taken out (`Ctx::could_not_sign_in`). The one text
     /// here the runner did not write is the response excerpt, which is the
-    /// application's own body.
+    /// application's own body with every anti-forgery token taken out
+    /// (`shown`).
     pub fn message(&self) -> String {
         let captured = if self.created.is_empty() {
             "nothing had been captured yet".to_string()
@@ -498,7 +501,9 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
                 return None;
             }
         };
-        if same_path(&href, page) {
+        // The token page on the recipe's own origin - the same path on any
+        // other origin (an identity provider's, say) is another page.
+        if same_path(&href, page) && origin_of(&href).as_deref() == Some(ctx.origin.as_str()) {
             break;
         }
         if signed_in_again {
@@ -572,23 +577,33 @@ async fn run_step<D: Driver>(
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
-            record(ctx, step, &built, handler, None, duration_ms, "");
+            record(ctx, step, &built, handler, None, duration_ms, "", token);
             return Err((None, browser_failed(ctx, step, &e)));
         }
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
     let text = answer["text"].as_str().unwrap_or("");
-    record(ctx, step, &built, handler, status, duration_ms, text);
+    record(ctx, step, &built, handler, status, duration_ms, text, token);
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
             return Err((None, STEP_TOO_LONG.to_string()));
         }
-        applog::warn(format!("api template {}: step {}: the request did not complete: {}", ctx.id(), step.name, plain(err)));
+        applog::warn(format!(
+            "api template {}: step {}: the request did not complete: {}",
+            ctx.id(),
+            step.name,
+            excerpt(&scrub_tokens(&plain(err), Some(token)))
+        ));
         return Err((None, "the request did not complete - see Settings, Logs".to_string()));
     }
     let Some(status) = status else {
-        applog::warn(format!("api template {}: step {}: the page answered {}", ctx.id(), step.name, excerpt(&answer.to_string())));
+        // Only the answer's shape: whatever it carries may be the body.
+        let keys = match answer.as_object() {
+            Some(map) => format!("an object with keys: {}", map.keys().cloned().collect::<Vec<_>>().join(", ")),
+            None => "something that is not an object".to_string(),
+        };
+        applog::warn(format!("api template {}: step {}: the page answered {keys}", ctx.id(), step.name));
         return Err((None, "the page gave no answer for this request - see Settings, Logs".to_string()));
     };
 
@@ -604,7 +619,9 @@ async fn run_step<D: Driver>(
     }
 
     let parsed = check_expect(&step.expect, status, text).map_err(|e| {
-        let shown = excerpt(text);
+        // `e` can quote the answer's own values, so it is scrubbed too.
+        let e = scrub_tokens(&e, Some(token));
+        let shown = shown(text, token);
         let detail = if shown.is_empty() { e } else { format!("{e} - the response began: {shown}") };
         (Some(status), detail)
     })?;
@@ -615,8 +632,10 @@ async fn run_step<D: Driver>(
         let Some(value) = parsed.as_ref().and_then(|body| capture(body, &segs)) else {
             return Err((Some(status), format!("capture {name} found nothing at {path}")));
         };
-        vars.insert(name.clone(), value.clone());
-        progress.created.insert(name.clone(), value);
+        // Later steps get what was captured; the report - and everything
+        // built from it - only ever gets it without a token in it.
+        progress.created.insert(name.clone(), scrub_value(&value, Some(token)));
+        vars.insert(name.clone(), value);
         got.push(name.as_str());
     }
     let detail = if got.is_empty() {
@@ -627,8 +646,17 @@ async fn run_step<D: Driver>(
     Ok((status, detail))
 }
 
-/// One activity record for a request the page made. Never the token: it is
-/// not in `built`, and nothing else here has it.
+/// A request or response body as a record or a sentence shows it: every
+/// anti-forgery token taken out (`scrub_tokens`) BEFORE the 500-character
+/// excerpt, so the cap can never leave half a token showing.
+fn shown(body: &str, token: &str) -> String {
+    excerpt(&scrub_tokens(body, Some(token)))
+}
+
+/// One activity record for a request the page made. Never a token: the
+/// one the runner read is not in `built`, and both bodies go through
+/// `shown`, which takes out that one and any other a page carries.
+#[allow(clippy::too_many_arguments)]
 fn record(
     ctx: &Ctx<'_>,
     step: &Step,
@@ -637,6 +665,7 @@ fn record(
     status: Option<u16>,
     duration_ms: u64,
     response: &str,
+    token: &str,
 ) {
     activity_log::record(
         Kind::Api,
@@ -651,8 +680,8 @@ fn record(
             "handler": handler,
             "status": status,
             "duration_ms": duration_ms,
-            "request": excerpt(&body_text(&built.body)),
-            "response": excerpt(response),
+            "request": shown(&body_text(&built.body), token),
+            "response": shown(response, token),
         }),
     );
 }

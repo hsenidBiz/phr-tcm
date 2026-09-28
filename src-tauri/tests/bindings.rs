@@ -32,7 +32,19 @@ fn bindings_never_expose_a_token() {
 fn token_names_in(text: &str) -> Vec<&'static str> {
     let lower = text.to_lowercase();
     let mut hits = Vec::new();
-    for name in ["access_token", "accesstoken", "refresh_token", "refreshtoken", "bearer"] {
+    // `requestverificationtoken` and `cookie`: an API template run's
+    // anti-forgery token and session cookies stay in the page (design doc
+    // "API templates" §10). Not `antiforgery`: the template's
+    // `Antiforgery` block - the page to read a token from - is legitimate.
+    for name in [
+        "access_token",
+        "accesstoken",
+        "refresh_token",
+        "refreshtoken",
+        "bearer",
+        "requestverificationtoken",
+        "cookie",
+    ] {
         if lower.contains(name) {
             hits.push(name);
         }
@@ -65,6 +77,9 @@ fn the_token_check_ignores_case_but_not_word_boundaries() {
     assert_eq!(token_names_in("{ id_token: string }"), vec!["id_token"]);
     assert_eq!(token_names_in("{ invalidToken: boolean }"), Vec::<&str>::new());
     assert_eq!(token_names_in("{ valid_token: boolean }"), Vec::<&str>::new());
+    assert_eq!(token_names_in("{ __RequestVerificationToken: string }"), vec!["requestverificationtoken"]);
+    assert_eq!(token_names_in("{ sessionCookie: string }"), vec!["cookie"]);
+    assert_eq!(token_names_in("export type Antiforgery = { page: string }"), Vec::<&str>::new());
 }
 
 #[test]
