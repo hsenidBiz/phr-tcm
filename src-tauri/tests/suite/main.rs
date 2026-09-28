@@ -64,6 +64,7 @@ mod browser_snapshot;
 mod bugreport;
 mod cache;
 mod comment_images;
+mod db_batch;
 mod db_credentials;
 mod db_credentials_commands;
 mod db_guard;

@@ -23,7 +23,7 @@
 //! start of a line, and `$(name)` anywhere, before any of it ever reaches
 //! the server. `classify` refuses all of that on the ORIGINAL text, the
 //! same way it reads `GO`, and `sqlcmd::sqlcmd_args` also runs sqlcmd with
-//! `-X1`/`-x` so the two layers do not depend on each other.
+//! `-x` so `$(name)` has two layers that do not depend on each other.
 
 /// The longest statement the tools will look at. Anything bigger is far
 /// more likely to be a paste accident than a question about the database,
@@ -297,6 +297,83 @@ pub fn classify(sql: &str) -> Verdict {
             "{other} cannot run here: these tools run SELECT statements, and INSERT/UPDATE/DELETE only on the dev login"
         )),
     }
+}
+
+/// Whether `sql` ends where plain code does: outside every string literal,
+/// quoted or bracketed name, and block comment (which nest in T-SQL). A
+/// trailing `--` comment counts as closed, because a batch always puts a
+/// line break after each statement.
+///
+/// On its own a statement that ends inside one of those is harmless - the
+/// server calls it unfinished. In a batch it is not: whatever follows it
+/// would be read as part of it, so an open comment could swallow the row
+/// check after it, and an open quote could turn the NEXT statement's
+/// string - which the guard read as data - into code. `db::batch` refuses
+/// any statement this says is open.
+pub fn lexically_closed(sql: &str) -> bool {
+    #[derive(PartialEq)]
+    enum At {
+        Code,
+        LineComment,
+        BlockComment(usize),
+        Literal,
+        Quoted,
+        Bracketed,
+    }
+    let chars: Vec<char> = sql.chars().collect();
+    let mut at = At::Code;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match at {
+            At::Code => match c {
+                '-' if next == Some('-') => {
+                    at = At::LineComment;
+                    i += 1;
+                }
+                '/' if next == Some('*') => {
+                    at = At::BlockComment(1);
+                    i += 1;
+                }
+                '\'' => at = At::Literal,
+                '"' => at = At::Quoted,
+                '[' => at = At::Bracketed,
+                _ => {}
+            },
+            At::LineComment => {
+                if c == '\n' || c == '\r' {
+                    at = At::Code;
+                }
+            }
+            At::BlockComment(depth) => {
+                if c == '/' && next == Some('*') {
+                    at = At::BlockComment(depth + 1);
+                    i += 1;
+                } else if c == '*' && next == Some('/') {
+                    at = if depth == 1 { At::Code } else { At::BlockComment(depth - 1) };
+                    i += 1;
+                }
+            }
+            // A doubled closing character is that character, escaped.
+            At::Literal | At::Quoted | At::Bracketed => {
+                let close = match at {
+                    At::Literal => '\'',
+                    At::Quoted => '"',
+                    _ => ']',
+                };
+                if c == close {
+                    if next == Some(close) {
+                        i += 1;
+                    } else {
+                        at = At::Code;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    matches!(at, At::Code | At::LineComment)
 }
 
 /// The gate itself. `Read` always passes; `Write` passes only on the dev

@@ -142,6 +142,97 @@ pub async fn run_query<R: Runner>(
     }
 }
 
+/// Several statements as one all-or-nothing transaction - see `db::batch`.
+///
+/// The same two write doors as `run_query`, asked of the batch as a whole:
+/// one write anywhere in it makes it a write. Refusals, the writes switch
+/// and the read-only connection answer exactly as they do for one
+/// statement, with the refused statement named by its position.
+///
+/// The log keeps a batch that writes whole, every statement of it, and
+/// says whether it was a dry run - a batch that ran for real is the thing
+/// somebody may later need to find and undo.
+pub async fn run_batch_query<R: Runner>(
+    r: &R,
+    exe: &Path,
+    c: &Connection,
+    writes_on: bool,
+    statements: &[super::batch::BatchStatement],
+    dry_run: bool,
+) -> Result<String, (u16, String)> {
+    use super::batch;
+    let joined = || {
+        statements
+            .iter()
+            .enumerate()
+            .map(|(i, s)| format!("{}) {}", i + 1, s.sql))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // Classified with write access first, so the answer can tell "this
+    // statement is refused everywhere" apart from the two write doors.
+    let verdict = match batch::validate(statements, guard::Access::DevWrites) {
+        Ok(v) => v,
+        Err(why) => {
+            crate::applog::info(refusal_log_line(c, &why, &joined()));
+            return Err((400, why));
+        }
+    };
+    if verdict == Verdict::Write {
+        if !writes_on {
+            crate::applog::info(refusal_log_line(c, WRITES_OFF, &joined()));
+            return Err((400, WRITES_OFF.to_string()));
+        }
+        if guard::access_for_user(&c.user) != guard::Access::DevWrites {
+            crate::applog::info(refusal_log_line(c, guard::READ_ONLY_SENTENCE, &joined()));
+            return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
+        }
+    }
+
+    let kind = if verdict == Verdict::Write { "Write" } else { "Read" };
+    let dry = if dry_run { ", dry run" } else { "" };
+    let one_line = joined().split_whitespace().collect::<Vec<_>>().join(" ");
+    let shown = if verdict == Verdict::Write { one_line } else { cut(&one_line, READ_LOG_CHARS) };
+    crate::applog::info(format!(
+        "db batch ({kind}, {} statements{dry}) on {}/{}: {shown}",
+        statements.len(),
+        c.server,
+        c.database
+    ));
+
+    match sqlcmd::run_batch(r, exe, c, statements, dry_run).await {
+        Ok(run) => Ok(batch_answer(statements, &run, dry_run)),
+        Err(said) => Err((502, said)),
+    }
+}
+
+/// What a batch that ran to its end says back: how it ended first, then
+/// each statement's row count, then whatever its SELECTs returned.
+fn batch_answer(
+    statements: &[super::batch::BatchStatement],
+    run: &sqlcmd::BatchRun,
+    dry_run: bool,
+) -> String {
+    use super::batch::Ended;
+    let n = statements.len();
+    let head = match (run.ended, dry_run) {
+        (Some(Ended::RolledBack), true) => format!(
+            "Dry run: all {n} statements ran and were rolled back - nothing was saved. Send the same statements without dry_run to save them."
+        ),
+        (Some(Ended::Saved), false) => format!("Saved: all {n} statements ran in one transaction."),
+        // The wrapper always prints how it ended; a batch that exited
+        // cleanly without saying so is reported as exactly that, never
+        // guessed at.
+        _ => "The batch finished, but its last line did not say whether it was saved - check the data before running it again.".to_string(),
+    };
+    let mut out = format!("{head}\n{}", super::batch::row_lines(statements, &run.rows));
+    if !run.text.trim().is_empty() {
+        out.push_str("\n\nOutput:\n");
+        out.push_str(&with_cap_note(&run.text, run.capped));
+    }
+    out
+}
+
 /// Puts the cap where an assistant reads it FIRST. `run_sql` says what it
 /// had to cut after the rows, which is the right place for a person
 /// scrolling and the wrong one for a reader that may stop early and

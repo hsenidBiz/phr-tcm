@@ -70,7 +70,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "db_query",
     label: "Run a statement",
-    summary: "Run one SQL statement on the chosen connection and read the result.",
+    summary: "Run one SQL statement, or several as one all-or-nothing transaction, on the chosen connection and read the result.",
   },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
