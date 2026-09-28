@@ -2,8 +2,19 @@
 //! doc "API templates" §4.
 
 use serde_json::{json, Value};
-use v2_lib::api_templates::exec::{parse_capture_path, placeholders, Seg};
-use v2_lib::api_templates::{check, check_values, parse_draft, valid_id, ApiTemplate};
+use std::collections::BTreeMap;
+use v2_lib::api_templates::exec::{
+    build_request, capture, check_expect, excerpt, parse_capture_path, placeholders, substitute,
+    substitute_str, Body, Seg,
+};
+use v2_lib::api_templates::{check, check_values, parse_draft, valid_id, ApiTemplate, Expect, Method, Step};
+
+/// Builds a `BTreeMap<String, Value>` from name/value pairs - shorthand for
+/// the `vars` argument `substitute`, `substitute_str` and `build_request`
+/// all take.
+fn btree(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+}
 
 /// Mirrors the design doc's §4 example exactly, minus `proven` (which only
 /// the app may write).
@@ -273,4 +284,182 @@ fn capture_path_parsing_produces_segments() {
     assert!(parse_capture_path("a.b").is_err());
     assert!(parse_capture_path("$..a").is_err());
     assert!(parse_capture_path("$.a[x]").is_err());
+}
+
+// --- Task 3: requests, placeholders, captures and expectations ---
+
+/// A minimal step with the given path, no query/body, default expect.
+fn plain_step(path: &str) -> Step {
+    Step {
+        name: "Step".to_string(),
+        method: Method::Get,
+        path: path.to_string(),
+        query: BTreeMap::new(),
+        json: None,
+        form: None,
+        expect: Expect::default(),
+        capture: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn a_whole_value_placeholder_keeps_its_type() {
+    let vars = btree(&[("cycleId", json!(273)), ("ids", json!([1, 2]))]);
+    assert_eq!(substitute(&json!({"a":"{{cycleId}}","b":"{{ids}}"}), &vars), json!({"a":273,"b":[1,2]}));
+}
+
+#[test]
+fn a_placeholder_inside_text_is_text() {
+    assert_eq!(substitute_str("cycle {{cycleId}}!", &btree(&[("cycleId", json!(273))])), "cycle 273!");
+}
+
+#[test]
+fn substituted_values_are_never_substituted_again() {
+    // Review Focus 1
+    let vars = btree(&[("name", json!("Q3 {{draft}}")), ("draft", json!("X"))]);
+    assert_eq!(substitute_str("{{name}}", &vars), "Q3 {{draft}}");
+}
+
+#[test]
+fn query_values_are_substituted_and_encoded() {
+    // Review Focus 3
+    let mut step = plain_step("/hr/pmsv10/performancecycle");
+    step.query.insert("handler".to_string(), "Step".to_string());
+    step.query.insert("stepKey".to_string(), "{{k}}".to_string());
+    let vars = btree(&[("k", json!("a b&c"))]);
+    let req = build_request(&step, &vars).unwrap();
+    assert_eq!(req.url, "/hr/pmsv10/performancecycle?handler=Step&stepKey=a%20b%26c");
+}
+
+#[test]
+fn capture_reads_keys_indexes_and_every_element() {
+    let body = json!({"cycleId":274,"stages":[{"stageId":"s1"},{"stageId":"s2"}]});
+    assert_eq!(capture(&body, &parse_capture_path("$.cycleId").unwrap()), Some(json!(274)));
+    assert_eq!(capture(&body, &parse_capture_path("$.stages[1].stageId").unwrap()), Some(json!("s2")));
+    assert_eq!(
+        capture(&body, &parse_capture_path("$.stages[*].stageId").unwrap()),
+        Some(json!(["s1", "s2"]))
+    );
+    assert_eq!(capture(&body, &parse_capture_path("$.nope").unwrap()), None);
+}
+
+#[test]
+fn capture_all_over_an_empty_array_is_none() {
+    let body = json!({"stages": []});
+    assert_eq!(capture(&body, &parse_capture_path("$.stages[*].stageId").unwrap()), None);
+}
+
+#[test]
+fn expect_is_a_partial_match() {
+    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    assert!(check_expect(&e, 200, r#"{"success":true,"cycleId":1}"#).is_ok());
+}
+
+#[test]
+fn an_html_answer_fails_a_json_expectation_cleanly() {
+    // Review Focus 2
+    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    assert_eq!(check_expect(&e, 200, "<!DOCTYPE html><html>").unwrap_err(), "the response was not JSON");
+}
+
+#[test]
+fn a_body_that_is_json_but_not_the_expected_shape_fails() {
+    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let err = check_expect(&e, 200, r#"{"success":false}"#).unwrap_err();
+    assert_eq!(err, "expected success = true, got false");
+}
+
+#[test]
+fn a_status_mismatch_is_reported_before_the_body_is_even_parsed() {
+    let e = Expect { status: 200, json: Some(json!({"success": true})) };
+    let err = check_expect(&e, 400, "not json at all").unwrap_err();
+    assert_eq!(err, "expected status 200, got 400");
+}
+
+#[test]
+fn no_json_expectation_still_returns_a_parsed_body_when_there_is_one() {
+    let e = Expect { status: 200, json: None };
+    assert_eq!(check_expect(&e, 200, r#"{"a":1}"#).unwrap(), Some(json!({"a":1})));
+    assert_eq!(check_expect(&e, 200, "plain text").unwrap(), None);
+}
+
+#[test]
+fn excerpts_are_capped_at_500() {
+    assert!(excerpt(&"x".repeat(900)).chars().count() <= 500);
+}
+
+#[test]
+fn excerpt_collapses_whitespace() {
+    assert_eq!(excerpt("a\n\n  b\t\tc"), "a b c");
+}
+
+// --- R5: path placeholders are percent-encoded as one segment ---
+
+#[test]
+fn a_path_placeholder_value_is_percent_encoded_as_one_segment() {
+    let step = plain_step("/hr/pmsv10/step/{{seg}}");
+    let vars = btree(&[("seg", json!("no slash"))]);
+    let req = build_request(&step, &vars).unwrap();
+    assert_eq!(req.url, "/hr/pmsv10/step/no%20slash");
+}
+
+#[test]
+fn a_path_placeholder_cannot_smuggle_a_slash_past_encoding() {
+    // "../admin" becomes the single encoded segment "..%2Fadmin"; decoding
+    // that back still reveals a ".." segment, so the post-substitution
+    // safety re-check refuses the built request rather than letting the
+    // encoded slash reach the origin as a real path separator.
+    let step = plain_step("/hr/{{seg}}");
+    let vars = btree(&[("seg", json!("../admin"))]);
+    let err = build_request(&step, &vars).unwrap_err();
+    assert!(err.contains("Step"), "{err}");
+}
+
+#[test]
+fn a_path_placeholder_value_of_exactly_dotdot_is_refused() {
+    let step = plain_step("/hr/{{seg}}/x");
+    let vars = btree(&[("seg", json!(".."))]);
+    let err = build_request(&step, &vars).unwrap_err();
+    assert!(err.contains("Step") && err.contains(".."), "{err}");
+}
+
+#[test]
+fn a_path_placeholder_value_of_exactly_dot_is_refused() {
+    let step = plain_step("/hr/{{seg}}/x");
+    let vars = btree(&[("seg", json!("."))]);
+    let err = build_request(&step, &vars).unwrap_err();
+    assert!(err.contains("Step"), "{err}");
+}
+
+#[test]
+fn a_json_body_is_substituted_and_typed() {
+    let mut step = plain_step("/hr/pmsv10/thing");
+    step.json = Some(json!({"cycleId": "{{cycleId}}", "note": "for {{cycleId}}"}));
+    let vars = btree(&[("cycleId", json!(273))]);
+    let req = build_request(&step, &vars).unwrap();
+    match req.body {
+        Body::Json { value } => assert_eq!(value, json!({"cycleId": 273, "note": "for 273"})),
+        other => panic!("expected a json body, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_form_body_is_substituted_as_text() {
+    let mut step = plain_step("/hr/pmsv10/thing");
+    let mut form = BTreeMap::new();
+    form.insert("CycleId".to_string(), "{{cycleId}}".to_string());
+    step.form = Some(form);
+    let vars = btree(&[("cycleId", json!(273))]);
+    let req = build_request(&step, &vars).unwrap();
+    match req.body {
+        Body::Form { fields } => assert_eq!(fields.get("CycleId"), Some(&"273".to_string())),
+        other => panic!("expected a form body, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_step_with_no_body_builds_body_none() {
+    let step = plain_step("/hr/pmsv10/thing");
+    let req = build_request(&step, &BTreeMap::new()).unwrap();
+    assert!(matches!(req.body, Body::None));
 }

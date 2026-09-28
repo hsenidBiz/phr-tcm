@@ -215,7 +215,7 @@ fn has_percent_encoding(s: &str) -> bool {
 /// second belt in case decoding somehow didn't reach a fixed point): no
 /// backslash anywhere, and no `..` segment, treating `\` as a segment
 /// separator too since an encoded backslash only appears after decoding.
-fn is_safe_relative_path(path: &str) -> bool {
+pub(crate) fn is_safe_relative_path(path: &str) -> bool {
     if !path.starts_with('/') || path.starts_with("//") {
         return false;
     }
