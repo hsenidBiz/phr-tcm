@@ -6,8 +6,9 @@ import { cn } from "../lib/cn";
  * of the picture: the pen writes its line, the eyelid closes, the play
  * button leaves its box. A lucide icon is one opaque <svg>, so all it can do
  * is move as a whole - which read as the picture warping. These draw the
- * same geometry as the lucide icon they replace (Pen Line, File Up, Eye,
- * Square Play, Radar, Folder Tree, List Ordered, Bot; lucide is ISC), split
+ * same geometry as the lucide icon they replace (Pen Line, File Up, Rotate
+ * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, and Work
+ * Manager's Git Pull Request, Square Kanban, File Plus Corner; lucide is ISC), split
  * into the parts the animation needs, plus a few pieces that only show
  * mid-animation. At rest every one looks exactly like the lucide original.
  *
@@ -74,6 +75,17 @@ export function GlyphImport(p: GlyphProps) {
           <path d="M16 24.5v3" />
         </g>
       </g>
+    </Glyph>
+  );
+}
+
+/** Update Test Cases: the line runs off round the circle into its arrowhead,
+ *  draws itself back in from the start, and the arrowhead snaps back on. */
+export function GlyphUpdate(p: GlyphProps) {
+  return (
+    <Glyph kind="update" {...p}>
+      <path className="ng-arc" pathLength={1} d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path className="ng-head" d="M3 3v5h5" />
     </Glyph>
   );
 }
@@ -171,6 +183,51 @@ export function GlyphManage(p: GlyphProps) {
       <path d="M4 4h1v5" />
       <path d="M4 9h2" />
       <path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02" />
+    </Glyph>
+  );
+}
+
+/** Pull Requests: a change leaves the source branch's dot, runs along the
+ *  line and lands in the target's, which lights up as it arrives. */
+export function GlyphPrs(p: GlyphProps) {
+  return (
+    <Glyph kind="prs" {...p}>
+      <circle className="ng-target" cx="18" cy="18" r="3" />
+      <circle className="ng-source" cx="6" cy="6" r="3" />
+      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+      <line x1="6" x2="6" y1="9" y2="21" />
+      {/* The travelling dot: from the source's edge, across the gap, along the line. */}
+      <path className="ng-change" pathLength={1} strokeWidth={3} d="M9 6h7a2 2 0 0 1 2 2v7" />
+    </Glyph>
+  );
+}
+
+/** Board: the first column's bottom card hops to the middle column, then
+ *  on to the last, and the columns settle back. */
+export function GlyphBoard(p: GlyphProps) {
+  return (
+    <Glyph kind="board" {...p}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path className="ng-col-1" d="M8 7v7" />
+      <path d="M12 7v4" />
+      <path d="M16 7v9" />
+      {/* The card: at rest it is the first column's last two units, and hidden. */}
+      <path className="ng-card" d="M0 0v2" />
+    </Glyph>
+  );
+}
+
+/** New Work Item: the plus spins out and back in with a pop, and the page's
+ *  folded corner flips open and shut. */
+export function GlyphCreate(p: GlyphProps) {
+  return (
+    <Glyph kind="create" {...p}>
+      <path d="M11.35 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v5.35" />
+      <path className="ng-fold" d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <g className="ng-plus">
+        <path d="M14 19h6" />
+        <path d="M17 16v6" />
+      </g>
     </Glyph>
   );
 }

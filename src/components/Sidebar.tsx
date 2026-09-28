@@ -1,13 +1,17 @@
-import { ChevronsLeft, ChevronsRight, FilePlus2, GitPullRequest, KanbanSquare, RotateCcw } from "lucide-react";
+import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useSyncExternalStore, type ComponentType } from "react";
 import {
   GlyphAi,
   GlyphAutoRun,
+  GlyphBoard,
+  GlyphCreate,
   GlyphImport,
   GlyphManage,
   GlyphManual,
+  GlyphPrs,
   GlyphRun,
   GlyphSuites,
+  GlyphUpdate,
   GlyphView,
   type GlyphProps,
 } from "./navGlyphs";
@@ -47,7 +51,7 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "import", label: "Import Test Cases", icon: GlyphImport, tone: "nav-ico nav-ico-import" },
   // A circular arrow, not a second pencil: Manual Entry already owns the
   // pencil, and two pencils in one rail are indistinguishable at 16px.
-  { id: "edit", label: "Update Test Cases", icon: RotateCcw, tone: "nav-ico nav-ico-edit" },
+  { id: "edit", label: "Update Test Cases", icon: GlyphUpdate, tone: "nav-ico nav-ico-edit" },
   { id: "view", label: "View Test Cases", icon: GlyphView, tone: "nav-ico nav-ico-view" },
   { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
@@ -86,9 +90,9 @@ export const WORK_ITEMS: Item<WorkSection>[] = [
   // The rail is where this glyph earns its place - it tells the section
   // apart from the others. Inside the panel every row is a pull request,
   // so the same icon there said nothing and has gone.
-  { id: "prs", label: "Pull Requests", icon: GitPullRequest, tone: "nav-ico nav-ico-prs" },
-  { id: "board", label: "Board", icon: KanbanSquare, tone: "nav-ico nav-ico-board" },
-  { id: "create", label: "New Work Item", icon: FilePlus2, tone: "nav-ico nav-ico-create" },
+  { id: "prs", label: "Pull Requests", icon: GlyphPrs, tone: "nav-ico nav-ico-prs" },
+  { id: "board", label: "Board", icon: GlyphBoard, tone: "nav-ico nav-ico-board" },
+  { id: "create", label: "New Work Item", icon: GlyphCreate, tone: "nav-ico nav-ico-create" },
 ];
 
 export default function Sidebar<T extends string = Section>({
