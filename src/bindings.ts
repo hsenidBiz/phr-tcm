@@ -729,6 +729,13 @@ export const commands = {
 	 */
 	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[], global: boolean) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools, global })),
 	/**
+	 *  Switch "Run database changes without asking" on or off: keep the choice,
+	 *  then write (or take out) each registered tool's own "always allow" for
+	 *  `db_query`. Answers per tool, so the AI Bridge tab can say which tools
+	 *  were set and which the person still has to set themselves.
+	 */
+	setDbAutoApprove: (on: boolean, workingDir: string | null) => typedError<AutoApproveOutcome[], string>(__TAURI_INVOKE("set_db_auto_approve", { on, workingDir })),
+	/**
 	 *  Removes a server from the tool's config. No installed-guard: if a
 	 *  config still carries an entry after the tool was uninstalled, removing
 	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
@@ -916,6 +923,12 @@ export type AppSettings = {
 	 *  instead of opening the window.
 	 */
 	start_minimized?: boolean,
+	/**
+	 *  AI tools run `db_query` without asking the person first: the app
+	 *  writes each registered tool's own "always allow" for it, and tells
+	 *  the assistant it need not ask. Off unless turned on.
+	 */
+	db_auto_approve?: boolean,
 };
 
 export type AssignedItem = {
@@ -933,6 +946,26 @@ export type AudioSpectrum = {
 export type AuthStatus = {
 	signed_in: boolean,
 	account: string | null,
+};
+
+/**
+ *  What switching "Run database changes without asking" did for one
+ *  registered tool.
+ */
+export type AutoApproveOutcome = {
+	/**  The tool's name as the AI Bridge tab shows it. */
+	tool: string,
+	/**
+	 *  The tool's own "always allow" for `db_query` was written (or taken
+	 *  out, switching off).
+	 */
+	applied: boolean,
+	/**
+	 *  What the person has to do in the tool itself: when the app could
+	 *  not set it, why a write failed, or - set or not - a setting of the
+	 *  tool's own it also depends on. Empty when there is nothing to do.
+	 */
+	note: string,
 };
 
 export type BackupImportResult = {

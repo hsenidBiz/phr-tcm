@@ -278,6 +278,9 @@ pub async fn route(
             serde_json::json!({
                 "disabled": ctx.disabled_tools,
                 "autorun": crate::ai_tools::autorun_offered(),
+                // Only while writes are on too: without them there is no
+                // change to run, asked about or not.
+                "db_no_ask": crate::app_settings::current().db_auto_approve && ctx.db_writes,
             })
             .to_string(),
         ),

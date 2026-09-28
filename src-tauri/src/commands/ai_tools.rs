@@ -11,9 +11,10 @@ use tauri::State;
 
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
-    legacy_command_path, merge_entry, project_command_dir, remove_entry, tcm_server,
-    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS,
-    TCM_SERVER, TOOL_SPECS,
+    legacy_command_path, merge_entry, project_command_dir, remove_entry, set_claude_allow,
+    set_cursor_allow, tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_QUERY_RULE,
+    CURSOR_DB_QUERY_ENTRY, COMMAND_MARKER,
+    LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
@@ -98,7 +99,176 @@ pub fn register_ai_tool(
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)
+    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)?;
+    // A tool registered while "Run database changes without asking" is on
+    // gets its own "always allow" too, the same as the ones registered
+    // before the switch was turned on. Best-effort: the registration worked.
+    if crate::app_settings::current().db_auto_approve {
+        for o in apply_db_auto_approve_now(true, working_dir.as_deref()) {
+            if !o.applied && !o.note.is_empty() {
+                crate::applog::info(format!("auto-approve for {}: {}", o.tool, o.note));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What switching "Run database changes without asking" did for one
+/// registered tool.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct AutoApproveOutcome {
+    /// The tool's name as the AI Bridge tab shows it.
+    pub tool: String,
+    /// The tool's own "always allow" for `db_query` was written (or taken
+    /// out, switching off).
+    pub applied: bool,
+    /// What the person has to do in the tool itself: when the app could
+    /// not set it, why a write failed, or - set or not - a setting of the
+    /// tool's own it also depends on. Empty when there is nothing to do.
+    pub note: String,
+}
+
+/// Switch "Run database changes without asking" on or off: keep the choice,
+/// then write (or take out) each registered tool's own "always allow" for
+/// `db_query`. Answers per tool, so the AI Bridge tab can say which tools
+/// were set and which the person still has to set themselves.
+#[tauri::command]
+#[specta::specta]
+pub fn set_db_auto_approve(on: bool, working_dir: Option<String>) -> Result<Vec<AutoApproveOutcome>, String> {
+    crate::app_settings::update(|s| s.db_auto_approve = on)?;
+    Ok(apply_db_auto_approve_now(on, working_dir.as_deref()))
+}
+
+/// Where a tool keeps the "always allow" the app can write: a file per
+/// repository and one for the machine, and how an entry goes in or out.
+struct AllowFile {
+    project: fn(&str) -> PathBuf,
+    user: fn() -> PathBuf,
+    merge: fn(&str, &str, bool) -> Result<Option<String>, String>,
+    entry: &'static str,
+}
+
+/// Claude Code: `settings.local.json` in the repository, which Claude Code
+/// keeps out of source control - letting a tool run unasked is this
+/// person's choice, not the repository's - and the user settings for a
+/// machine-wide registration. One `permissions.allow` rule.
+const CLAUDE_ALLOW: AllowFile = AllowFile {
+    project: |root| PathBuf::from(root).join(".claude").join("settings.local.json"),
+    user: || PathBuf::from(home_dir()).join(".claude").join("settings.json"),
+    merge: set_claude_allow,
+    entry: CLAUDE_DB_QUERY_RULE,
+};
+
+/// Cursor: `permissions.json` beside its `mcp.json`, in the repository or
+/// the home folder. One `mcpAllowlist` entry.
+const CURSOR_ALLOW: AllowFile = AllowFile {
+    project: |root| PathBuf::from(root).join(".cursor").join("permissions.json"),
+    user: || PathBuf::from(home_dir()).join(".cursor").join("permissions.json"),
+    merge: set_cursor_allow,
+    entry: CURSOR_DB_QUERY_ENTRY,
+};
+
+/// The tools whose "always allow" for one tool is a file the app can
+/// write. The others keep it only in their own windows - or, for VS Code,
+/// only as a switch that approves EVERY tool, which this is not - so for
+/// them the app says what to do instead.
+fn allow_file(id: &str) -> Option<&'static AllowFile> {
+    match id {
+        "claude-code" => Some(&CLAUDE_ALLOW),
+        "cursor" => Some(&CURSOR_ALLOW),
+        _ => None,
+    }
+}
+
+/// What to tell the person about a tool the app cannot set, or one it set
+/// that needs a setting of its own as well.
+fn allow_note(id: &str, name: &str) -> String {
+    match id {
+        "cursor" => "Cursor only uses this outside its ask-every-time run mode - check Cursor Settings > Agents".to_string(),
+        "claude-desktop" => "Claude Desktop keeps this in its own window: when it asks about db_query, choose Always allow".to_string(),
+        "vscode" => "VS Code keeps this in its own window: when it asks about db_query, choose to always allow it (or use Chat: Manage Tool Approval)".to_string(),
+        _ => format!("{name} keeps this in its own settings: allow the tcm-testcases db_query tool there"),
+    }
+}
+
+/// Put the entry into (or take it out of) one file. A missing file is
+/// created only to switch ON; switching off leaves a missing file missing.
+fn write_allow(file: &AllowFile, path: &std::path::Path, on: bool) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if !on {
+                return Ok(());
+            }
+            String::new()
+        }
+        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+    };
+    let Some(updated) = (file.merge)(&existing, file.entry, on).map_err(|e| format!("{}: {e}", path.display()))?
+    else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    atomic_write(path, &updated)
+}
+
+/// Each installed tool that carries our server, and what was done for it.
+///
+/// A tool with a writable allow file gets the entry where the server is
+/// registered: the working repository's file, the machine's, or both.
+/// Switching off takes it out of both wherever it is, registered or not -
+/// nothing the app wrote should outlive the switch. Every other tool that
+/// carries the server is named with what the person has to do.
+pub fn apply_db_auto_approve_now(on: bool, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
+    let root = root_of(working_dir);
+    let mut out = Vec::new();
+    for t in detect_in(&home_dir(), &appdata_dir(), &is_on_path, root) {
+        let here = t.registered_servers.iter().any(|s| s == TCM_SERVER);
+        let global_too = t.global_registered_servers.iter().any(|s| s == TCM_SERVER);
+        let Some(file) = allow_file(&t.id) else {
+            if on && t.installed && (here || global_too) {
+                out.push(AutoApproveOutcome {
+                    tool: t.name.clone(),
+                    applied: false,
+                    note: allow_note(&t.id, &t.name),
+                });
+            }
+            continue;
+        };
+        let mut paths = Vec::new();
+        if on {
+            if here && t.scope == "project" {
+                if let Some(r) = root {
+                    paths.push((file.project)(r));
+                }
+            }
+            if (here && t.scope == "global") || global_too {
+                paths.push((file.user)());
+            }
+        } else {
+            if let Some(r) = root {
+                paths.push((file.project)(r));
+            }
+            paths.push((file.user)());
+        }
+        if !t.installed || (on && paths.is_empty()) {
+            continue;
+        }
+        let result = paths.iter().try_for_each(|p| write_allow(file, p, on));
+        out.push(match result {
+            Ok(()) => AutoApproveOutcome {
+                tool: t.name.clone(),
+                applied: true,
+                // Cursor reads it only in some run modes: say so, even when set.
+                note: if on && t.id == "cursor" { allow_note(&t.id, &t.name) } else { String::new() },
+            },
+            Err(e) => AutoApproveOutcome { tool: t.name.clone(), applied: false, note: e },
+        });
+    }
+    out
 }
 
 /// Every database the Company database card offers, as the public view:

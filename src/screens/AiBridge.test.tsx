@@ -845,6 +845,49 @@ test("on the dev login the write switch turns on and is stored", async () => {
   ).toHaveAttribute("aria-checked", "true");
 });
 
+/// "Run changes without asking" means something only while writes can
+/// happen, and turning it on reports what each registered tool needs:
+/// the ones the app set say nothing, the rest say what to do.
+test("running changes without asking needs writes on, and says what each tool needs", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  const asked: unknown[] = [];
+  let settings = { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true, db_auto_approve: false };
+  dbMocks((cmd, args) => {
+    if (cmd === "get_app_settings") return settings;
+    if (cmd === "set_db_auto_approve") {
+      asked.push(args);
+      settings = { ...settings, db_auto_approve: (args as { on: boolean }).on };
+      return [
+        { tool: "Claude Code", applied: true, note: "" },
+        { tool: "VS Code", applied: false, note: "VS Code keeps this in its own window: when it asks about db_query, choose to always allow it (or use Chat: Manage Tool Approval)" },
+      ];
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Signs in as sgdev01db01_devlogin");
+
+  const noAsk = screen.getByRole("switch", { name: "Run database changes without asking" });
+  expect(noAsk).toBeDisabled();
+  expect(noAsk).toHaveAttribute("aria-checked", "false");
+
+  fireEvent.click(screen.getByRole("switch", { name: "Create, update and delete" }));
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Run database changes without asking" })).not.toBeDisabled(),
+  );
+  fireEvent.click(screen.getByRole("switch", { name: "Run database changes without asking" }));
+
+  await waitFor(() => expect(asked).toHaveLength(1));
+  expect((asked[0] as { on: boolean }).on).toBe(true);
+  expect(await screen.findByText(/VS Code keeps this in its own window/)).toBeInTheDocument();
+  expect(screen.queryByText(/Claude Code keeps/)).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Run database changes without asking" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    ),
+  );
+});
+
 /// Forgetting takes every saved login, the choice and permission to write
 /// with it. Leaving writes standing would hand the next database a
 /// decision nobody made about it.

@@ -13,7 +13,14 @@ fn a_missing_file_is_the_defaults() {
     let d = dir();
     assert_eq!(
         load(d.path()),
-        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true }
+        AppSettings {
+            close_to_tray: true,
+            close_notice_shown: false,
+            beta_updates: false,
+            start_minimized: true,
+            // Letting AI tools change the database unasked is a choice, never a default.
+            db_auto_approve: false,
+        }
     );
 }
 
@@ -32,14 +39,26 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
     std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true,"from_the_future":1}"#).unwrap();
     assert_eq!(
         load(d.path()),
-        AppSettings { close_to_tray: true, close_notice_shown: false, beta_updates: true, start_minimized: true }
+        AppSettings {
+            close_to_tray: true,
+            close_notice_shown: false,
+            beta_updates: true,
+            start_minimized: true,
+            db_auto_approve: false,
+        }
     );
 }
 
 #[test]
 fn saved_settings_read_back() {
     let d = dir();
-    let s = AppSettings { close_to_tray: false, close_notice_shown: true, beta_updates: true, start_minimized: false };
+    let s = AppSettings {
+        close_to_tray: false,
+        close_notice_shown: true,
+        beta_updates: true,
+        start_minimized: false,
+        db_auto_approve: true,
+    };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);
 }

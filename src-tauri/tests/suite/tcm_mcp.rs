@@ -687,3 +687,45 @@ fn a_development_build_offers_them_whatever_the_app_says() {
     assert!(offered);
     assert!(off.is_empty());
 }
+
+/// "Run database changes without asking" reaches the assistant as one line
+/// at the end of db_query's description - only on an explicit yes from the
+/// app, so an older app, a failed answer or no app at all never adds it.
+#[test]
+fn db_query_says_not_to_ask_only_when_the_app_says_so() {
+    let db_query_description = |tools_reply: &'static str| {
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            if path == "/tools" {
+                return Ok((200, tools_reply.into()));
+            }
+            Ok((200, "{}".into()))
+        };
+        let resp =
+            handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "db_query")
+            .map(|t| t["description"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    let asked = db_query_description(r#"{"disabled":[],"db_no_ask":true}"#);
+    assert!(asked.ends_with(v2_lib::mcp::DB_NO_ASK), "{asked}");
+    for reply in [r#"{"disabled":[],"db_no_ask":false}"#, r#"{"disabled":[]}"#, "not json"] {
+        let plain = db_query_description(reply);
+        assert!(!plain.contains("without confirmation"), "{reply}: {plain}");
+    }
+    // Only db_query carries it.
+    assert!(!v2_lib::mcp::DB_NO_ASK.is_empty());
+}
+
+#[test]
+fn db_no_ask_needs_an_explicit_yes() {
+    use v2_lib::mcp::db_no_ask_from;
+    assert!(db_no_ask_from(&Ok((200, r#"{"db_no_ask":true}"#.into()))));
+    assert!(!db_no_ask_from(&Ok((200, r#"{"db_no_ask":"true"}"#.into()))));
+    assert!(!db_no_ask_from(&Ok((500, r#"{"db_no_ask":true}"#.into()))));
+    assert!(!db_no_ask_from(&Err("the app is closed".into())));
+}

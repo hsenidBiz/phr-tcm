@@ -27,11 +27,21 @@ pub struct AppSettings {
     /// A start at sign-in (Start with Windows) stays hidden in the tray
     /// instead of opening the window.
     pub start_minimized: bool,
+    /// AI tools run `db_query` without asking the person first: the app
+    /// writes each registered tool's own "always allow" for it, and tells
+    /// the assistant it need not ask. Off unless turned on.
+    pub db_auto_approve: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true }
+        Self {
+            close_to_tray: true,
+            close_notice_shown: false,
+            beta_updates: false,
+            start_minimized: true,
+            db_auto_approve: false,
+        }
     }
 }
 

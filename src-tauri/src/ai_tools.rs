@@ -606,6 +606,104 @@ pub fn remove_entry(
         .map_err(|e| format!("failed to serialize config: {e}"))
 }
 
+/// The Claude Code permission rule that lets our `db_query` run without the
+/// "Allow this tool?" prompt: one tool of one server, never a wildcard.
+pub const CLAUDE_DB_QUERY_RULE: &str = "mcp__tcm-testcases__db_query";
+
+/// A Claude Code settings file's text with `rule` in `permissions.allow`
+/// (`on`) or out of it, and nothing else touched - every other rule, key
+/// and value is somebody else's. `None` when the file already says what was
+/// asked, so an unchanged file is never rewritten.
+///
+/// An empty or missing file reads as `{}`. A file that is not a JSON object
+/// is refused rather than replaced: it is the person's own settings, and
+/// overwriting what the app cannot read would lose it. Taking the rule out
+/// also takes out an `allow` list, and then a `permissions` object, that it
+/// leaves empty - so switching on and off again leaves the file as it was.
+pub fn set_claude_allow(settings: &str, rule: &str, on: bool) -> Result<Option<String>, String> {
+    let text = if settings.trim().is_empty() { "{}" } else { settings };
+    let mut root: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("could not read the settings file: {e}"))?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "the settings file is not a JSON object".to_string())?;
+
+    let has = obj
+        .get("permissions")
+        .and_then(|p| p.get("allow"))
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| a.iter().any(|r| r == rule));
+    if has == on {
+        return Ok(None);
+    }
+
+    if on {
+        let perms = obj
+            .entry("permissions")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| "\"permissions\" in the settings file is not an object".to_string())?;
+        let allow = perms
+            .entry("allow")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| "\"permissions.allow\" in the settings file is not a list".to_string())?;
+        allow.push(serde_json::Value::String(rule.to_string()));
+    } else if let Some(perms) = obj.get_mut("permissions").and_then(|p| p.as_object_mut()) {
+        if let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut()) {
+            allow.retain(|r| r != rule);
+            if allow.is_empty() {
+                perms.remove("allow");
+            }
+        }
+        if perms.is_empty() {
+            obj.remove("permissions");
+        }
+    }
+    serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize settings: {e}"))
+}
+
+/// Cursor's allowlist entry that lets our `db_query` run without asking:
+/// `server:tool`, one tool of one server.
+pub const CURSOR_DB_QUERY_ENTRY: &str = "tcm-testcases:db_query";
+
+/// A Cursor `permissions.json`'s text with `entry` in `mcpAllowlist` (`on`)
+/// or out of it, nothing else touched. `None` when nothing would change.
+/// Same rules as `set_claude_allow`: an unreadable file is refused, never
+/// replaced, and a list the entry leaves empty goes with it.
+pub fn set_cursor_allow(permissions: &str, entry: &str, on: bool) -> Result<Option<String>, String> {
+    let text = if permissions.trim().is_empty() { "{}" } else { permissions };
+    let mut root: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("could not read the permissions file: {e}"))?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "the permissions file is not a JSON object".to_string())?;
+    let has = obj
+        .get("mcpAllowlist")
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| a.iter().any(|r| r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(entry))));
+    if has == on {
+        return Ok(None);
+    }
+    if on {
+        obj.entry("mcpAllowlist")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| "\"mcpAllowlist\" in the permissions file is not a list".to_string())?
+            .push(serde_json::Value::String(entry.to_string()));
+    } else if let Some(list) = obj.get_mut("mcpAllowlist").and_then(|a| a.as_array_mut()) {
+        list.retain(|r| !r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(entry)));
+        if list.is_empty() {
+            obj.remove("mcpAllowlist");
+        }
+    }
+    serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize permissions: {e}"))
+}
+
 /// Writes `contents` to `path` atomically: write to a sibling temp file in
 /// the same directory (so the final `rename` stays on one volume - atomic
 /// on NTFS), then rename it over `path`. Cleans up the temp file if the
