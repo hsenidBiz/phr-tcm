@@ -334,7 +334,10 @@ function applyPatches() {
 
   const patches = {
     authStatus: () => Promise.resolve(auth),
+    resumeSession: () => Promise.resolve(auth),
     signIn: () => ok(auth),
+    signOut: () => err("Demo mode: signing out is disabled"),
+    setStaySignedIn: () => err("Demo mode: sign-in settings are disabled"),
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
     applyUpdate: () => err("Demo mode: updates are disabled"),
 

@@ -199,16 +199,46 @@ test("a PR mention opens its pull request in the app", () => {
 
 /// Each click swings the bell once more (index.css, ico-bell-swing): the
 /// icon is a fresh element per click, so a click mid-swing starts it over.
-test("the bell swings when it is clicked, every time", () => {
+test("the bell rings when it is clicked, every time", () => {
   seed();
   render(<NotificationBell org="acme" />);
   const bell = screen.getByRole("button", { name: /Notifications/ });
-  expect(bell.querySelector("svg")).not.toHaveClass("ico-bell-swing");
+  expect(bell.querySelector("svg")).not.toHaveClass("ico-bell-ring");
   fireEvent.click(bell);
   const first = bell.querySelector("svg");
-  expect(first).toHaveClass("ico-bell-swing");
+  expect(first).toHaveClass("ico-bell-ring");
   fireEvent.click(bell);
   const second = bell.querySelector("svg");
-  expect(second).toHaveClass("ico-bell-swing");
+  expect(second).toHaveClass("ico-bell-ring");
   expect(second).not.toBe(first);
+});
+
+/// The bell is two parts, so a ring can swing the housing and let the
+/// clapper follow on its own momentum (index.css, "ico-bell-ring") - a
+/// single lucide <svg> could only swing as one piece.
+test("the bell's housing and clapper are separate parts, and a click rings them", () => {
+  render(<NotificationBell org="acme" />);
+  const button = screen.getByRole("button", { name: /Notifications/ });
+  const svg = () => button.querySelector("svg")!;
+  expect(svg().querySelector(".ng-bell-housing")).not.toBeNull();
+  expect(svg().querySelector(".ng-bell-clapper")).not.toBeNull();
+  // At rest it does not ring.
+  expect(svg()).not.toHaveClass("ico-bell-ring");
+  fireEvent.click(button);
+  expect(svg()).toHaveClass("ico-bell-ring");
+});
+
+/// A long title or context line wraps instead of being cut off with an
+/// ellipsis: the whole text is the point of the notification.
+test("long titles and context lines wrap rather than being cut off", () => {
+  const title = "Task #158269 assigned to you with a title long enough to need a second line";
+  const body = "[DEV] Performance Assessment | Demo comments for the goal alignment and cascading report";
+  raise("acme", [{ id: "assigned:158269", kind: "assigned", title, body, href: "https://x/158269" }]);
+  render(<NotificationBell org="acme" />);
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  for (const text of [title, body]) {
+    const el = screen.getByText(text);
+    expect(el).not.toHaveClass("truncate");
+    expect(el).toHaveClass("break-words");
+  }
 });

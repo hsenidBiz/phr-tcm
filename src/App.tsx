@@ -24,6 +24,7 @@ import {
   setSessionActive,
   subscribeSessionExpired,
 } from "./lib/sessionExpired";
+import { authQuery } from "./lib/authQuery";
 import {
   addWorkAlerts,
   clearWorkAlerts,
@@ -467,10 +468,10 @@ export default function App() {
   };
 
 
-  const status = useQuery({
-    queryKey: ["auth"],
-    queryFn: () => commands.authStatus(),
-  });
+  // On launch this also tries the sign-in Stay signed in kept (lib/
+  // authQuery.ts), so the loading screen below stays up for that one
+  // round trip and a kept session opens straight into the app.
+  const status = useQuery(authQuery);
 
   // The loading screen (index.html) stays until this answers: before it,
   // `signedIn` reads false, so a signed-in person would see the sign-in

@@ -8,7 +8,8 @@ import { cn } from "../lib/cn";
  * is move as a whole - which read as the picture warping. These draw the
  * same geometry as the lucide icon they replace (Pen Line, File Up, Rotate
  * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, and Work
- * Manager's Git Pull Request, Square Kanban, File Plus Corner; lucide is ISC), split
+ * Manager's Git Pull Request, Square Kanban, File Plus Corner, and the context
+ * bar's Bell; lucide is ISC), split
  * into the parts the animation needs, plus a few pieces that only show
  * mid-animation. At rest every one looks exactly like the lucide original.
  *
@@ -262,6 +263,23 @@ export function GlyphAi(p: GlyphProps) {
         {row(13.4, "10110100110", "01001011001", "ng-bits-1")}
         {row(18, "01101001011", "10010110100", "ng-bits-2")}
       </g>
+    </Glyph>
+  );
+}
+
+/** The context bar's notification bell: lucide's Bell, with the housing and
+ *  the clapper drawn apart. A ring swings the housing, and the clapper -
+ *  hung from the same crown - follows on its own momentum a beat behind,
+ *  overshoots and keeps swinging after the housing has settled. The motion
+ *  is `ico-bell-ring` in index.css, started on click, not on hover. */
+export function GlyphBell(p: GlyphProps) {
+  return (
+    <Glyph kind="bell" {...p}>
+      <path
+        className="ng-bell-housing"
+        d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"
+      />
+      <path className="ng-bell-clapper" d="M10.268 21a2 2 0 0 0 3.464 0" />
     </Glyph>
   );
 }

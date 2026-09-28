@@ -16,7 +16,22 @@ export const commands = {
 	 */
 	prepareBugReport: (title: string, description: string, organization: string, project: string) => typedError<BugReport, string>(__TAURI_INVOKE("prepare_bug_report", { title, description, organization, project })),
 	authStatus: () => __TAURI_INVOKE<AuthStatus>("auth_status"),
+	/**
+	 *  `auth_status`, after first trying the sign-in kept by Stay signed in
+	 *  when nobody is signed in yet. What the app asks on launch: a session
+	 *  Microsoft still honours goes straight in, anything else answers
+	 *  "signed out" and the sign-in screen's button opens the browser as it
+	 *  always did. Cheap once signed in - it answers from memory.
+	 */
+	resumeSession: () => __TAURI_INVOKE<AuthStatus>("resume_session"),
 	signIn: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_in")),
+	/**
+	 *  Sign out: the session goes from memory AND from Credential Manager, and
+	 *  the next browser sign-in asks which account to use. An error means the
+	 *  session is gone from this run but the kept copy could not be removed,
+	 *  so the next launch would sign back in - the person needs to know that.
+	 */
+	signOut: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_out")),
 	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
 	listOrgs: () => typedError<Org[], AdoError>(__TAURI_INVOKE("list_orgs")),
 	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
@@ -832,6 +847,11 @@ export const commands = {
 	 *  never downgrades.
 	 */
 	setBetaUpdates: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_beta_updates", { on })),
+	/**
+	 *  Stay signed in. Off removes the kept sign-in from Credential Manager at
+	 *  once; on keeps the current one, so the very next launch goes straight in.
+	 */
+	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
 };
 
 /** Events */
@@ -929,6 +949,12 @@ export type AppSettings = {
 	 *  the assistant it need not ask. Off unless turned on.
 	 */
 	db_auto_approve?: boolean,
+	/**
+	 *  Stay signed in: the sign-in is kept in Windows Credential Manager
+	 *  and a launch goes straight in while Microsoft still accepts it
+	 *  (`crate::saved_session`). Off: every launch signs in in the browser.
+	 */
+	stay_signed_in?: boolean,
 };
 
 export type AssignedItem = {

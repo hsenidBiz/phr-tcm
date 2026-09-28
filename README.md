@@ -232,9 +232,13 @@ are enforced in code and by tests.
   The delete is permission-gated and fails closed. Plans, suites, runs,
   attachments, comments, board items and pull requests are never removed.
 - The token never crosses the IPC boundary. Your Microsoft access token
-  lives in Rust memory for the session. The app never returns the token to
-  the web layer, writes the token to disk or logs the token. A test fails
-  the build if a token-shaped field appears in the generated bindings.
+  lives in Rust memory for the session. The app never returns a token to
+  the web layer or logs one, and never writes the access token anywhere.
+  With Stay signed in on (the default), the refresh token is kept in
+  Windows Credential Manager, encrypted to your Windows account, and
+  nowhere else. Sign out, or turning the setting off, removes it. A test
+  fails the build if a token-shaped field appears in the generated
+  bindings.
 - Confirm before every write. A review gate precedes any create or update.
   Reads happen freely.
 - Rate-limited writes. A pacer keeps requests within the budget you set,
@@ -249,6 +253,14 @@ Interactive MSAL with PKCE through your system browser, using the Azure
 CLI public client. No Personal Access Token and no app registration. The
 token refreshes silently. A 401 in the middle of a batch prompts you to
 sign in again and resumes the in-flight item.
+
+Stay signed in (Settings → General, on by default) keeps the sign-in
+between launches, so a launch goes straight into the app while Microsoft
+still accepts it. When it no longer does - about 90 days unused, a
+password change, revoked sessions, a sign-in policy that needs you - the
+kept sign-in is removed and the browser opens as before. An offline launch
+keeps it for next time. Sign out removes it, and the next sign-in asks
+which account to use.
 
 ---
 
@@ -331,6 +343,8 @@ src-tauri/                  Rust core
     ai_bridge.rs, mcp.rs    The local bridge and the MCP server the
                             assistants talk to
     auth.rs                 MSAL PKCE loopback sign-in and in-memory token
+    saved_session.rs        Stay signed in: the refresh token kept in
+                            Windows Credential Manager
     steps_xml.rs            Steps XML build and parse (golden-tested)
     model.rs                TestCase and Step domain types
     updater/mod.rs          Velopack auto-update

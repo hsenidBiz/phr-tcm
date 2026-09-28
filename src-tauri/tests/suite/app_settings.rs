@@ -20,6 +20,7 @@ fn a_missing_file_is_the_defaults() {
             start_minimized: true,
             // Letting AI tools change the database unasked is a choice, never a default.
             db_auto_approve: false,
+            stay_signed_in: true,
         }
     );
 }
@@ -45,6 +46,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             beta_updates: true,
             start_minimized: true,
             db_auto_approve: false,
+            stay_signed_in: true,
         }
     );
 }
@@ -58,6 +60,7 @@ fn saved_settings_read_back() {
         beta_updates: true,
         start_minimized: false,
         db_auto_approve: true,
+        stay_signed_in: false,
     };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);
@@ -87,4 +90,13 @@ fn an_older_file_starts_minimized() {
     let d = dir();
     std::fs::write(d.path().join("app-settings.json"), r#"{"close_to_tray":true,"close_notice_shown":true,"beta_updates":false}"#).unwrap();
     assert!(load(d.path()).start_minimized);
+}
+
+/// Stay signed in arrives on for everyone: a settings file from before it
+/// existed turns it on, the same as a fresh install.
+#[test]
+fn an_older_file_stays_signed_in() {
+    let d = dir();
+    std::fs::write(d.path().join("app-settings.json"), r#"{"close_to_tray":true,"beta_updates":false,"start_minimized":true}"#).unwrap();
+    assert!(load(d.path()).stay_signed_in);
 }

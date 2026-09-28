@@ -65,7 +65,7 @@ function renderApp() {
 
 function signedInMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
   mockIPC((cmd, args) => {
-    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update") return null;
     if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
     if (cmd === "list_test_case_fields") return [];
@@ -76,7 +76,7 @@ function signedInMocks(extra: (cmd: string, args: unknown) => unknown = () => un
 
 test("signed out: sign-in view only, no sidebar tabs", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update") return null;
   });
   renderApp();
@@ -96,7 +96,7 @@ test("the app asks for this machine's optional extras switch at startup", async 
   const calls: string[] = [];
   mockIPC((cmd) => {
     calls.push(cmd);
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update") return null;
     if (cmd === "get_extras_unlocked") return true;
   });
@@ -117,7 +117,7 @@ test("the loading screen stays until the app knows whether you are signed in", a
     answer = r;
   });
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return auth;
+    if (cmd === "resume_session") return auth;
     if (cmd === "check_update") return null;
   });
   try {
@@ -580,7 +580,7 @@ test("the path from begin_test_case_writing starts being watched", async () => {
   // `plugin:event|listen` must be left to the mock rather than stubbed here.
   mockIPC(
     (cmd) => {
-      if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+      if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
       if (cmd === "check_update") return null;
       if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
       if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
@@ -627,7 +627,7 @@ test("the path from begin_test_case_writing starts being watched", async () => {
 });
 test("update banner appears when a newer version exists", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update") return { available: "0.5.0", blocked: null };
   });
   renderApp();
@@ -641,7 +641,7 @@ test("update banner appears when a newer version exists", async () => {
 // to do about it, instead of blandly re-offering the same version.
 test("a failed update attempt is explained, not silently re-offered", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update")
       return { available: "0.5.0", blocked: null, failed_attempt: "0.5.0" };
   });
@@ -665,7 +665,7 @@ test("a release published while the app is open is noticed within the hour", asy
   });
   let checks = 0;
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update") {
       checks += 1;
       // Nothing on launch; a release lands between the first and second.
@@ -702,7 +702,7 @@ test("a release published while the app is open is noticed within the hour", asy
 test("the update banner shows how much of the package has downloaded", async () => {
   mockIPC(
     (cmd) => {
-      if (cmd === "auth_status") return { signed_in: false, account: null };
+      if (cmd === "resume_session") return { signed_in: false, account: null };
       if (cmd === "check_update") return { available: "0.5.0", blocked: null };
       // Never resolves: the download is still in flight for the whole test,
       // which is exactly the window the bar exists for.
@@ -757,7 +757,7 @@ test("the update banner shows how much of the package has downloaded", async () 
 test("a slowdown toast appears once, and is debounced against a second event", async () => {
   mockIPC(
     (cmd) => {
-      if (cmd === "auth_status") return { signed_in: false, account: null };
+      if (cmd === "resume_session") return { signed_in: false, account: null };
       if (cmd === "check_update") return null;
     },
     { shouldMockEvents: true },
@@ -786,7 +786,7 @@ test("a slowdown toast appears once, and is debounced against a second event", a
 /// difference is told to the person who ASKED, in the toast.
 test("a failed update check shows no banner", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "resume_session") return { signed_in: false, account: null };
     if (cmd === "check_update") return { available: null, blocked: "Could not reach the update feed" };
   });
   renderApp();
@@ -1387,7 +1387,7 @@ test("clicking the tab the tour asks for moves the app and carries the tour on",
 test("signing out mid-tour ends the tour and unlocks the app", async () => {
   let signedIn = true;
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: signedIn, account: signedIn ? "a@b.com" : null };
+    if (cmd === "resume_session") return { signed_in: signedIn, account: signedIn ? "a@b.com" : null };
     if (cmd === "check_update") return null;
     if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
     if (cmd === "list_test_case_fields") return [];
@@ -1430,7 +1430,7 @@ test("capture mode suppresses the tour, the what's new modal, the update banner 
   // suppress them.
   localStorage.setItem("tcm-v2-changelog-seen", "1.25.28");
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update") return { available: "9.9.9", blocked: null, failed_attempt: null };
     if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
     if (cmd === "list_test_case_fields") return [];
@@ -1459,7 +1459,7 @@ test("capture mode suppresses the tour, the what's new modal, the update banner 
 test("capture mode hides the DEV BUILD panel in a forced dev build; off, it shows", async () => {
   const devMocks = () =>
     mockIPC((cmd) => {
-      if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+      if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
       if (cmd === "check_update") return null;
       if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
       if (cmd === "list_test_case_fields") return [];
