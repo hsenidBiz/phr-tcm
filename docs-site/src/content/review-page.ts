@@ -52,7 +52,7 @@ export const reviewPage: Screen = {
   groups: [
     { id: "search", title: "Search and options", summary: "Find a case, and choose what the page shows." },
     { id: "case", title: "A test case", summary: "Everything about one case, and your comment on it." },
-    { id: "side", title: "The whole set and the spec", summary: "Comments about a file as a whole, and the specification beside the cases." },
+    { id: "side", title: "The whole set and the spec", summary: "Comments about a file as a whole, the specification beside the cases, and light or dark." },
     { id: "map", title: "The Test map", summary: "The same cases as a tree of their areas." },
   ],
   controls: [
@@ -60,7 +60,9 @@ export const reviewPage: Screen = {
     {
       id: "scheme",
       shot: PAGE,
-      group: "search",
+      // In the corner above the side column: in "search" it stretched that
+      // group's outline across the whole header.
+      group: "side",
       locate: { css: "#scheme-switch" },
       name: "Light / Dark",
       does: "Switches the page between light and dark. It starts in the app's own theme.",

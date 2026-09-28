@@ -634,13 +634,6 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
       await target.mouse.move(2, 2).catch(() => {});
       await settle(target);
       await untilStill(target, controls, size);
-      guard();
-      if (staging) {
-        const dir = join(staging, pass.dir);
-        mkdirSync(dir, { recursive: true });
-        await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
-      }
-
       let placed = 0;
       if (passIndex === 0) positions[shot.id] = { size, controls: {} };
       for (const control of controls) {
@@ -668,6 +661,21 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
           }
         }
       }
+      // Photographed AFTER the boxes are measured. Leaving the capture's
+      // density override also drops Playwright's viewport (it is set the
+      // same way), and the page falls back to its real window. The app's
+      // window is the shot's size anyway, but headless Edge's is 1410x805:
+      // measured after the picture, the review page had re-laid itself out
+      // narrower and every box sat 30 px beside what the picture shows. The
+      // override itself changes only the density, so boxes measured now
+      // describe exactly what it photographs.
+      guard();
+      if (staging) {
+        const dir = join(staging, pass.dir);
+        mkdirSync(dir, { recursive: true });
+        await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
+      }
+
       console.log(`  ${shot.id}  ${placed}/${controls.length} controls`);
     }
   }
