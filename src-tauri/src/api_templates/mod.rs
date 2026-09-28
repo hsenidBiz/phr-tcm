@@ -138,8 +138,8 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 /// Decodes only well-formed `%XX` escapes; anything else (a lone `%`, a
-/// non-hex pair) passes through unchanged. Used solely to catch a `..`
-/// segment smuggled in as `%2e%2e` - not a general URL decoder.
+/// non-hex pair) passes through unchanged. Not a general URL decoder - see
+/// `fully_decode`, which is what `is_safe_relative_path` actually uses.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -160,21 +160,45 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Applies `percent_decode` until it stops changing the string, so a
+/// double-encoded `..` (`%252e%252e` - one decode pass turns that into the
+/// inert-looking `%2e%2e`, and only a second pass reveals `..`) cannot
+/// slip past a single-pass check. Capped at a handful of passes: a real
+/// path never needs more, and a pathological input must not loop forever.
+fn fully_decode(path: &str) -> String {
+    let mut current = path.to_string();
+    for _ in 0..8 {
+        let next = percent_decode(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
 /// A step's `path`: exactly one leading `/` (not `//`, which a browser
-/// reads as protocol-relative), no backslash anywhere, no `..` segment
-/// even percent-encoded, and - belt and braces - still the same origin
-/// once laid after a placeholder origin, using the same rule the sign-in
-/// recipe uses (`recipe::origin_of`).
+/// reads as protocol-relative) - checked on the raw text, since decoding
+/// never changes where that leading slash falls - then, decoded (fully,
+/// so `..%2f`, `%2e%2e%2f` and a double-encoded escape are all caught the
+/// same as a literal `..`): no backslash anywhere, and no `..` segment,
+/// treating `\` as a segment separator too since an encoded backslash
+/// only appears after decoding.
 fn is_safe_relative_path(path: &str) -> bool {
     if !path.starts_with('/') || path.starts_with("//") {
         return false;
     }
-    if path.contains('\\') {
+    let decoded = fully_decode(path);
+    if decoded.contains('\\') {
         return false;
     }
-    if path.split('/').any(|seg| percent_decode(seg) == "..") {
+    if decoded.split(['/', '\\']).any(|seg| seg == "..") {
         return false;
     }
+    // Defense in depth, not load-bearing given the checks above: confirms
+    // that laying the raw `path` after a placeholder origin still can't
+    // move the request off that origin, using the exact rule the sign-in
+    // recipe uses.
     origin_of(&format!("https://x.invalid{path}")).as_deref() == Some("https://x.invalid")
 }
 

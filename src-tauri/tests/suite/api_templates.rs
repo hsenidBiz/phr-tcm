@@ -84,12 +84,35 @@ fn ids_are_lowercase_filename_safe_and_short() {
 
 #[test]
 fn only_relative_paths_on_the_same_origin() {
-    for p in ["https://evil.test/x", "//evil.test/x", "/\\evil.test", "hr/x", "/hr/../x", "/hr/%2e%2e/x"] {
+    for p in [
+        "https://evil.test/x",
+        "//evil.test/x",
+        "/\\evil.test",
+        "hr/x",
+        "/hr/../x",
+        "/hr/%2e%2e/x",
+        // An encoded slash inside a ".." segment still decodes to a real
+        // ".." segment - splitting the RAW path on '/' before decoding
+        // (the earlier, wrong approach) would miss all of these.
+        "/a/..%2fb",
+        "/a/..%2Fb",
+        "/a/%2e%2e%2fb",
+        "/a/..%5cb",
+        // Double-encoded: one decode pass looks like the inert `%2e%2e`;
+        // only a second pass reveals "..".
+        "/hr/%252e%252e/x",
+    ] {
         let mut v = draft();
         v["steps"][0]["path"] = json!(p);
         let err = parse_draft(&v).unwrap_err();
         assert!(err.iter().any(|e| e.contains("Cycle setup")), "path {p:?}: {err:?}");
     }
+
+    // An ordinary encoded character that isn't part of a traversal attempt
+    // is still accepted.
+    let mut v = draft();
+    v["steps"][0]["path"] = json!("/hr/a%20b");
+    assert!(parse_draft(&v).is_ok());
 }
 
 #[test]
