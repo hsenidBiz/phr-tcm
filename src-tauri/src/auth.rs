@@ -1,7 +1,9 @@
 //! Microsoft Entra ID sign-in via OAuth2 authorization-code + PKCE (RFC 7636)
 //! against the well-known Azure CLI public client — no app registration, no
-//! PATs, no client secret. Tokens live in [`AuthState`] in Rust memory only
-//! and must never be returned over IPC (enforced by tests/bindings.rs).
+//! PATs, no client secret. Tokens live in [`AuthState`] in Rust memory and
+//! must never be returned over IPC (enforced by tests/bindings.rs). The one
+//! exception to "memory only" is Stay signed in: the refresh token is kept
+//! in Windows Credential Manager between launches (`crate::saved_session`).
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
@@ -66,6 +68,13 @@ pub fn store_refreshed(state: &mut AuthState, sent_refresh_token: &str, fresh: T
         state.tokens = Some(fresh);
     }
     still_current
+}
+
+/// The authorize URL, made to ask which account to use. After Sign out the
+/// browser still holds the Microsoft session it signed in with, and without
+/// this it would sign straight back in to the same account.
+pub fn choosing_account(authorize_url: String) -> String {
+    authorize_url + "&prompt=select_account"
 }
 
 pub fn build_authorize_url(challenge: &str, redirect_uri: &str, state: &str) -> String {
@@ -138,6 +147,19 @@ pub const SIGN_IN_NET_UNREACHABLE: &str =
 pub const SIGN_IN_NET_GENERIC: &str =
     "The connection to Microsoft sign-in failed. Try again - restart the app if it keeps happening. Settings → Logs has the details.";
 
+/// How every refusal from the token endpoint begins. A refusal is Microsoft
+/// saying no to THIS token or request - expired, revoked, a policy that now
+/// wants the person at the keyboard - which is what makes a saved sign-in
+/// worth forgetting (`is_refusal`). Trouble on Microsoft's side is not.
+pub const SIGN_IN_REFUSED: &str = "Microsoft sign-in refused the request";
+pub const SIGN_IN_UNAVAILABLE: &str = "Microsoft sign-in is having trouble right now";
+
+/// True when `error` (from `refresh` or the code exchange) is a refusal,
+/// not a network failure or a problem on Microsoft's side.
+pub fn is_refusal(error: &str) -> bool {
+    error.starts_with(SIGN_IN_REFUSED)
+}
+
 fn sign_in_network_error(e: &reqwest::Error) -> String {
     if e.is_timeout() {
         SIGN_IN_NET_TIMEOUT
@@ -184,8 +206,14 @@ async fn post_token_endpoint(url: &str, params: &[(&str, String)]) -> Result<Tok
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
             .take(40)
             .collect();
+        // A 5xx or a 429 is Microsoft's side, not a verdict on the token.
+        if status.is_server_error() || status.as_u16() == 429 {
+            return Err(format!(
+                "{SIGN_IN_UNAVAILABLE} ({code}). Try again in a few minutes - Settings → Logs has the details."
+            ));
+        }
         return Err(format!(
-            "Microsoft sign-in refused the request ({code}). Sign in again - Settings → Logs has the details."
+            "{SIGN_IN_REFUSED} ({code}). Sign in again - Settings → Logs has the details."
         ));
     }
     resp.json().await.map_err(|e| {
@@ -418,8 +446,9 @@ pub fn await_redirect(
 }
 
 /// Runs the interactive flow: opens the system browser at the authorize URL,
-/// waits for the loopback redirect, exchanges the code.
-pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, String> {
+/// waits for the loopback redirect, exchanges the code. `choose_account`
+/// makes Microsoft ask which account to use (see `choosing_account`).
+pub async fn sign_in_interactive(open_url: impl Fn(&str), choose_account: bool) -> Result<TokenSet, String> {
     use std::net::TcpListener;
 
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -431,7 +460,8 @@ pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, St
     let redirect_uri = format!("http://localhost:{port}");
     let (verifier, challenge) = pkce_pair();
     let state = b64url(&rand::random::<[u8; 16]>());
-    open_url(&build_authorize_url(&challenge, &redirect_uri, &state));
+    let url = build_authorize_url(&challenge, &redirect_uri, &state);
+    open_url(&if choose_account { choosing_account(url) } else { url });
 
     let code = tokio::task::spawn_blocking(move || {
         await_redirect(listener, &state, SIGN_IN_WINDOW, LOOPBACK_READ_TIMEOUT)

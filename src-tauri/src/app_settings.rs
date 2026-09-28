@@ -1,6 +1,7 @@
 //! The app's own settings: whether closing the main window keeps it running
-//! in the tray, whether the one-time notice about that has been shown, and
-//! whether this install takes beta builds.
+//! in the tray, whether the one-time notice about that has been shown,
+//! whether this install takes beta builds, and whether the sign-in is kept
+//! between launches.
 //!
 //! Rust owns them, not the webview's storage, because they are needed
 //! before any page loads (the close handler, the update check at launch)
@@ -27,11 +28,21 @@ pub struct AppSettings {
     /// A start at sign-in (Start with Windows) stays hidden in the tray
     /// instead of opening the window.
     pub start_minimized: bool,
+    /// Stay signed in: the sign-in is kept in Windows Credential Manager
+    /// and a launch goes straight in while Microsoft still accepts it
+    /// (`crate::saved_session`). Off: every launch signs in in the browser.
+    pub stay_signed_in: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true }
+        Self {
+            close_to_tray: true,
+            close_notice_shown: false,
+            beta_updates: false,
+            start_minimized: true,
+            stay_signed_in: true,
+        }
     }
 }
 

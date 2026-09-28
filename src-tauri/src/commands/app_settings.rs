@@ -68,3 +68,16 @@ pub fn set_start_minimized(on: bool) -> Result<AppSettings, String> {
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
 }
+
+/// Stay signed in. Off removes the kept sign-in from Credential Manager at
+/// once; on keeps the current one, so the very next launch goes straight in.
+#[tauri::command]
+#[specta::specta]
+pub fn set_stay_signed_in(app: tauri::AppHandle, on: bool) -> Result<AppSettings, String> {
+    let settings = app_settings::update(|s| s.stay_signed_in = on).map_err(|e| {
+        crate::applog::warn(format!("saving the stay signed in setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    crate::saved_session::keep_for_next_launch(&app);
+    Ok(settings)
+}

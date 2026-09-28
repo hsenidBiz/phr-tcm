@@ -9,6 +9,7 @@ import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
 import { commands, type AppSettings } from "../bindings";
 import { copyText } from "../lib/clipboard";
+import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
@@ -482,6 +483,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       </SettingsCard>
 
       <SettingsCard title="General" data-settings-card="general">
+        <AccountSettings />
         <BackgroundSettings />
         {/* Three levels, one pressed. Only the chosen level's explanation
             shows, under the row - the three used to be stacked as large

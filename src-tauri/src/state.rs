@@ -111,8 +111,26 @@ where
 }
 
 /// Returns a valid access token, silently refreshing when it is within
-/// 5 minutes of expiry. The token itself never leaves the Rust side.
+/// 5 minutes of expiry. The token itself never leaves the Rust side. A
+/// refresh hands back a new refresh token, and Stay signed in keeps that
+/// one for the next launch.
 pub(crate) async fn get_fresh_token(app: &tauri::AppHandle) -> Result<String, ado::AdoError> {
+    use std::sync::atomic::{AtomicBool, Ordering};
     let state = app.state::<Mutex<auth::AuthState>>();
-    fresh_token_with(&state, |rt, account| async move { auth::refresh(&rt, account).await }).await
+    let refreshed = AtomicBool::new(false);
+    let token = fresh_token_with(&state, |rt, account| {
+        let refreshed = &refreshed;
+        async move {
+            let fresh = auth::refresh(&rt, account).await;
+            if fresh.is_ok() {
+                refreshed.store(true, Ordering::Relaxed);
+            }
+            fresh
+        }
+    })
+    .await?;
+    if refreshed.load(Ordering::Relaxed) {
+        crate::saved_session::keep_for_next_launch(app);
+    }
+    Ok(token)
 }

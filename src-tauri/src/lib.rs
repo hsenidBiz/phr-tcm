@@ -37,6 +37,7 @@ pub mod optimize;
 pub mod pipelines;
 pub mod report;
 pub mod run_order;
+pub mod saved_session;
 pub mod spec_pane;
 pub mod speccov;
 pub mod state;
@@ -88,7 +89,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::ping,
             misc::prepare_bug_report,
             auth::auth_status,
+            auth::resume_session,
             auth::sign_in,
+            auth::sign_out,
             discovery::list_projects,
             discovery::list_orgs,
             discovery::search_pbis,
@@ -246,7 +249,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,
-            app_settings::set_beta_updates
+            app_settings::set_beta_updates,
+            app_settings::set_stay_signed_in
         ])
 }
 
@@ -356,6 +360,8 @@ pub fn run() {
         // Each database's saved login. Shared, not owned, because the AI
         // bridge's context carries the same store to its database tools.
         .manage(db::DbSecrets(std::sync::Arc::new(db::CredentialManager)))
+        // Stay signed in's kept session - the same per-user vault.
+        .manage(saved_session::SessionVault::new(std::sync::Arc::new(db::CredentialManager)))
         .invoke_handler(builder.invoke_handler())
         .on_window_event(tray::on_window_event)
         // Once, for the main window's first load: the gap between the

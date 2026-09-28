@@ -88,6 +88,7 @@ mod pipelines;
 mod relink;
 mod report;
 mod run_order;
+mod saved_session;
 mod spec_pane;
 mod speccov;
 mod speccov_bridge;
