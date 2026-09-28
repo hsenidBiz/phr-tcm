@@ -240,6 +240,10 @@ async fn a_refused_statement_stops_the_whole_batch_before_sqlcmd() {
 
 #[tokio::test]
 async fn a_batch_that_saves_says_so_with_every_count() {
+    // `run_batch_query` also touches `activity_log`'s process-wide
+    // directory now - held so a concurrent test's own tempdir assertions
+    // never see a stray write from this one (see serial::activity_log).
+    let _act = crate::serial::activity_log();
     let out = format!("{MARK}|1|2\n{MARK}|2|24\n{MARK}|3|48\n{MARK}|4|8\n{MARK}|end|saved\n");
     let fake = FakeRunner::answering(0, &out);
     let said = run_batch_query(&fake, &exe(), &dev_login(), true, &four_updates(), false).await.unwrap();
@@ -251,6 +255,7 @@ async fn a_batch_that_saves_says_so_with_every_count() {
 
 #[tokio::test]
 async fn a_dry_run_says_nothing_was_saved() {
+    let _act = crate::serial::activity_log();
     let out = format!("{MARK}|1|2\n{MARK}|2|24\n{MARK}|3|48\n{MARK}|4|8\n{MARK}|end|rolled-back\n");
     let fake = FakeRunner::answering(0, &out);
     let said = run_batch_query(&fake, &exe(), &dev_login(), true, &four_updates(), true).await.unwrap();
@@ -260,6 +265,7 @@ async fn a_dry_run_says_nothing_was_saved() {
 
 #[tokio::test]
 async fn a_count_that_does_not_match_rolls_everything_back_and_says_what_ran() {
+    let _act = crate::serial::activity_log();
     // What sqlcmd prints when the row check throws after statement 2.
     let out = format!(
         "{MARK}|1|2\n{MARK}|2|30\nMsg 50000, Level 16, State 1, Server dev, Line 14\nstatement 2 affected 30 rows, expected 24\n"
@@ -277,6 +283,7 @@ async fn a_count_that_does_not_match_rolls_everything_back_and_says_what_ran() {
 
 #[tokio::test]
 async fn the_two_write_doors_apply_to_a_batch_as_a_whole() {
+    let _act = crate::serial::activity_log();
     let fake = FakeRunner::answering(0, "");
     let (status, said) = run_batch_query(&fake, &exe(), &dev_login(), false, &four_updates(), true)
         .await

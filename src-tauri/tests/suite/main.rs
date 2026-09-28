@@ -20,6 +20,7 @@
 mod common;
 mod serial;
 
+mod activity_log;
 mod ado;
 mod ado_boards;
 mod ado_git;

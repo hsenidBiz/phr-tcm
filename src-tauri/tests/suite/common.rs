@@ -247,6 +247,31 @@ impl FakePage {
     }
 }
 
+/// Every record from `dir`'s `{kind}-*.jsonl` files (as `activity_log::init`
+/// was pointed at it), parsed and in file-then-line order. A bad line is
+/// skipped rather than panicking the test that called this - the point is
+/// to read back what `activity_log::record` wrote, not to validate it.
+pub fn activity_records(dir: &std::path::Path, kind: &str) -> Vec<Value> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            name.starts_with(&format!("{kind}-")) && name.ends_with(".jsonl")
+        })
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .flat_map(|text| {
+            text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// The password `stateful_app`'s account signs in with. Used by both
 /// `autorun_signin.rs` and `autorun_runner.rs` - one stateful fake, never
 /// copied.

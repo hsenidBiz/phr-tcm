@@ -6,6 +6,7 @@ pub mod ado;
 pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
+pub mod activity_log;
 pub mod applog;
 pub mod autorun;
 pub mod branchcheck;
@@ -121,6 +122,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::log_ui,
             misc::app_log_dir,
             misc::open_app_log_dir,
+            misc::open_activity_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,
             misc::export_app_backup,
@@ -394,7 +396,11 @@ pub fn run() {
             // an in-memory tail Settings can show for bug reports.
             use tauri::Manager;
             if let Ok(dir) = app.path().app_log_dir() {
-                applog::init(dir);
+                applog::init(dir.clone());
+                // Detailed DB (and later API) records: same base folder,
+                // its own subfolder so `applog`'s own pruning never looks
+                // inside it - see activity_log.rs.
+                activity_log::init(dir.join("activity"));
             }
             // The app's one Rust-side cache (project tags, resolved suites,
             // the assigned-items baseline), on disk and shared by the UI and

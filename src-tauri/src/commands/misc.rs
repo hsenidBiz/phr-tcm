@@ -56,6 +56,21 @@ pub fn open_app_log_dir() -> Result<(), String> {
     })
 }
 
+/// Open the activity folder - the full DB (and, later, API) statement
+/// trail `activity_log` writes, kept apart from the app log's own daily
+/// files. Same reasoning as `open_app_log_dir`: only Rust can `open_path`.
+#[tauri::command]
+#[specta::specta]
+pub fn open_activity_log_dir() -> Result<(), String> {
+    let Some(dir) = crate::activity_log::directory() else {
+        return Err("The activity folder is not set up yet.".into());
+    };
+    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| {
+        crate::applog::warn(format!("open activity folder failed: {e}"));
+        "Could not open the activity folder.".to_string()
+    })
+}
+
 /// Non-blocking update check; Some(version) when a newer build is published.
 #[tauri::command]
 #[specta::specta]

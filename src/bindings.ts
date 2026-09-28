@@ -150,6 +150,12 @@ export const commands = {
 	 */
 	openAppLogDir: () => typedError<null, string>(__TAURI_INVOKE("open_app_log_dir")),
 	/**
+	 *  Open the activity folder - the full DB (and, later, API) statement
+	 *  trail `activity_log` writes, kept apart from the app log's own daily
+	 *  files. Same reasoning as `open_app_log_dir`: only Rust can `open_path`.
+	 */
+	openActivityLogDir: () => typedError<null, string>(__TAURI_INVOKE("open_activity_log_dir")),
+	/**
 	 *  Download the pending update and restart into it, streaming
 	 *  `UpdateProgress` so the banner can show how much is left.
 	 * 

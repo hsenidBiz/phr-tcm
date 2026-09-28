@@ -735,6 +735,28 @@ test("Open log folder asks Rust to open it", async () => {
   expect(calls.some((c) => c.startsWith("plugin:opener|"))).toBe(false);
 });
 
+/// The detailed DB (and later API) statement trail lives apart from the
+/// app log - its own folder, opened the same way: only Rust can
+/// `open_path`, so this button calls straight through to Rust too.
+test("Open activity folder asks Rust to open it", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(String(cmd));
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+    if (cmd === "open_activity_log_dir") return { status: "ok", data: null };
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+  const open = await screen.findByRole("button", { name: "Open activity folder" });
+  fireEvent.click(open);
+  await waitFor(() => expect(calls).toContain("open_activity_log_dir"));
+  expect(calls.some((c) => c.startsWith("plugin:opener|"))).toBe(false);
+});
+
 /// The "How To Use" button is one click from Settings, same shape as the
 /// other buttons that open something from Rust.
 test("How To Use opens the help site", async () => {

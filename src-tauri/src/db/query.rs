@@ -14,7 +14,11 @@
 //! file does.
 
 use std::path::Path;
+use std::time::Instant;
 
+use serde_json::json;
+
+use crate::activity_log::{self, Kind};
 use super::guard::{self, Verdict};
 use super::{schema, sqlcmd};
 use sqlcmd::{Connection, Runner};
@@ -52,49 +56,48 @@ pub fn lookup_limit(asked: Option<i64>) -> usize {
     }
 }
 
-/// The line Settings -> Logs shows for one statement: what kind it was,
-/// which server and database it went to, and the statement itself. A write
-/// is written whole, because a write is the thing somebody may later need
-/// to undo by hand; a read is cut at `READ_LOG_CHARS`, since a SELECT can
-/// carry a page of values and the log is a trail, not a transcript.
-///
-/// The user and the password are never in it. Pure and separate from the
-/// route so it can be asserted without a log file, the same shape as
-/// `ai_bridge::describe_try`.
-pub fn log_line(c: &Connection, verdict: &Verdict, sql: &str) -> String {
-    let kind = if matches!(verdict, Verdict::Write) { "Write" } else { "Read" };
-    // Flattened, because a multi-line statement would otherwise become
-    // several log lines and only the first would look like one.
-    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    let shown = if matches!(verdict, Verdict::Write) {
-        one_line
-    } else {
-        cut(&one_line, READ_LOG_CHARS)
-    };
-    format!("db query ({kind}) on {}/{}: {shown}", c.server, c.database)
+/// `{server}/{database}`, the way every activity record and app-log
+/// summary below names the connection - never the user or the password.
+fn conn_label(c: &Connection) -> String {
+    format!("{}/{}", c.server, c.database)
 }
 
-/// How much of a read's statement the log keeps.
-const READ_LOG_CHARS: usize = 200;
+/// A statement that never ran at all - refused by the guard, or shaped
+/// like a write and stopped at one of the two write doors. Recorded for
+/// the same reason a run is: a person looking for why an assistant "did
+/// nothing" needs the attempt in the trail, not just the ones that got
+/// through. The full statement goes to the activity log; `applog` gets a
+/// short summary with no SQL in it at all.
+fn record_refusal(c: &Connection, why: &str, sql: &str) {
+    let conn = conn_label(c);
+    activity_log::record(
+        Kind::Db,
+        json!({ "connection": conn, "verdict": "refused", "why": why, "sql": sql }),
+    );
+    crate::applog::info(format!("db query refused on {conn}: {why}"));
+}
 
-fn cut(text: &str, at: usize) -> String {
-    if text.chars().count() <= at {
-        return text.to_string();
+/// Every `(N row affected)` / `(N rows affected)` footer sqlcmd prints,
+/// summed - a batch's own wrapper can print more than one. Separate from
+/// `sqlcmd::BatchRun::rows`, which reads the wrapper's own markers rather
+/// than sqlcmd's prose, because a plain `run_query` has no wrapper to read
+/// them from.
+pub fn rows_affected(stdout: &str) -> Option<i64> {
+    let mut total = 0i64;
+    let mut found = false;
+    for line in stdout.lines() {
+        let Some(inner) =
+            line.trim().strip_prefix('(').and_then(|s| s.strip_suffix(" affected)"))
+        else {
+            continue;
+        };
+        let Some(n) = inner.split_whitespace().next().and_then(|s| s.parse::<i64>().ok()) else {
+            continue;
+        };
+        total += n;
+        found = true;
     }
-    text.chars().take(at).collect()
-}
-
-/// The line Settings -> Logs shows for a statement that never ran at all -
-/// refused by the guard, or shaped like a write and stopped at one of the
-/// two write doors. Logged for the same reason a run is: a person looking
-/// for why an assistant "did nothing" needs the attempt in the trail, not
-/// just the ones that got through.
-///
-/// Always cut at `READ_LOG_CHARS`, whatever kind of statement it was - it
-/// never reached sqlcmd, so there is no executed write to keep whole for.
-fn refusal_log_line(c: &Connection, why: &str, sql: &str) -> String {
-    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("db query refused on {}/{}: {why} - {}", c.server, c.database, cut(&one_line, READ_LOG_CHARS))
+    found.then_some(total)
 }
 
 /// One statement from the assistant, if it may run at all.
@@ -113,32 +116,58 @@ pub async fn run_query<R: Runner>(
     let verdict = guard::classify(sql);
     match &verdict {
         Verdict::Refused(why) => {
-            crate::applog::info(refusal_log_line(c, why, sql));
+            record_refusal(c, why, sql);
             return Err((400, why.clone()));
         }
         Verdict::Write => {
             if !writes_on {
-                crate::applog::info(refusal_log_line(c, WRITES_OFF, sql));
+                record_refusal(c, WRITES_OFF, sql);
                 return Err((400, WRITES_OFF.to_string()));
             }
             if guard::access_for_user(&c.user) != guard::Access::DevWrites {
-                crate::applog::info(refusal_log_line(c, guard::READ_ONLY_SENTENCE, sql));
+                record_refusal(c, guard::READ_ONLY_SENTENCE, sql);
                 return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
             }
         }
         Verdict::Read => {}
     }
 
-    // Logged before it runs, not after: a statement that hangs or takes
-    // the connection down is exactly the one somebody needs to find.
-    crate::applog::info(log_line(c, &verdict, sql));
+    let (verdict_str, kind_title) =
+        if matches!(verdict, Verdict::Write) { ("write", "Write") } else { ("read", "Read") };
+    let conn = conn_label(c);
 
-    match sqlcmd::run_sql(r, exe, c, sql).await {
-        Ok((text, capped)) => Ok(with_cap_note(&text, capped)),
+    // Recorded after the process returns, not before: the full statement
+    // now only ever goes to the activity log, and that record needs to say
+    // how the run ended, not just that it was attempted.
+    let started = Instant::now();
+    let result = sqlcmd::run_sql(r, exe, c, sql).await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match result {
+        Ok((text, capped)) => {
+            let rows = rows_affected(&text);
+            activity_log::record(
+                Kind::Db,
+                json!({
+                    "connection": conn, "verdict": verdict_str, "sql": sql,
+                    "ok": true, "rows": rows, "duration_ms": duration_ms,
+                }),
+            );
+            let rows_note = rows.map(|n| format!(", {n} rows")).unwrap_or_default();
+            crate::applog::info(format!("db query ({kind_title}) on {conn}: ok{rows_note}, {duration_ms} ms"));
+            Ok(with_cap_note(&text, capped))
+        }
         // Whatever the server said, redacted by `run_sql` on the way out.
         // 502 rather than 400: the statement was allowed and sent, and
         // something beyond this app answered.
-        Err(said) => Err((502, format!("the database refused the statement: {said}"))),
+        Err(said) => {
+            activity_log::record(
+                Kind::Db,
+                json!({ "connection": conn, "verdict": verdict_str, "sql": sql, "ok": false, "duration_ms": duration_ms }),
+            );
+            crate::applog::info(format!("db query ({kind_title}) on {conn}: failed, {duration_ms} ms"));
+            Err((502, format!("the database refused the statement: {said}")))
+        }
     }
 }
 
@@ -174,35 +203,53 @@ pub async fn run_batch_query<R: Runner>(
     let verdict = match batch::validate(statements, guard::Access::DevWrites) {
         Ok(v) => v,
         Err(why) => {
-            crate::applog::info(refusal_log_line(c, &why, &joined()));
+            record_refusal(c, &why, &joined());
             return Err((400, why));
         }
     };
     if verdict == Verdict::Write {
         if !writes_on {
-            crate::applog::info(refusal_log_line(c, WRITES_OFF, &joined()));
+            record_refusal(c, WRITES_OFF, &joined());
             return Err((400, WRITES_OFF.to_string()));
         }
         if guard::access_for_user(&c.user) != guard::Access::DevWrites {
-            crate::applog::info(refusal_log_line(c, guard::READ_ONLY_SENTENCE, &joined()));
+            record_refusal(c, guard::READ_ONLY_SENTENCE, &joined());
             return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
         }
     }
 
-    let kind = if verdict == Verdict::Write { "Write" } else { "Read" };
     let dry = if dry_run { ", dry run" } else { "" };
-    let one_line = joined().split_whitespace().collect::<Vec<_>>().join(" ");
-    let shown = if verdict == Verdict::Write { one_line } else { cut(&one_line, READ_LOG_CHARS) };
-    crate::applog::info(format!(
-        "db batch ({kind}, {} statements{dry}) on {}/{}: {shown}",
-        statements.len(),
-        c.server,
-        c.database
-    ));
+    let conn = conn_label(c);
+    let n = statements.len();
 
-    match sqlcmd::run_batch(r, exe, c, statements, dry_run).await {
-        Ok(run) => Ok(batch_answer(statements, &run, dry_run)),
-        Err(said) => Err((502, said)),
+    let started = Instant::now();
+    let result = sqlcmd::run_batch(r, exe, c, statements, dry_run).await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(run) => {
+            let rows: i64 = run.rows.iter().flatten().sum();
+            activity_log::record(
+                Kind::Db,
+                json!({
+                    "connection": conn, "verdict": "batch", "sql": joined(), "dry_run": dry_run,
+                    "ok": true, "rows": rows, "duration_ms": duration_ms,
+                }),
+            );
+            crate::applog::info(format!("db batch ({n} statements{dry}) on {conn}: ok, {duration_ms} ms"));
+            Ok(batch_answer(statements, &run, dry_run))
+        }
+        Err(said) => {
+            activity_log::record(
+                Kind::Db,
+                json!({
+                    "connection": conn, "verdict": "batch", "sql": joined(), "dry_run": dry_run,
+                    "ok": false, "duration_ms": duration_ms,
+                }),
+            );
+            crate::applog::info(format!("db batch ({n} statements{dry}) on {conn}: failed, {duration_ms} ms"));
+            Err((502, said))
+        }
     }
 }
 
@@ -288,12 +335,9 @@ pub async fn run_lookup<R: Runner>(
     limit: usize,
 ) -> Result<String, (u16, String)> {
     let query = query.trim();
-    crate::applog::info(format!(
-        "db lookup on {}/{}: {}",
-        c.server,
-        c.database,
-        cut(query, READ_LOG_CHARS)
-    ));
+    let conn = conn_label(c);
+    activity_log::record(Kind::Db, json!({ "connection": conn, "verdict": "lookup", "sql": query }));
+    crate::applog::info(format!("db lookup on {conn}"));
 
     if let Some(sql) = schema::describe_sql(query) {
         let tsv = read(r, exe, c, &sql).await?;

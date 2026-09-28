@@ -1970,8 +1970,12 @@ mod db_tests {
 
     #[tokio::test]
     async fn a_write_on_a_read_only_connection_never_reaches_the_process() {
-        // Reads its line back from the shared log tail (crate::serial::log_tail).
+        // Reads its lines back from the shared log tail and the activity
+        // log's own directory lock (crate::serial).
         let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
         let fake = FakeRunner::answering("");
         let sql = "INSERT INTO dbo.Leave (marker) VALUES ('task6fix-readonly-marker')";
         let refused = run_query(
@@ -1989,102 +1993,161 @@ mod db_tests {
         assert_eq!(refused.1, READ_ONLY_SENTENCE);
         assert!(fake.calls().is_empty(), "a refused write reached sqlcmd");
 
-        // A refusal is still worth a trail: Settings -> Logs should show the
-        // attempt, why it was refused, and never the connection's own user
-        // or password.
+        // A refusal is still worth a trail: the activity log should show
+        // the attempt in full, why it was refused, and never the
+        // connection's own user or password.
         let read_only = read_only();
-        let line = v2_lib::applog::recent(400)
-            .into_iter()
-            .map(|l| l.message)
-            .find(|m| m.contains("task6fix-readonly-marker"))
-            .expect("the refusal is in the log");
-        assert!(line.contains(READ_ONLY_SENTENCE), "{line}");
-        assert!(line.contains(sql), "{line}");
-        assert!(!line.contains(&read_only.user), "the user is in the log: {line}");
-        assert!(!line.contains(&read_only.password), "the password is in the log: {line}");
+        let recs = v2_lib::activity_log::directory()
+            .map(|d| crate::common::activity_records(&d, "db"))
+            .unwrap_or_default();
+        let rec = recs.iter().find(|r| r["sql"] == sql).expect("the refusal is in the activity log");
+        assert_eq!(rec["verdict"], "refused", "{rec}");
+        assert_eq!(rec["why"], READ_ONLY_SENTENCE, "{rec}");
+        let rec_str = rec.to_string();
+        assert!(!rec_str.contains(&read_only.user), "the user is in the activity log: {rec_str}");
+        assert!(!rec_str.contains(&read_only.password), "the password is in the activity log: {rec_str}");
+
+        // The app log gets a short summary only - never the SQL.
+        let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+        assert!(
+            !lines.iter().any(|m| m.contains("task6fix-readonly-marker")),
+            "the SQL leaked into the app log: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|m| m.starts_with("db query ") && m.contains(READ_ONLY_SENTENCE)),
+            "no summary line in the app log: {lines:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_write_with_the_switch_off_never_reaches_the_process_either() {
-        // Reads its line back from the shared log tail (crate::serial::log_tail).
         let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
         let fake = FakeRunner::answering("");
-        for (i, verb_sql) in [
+        for verb_sql in [
             "INSERT INTO dbo.Leave (marker) VALUES ('task6fix-switch-off-marker')",
             "UPDATE dbo.Leave SET marker = 'task6fix-switch-off-marker'",
             "DELETE FROM dbo.Leave WHERE marker = 'task6fix-switch-off-marker'",
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        ] {
             let refused = run_query(&fake, &exe(), &dev_login(), false, verb_sql).await.unwrap_err();
             assert_eq!(refused.0, 400, "{verb_sql}");
             assert_eq!(refused.1, WRITES_OFF, "{verb_sql}");
             assert!(refused.1.contains("AI Bridge tab"), "{}", refused.1);
 
+            let recs = v2_lib::activity_log::directory()
+                .map(|d| crate::common::activity_records(&d, "db"))
+                .unwrap_or_default();
+            let rec =
+                recs.iter().find(|r| r["sql"] == verb_sql).expect("the refusal is in the activity log");
+            assert_eq!(rec["verdict"], "refused", "{rec}");
+            assert_eq!(rec["why"], WRITES_OFF, "{rec}");
+
             let dev = dev_login();
-            let line = v2_lib::applog::recent(400)
-                .into_iter()
-                .map(|l| l.message)
-                .filter(|m| m.contains("task6fix-switch-off-marker"))
-                .nth(i)
-                .expect("the refusal is in the log");
-            assert!(line.contains(WRITES_OFF), "{line}");
-            assert!(!line.contains(&dev.user), "the user is in the log: {line}");
-            assert!(!line.contains(&dev.password), "the password is in the log: {line}");
+            let rec_str = rec.to_string();
+            assert!(!rec_str.contains(&dev.user), "the user is in the activity log: {rec_str}");
+            assert!(!rec_str.contains(&dev.password), "the password is in the activity log: {rec_str}");
         }
         assert!(fake.calls().is_empty(), "a switched-off write reached sqlcmd");
+
+        let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+        assert!(
+            !lines.iter().any(|m| m.contains("task6fix-switch-off-marker")),
+            "the SQL leaked into the app log: {lines:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_write_needs_both_the_switch_and_the_dev_login_and_is_logged_whole() {
-        // Reads its line back from the shared log tail (crate::serial::log_tail).
         let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
         let fake = FakeRunner::answering("");
-        // A marker no other test writes, so the log line is findable in a
-        // shared in-memory tail.
+        // A marker no other test writes, so the record is findable even
+        // though several tests share this activity_log lock in sequence.
         let sql = "INSERT INTO dbo.Leave (marker) VALUES ('task6-write-marker')";
         let out = run_query(&fake, &exe(), &dev_login(), true, sql).await.expect("it runs");
         assert_eq!(out, "");
         assert_eq!(fake.calls().len(), 1, "the write reached sqlcmd exactly once");
         assert!(fake.calls()[0].contains(&sql.to_string()), "{:?}", fake.calls()[0]);
 
-        let line = v2_lib::applog::recent(400)
-            .into_iter()
-            .map(|l| l.message)
-            .find(|m| m.contains("task6-write-marker"))
-            .expect("the write is in the log");
-        assert!(line.starts_with("db query (Write) on "), "{line}");
-        assert!(line.contains("sgdev01db02.cloud/hrmmain_philippinesdev"), "{line}");
+        let recs = v2_lib::activity_log::directory()
+            .map(|d| crate::common::activity_records(&d, "db"))
+            .unwrap_or_default();
+        let rec = recs.iter().find(|r| r["sql"] == sql).expect("the write is in the activity log");
+        assert_eq!(rec["verdict"], "write", "{rec}");
+        assert_eq!(rec["ok"], true, "{rec}");
+        assert!(rec["duration_ms"].is_u64(), "{rec}");
+        assert!(
+            rec["connection"].as_str().unwrap().contains("sgdev01db02.cloud/hrmmain_philippinesdev"),
+            "{rec}"
+        );
         // The whole statement, and never the credentials.
-        assert!(line.ends_with(sql), "{line}");
-        assert!(!line.contains("abc123"), "the password is in the log: {line}");
-        assert!(!line.contains("devlogin"), "the user is in the log: {line}");
+        let rec_str = rec.to_string();
+        assert!(!rec_str.contains("abc123"), "the password is in the activity log: {rec_str}");
+        assert!(!rec_str.contains("devlogin"), "the user is in the activity log: {rec_str}");
+
+        let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+        assert!(
+            !lines.iter().any(|m| m.contains("task6-write-marker")),
+            "the SQL leaked into the app log: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|m| m.starts_with("db query (Write) on ") && m.contains("ok")),
+            "no summary line in the app log: {lines:?}"
+        );
     }
 
+    /// Renamed from `a_read_is_logged_short_and_without_the_credentials`:
+    /// a read is no longer cut at 200 characters - the activity log is the
+    /// audit record and is never shipped in a bug report, so it keeps a
+    /// read's statement in full, the same as a write's.
     #[tokio::test]
-    async fn a_read_is_logged_short_and_without_the_credentials() {
-        // Reads its line back from the shared log tail (crate::serial::log_tail).
+    async fn a_read_is_logged_in_full_and_without_the_credentials() {
         let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
         let fake = FakeRunner::answering("n\n1\n");
         let long = format!("SELECT 'task6-read-marker' AS a, '{}' AS b", "x".repeat(400));
         run_query(&fake, &exe(), &read_only(), false, &long).await.expect("a read runs");
 
-        let line = v2_lib::applog::recent(400)
-            .into_iter()
-            .map(|l| l.message)
-            .find(|m| m.contains("task6-read-marker"))
-            .expect("the read is in the log");
-        assert!(line.starts_with("db query (Read) on "), "{line}");
-        assert!(line.contains("sgdev01db02.cloud/hrmmain_philippines"), "{line}");
-        assert!(!line.contains(&"x".repeat(400)), "a read is cut short: {line}");
-        assert!(!line.contains("M5kjapL2H3bE"), "the password is in the log: {line}");
+        let recs = v2_lib::activity_log::directory()
+            .map(|d| crate::common::activity_records(&d, "db"))
+            .unwrap_or_default();
+        let rec =
+            recs.iter().find(|r| r["sql"] == long.as_str()).expect("the read is in the activity log");
+        assert_eq!(rec["verdict"], "read", "{rec}");
+        assert_eq!(rec["sql"], long.as_str(), "a read is kept in full: {rec}");
+
+        let read_only = read_only();
+        let rec_str = rec.to_string();
+        assert!(!rec_str.contains(&read_only.user), "the user is in the activity log: {rec_str}");
+        assert!(!rec_str.contains(&read_only.password), "the password is in the activity log: {rec_str}");
+
+        let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+        assert!(
+            !lines.iter().any(|m| m.contains("task6-read-marker")),
+            "the SQL leaked into the app log: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|m| m.contains(&"x".repeat(400))),
+            "the SQL leaked into the app log: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|m| m.starts_with("db query (Read) on ")),
+            "no summary line in the app log: {lines:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_refused_statement_is_refused_on_the_dev_login_too() {
-        // Reads its line back from the shared log tail (crate::serial::log_tail).
         let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
         let fake = FakeRunner::answering("");
         let dev = dev_login();
         for sql in ["DROP TABLE dbo.Leave", "SELECT 1\nGO\nSELECT 2", "EXEC sp_who"] {
@@ -2093,19 +2156,21 @@ mod db_tests {
             assert!(!refused.1.is_empty(), "{sql}");
 
             // The guard's own refusal never even reaches sqlcmd's process,
-            // but it still belongs in Settings -> Logs, with the reason
-            // and never the dev login's credentials. The statement is
-            // flattened onto one line the same way an executed one is, so
-            // it is matched on the refusal reason rather than the raw
-            // (possibly multi-line) SQL text.
-            let line = v2_lib::applog::recent(400)
-                .into_iter()
-                .map(|l| l.message)
-                .filter(|m| m.starts_with("db query refused on") && m.contains(&refused.1))
+            // but it still belongs in the activity log, with the reason,
+            // the raw (possibly multi-line) SQL text, and never the dev
+            // login's credentials.
+            let recs = v2_lib::activity_log::directory()
+                .map(|d| crate::common::activity_records(&d, "db"))
+                .unwrap_or_default();
+            let rec = recs
+                .iter()
+                .filter(|r| r["verdict"] == "refused" && r["why"] == refused.1.as_str())
                 .last()
-                .expect("the refusal is in the log");
-            assert!(!line.contains(&dev.user), "the user is in the log: {line}");
-            assert!(!line.contains(&dev.password), "the password is in the log: {line}");
+                .expect("the refusal is in the activity log");
+            assert_eq!(rec["sql"], sql, "{sql}: {rec}");
+            let rec_str = rec.to_string();
+            assert!(!rec_str.contains(&dev.user), "the user is in the activity log: {rec_str}");
+            assert!(!rec_str.contains(&dev.password), "the password is in the activity log: {rec_str}");
         }
         assert!(fake.calls().is_empty(), "a refused statement reached sqlcmd");
     }
@@ -2115,6 +2180,10 @@ mod db_tests {
     /// password and all, which is why nothing leaves `run_sql` unredacted.
     #[tokio::test]
     async fn a_connection_failure_comes_back_as_502_without_the_password() {
+        // `run_query` also touches `activity_log`'s process-wide directory
+        // now - held so a concurrent test's own tempdir assertions never
+        // see a stray write from this one (see serial::activity_log).
+        let _act = crate::serial::activity_log();
         let password = "abc123@@@###";
         let fake = FakeRunner::failing(&format!(
             "Sqlcmd: Error: Microsoft ODBC Driver 17: Login failed (-P {password})"
@@ -2131,6 +2200,7 @@ mod db_tests {
 
     #[tokio::test]
     async fn a_capped_answer_says_so_on_its_first_line() {
+        let _act = crate::serial::activity_log();
         let mut rows = String::from("id\n");
         for i in 0..250 {
             rows.push_str(&format!("{i}\n"));
@@ -2158,6 +2228,7 @@ mod db_tests {
     /// for a row of data.
     #[tokio::test]
     async fn a_capped_answer_counts_only_its_own_data_rows() {
+        let _act = crate::serial::activity_log();
         let mut stdout = String::from("id\tblob\n----\t----\n");
         for i in 0..150 {
             stdout.push_str(&format!("{i:03}\t{}\n", "x".repeat(600)));
@@ -2183,6 +2254,7 @@ mod db_tests {
     /// than `with_cap_note` searching the answer for the word.
     #[tokio::test]
     async fn an_uncapped_answer_with_the_word_capped_in_a_value_gets_no_note() {
+        let _act = crate::serial::activity_log();
         let stdout = "id\tnote\n----\t----\n1\tstatus is (capped) apparently\n\n(1 rows affected)\n";
         let fake = FakeRunner::answering(stdout);
         let out = run_query(&fake, &exe(), &read_only(), false, "SELECT id, note FROM dbo.Leave")
@@ -2209,6 +2281,7 @@ dbo\tLeaveRequest\t160\n\
 
     #[tokio::test]
     async fn a_lookup_ranks_then_reads_the_details_of_the_tables_it_picked() {
+        let _act = crate::serial::activity_log();
         let fake = FakeRunner::answering_in_turn(&[RANKED, TWO_TABLES]);
         let out = run_lookup(&fake, &exe(), &read_only(), "leave request", 10)
             .await
@@ -2230,6 +2303,7 @@ dbo\tLeaveRequest\t160\n\
 
     #[tokio::test]
     async fn a_lookup_with_nothing_in_peopleshr_searches_every_schema() {
+        let _act = crate::serial::activity_log();
         let fake = FakeRunner::answering_in_turn(&["", RANKED, TWO_TABLES]);
         let out = run_lookup(&fake, &exe(), &read_only(), "leave request", 10)
             .await
@@ -2248,6 +2322,7 @@ dbo\tLeaveRequest\t160\n\
     /// should not have to know which shape it is asking for.
     #[tokio::test]
     async fn a_bare_table_name_comes_back_as_that_tables_columns() {
+        let _act = crate::serial::activity_log();
         let columns = "sch\ttab\tcol\ttyp\tlen\tnul\n\
 ----\t---\t---\t---\t---\t---\n\
 dbo\tLeaveRequest\tLeaveRequestId\tint\tNULL\tNO\n\
@@ -2266,6 +2341,7 @@ dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
 
     #[tokio::test]
     async fn a_name_that_is_not_a_table_falls_back_to_the_ranked_lookup() {
+        let _act = crate::serial::activity_log();
         // Nothing comes back for the describe, so the words are treated as
         // a topic and the ranked lookup answers.
         let fake = FakeRunner::answering("");
@@ -2281,6 +2357,7 @@ dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
 
     #[tokio::test]
     async fn a_lookup_that_cannot_reach_the_server_says_so_without_the_password() {
+        let _act = crate::serial::activity_log();
         let fake = FakeRunner::failing("Login failed (-P M5kjapL2H3bEIuZZ4YA4)");
         let refused =
             run_lookup(&fake, &exe(), &read_only(), "leave request", 10).await.unwrap_err();

@@ -56,3 +56,15 @@ pub fn report_revisions() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// `activity_log`'s own directory (`activity_log::init`). Taken by any test
+/// that points it at a tempdir and reads that tempdir back, AND by every
+/// other test that reaches `db::query`'s `run_query` / `run_batch_query` /
+/// `run_lookup` - those call `activity_log::record` too now, and without
+/// this lock a record from one test's run can land in another test's
+/// tempdir mid-assertion (this raced in practice before every db_tests and
+/// db_batch test that calls them took the lock).
+pub fn activity_log() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

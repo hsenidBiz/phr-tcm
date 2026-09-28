@@ -662,6 +662,22 @@ export default function Settings({ org, project }: { org: string; project: strin
                 <IconBrowse aria-hidden />
                 Open log folder
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // Rust opens it, same reason as "Open log folder" above.
+                  commands
+                    .openActivityLogDir()
+                    .then((r) => {
+                      if (r.status === "error") toast.error(r.error);
+                    })
+                    .catch(() => toast.error("Could not open the activity folder."));
+                }}
+              >
+                <IconBrowse aria-hidden />
+                Open activity folder
+              </Button>
             </div>
             <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[50vh]">
               {shownLogs.length === 0 ? (
