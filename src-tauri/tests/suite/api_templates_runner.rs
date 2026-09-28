@@ -39,6 +39,10 @@ struct Script {
     responses: VecDeque<Value>,
     /// `FETCH_FN` never answers - the page is stuck.
     hang_fetch: bool,
+    /// `Page.navigate` starts but its page never finishes loading.
+    never_loads: bool,
+    /// `Page.navigate` fails as a browser that has gone away does.
+    browser_gone: bool,
     /// The arguments of every `FETCH_FN` call, in order.
     fetched: Vec<Vec<Value>>,
     navigated: String,
@@ -78,7 +82,18 @@ impl Driver for App {
             return Ok(json!({ "result": { "value": reply.expect("a request nobody scripted an answer for") } }));
         }
         if method == "Page.navigate" {
-            self.script.lock().unwrap().navigated = params["url"].as_str().unwrap_or("").to_string();
+            let (never_loads, gone) = {
+                let mut s = self.script.lock().unwrap();
+                s.navigated = params["url"].as_str().unwrap_or("").to_string();
+                (s.never_loads, s.browser_gone)
+            };
+            if gone {
+                return Err(CdpError::Closed);
+            }
+            if never_loads {
+                // Not passed on to `inner`, so no load event ever follows.
+                return Ok(json!({ "frameId": "F", "loaderId": "L" }));
+            }
         }
         self.inner.call(method, params).await
     }
@@ -439,6 +454,58 @@ async fn the_browser_is_closed_on_every_path() {
     assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1), "timeout");
     let d = r.browsers.last.as_ref().unwrap();
     assert!(d.inner.deadline_was_cleared(), "the step's deadline outlived the run");
+}
+
+/// Nothing a person or the assistant reads names a host or carries a raw
+/// browser error: a sign-in failure's own wording can do both, so it goes
+/// to the app log as it is and reaches the report without them.
+#[tokio::test]
+async fn a_failed_sign_in_names_no_host_and_no_raw_browser_error() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+
+    // The sign-in page never loads: Auto Run's detail is "the sign-in page
+    // did not open: https://hr.example.internal/ did not finish loading ...".
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().never_loads = true;
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert_eq!(report.failed.as_deref(), Some("Sign in"));
+    let detail = report.steps.last().unwrap().detail.clone();
+    let message = report.message();
+    for text in [&detail, &message] {
+        assert!(!text.contains("example.internal") && !text.contains("://"), "a host reached: {text}");
+    }
+    assert!(detail.starts_with("could not sign in as \"admin\": the sign-in page did not open: / did not finish loading"), "{detail}");
+    assert!(detail.ends_with(" - sign that account in once from Auto Run, then try again"), "{detail}");
+    let log = v2_lib::applog::recent(400);
+    assert!(
+        log.iter().any(|l| l.message.contains("https://hr.example.internal/ did not finish loading")),
+        "the raw detail did not reach the app log: {:?}",
+        log.iter().map(|l| &l.message).collect::<Vec<_>>()
+    );
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
+
+    // The browser itself stops answering: a fixed sentence, the raw error
+    // in the log only.
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().browser_gone = true;
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    let detail = report.steps.last().unwrap().detail.clone();
+    assert_eq!(
+        detail,
+        "could not sign in as \"admin\": the browser stopped answering while signing in - see Settings, Logs"
+    );
+    let message = report.message();
+    assert!(!message.contains("://") && !message.contains("did not answer:"), "{message}");
+    let log = v2_lib::applog::recent(400);
+    assert!(
+        log.iter().any(|l| l.message.contains("signing in as \"admin\"") && l.message.contains("the browser did not answer")),
+        "the raw detail did not reach the app log: {:?}",
+        log.iter().map(|l| &l.message).collect::<Vec<_>>()
+    );
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
 }
 
 #[test]

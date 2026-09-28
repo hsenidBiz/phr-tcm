@@ -27,7 +27,7 @@ use crate::autorun::nav::path_of;
 use crate::autorun::recipe::SignInRecipe;
 use crate::autorun::replay::Browsers;
 use crate::autorun::sessions::forget_session;
-use crate::autorun::signin::{prepare, sign_in};
+use crate::autorun::signin::{prepare, sign_in, SignInOutcome};
 use crate::browser::actions::{execute_in, Action, Policy};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::page::{call_value, document, eval_value, Handle};
@@ -155,8 +155,12 @@ fn plain(v: &Value) -> String {
 impl RunReport {
     /// The run in one sentence, for the assistant and the run history:
     /// `cycleId 274 created; failed at Evaluation rules (SaveEvalRulesProgress):
-    /// expected status 200, got 400 - the response began: ...`. Names no
-    /// host - every detail it is built from already doesn't.
+    /// expected status 200, got 400 - the response began: ...`. Built only
+    /// from step details, which are the runner's own sentences: raw browser
+    /// errors go to the app log instead, and a sign-in detail has its
+    /// addresses' hosts taken out (`Ctx::could_not_sign_in`). The one text
+    /// here the runner did not write is the response excerpt, which is the
+    /// application's own body.
     pub fn message(&self) -> String {
         let captured = if self.created.is_empty() {
             "nothing had been captured yet".to_string()
@@ -324,12 +328,52 @@ impl Ctx<'_> {
         &self.req.template.id
     }
 
-    /// A failed sign-in, as the person reads it.
-    fn could_not_sign_in(&self, detail: &str) -> String {
+    /// A failed sign-in, as the person reads it. `SignInOutcome.detail` is
+    /// Auto Run's wording, which can carry a raw browser error or a full
+    /// address: it goes to the app log as it is (it is already
+    /// password-redacted), and the sentence gets either a fixed one - when
+    /// the browser itself failed - or the detail with every address's
+    /// scheme and host taken out.
+    fn could_not_sign_in(&self, out: &SignInOutcome) -> String {
+        applog::warn(format!("api template {}: signing in as \"{}\": {}", self.id(), self.req.account, out.detail));
+        if out.harness {
+            return format!(
+                "could not sign in as \"{}\": the browser stopped answering while signing in - see Settings, Logs",
+                self.req.account
+            );
+        }
+        let mut detail = out.detail.clone();
+        for origin in self.recipe.origins() {
+            detail = detail.replace(&origin, "");
+        }
         format!(
-            "could not sign in as \"{}\": {detail} - sign that account in once from Auto Run, then try again",
-            self.req.account
+            "could not sign in as \"{}\": {} - sign that account in once from Auto Run, then try again",
+            self.req.account,
+            without_hosts(&detail)
         )
+    }
+}
+
+/// `text` with the scheme and host of every http(s) address taken out, so
+/// `https://Host:8443/hr/ did not load` reads `/hr/ did not load` - the
+/// backstop behind stripping the recipe's own origins, for an address
+/// written in another case or on some other host.
+fn without_hosts(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let at = ["https://", "http://"].iter().filter_map(|s| lower.find(s).map(|i| (i, s.len()))).min();
+        let Some((i, scheme_len)) = at else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..i]);
+        let after = &rest[i + scheme_len..];
+        let host_len = after
+            .find(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(after.len());
+        rest = &after[host_len..];
     }
 }
 
@@ -399,7 +443,7 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
 
     let signed = sign_in(d, root, &ctx.recipe, &ctx.account, timing).await;
     if !signed.ok {
-        return progress.fail(None, ctx.could_not_sign_in(&signed.detail));
+        return progress.fail(None, ctx.could_not_sign_in(&signed));
     }
 
     progress.at(TOKEN_PAGE, None);
@@ -468,7 +512,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         progress.at(SIGN_IN, None);
         let again = sign_in(d, ctx.root, &ctx.recipe, &ctx.account, ctx.timing).await;
         if !again.ok {
-            progress.fail(None, ctx.could_not_sign_in(&again.detail));
+            progress.fail(None, ctx.could_not_sign_in(&again));
             return None;
         }
         progress.at(TOKEN_PAGE, None);
