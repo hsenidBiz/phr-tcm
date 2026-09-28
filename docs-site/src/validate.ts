@@ -35,7 +35,8 @@ export function locateProblem(locate: unknown): string | null {
       }
     case "label":
     case "text":
-    case "testId": {
+    case "testId":
+    case "css": {
       const v = l[keys];
       return nonEmpty(v) ? null : `locate ${keys} is empty`;
     }
@@ -56,11 +57,14 @@ function stepProblem(step: unknown): string | null {
     case "press":
       return nonEmpty(s[kind]) ? null : `${kind} is empty`;
     case "click":
+    case "activate":
     case "waitFor":
     case "scrollTo":
       return locateProblem(s[kind]);
     case "runnerWindow":
       return s.runnerWindow === true ? null : "runnerWindow must be true";
+    case "reviewPage":
+      return s.reviewPage === "cases" || s.reviewPage === "map" ? null : 'reviewPage must be "cases" or "map"';
     default:
       return `is an unknown step "${kind}"`;
   }

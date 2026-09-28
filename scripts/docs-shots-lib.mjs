@@ -267,6 +267,9 @@ export function locatorFor(root, locate) {
     const v = cssString(locate.testId);
     return root.locator(`[data-testid=${v}], [data-tour=${v}]`);
   }
+  // The review page and its Test map are plain HTML written for the
+  // browser: ids and classes, and the same control on every case card.
+  if ("css" in locate) return root.locator(locate.css);
   throw new Error(`Unknown locate ${describeLocate(locate)}`);
 }
 
@@ -294,10 +297,14 @@ export async function runStep(ctx, step) {
   const { page } = ctx;
   if ("nav" in step) await navLocator(page, step.nav).click();
   else if ("click" in step) await visibleOnly(locatorFor(page, step.click)).click();
+  // No pointer: the element is reached the way a keyboard reaches it, so a
+  // canvas drawn over it cannot take the click.
+  else if ("activate" in step) await locatorFor(page, step.activate).first().dispatchEvent("click");
   else if ("press" in step) await page.keyboard.press(step.press);
   else if ("waitFor" in step) await visibleOnly(locatorFor(page, step.waitFor)).waitFor({ state: "visible" });
   else if ("scrollTo" in step) await visibleOnly(locatorFor(page, step.scrollTo)).scrollIntoViewIfNeeded();
   else if ("runnerWindow" in step) return ctx.openRunner();
+  else if ("reviewPage" in step) return ctx.openReview(step.reviewPage);
   else throw new Error(`Unknown step ${JSON.stringify(step)}`);
   return page;
 }
