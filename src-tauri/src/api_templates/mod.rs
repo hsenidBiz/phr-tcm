@@ -160,35 +160,69 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Applies `percent_decode` until it stops changing the string, so a
-/// double-encoded `..` (`%252e%252e` - one decode pass turns that into the
-/// inert-looking `%2e%2e`, and only a second pass reveals `..`) cannot
-/// slip past a single-pass check. Capped at a handful of passes: a real
-/// path never needs more, and a pathological input must not loop forever.
+/// Applies `percent_decode` until it reaches a genuine fixed point - not a
+/// fixed pass count - so a `..` percent-encoded any number of times over
+/// (`%2e%2e`, `%252e%252e`, `%25252e%25252e`, ...: each extra layer wraps
+/// the previous one's `%` as `%25`, which only one more decode pass peels
+/// off) is always eventually caught, however many layers deep.
+///
+/// This terminates without an arbitrary cap: `percent_decode` only ever
+/// turns a 3-byte `%XX` into 1 decoded byte, so every pass that changes
+/// anything strictly shortens the string, and a string of length `path.len()`
+/// cannot shorten more than `path.len()` times. The loop bound below is
+/// that argument made explicit, purely as a backstop against a bug in it -
+/// it is never expected to bind (a genuine fixed point is always reached
+/// first, and the caller's `has_percent_encoding` check catches it if that
+/// argument is ever wrong).
 fn fully_decode(path: &str) -> String {
     let mut current = path.to_string();
-    for _ in 0..8 {
+    for _ in 0..=path.len() {
         let next = percent_decode(&current);
         if next == current {
-            break;
+            return current;
         }
         current = next;
     }
     current
 }
 
+/// True if `s` still contains a `%` followed by two hex digits - i.e. a
+/// span `percent_decode` would still turn into a byte. Only ever true if
+/// `fully_decode` stopped before reaching a genuine fixed point (it
+/// shouldn't, see its own doc comment) - the second, independent belt
+/// `is_safe_relative_path` relies on to refuse rather than silently treat
+/// a not-fully-decoded path as safe.
+fn has_percent_encoding(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && std::str::from_utf8(&bytes[i + 1..i + 3]).is_ok_and(|hex| u8::from_str_radix(hex, 16).is_ok())
+        {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// A step's `path`: exactly one leading `/` (not `//`, which a browser
 /// reads as protocol-relative) - checked on the raw text, since decoding
 /// never changes where that leading slash falls - then, decoded (fully,
-/// so `..%2f`, `%2e%2e%2f` and a double-encoded escape are all caught the
-/// same as a literal `..`): no backslash anywhere, and no `..` segment,
-/// treating `\` as a segment separator too since an encoded backslash
-/// only appears after decoding.
+/// so `..%2f`, `%2e%2e%2f` and any depth of double (or more) encoding are
+/// all caught the same as a literal `..`, with `has_percent_encoding` as a
+/// second belt in case decoding somehow didn't reach a fixed point): no
+/// backslash anywhere, and no `..` segment, treating `\` as a segment
+/// separator too since an encoded backslash only appears after decoding.
 fn is_safe_relative_path(path: &str) -> bool {
     if !path.starts_with('/') || path.starts_with("//") {
         return false;
     }
     let decoded = fully_decode(path);
+    if has_percent_encoding(&decoded) {
+        return false;
+    }
     if decoded.contains('\\') {
         return false;
     }

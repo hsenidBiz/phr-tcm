@@ -116,6 +116,27 @@ fn only_relative_paths_on_the_same_origin() {
 }
 
 #[test]
+fn a_dotdot_encoded_many_layers_deep_is_still_refused() {
+    // level_1 = "..", encoded once. Each further layer re-encodes every
+    // '%' as '%25', wrapping the previous layer's encoding once more - so
+    // `it` ends up "..", percent-encoded 9 times over.
+    let mut it = "%2e%2e".to_string();
+    for _ in 0..8 {
+        it = it.replace('%', "%25");
+    }
+    let mut v = draft();
+    v["steps"][0]["path"] = json!(format!("/hr/{it}/x"));
+    let err = parse_draft(&v).unwrap_err();
+    assert!(err.iter().any(|e| e.contains("Cycle setup")), "{err:?}");
+
+    // An ordinary encoded character is still accepted, unaffected by the
+    // deeper decode loop.
+    let mut v = draft();
+    v["steps"][0]["path"] = json!("/hr/a%20b");
+    assert!(parse_draft(&v).is_ok());
+}
+
+#[test]
 fn a_step_has_at_most_one_body() {
     let mut v = draft();
     // step 0 already has a "form" body; adding "json" gives it two.
