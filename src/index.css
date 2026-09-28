@@ -936,7 +936,10 @@ table {
 .nav-glyph .ng-pulse,
 .nav-glyph .ng-change,
 .nav-glyph .ng-card,
+.nav-glyph .ng-arg,
 .nav-glyph .ng-code { opacity: 0; }
+/* API Templates' values, drawn as dots by their round caps. */
+.nav-glyph .ng-arg { stroke: var(--ng-hi); }
 /* The selected row's rule (.nav-ico-on path) strokes every path and fills
    none; these two keep their own paint. */
 .nav-glyph .ng-fill { fill: currentColor; stroke: none; }
@@ -1068,6 +1071,30 @@ table {
   @keyframes ng-eyes { 0%, 100% { opacity: 1; } 8%, 88% { opacity: 0; } }
   @keyframes ng-stream { from { transform: translateX(0); } to { transform: translateX(-38px); } }
   @keyframes ng-flip { 0% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* API Templates: the braces open, three values drop into the gap one
+     after another - a template taking its parameters - and the braces
+     close on them. The values go before the braces meet, so the glyph
+     ends exactly as lucide's Braces. */
+  .group:hover .ng-apitemplates .ng-brace-l { animation: ng-brace-l 1.2s ease-in-out; }
+  .group:hover .ng-apitemplates .ng-brace-r { animation: ng-brace-r 1.2s ease-in-out; }
+  .group:hover .ng-apitemplates .ng-arg { animation: ng-arg 1.2s ease-out; }
+  .group:hover .ng-apitemplates .ng-arg-2 { animation-delay: 0.1s; }
+  .group:hover .ng-apitemplates .ng-arg-3 { animation-delay: 0.2s; }
+  @keyframes ng-brace-l {
+    0%, 100% { transform: translateX(0); }
+    22%, 68% { transform: translateX(-2px); }
+  }
+  @keyframes ng-brace-r {
+    0%, 100% { transform: translateX(0); }
+    22%, 68% { transform: translateX(2px); }
+  }
+  @keyframes ng-arg {
+    0%, 18% { opacity: 0; transform: translateY(-3px); }
+    30% { opacity: 1; transform: translateY(0); }
+    52% { opacity: 1; transform: translateY(0); }
+    62%, 100% { opacity: 0; transform: translateY(0); }
+  }
 
   /* Update Test Cases: the line runs off along itself into the arrowhead,
      which goes with it, then draws back in from the start, and the head

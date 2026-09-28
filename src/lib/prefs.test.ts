@@ -1,6 +1,6 @@
 // A section missing from prefs.ts's own whitelist reads back as "manual"
 // forever - that hid a real bug (Auto Run losing a saved tab on every
-// restart; see lib/extras.ts's shouldLeaveAutoRun). Enumerating every real
+// restart; see lib/extras.ts's shouldLeaveHidden). Enumerating every real
 // Section id, rather than a hand-picked few, is what would have caught it.
 import { afterEach, expect, test } from "vitest";
 import { CASE_ITEMS } from "../components/Sidebar";

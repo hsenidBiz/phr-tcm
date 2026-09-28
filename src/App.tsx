@@ -69,7 +69,7 @@ import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
-import { hydrateExtras, shouldLeaveAutoRun, useAutoRunVisible, useExtrasHydrated } from "./lib/extras";
+import { hydrateExtras, shouldLeaveHidden, useAutoRunVisible, useExtrasHydrated } from "./lib/extras";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -121,6 +121,8 @@ const AiBridge = lazy(() => import("./screens/AiBridge"));
 // extras are unlocked (lib/extras); lazy, so nobody who never opens it
 // loads it.
 const AutoRun = lazy(() => import("./screens/AutoRun"));
+// Offered exactly where Auto Run is, and lazy for the same reason.
+const ApiTemplates = lazy(() => import("./screens/ApiTemplates"));
 const Settings = lazy(() => import("./screens/Settings"));
 const Suites = lazy(() => import("./screens/Suites"));
 const ManageCases = lazy(() => import("./screens/ManageCases"));
@@ -173,12 +175,14 @@ const TITLES: Record<Section, string> = {
   suites: "Search Suites",
   manage: "Suite Management",
   ai: "AI Bridge",
+  apitemplates: "API Templates",
   settings: "Settings",
 };
 
 /** Status pill beside the heading - features shipped before they are done. */
 const TITLE_NOTES: Partial<Record<Section, string>> = {
   autorun: "In Development",
+  apitemplates: "In Development",
 };
 
 export default function App() {
@@ -340,14 +344,15 @@ export default function App() {
     void hydrateExtras();
   }, []);
 
-  // If Auto Run stops being offered while it is the open tab (the optional
-  // extras got reset, or a future lock path outside Settings), move off it
-  // rather than leave the "Auto Run" heading over a blank body. Gated on
-  // hydration: extrasHydrated starts false the same way a locked machine
-  // reads, so without the gate a restart with a saved Auto Run tab bounces
-  // straight to Manual Entry before hydrateExtras' answer comes back.
+  // If Auto Run (or API Templates, offered exactly where it is) stops being
+  // offered while it is the open tab (the optional extras got reset, or a
+  // future lock path outside Settings), move off it rather than leave its
+  // heading over a blank body. Gated on hydration: extrasHydrated starts
+  // false the same way a locked machine reads, so without the gate a
+  // restart with a saved Auto Run tab bounces straight to Manual Entry
+  // before hydrateExtras' answer comes back.
   useEffect(() => {
-    if (shouldLeaveAutoRun(section, autoRunShown, extrasHydrated)) setSection("manual");
+    if (shouldLeaveHidden(section, autoRunShown, extrasHydrated)) setSection("manual");
   }, [autoRunShown, section, extrasHydrated]);
 
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
@@ -1310,6 +1315,9 @@ export default function App() {
                   />
                 )}
                 {section === "ai" && <AiBridge />}
+                {autoRunShown && section === "apitemplates" && (
+                  <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
+                )}
                 {section === "settings" && <Settings org={org} project={project} />}
               </AnimatedContent>
             )}

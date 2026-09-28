@@ -70,6 +70,8 @@ test("the route covers both areas and every tab a user gets", () => {
   }
   // Auto Run never ships to users.
   expect(keys).not.toContain("autorun");
+  // Nor does API Templates, which is offered exactly where Auto Run is.
+  expect(keys).not.toContain("apitemplates");
 });
 
 test("the script visits Suite Management, the review controls and the three Settings stops", () => {

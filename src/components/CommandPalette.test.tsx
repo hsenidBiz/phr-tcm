@@ -66,6 +66,12 @@ test("every Go-to hint is the section's 1-based slot in the shortcut order", asy
   expect(visibleCaseItems().length).toBeGreaterThan(0);
   for (const item of visibleCaseItems()) {
     const slot = shortcutOrder().indexOf(item.id) + 1;
+    // Ctrl+1..9 is all there is: a row past the ninth has no number, so
+    // it carries no hint rather than one for a key that does nothing.
+    if (slot > 9) {
+      expect(sectionShortcut(item.id)).toBeUndefined();
+      continue;
+    }
     expect(sectionShortcut(item.id)).toBe(`mod+${slot}`);
     // The Kbd badge sits beside the label inside the same row, and the
     // digit is the last thing in it.

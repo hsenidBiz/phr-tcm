@@ -108,12 +108,17 @@ export function useAutoRunVisible(): boolean {
   return AUTO_RUN_DEV || on;
 }
 
-/** Whether the App shell's redirect off Auto Run (it stopped being offered
- * while it was the open tab) should fire right now. False until hydration
- * settles, so a release build with a saved Auto Run tab is not bounced to
- * Manual Entry before Rust's answer to `get_extras_unlocked` arrives. */
-export function shouldLeaveAutoRun(section: string, autoRunShown: boolean, hydrated: boolean): boolean {
-  return hydrated && !autoRunShown && section === "autorun";
+/** The tabs offered exactly where Auto Run is: Auto Run itself, and API
+ * Templates, whose tools and runs are gated the same way. */
+const HIDDEN_WITH_AUTO_RUN = new Set(["autorun", "apitemplates"]);
+
+/** Whether the App shell's redirect off a tab that stopped being offered
+ * while it was open (Auto Run or API Templates) should fire right now.
+ * False until hydration settles, so a release build with one of them saved
+ * as the tab is not bounced to Manual Entry before Rust's answer to
+ * `get_extras_unlocked` arrives. */
+export function shouldLeaveHidden(section: string, shown: boolean, hydrated: boolean): boolean {
+  return hydrated && !shown && HIDDEN_WITH_AUTO_RUN.has(section);
 }
 
 /** Tests only: back to locked and un-hydrated, without telling anyone. */

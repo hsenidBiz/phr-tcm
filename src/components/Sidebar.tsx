@@ -2,6 +2,7 @@ import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { useSyncExternalStore, type ComponentType } from "react";
 import {
   GlyphAi,
+  GlyphApiTemplates,
   GlyphAutoRun,
   GlyphBoard,
   GlyphCreate,
@@ -28,7 +29,18 @@ import { cn } from "../lib/cn";
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
  * in the context bar. Collapsible to an icon rail. In Work Manager mode the
  * same rail shows WORK_ITEMS instead (PRs first, then the board). */
-export type Section = "manual" | "import" | "edit" | "view" | "run" | "autorun" | "suites" | "manage" | "ai" | "settings";
+export type Section =
+  | "manual"
+  | "import"
+  | "edit"
+  | "view"
+  | "run"
+  | "autorun"
+  | "suites"
+  | "manage"
+  | "ai"
+  | "apitemplates"
+  | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
 type Item<T extends string> = {
@@ -61,17 +73,24 @@ export const CASE_ITEMS: Item<Section>[] = [
   // An ordered list, because ordering is the first thing this screen does.
   { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage" },
   { id: "ai", label: "AI Bridge", icon: GlyphAi, tone: "nav-ico nav-ico-ai" },
+  // Last, so every tab above keeps its Ctrl+number; it has none of its
+  // own (see sectionShortcut). Braces, for the JSON a template is.
+  { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates", note: "In Dev" },
 ];
 
-/** The rows the rail shows: CASE_ITEMS, with Auto Run only where it is
- * offered - always in a development build (`import.meta.env.DEV`: true for
- * `tauri dev` and vitest, false in `tauri build`), and in a release build
- * while this machine's optional extras are unlocked (lib/extras). A
- * function, not a constant: the answer can change while the app runs.
- * Ctrl+1..N and the palette's "mod+N" hints are both read off this list,
- * so a number can never open one screen and be labelled as another. */
+/** The tabs offered only where Auto Run is. */
+const WITH_AUTO_RUN: ReadonlySet<Section> = new Set<Section>(["autorun", "apitemplates"]);
+
+/** The rows the rail shows: CASE_ITEMS, with Auto Run and API Templates
+ * only where they are offered - always in a development build
+ * (`import.meta.env.DEV`: true for `tauri dev` and vitest, false in `tauri
+ * build`), and in a release build while this machine's optional extras are
+ * unlocked (lib/extras). A function, not a constant: the answer can change
+ * while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
+ * read off this list, so a number can never open one screen and be
+ * labelled as another. */
 export function visibleCaseItems(autoRun: boolean = autoRunVisible()): Item<Section>[] {
-  return CASE_ITEMS.filter((i) => i.id !== "autorun" || autoRun);
+  return CASE_ITEMS.filter((i) => !WITH_AUTO_RUN.has(i.id) || autoRun);
 }
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. */
@@ -80,10 +99,12 @@ export function shortcutOrder(autoRun: boolean = autoRunVisible()): Section[] {
 }
 
 /** The shortcut string for a section ("mod+3"), or undefined for sections
- * that have no number (Settings, or a hidden tab). */
+ * that have no number (Settings, a hidden tab, or a row past the ninth -
+ * App's handler answers Ctrl+1..9 only, so a tenth row gets no hint for a
+ * key that would do nothing). */
 export function sectionShortcut(section: Section, autoRun: boolean = autoRunVisible()): string | undefined {
   const n = shortcutOrder(autoRun).indexOf(section);
-  return n === -1 ? undefined : `mod+${n + 1}`;
+  return n === -1 || n >= 9 ? undefined : `mod+${n + 1}`;
 }
 
 export const WORK_ITEMS: Item<WorkSection>[] = [
@@ -118,7 +139,7 @@ export default function Sidebar<T extends string = Section>({
   liveItem?: T | null;
 }) {
   // Subscribed, so unlocking or resetting the optional extras adds or
-  // removes the Auto Run row at once.
+  // removes the Auto Run and API Templates rows at once.
   const autoRun = useAutoRunVisible();
   const list = items ?? (visibleCaseItems(autoRun) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a

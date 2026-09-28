@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
  * button leaves its box. A lucide icon is one opaque <svg>, so all it can do
  * is move as a whole - which read as the picture warping. These draw the
  * same geometry as the lucide icon they replace (Pen Line, File Up, Rotate
- * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, and Work
+ * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, Braces, and Work
  * Manager's Git Pull Request, Square Kanban, File Plus Corner, and the context
  * bar's Bell; lucide is ISC), split
  * into the parts the animation needs, plus a few pieces that only show
@@ -154,6 +154,22 @@ export function GlyphAutoRun(p: GlyphProps) {
         <path className="ng-wedge ng-fill" d="M12 12L18.01 5.99A8.5 8.5 0 0 0 12.74 3.53Z" fill="currentColor" stroke="none" />
         <path d="m13.41 10.59 5.66-5.66" />
       </g>
+    </Glyph>
+  );
+}
+
+/** API Templates: lucide's Braces, one brace per part. On hover the braces
+ *  open, three values fill the gap one after another - a template taking
+ *  its parameters - and the braces close on them again. The values only
+ *  exist mid-animation. */
+export function GlyphApiTemplates(p: GlyphProps) {
+  return (
+    <Glyph kind="apitemplates" {...p}>
+      <path className="ng-brace-l" d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1" />
+      <path className="ng-brace-r" d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
+      <path className="ng-arg ng-arg-1" d="M9 12h.01" />
+      <path className="ng-arg ng-arg-2" d="M12 12h.01" />
+      <path className="ng-arg ng-arg-3" d="M15 12h.01" />
     </Glyph>
   );
 }

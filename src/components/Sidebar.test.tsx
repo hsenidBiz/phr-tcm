@@ -4,7 +4,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import Sidebar, { WORK_ITEMS, shortcutOrder, type WorkSection } from "./Sidebar";
+import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 
 afterEach(() => {
@@ -118,8 +118,53 @@ test("capture mode hides Auto Run in a dev build; off, dev behaviour is unchange
 /// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
 /// the answer comes.
 test("the shortcut order with and without Auto Run", () => {
-  expect(shortcutOrder(true)).toEqual(["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai"]);
+  expect(shortcutOrder(true)).toEqual([
+    "manual",
+    "import",
+    "edit",
+    "view",
+    "run",
+    "autorun",
+    "suites",
+    "manage",
+    "ai",
+    "apitemplates",
+  ]);
   expect(shortcutOrder(false)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
+});
+
+/// API Templates sits after AI Bridge so every existing tab keeps its
+/// Ctrl+number, and it gets none of its own: App's handler only reaches
+/// Ctrl+1..9, and a hint for a key that does nothing would be a lie.
+test("API Templates comes last and has no Ctrl number", () => {
+  expect(sectionShortcut("apitemplates", true)).toBeUndefined();
+  expect(sectionShortcut("ai", true)).toBe("mod+9");
+  expect(sectionShortcut("autorun", true)).toBe("mod+6");
+  expect(sectionShortcut("apitemplates", false)).toBeUndefined();
+});
+
+/// Offered exactly where Auto Run is: a locked release build shows
+/// neither, and unlocking this machine's extras brings both.
+test("a locked release build hides API Templates, and unlocking shows it", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const release = await import("./Sidebar");
+  const extras = await import("../lib/extras");
+  mockIPC(() => null);
+
+  render(<release.default section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(release.shortcutOrder()).not.toContain("apitemplates");
+
+  await act(() => extras.setExtrasUnlocked(true));
+  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+
+  await act(() => extras.setExtrasUnlocked(false));
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+
+  clearMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 test("zero and absent counts render no bubble", () => {

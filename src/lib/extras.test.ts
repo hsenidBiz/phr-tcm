@@ -7,7 +7,7 @@ import {
   hydrateExtras,
   resetExtrasStore,
   setExtrasUnlocked,
-  shouldLeaveAutoRun,
+  shouldLeaveHidden,
   subscribeExtras,
 } from "./extras";
 
@@ -99,12 +99,21 @@ test("resetting the store for tests also resets the hydrated flag", async () => 
 
 test("the Auto Run redirect waits for hydration before it fires", () => {
   // Not hydrated yet: never redirect, whatever autoRunShown says right now.
-  expect(shouldLeaveAutoRun("autorun", false, false)).toBe(false);
-  expect(shouldLeaveAutoRun("autorun", true, false)).toBe(false);
+  expect(shouldLeaveHidden("autorun", false, false)).toBe(false);
+  expect(shouldLeaveHidden("autorun", true, false)).toBe(false);
   // Hydrated: redirect only off Auto Run, and only once it is not shown.
-  expect(shouldLeaveAutoRun("autorun", false, true)).toBe(true);
-  expect(shouldLeaveAutoRun("autorun", true, true)).toBe(false);
-  expect(shouldLeaveAutoRun("manual", false, true)).toBe(false);
+  expect(shouldLeaveHidden("autorun", false, true)).toBe(true);
+  expect(shouldLeaveHidden("autorun", true, true)).toBe(false);
+  expect(shouldLeaveHidden("manual", false, true)).toBe(false);
+});
+
+// API Templates is offered exactly where Auto Run is, so the same
+// redirect moves off it - and waits for hydration the same way.
+test("the redirect leaves API Templates too, once hydration settles", () => {
+  expect(shouldLeaveHidden("apitemplates", false, true)).toBe(true);
+  expect(shouldLeaveHidden("apitemplates", false, false)).toBe(false);
+  expect(shouldLeaveHidden("apitemplates", true, true)).toBe(false);
+  expect(shouldLeaveHidden("ai", false, true)).toBe(false);
 });
 
 test("a development build shows Auto Run whatever the switch says", () => {
