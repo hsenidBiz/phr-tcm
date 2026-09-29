@@ -15,6 +15,12 @@ export const EFFECT_TONE: Record<Effect, string> = {
   delete: "text-danger bg-danger/15",
 };
 
+/** What a run does to the application's data, as the list and the flow map
+ * both show it. */
+export function EffectBadge({ effect }: { effect: Effect }) {
+  return <Badge className={EFFECT_TONE[effect]}>{effect}</Badge>;
+}
+
 /** A proving or run stamp - "YYYY-MM-DD HH:MM:SS" in UTC, the app log's
  * own format - as a Date, or null when it is not one. */
 export function stampDate(at: string): Date | null {
@@ -27,7 +33,7 @@ export function stampDate(at: string): Date | null {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** "28 Sep", in this machine's time. */
-function dayMonth(d: Date): string {
+export function dayMonth(d: Date): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
@@ -145,15 +151,31 @@ function RunLine({ run }: { run: RunRecord }) {
  * One saved template: a line to scan, and - opened - everything the
  * assistant wrote and proved, read-only. The only thing a person can do to
  * a template here is remove it (spec §8: no edit, no run, no duplicate).
+ *
+ * Open or folded is its own business unless the tab passes `open` - which
+ * it does so that clicking the template on a flow map can open it.
  */
 export default function TemplateRow({
   saved,
   onRemove,
+  open: openProp,
+  onOpenChange,
+  stage,
 }: {
   saved: SavedTemplate;
   onRemove: () => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** The flow stage it performs, spelled out; `missing` when that flow or
+   * stage is no longer saved, so every run of it is refused. */
+  stage?: { text: string; missing: boolean };
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = openProp ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setOwnOpen(next);
+    onOpenChange?.(next);
+  };
   const t = saved.template;
   const n = t.params.length;
   const proven = t.proven ? stampDate(t.proven.at) : null;
@@ -162,19 +184,24 @@ export default function TemplateRow({
   const lastRun = saved.runs.find((r) => runMode(r) === "run");
 
   return (
-    <li aria-label={t.title} className="rounded-md border border-border bg-surface">
+    <li id={`api-template-${t.id}`} aria-label={t.title} className="rounded-md border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
         <button
           aria-label={`${open ? "Hide" : "Show"} details of ${t.title}`}
           aria-expanded={open}
           title={open ? "Hide details" : "Show details"}
           className="text-muted transition-colors hover:text-accent"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setOpen(!open)}
         >
           {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </button>
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.title}</span>
-        <Badge className={EFFECT_TONE[t.effect]}>{t.effect}</Badge>
+        <EffectBadge effect={t.effect} />
+        {stage && (
+          <span className={cn("text-xs", stage.missing ? "text-warning" : "text-muted")}>
+            {`Stage: ${stage.text}${stage.missing ? " (no longer saved)" : ""}`}
+          </span>
+        )}
         <span className="text-xs text-muted">
           {n} parameter{n === 1 ? "" : "s"}
         </span>
