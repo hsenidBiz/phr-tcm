@@ -486,6 +486,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
     let url = format!("{}{page}", ctx.origin);
     let policy = Policy::only(ctx.recipe.origins());
     let mut signed_in_again = false;
+    let mut href;
     loop {
         let went = execute_in(d, &Action::Navigate { url: url.clone() }, ctx.timing, &policy).await;
         if !went.ok {
@@ -493,7 +494,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
             progress.fail(None, format!("the token page {page} did not open - see Settings, Logs"));
             return None;
         }
-        let href = match eval_value(d, "location.href").await {
+        href = match eval_value(d, "location.href").await {
             Ok(v) => v.as_str().unwrap_or("").to_string(),
             Err(e) => {
                 applog::warn(format!("api template {}: reading the token page's address: {e}", ctx.id()));
@@ -507,6 +508,8 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
             break;
         }
         if signed_in_again {
+            let cookies = cookies_for(d, ctx, &url).await;
+            record_token_page(ctx, &href, None, cookies);
             progress.fail(None, "the token page sent us to another page - check the template's antiforgery page");
             return None;
         }
@@ -528,6 +531,12 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         Ok(doc) => call_value(d, &doc, TOKEN_FN, &[]).await.map(|v| (doc, v)),
         Err(e) => Err(e),
     };
+    let found = match &read {
+        Ok((_, Value::String(t))) if !t.is_empty() => Some(t.as_str()),
+        _ => None,
+    };
+    let cookies = cookies_for(d, ctx, &url).await;
+    record_token_page(ctx, &href, found, cookies);
     match read {
         Ok((doc, Value::String(t))) if !t.is_empty() => Some((doc, t)),
         Ok(_) => {
@@ -570,20 +579,26 @@ async fn run_step<D: Driver>(
 ) -> StepResult {
     let built = build_request(step, vars).map_err(|e| (None, e))?;
     let wire = serde_json::to_value(&built).map_err(|e| (None, format!("the request could not be built: {e}")))?;
+    // Which cookies the browser holds for this address - the one thing a
+    // rejected save (a 400 with no body) cannot say for itself.
+    let cookies_sent = cookies_for(d, ctx, &format!("{}{}", ctx.origin, built.url))
+        .await
+        .map(|all| all.iter().map(|c| c["name"].clone()).collect::<Vec<_>>());
     let started = Instant::now();
     let answer = call_value(d, doc, FETCH_FN, &[wire, Value::String(token.to_string())]).await;
     let duration_ms = started.elapsed().as_millis() as u64;
 
+    let sent = Sent { status: None, duration_ms, response: "", cookies: cookies_sent.as_deref() };
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
-            record(ctx, step, &built, handler, None, duration_ms, "", token);
+            record(ctx, step, &built, handler, &sent, token);
             return Err((None, browser_failed(ctx, step, &e)));
         }
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
     let text = answer["text"].as_str().unwrap_or("");
-    record(ctx, step, &built, handler, status, duration_ms, text, token);
+    record(ctx, step, &built, handler, &Sent { status, response: text, ..sent }, token);
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
@@ -653,20 +668,22 @@ fn shown(body: &str, token: &str) -> String {
     excerpt(&scrub_tokens(body, Some(token)))
 }
 
-/// One activity record for a request the page made. Never a token: the
-/// one the runner read is not in `built`, and both bodies go through
-/// `shown`, which takes out that one and any other a page carries.
-#[allow(clippy::too_many_arguments)]
-fn record(
-    ctx: &Ctx<'_>,
-    step: &Step,
-    built: &exec::BuiltRequest,
-    handler: Option<&str>,
+/// What came of one request, for its activity record.
+#[derive(Clone, Copy)]
+struct Sent<'a> {
     status: Option<u16>,
     duration_ms: u64,
-    response: &str,
-    token: &str,
-) {
+    response: &'a str,
+    /// The names of the cookies the browser held for the request's
+    /// address; `None` when it would not say.
+    cookies: Option<&'a [Value]>,
+}
+
+/// One activity record for a request the page made. Never a token: the
+/// one the runner read is not in `built`, and both bodies go through
+/// `shown`, which takes out that one and any other a page carries. Never
+/// a cookie value either: only the names the browser would send.
+fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Option<&str>, sent: &Sent<'_>, token: &str) {
     activity_log::record(
         Kind::Api,
         json!({
@@ -678,10 +695,66 @@ fn record(
             "method": method_name(built.method),
             "url": built.url,
             "handler": handler,
-            "status": status,
-            "duration_ms": duration_ms,
+            "status": sent.status,
+            "duration_ms": sent.duration_ms,
             "request": shown(&body_text(&built.body), token),
-            "response": shown(response, token),
+            "response": shown(sent.response, token),
+            "cookies_sent": sent.cookies,
         }),
     );
+}
+
+/// The activity record for the token page: where it was asked for, where
+/// the browser actually ended up, whether a token was there (and how long
+/// it was - never the token) and what cookies the page holds. It is what
+/// tells a save the server rejected apart from one that never had a
+/// token to send.
+fn record_token_page(ctx: &Ctx<'_>, final_url: &str, token: Option<&str>, cookies: Option<Vec<Value>>) {
+    activity_log::record(
+        Kind::Api,
+        json!({
+            "event": "token_page",
+            "template": ctx.id(),
+            "mode": ctx.req.mode.label(),
+            "account": ctx.req.account,
+            "origin": ctx.origin,
+            "requested": ctx.req.template.antiforgery.page,
+            "final_url": scrub_tokens(final_url, token),
+            "token_found": token.is_some(),
+            "token_length": token.map(str::len),
+            "cookies": cookies,
+        }),
+    );
+}
+
+/// The cookies the browser holds for `url`, as a record may show them -
+/// see `cookie_summary`. A browser that will not say is logged and read as
+/// `None`: this is a diagnostic, and never a reason to stop a run.
+async fn cookies_for<D: Driver>(d: &mut D, ctx: &Ctx<'_>, url: &str) -> Option<Vec<Value>> {
+    match d.call("Network.getCookies", json!({ "urls": [url] })).await {
+        Ok(answer) => Some(cookie_summary(&answer["cookies"])),
+        Err(e) => {
+            applog::warn(format!("api template {}: reading the cookies for its activity record: {e}", ctx.id()));
+            None
+        }
+    }
+}
+
+/// Each cookie's name, where it applies and its flags - never its value,
+/// which is copied from nowhere because it is never read.
+fn cookie_summary(cookies: &Value) -> Vec<Value> {
+    let Some(all) = cookies.as_array() else { return vec![] };
+    all.iter()
+        .map(|c| {
+            json!({
+                "name": c["name"],
+                "domain": c["domain"],
+                "path": c["path"],
+                "http_only": c["httpOnly"],
+                "secure": c["secure"],
+                "same_site": c["sameSite"],
+                "session": c["session"],
+            })
+        })
+        .collect()
 }

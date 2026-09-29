@@ -46,6 +46,13 @@ struct Script {
     /// The arguments of every `FETCH_FN` call, in order.
     fetched: Vec<Vec<Value>>,
     navigated: String,
+    /// What `Network.getCookies` answers (its `cookies` array); `None` is
+    /// an empty jar.
+    cookies: Option<Value>,
+    /// `Network.getCookies` fails, as a browser that refuses it does.
+    cookies_fail: bool,
+    /// The `urls` of every `Network.getCookies` call, in order.
+    cookie_urls: Vec<Value>,
 }
 
 struct App {
@@ -80,6 +87,14 @@ impl Driver for App {
                 std::future::pending::<()>().await;
             }
             return Ok(json!({ "result": { "value": reply.expect("a request nobody scripted an answer for") } }));
+        }
+        if method == "Network.getCookies" {
+            let mut s = self.script.lock().unwrap();
+            s.cookie_urls.push(params["urls"].clone());
+            if s.cookies_fail {
+                return Err(CdpError::Protocol { method: method.into(), message: "not allowed here".into() });
+            }
+            return Ok(json!({ "cookies": s.cookies.clone().unwrap_or(json!([])) }));
         }
         if method == "Page.navigate" {
             let (never_loads, gone) = {
@@ -237,6 +252,11 @@ fn answer(status: u16, body: Value) -> Value {
     })
 }
 
+/// The activity records of requests the page made - not the token page's.
+fn step_records(records: &[Value]) -> Vec<&Value> {
+    records.iter().filter(|r| r.get("step").is_some()).collect()
+}
+
 async fn run(r: &mut Rig, t: ApiTemplate) -> RunReport {
     let req = request(t, prove());
     run_template(&mut r.browsers, r.root.path(), &req, &quick()).await
@@ -295,11 +315,12 @@ async fn the_token_goes_in_the_header_and_nowhere_else() {
     assert!(!text.contains(TOKEN), "the token reached the report: {text}");
 
     let records = activity_records(activity.path(), "api");
-    assert_eq!(records.len(), 2, "{records:?}");
     for rec in &records {
         assert!(!rec.to_string().contains(TOKEN), "the token reached an activity record: {rec}");
     }
-    let first = &records[0];
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 2, "{records:?}");
+    let first = steps[0];
     assert_eq!(first["template"], "pms-create-draft-cycle");
     assert_eq!(first["mode"], "prove");
     assert_eq!(first["account"], "admin");
@@ -559,13 +580,14 @@ async fn a_token_in_a_response_body_reaches_no_report_record_or_log() {
         assert!(!message.contains(s), "{s} reached the message: {message}");
     }
     let records = activity_records(activity.path(), "api");
-    assert_eq!(records.len(), 2, "{records:?}");
     for rec in &records {
         for s in secrets {
             assert!(!rec.to_string().contains(s), "{s} reached an activity record: {rec}");
         }
     }
-    assert!(records[0]["response"].as_str().unwrap().contains("274"), "{}", records[0]);
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 2, "{records:?}");
+    assert!(steps[0]["response"].as_str().unwrap().contains("274"), "{}", steps[0]);
     let log = v2_lib::applog::recent(400);
     for line in &log {
         for s in secrets {
@@ -944,5 +966,134 @@ mod through_the_bridge {
         assert!(detail.contains("cycleId 276 created") && detail.contains("Evaluation rules"), "{detail}");
         assert_eq!(runs[0].outputs, BTreeMap::from([("cycleId".to_string(), json!(276))]), "what it had created");
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
+    }
+}
+
+/// A jar as the browser reports it: two cookies, each with a value that
+/// must never reach a record.
+fn jar() -> Value {
+    json!([
+        { "name": ".AspNetCore.Antiforgery.Ab1", "value": "JAR-SECRET-1", "domain": "hr.example.internal",
+          "path": "/hr/PMSV10", "httpOnly": true, "secure": true, "sameSite": "Strict", "session": true,
+          "size": 190, "expires": -1 },
+        { "name": "ehrm85", "value": "JAR-SECRET-2", "domain": ".example.internal",
+          "path": "/", "httpOnly": true, "secure": true, "session": false, "expires": 1_900_000_000.0 }
+    ])
+}
+
+/// Diagnosing a rejected save: what the token page was and what it held,
+/// and which cookies each step's address would carry - names, paths and
+/// flags only, never a value and never the token.
+#[tokio::test]
+async fn the_token_page_and_each_step_record_cookie_names_but_never_values() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().cookies = Some(jar());
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+
+    let records = activity_records(activity.path(), "api");
+    let page = records.iter().find(|rec| rec["event"] == "token_page").expect("no token page record");
+    assert_eq!(page["template"], "pms-create-draft-cycle");
+    assert_eq!(page["mode"], "prove");
+    assert_eq!(page["account"], "admin");
+    assert_eq!(page["origin"], "https://hr.example.internal");
+    assert_eq!(page["requested"], PAGE);
+    assert_eq!(page["final_url"], format!("https://hr.example.internal{PAGE}"));
+    assert_eq!(page["token_found"], true);
+    assert_eq!(page["token_length"], TOKEN.len());
+    assert_eq!(
+        page["cookies"],
+        json!([
+            { "name": ".AspNetCore.Antiforgery.Ab1", "domain": "hr.example.internal", "path": "/hr/PMSV10",
+              "http_only": true, "secure": true, "same_site": "Strict", "session": true },
+            { "name": "ehrm85", "domain": ".example.internal", "path": "/",
+              "http_only": true, "secure": true, "same_site": null, "session": false }
+        ])
+    );
+
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 2, "{records:?}");
+    for step in &steps {
+        assert_eq!(step["cookies_sent"], json!([".AspNetCore.Antiforgery.Ab1", "ehrm85"]), "{step}");
+    }
+    // The jar was asked about the page itself, then each step's own address.
+    let asked = r.script.lock().unwrap().cookie_urls.clone();
+    assert_eq!(
+        asked,
+        vec![
+            json!([format!("https://hr.example.internal{PAGE}")]),
+            json!(["https://hr.example.internal/hr/pmsv10/performancecycle?handler=SaveProgress"]),
+            json!(["https://hr.example.internal/hr/pmsv10/performancecycle?handler=SaveEvalRulesProgress"]),
+        ]
+    );
+
+    for rec in &records {
+        let text = rec.to_string();
+        for secret in ["JAR-SECRET-1", "JAR-SECRET-2", TOKEN] {
+            assert!(!text.contains(secret), "{secret} reached an activity record: {text}");
+        }
+    }
+    for line in v2_lib::applog::recent(400) {
+        for secret in ["JAR-SECRET-1", "JAR-SECRET-2", TOKEN] {
+            assert!(!line.message.contains(secret), "{secret} reached the app log: {}", line.message);
+        }
+    }
+}
+
+/// A page with no token is recorded too - that is exactly the case the
+/// record is for.
+#[tokio::test]
+async fn a_token_page_without_a_token_is_still_recorded() {
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(vec![], None);
+    {
+        let mut s = r.script.lock().unwrap();
+        s.token = None;
+        s.cookies = Some(jar());
+    }
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+
+    let records = activity_records(activity.path(), "api");
+    let page = records.iter().find(|rec| rec["event"] == "token_page").expect("no token page record");
+    assert_eq!(page["token_found"], false);
+    assert_eq!(page["token_length"], Value::Null);
+    assert_eq!(page["cookies"].as_array().map(Vec::len), Some(2), "{page}");
+    assert!(step_records(&records).is_empty(), "no step was sent: {records:?}");
+}
+
+/// Reading the jar is a diagnostic: when the browser will not say, the run
+/// goes on and the records say the cookies are unknown.
+#[tokio::test]
+async fn cookies_that_cannot_be_read_do_not_stop_the_run() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().cookies_fail = true;
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+
+    let records = activity_records(activity.path(), "api");
+    let page = records.iter().find(|rec| rec["event"] == "token_page").expect("no token page record");
+    assert_eq!(page["cookies"], Value::Null, "{page}");
+    for step in step_records(&records) {
+        assert_eq!(step["cookies_sent"], Value::Null, "{step}");
     }
 }

@@ -237,8 +237,17 @@ from the app log.
   (ran, or refused and why), rows affected or returned, duration.
 - **API records:** template id, mode (prove/run), account key, origin, and
   per step: method, path, handler, status, duration, request and response
-  bodies capped at 500 characters each. **Never** the anti-forgery token,
-  a cookie, or an account's password.
+  bodies capped at 500 characters each, and `cookies_sent` - the names of
+  the cookies the browser holds for that step's address. **Never** the
+  anti-forgery token, a cookie value, or an account's password.
+- **Token page record** (`"event": "token_page"`, added 2026-09-29 to
+  diagnose a hosted save rejected with an empty 400): the requested page,
+  the address the browser actually landed on, whether a token was found
+  and its length, and each cookie the page holds - name, domain, path,
+  HttpOnly, Secure, SameSite, session - never its value. Written when the
+  token is read or missing, and when the page lands somewhere else.
+  Reading the cookies is a diagnostic: when the browser will not say, the
+  fields are `null` and the run goes on.
 - **`db_query`'s statement logging moves here.** Its `log_line` and
   `refusal_log_line` calls in `db/query.rs` stop writing SQL to the app
   log.
