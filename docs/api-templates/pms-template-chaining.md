@@ -140,9 +140,19 @@ employee. Each writes only while their own latest status is `in_review`.
 Proven on cycle 280 as `imly` (manager) and `emma` (reviewer): final score
 0.8448 = goals 0.9413 x 60% + competencies 0.70 x 40%.
 
-Not proven: `manager-save-goal-plan` and `manager-restore-goal` (need an
-appraisee with a submitted, undecided goal plan whose account can sign in)
-and the three manager attachment deletes (need a UI upload first).
+**Manager changes to a submitted goal plan** (manager goal_planning status
+`in_review`; proven on cycle 281 as `conrad` on Quinton's plan, account
+`quinton`):
+
+1. `manager-save-goal-plan` - an upsert with a `participantGoalId` edits
+   that goal (recorded as a manager `edit` for the employee to acknowledge;
+   keep each group at 100); a `null` id adds a goal every run. `deletes` is a
+   soft delete (a pending manager `delete` in `perf_cp_goal_modification`).
+2. `manager-restore-goal` - removes a pending manager delete (179000148 if
+   there is none).
+3. `manager-approve-goal-plan` -> employee `pending_ack`.
+
+Not proven: the three manager attachment deletes (need a UI upload first).
 
 ## Known gaps
 
