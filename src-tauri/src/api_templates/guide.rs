@@ -209,6 +209,20 @@ A prove of a template on a flow is saved only if its own stage's check reads
 done afterwards - for the creating stage, on the subject it captured. A
 check that could not run saves nothing either, and says so.
 
+One large flow per kind of record. A flow is the map of everything the
+application lets you do to one record - a cycle, an assessment - so aim for
+ONE flow per kind of record that places EVERY template you have discovered
+or built for it on a stage, not a small flow per task. Before saving, call
+`list_api_templates`: each template that acts on this record (it takes the
+subject as a param, or captures it) belongs on a stage; one that acts on a
+different record belongs in that record's own flow. Include the stages no
+template performs yet - the map shows them as gaps to fill. `save_api_flow`
+answers with `not_on_a_flow`: the saved templates no flow places yet. Work
+that list down to empty - add a stage for each (or name an existing one),
+save the flow again, then re-prove each template with its `stage` set
+(`replace: true` and a `why`). Re-proving runs the template, so do it on a
+record made for testing.
+
 The order of work - flows first, templates second:
 
 1. Map the wizard first. Read the page's steps in the code and find where

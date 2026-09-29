@@ -1,7 +1,7 @@
 import { useId, useMemo } from "react";
-import type { Flow, SavedTemplate } from "../../bindings";
+import type { Effect, Flow, SavedTemplate } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { IconRemove } from "../../lib/actionIcons";
+import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { GEOMETRY, edgePath, layoutFlow, type Placed } from "../../lib/flowLayout";
 import { EffectBadge, dayMonth, stampDate } from "./TemplateRow";
@@ -12,6 +12,27 @@ function arrowHead(to: Placed): string {
   const y = to.y + to.h / 2;
   return `M${x - 6} ${y - 4} L${x} ${y} L${x - 6} ${y + 4}`;
 }
+
+/** An arrow's colour: what the stage it leads into does. One effect across
+ *  its templates takes that effect's token; no template yet, or templates
+ *  that disagree, take the theme's accent. */
+export type EdgeTone = Effect | "none";
+
+const EDGE_TONE: Record<EdgeTone, string> = {
+  create: "text-success",
+  edit: "text-warning",
+  delete: "text-danger",
+  none: "text-accent",
+};
+
+export function edgeTone(templates: { effect: Effect }[]): EdgeTone {
+  const effects = new Set(templates.map((t) => t.effect));
+  return effects.size === 1 ? [...effects][0] : "none";
+}
+
+/** Seconds between one column's pulse and the next, so the glow runs
+ *  through the flow left to right rather than every arrow at once. */
+const PULSE_STAGGER = 0.18;
 
 /**
  * One flow, drawn as a map (spec §8): its stages left to right by depth,
@@ -26,12 +47,15 @@ export default function FlowMap({
   flow,
   templates,
   onOpenTemplate,
+  onView,
   onRemove,
 }: {
   flow: Flow;
   /** The saved templates whose `stage` names this flow. */
   templates: SavedTemplate[];
   onOpenTemplate: (id: string) => void;
+  /** Open the flow on its own page in the browser. */
+  onView: () => void;
   onRemove: () => void;
 }) {
   const headingId = useId();
@@ -73,6 +97,15 @@ export default function FlowMap({
           size="sm"
           variant="ghost"
           className="ml-auto"
+          aria-label={`View flow ${flow.title} in the browser`}
+          onClick={onView}
+        >
+          <IconOpenInBrowser aria-hidden />
+          View flow
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
           aria-label={`Remove flow ${flow.title}`}
           onClick={onRemove}
         >
@@ -87,14 +120,24 @@ export default function FlowMap({
             aria-hidden="true"
             width={layout.width}
             height={layout.height}
-            className="absolute inset-0 fill-none stroke-border-strong"
+            className="absolute inset-0 fill-none"
           >
             {layout.edges.map(({ from, to }) => {
               const a = placed.get(from);
               const b = placed.get(to);
               if (!a || !b) return null;
+              const tone = edgeTone(byStage.get(to) ?? []);
               return (
-                <g key={`${from}->${to}`} strokeWidth={1.5}>
+                <g
+                  key={`${from}->${to}`}
+                  data-tone={tone}
+                  className={cn("flow-edge", EDGE_TONE[tone])}
+                  stroke="currentColor"
+                  strokeWidth={1.75}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ animationDelay: `${a.col * PULSE_STAGGER}s` }}
+                >
                   <path data-edge d={edgePath(a, b)} />
                   <path d={arrowHead(b)} />
                 </g>

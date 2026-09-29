@@ -86,6 +86,41 @@ pub fn api_templates_remove_flow(
     remove_flow_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id)
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn api_templates_open_flow(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+    palette: crate::webtheme::PagePalette,
+) -> Result<(), String> {
+    let root = crate::commands::autorun::root(&app)?;
+    let path = write_flow_page_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id, &palette)?;
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
+        crate::applog::warn(format!("the flow page could not be opened: {e}"));
+        "the flow page could not be opened in your browser - see Settings, Logs".to_string()
+    })
+}
+
+/// `api_templates_open_flow` up to the page on disk: the saved flow and
+/// the templates on it, drawn on their own page (`flow_page`). "Is Auto Run
+/// offered here" is passed in, as `remove_flow_at` takes it.
+pub fn write_flow_page_at(
+    offered: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    id: &str,
+    palette: &crate::webtheme::PagePalette,
+) -> Result<std::path::PathBuf, String> {
+    refuse_unless(offered)?;
+    let flow = flow_store::load(root, organization, project, id)?
+        .ok_or_else(|| format!("the flow {id} is no longer saved"))?;
+    let templates = store::list(root, organization, project)?;
+    crate::api_templates::flow_page::write(&flow, &templates, palette)
+}
+
 /// `api_templates_remove_flow` for a given data root, with "is Auto Run
 /// offered here" passed in so a locked build's refusal is testable.
 pub fn remove_flow_at(

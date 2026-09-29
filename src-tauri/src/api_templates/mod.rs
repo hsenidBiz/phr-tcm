@@ -11,6 +11,7 @@
 pub mod cookies;
 pub mod exec;
 pub mod flow;
+pub mod flow_page;
 pub mod flow_store;
 pub mod gate;
 pub mod guide;

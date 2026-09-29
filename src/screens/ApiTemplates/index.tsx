@@ -1,11 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { commands, events, type Flow, type SavedTemplate } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
+import { IconCollapseAll, IconExpandAll } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
+import { pagePalette } from "../../lib/reportTheme";
+import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
+import { toast } from "../../lib/toast";
 import FlowMap from "./FlowMap";
 import RemoveFlow from "./RemoveFlow";
 import RemoveTemplate from "./RemoveTemplate";
@@ -59,6 +67,12 @@ export default function ApiTemplates({
 }) {
   const qc = useQueryClient();
   const writesOn = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
+  // Folded module groups, remembered across sessions like the test case
+  // screens' own.
+  const [folded, toggleFolded, foldGroups, unfoldGroups] = usePersistedStringSet(
+    "tcm-v2-api-templates-collapsed-groups",
+  );
   const [search, setSearch] = useState("");
   const [removing, setRemoving] = useState<SavedTemplate["template"] | null>(null);
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
@@ -147,6 +161,11 @@ export default function ApiTemplates({
   }, [templates]);
   const onFlow = (flowId: string) => byFlow.get(flowId) ?? NONE;
 
+  // A search opens every group, so a match is never hidden in a fold.
+  const isFolded = (module: string) => !q && folded.has(module);
+  const moduleNames = groups.map((g) => g.module);
+  const openGroups = moduleNames.filter((m) => !isFolded(m));
+
   if (!org || !project) {
     return <p className="text-sm text-muted">Pick an organization and project in the bar above first.</p>;
   }
@@ -207,12 +226,30 @@ export default function ApiTemplates({
             groups.map(({ module, flows: moduleFlows, list }) => (
               <section key={module} aria-label={module} className="space-y-1">
                 <div className="flex w-full items-center gap-3 pb-1 pt-2">
-                  <h2 className="text-sm font-semibold tracking-wide text-muted">
-                    {module}
-                    {list.length > 0 && ` (${list.length})`}
-                  </h2>
+                  {/* The chevron and the title both fold the group - clicking
+                      the name is how people expect to open one. */}
+                  <button
+                    aria-label={`${isFolded(module) ? "Expand" : "Collapse"} group ${module}`}
+                    aria-expanded={!isFolded(module)}
+                    title={isFolded(module) ? "Expand group" : "Collapse group"}
+                    className="text-muted transition-colors hover:text-accent"
+                    onClick={() => toggleFolded(module)}
+                  >
+                    {isFolded(module) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                  </button>
+                  <button
+                    className="group"
+                    title={isFolded(module) ? "Expand group" : "Collapse group"}
+                    onClick={() => toggleFolded(module)}
+                  >
+                    <h2 className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                      {module}
+                      {list.length > 0 && ` (${list.length})`}
+                    </h2>
+                  </button>
                   <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                 </div>
+                <Collapse open={!isFolded(module)}>
                 {moduleFlows.length > 0 && (
                   <div className="space-y-2 pb-2">
                     {moduleFlows.map((f) => (
@@ -221,6 +258,13 @@ export default function ApiTemplates({
                         flow={f}
                         templates={onFlow(f.id)}
                         onOpenTemplate={openFromMap}
+                        onView={() => {
+                          // Rust writes the page and opens it, as the review
+                          // page's tree view does; a failure is a sentence.
+                          unwrapStr(commands.apiTemplatesOpenFlow(org, project, f.id, pagePalette())).catch(
+                            (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)),
+                          );
+                        }}
                         onRemove={() => setRemovingFlow(f)}
                       />
                     ))}
@@ -240,11 +284,43 @@ export default function ApiTemplates({
                     ))}
                   </ul>
                 )}
+                </Collapse>
               </section>
             ))
           )}
         </>
       )}
+
+      {/* Collapse all, stuck bottom left like the test case screens' own: one
+          button that folds every open group, and opens them all again once
+          every group is folded. Portalled so it pins to the window. */}
+      {groups.length > 0 &&
+        createPortal(
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-full text-text hover:bg-surface-2 hover:text-text"
+              onClick={() => (openGroups.length > 0 ? foldGroups(openGroups) : unfoldGroups(moduleNames))}
+            >
+              {openGroups.length > 0 ? (
+                <>
+                  <IconCollapseAll aria-hidden />
+                  Collapse all ({openGroups.length})
+                </>
+              ) : (
+                <>
+                  <IconExpandAll aria-hidden />
+                  Expand all ({moduleNames.length})
+                </>
+              )}
+            </Button>
+          </div>,
+          document.body,
+        )}
 
       {removing && (
         <RemoveTemplate

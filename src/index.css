@@ -953,6 +953,15 @@ table {
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* API Templates flow map: each arrow breathes in its stage's colour -
+     brighter, with a soft glow of that same colour - each column a beat
+     after the one before it (FlowMap sets the delay). */
+  .flow-edge { animation: flow-pulse 1.8s ease-in-out infinite; }
+  @keyframes flow-pulse {
+    0%, 100% { opacity: 0.55; filter: none; }
+    50% { opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+  }
+
   /* The context bar's bell (GlyphBell): its parts are nav glyphs, so its
      ring lives here with theirs - the keyframes are with the gear's above. */
   .ico-bell-ring .ng-bell-housing { transform-origin: 12px 2px; animation: ico-bell-housing 0.75s ease-in-out; }

@@ -861,6 +861,7 @@ export const commands = {
 	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
 	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
+	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 };
 
 /** Events */

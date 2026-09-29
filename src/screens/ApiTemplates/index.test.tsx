@@ -620,3 +620,116 @@ test("a wide map scrolls inside its own box", async () => {
   const canvas = map.firstElementChild as HTMLElement;
   expect(canvas.style.width).toBe(`${4 * 208 + 3 * 56}px`);
 });
+
+// ---------------------------------------------------------------------------
+// The map's arrows take the colour of what the stage they lead into does.
+
+test("each arrow is coloured by what its stage does, and pulses", async () => {
+  const on = (id: string, title: string, effect: string, stage: string) => ({
+    template: template({ id, title, effect, stage: { flow: "pms-performance-cycle", id: stage } }),
+    runs: [],
+  });
+  mockOverview({
+    origin: OVERVIEW.origin,
+    templates: [
+      on("pms-save-rules", "Save the rules", "edit", "rules"),
+      on("pms-add-people", "Add participants", "create", "participants"),
+      on("pms-drop-cycle", "Drop the cycle", "delete", "publish"),
+    ],
+    flows: [FLOW],
+  });
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const edges = [...within(flow).getByTestId("flow-map").querySelectorAll("g[data-tone]")];
+  const tones = edges.map((g) => g.getAttribute("data-tone"));
+  // setup->rules, rules->competencies, rules->participants, participants->publish.
+  expect(tones).toEqual(["edit", "none", "create", "delete"]);
+  const cls = edges.map((g) => g.getAttribute("class"));
+  expect(cls[0]).toContain("text-warning");
+  expect(cls[1]).toContain("text-accent");
+  expect(cls[2]).toContain("text-success");
+  expect(cls[3]).toContain("text-danger");
+  for (const c of cls) expect(c).toContain("flow-edge");
+  // The pulse runs left to right: a later column starts later.
+  expect(edges[0]).toHaveStyle({ animationDelay: "0s" });
+  expect((edges[3] as SVGElement).style.animationDelay).not.toBe("0s");
+});
+
+test("a stage whose templates disagree takes the theme's colour", async () => {
+  const { edgeTone } = await import("./FlowMap");
+  expect(edgeTone([])).toBe("none");
+  expect(edgeTone([{ effect: "create" }, { effect: "create" }])).toBe("create");
+  expect(edgeTone([{ effect: "create" }, { effect: "delete" }])).toBe("none");
+});
+
+// ---------------------------------------------------------------------------
+// Module groups fold, like the test case screens' groups.
+
+test("a module group folds from its header and stays folded", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+
+  await screen.findByText("Remove a goal");
+  const fold = screen.getByRole("button", { name: "Collapse group PMS / Goals" });
+  expect(fold).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(fold);
+
+  expect(screen.queryByText("Remove a goal")).not.toBeInTheDocument();
+  // The group itself stays, so it can be opened again.
+  expect(screen.getByRole("region", { name: "PMS / Goals" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand group PMS / Goals" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByText("Create a draft performance cycle")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-api-templates-collapsed-groups")).toContain("PMS / Goals");
+
+  // The group's title folds it too.
+  fireEvent.click(screen.getByRole("heading", { name: /PMS \/ Performance Cycle/ }));
+  expect(screen.queryByText("Create a draft performance cycle")).not.toBeInTheDocument();
+
+  // A search opens every group, so a match is never hidden in a fold.
+  fireEvent.change(screen.getByRole("textbox", { name: "Search templates" }), { target: { value: "goal" } });
+  expect(screen.getByText("Remove a goal")).toBeInTheDocument();
+});
+
+test("Collapse all folds every open group, then becomes Expand all", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+
+  await screen.findByText("Remove a goal");
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(2\)/ }));
+  expect(screen.queryByText("Remove a goal")).not.toBeInTheDocument();
+  expect(screen.queryByText("Create a draft performance cycle")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Expand all \(2\)/ }));
+  expect(screen.getByText("Remove a goal")).toBeInTheDocument();
+  expect(screen.getByText("Create a draft performance cycle")).toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------
+// View flow: the flow on its own page in the browser, as the review page's
+// tree view opens the Test map.
+
+test("View flow asks Rust to open the flow's own page, in the app's palette", async () => {
+  const calls = mockOverview(FLOW_OVERVIEW, (cmd) => (cmd === "api_templates_open_flow" ? null : undefined));
+  renderScreen(vi.fn(), "Web");
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  fireEvent.click(within(flow).getByRole("button", { name: "View flow Performance cycle wizard in the browser" }));
+
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_open_flow")).toHaveLength(1));
+  const args = calls.find((c) => c.cmd === "api_templates_open_flow")?.args as Record<string, unknown>;
+  expect(args).toMatchObject({ organization: "acme", project: "Web", id: "pms-performance-cycle" });
+  expect(args.palette).toMatchObject({ light: expect.any(Object), dark: expect.any(Object) });
+});
+
+test("a flow page that cannot be opened says why", async () => {
+  const { toast } = await import("../../lib/toast");
+  mockOverview(FLOW_OVERVIEW, (cmd) => {
+    if (cmd === "api_templates_open_flow") throw "the flow pms-performance-cycle is no longer saved";
+  });
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  fireEvent.click(within(flow).getByRole("button", { name: /^View flow/ }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("the flow pms-performance-cycle is no longer saved"));
+});

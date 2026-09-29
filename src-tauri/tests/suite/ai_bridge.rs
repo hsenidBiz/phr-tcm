@@ -2863,12 +2863,48 @@ mod api_template_routes {
             [("setup", true), ("rules", true), ("competencies", false), ("participants", true), ("publish", true)]
         );
         assert_eq!(v["orphaned"], json!([]), "{v}");
+        assert_eq!(v["not_on_a_flow"], json!([]), "nothing is left off a flow: {v}");
 
         let saved = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().expect("saved");
         let evidence = saved.saved.clone().expect("the app's saved block");
         assert_eq!(evidence.sample, json!(274));
         assert!(!evidence.at.is_empty());
         assert_eq!(v2_lib::api_templates::flow::Flow { saved: None, ..saved }, cycle_flow(), "saved as sent");
+    }
+
+    /// A flow is meant to place every template discovered for its record:
+    /// the save answer lists the saved templates no flow places yet, so the
+    /// assistant has the rest of the map in front of it.
+    #[tokio::test]
+    async fn saving_a_flow_lists_the_templates_on_no_flow_yet() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let placed = crate::common::saved_on_stage("pms-set-eval-rules", "Set the evaluation rules", "rules");
+        let loose = v2_lib::api_templates::ApiTemplate {
+            stage: None,
+            ..crate::common::saved_on_stage("pms-add-competency", "Add a competency", "rules")
+        };
+        for t in [&placed, &loose] {
+            v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, t).unwrap();
+        }
+        let db = db_answering(true, &[]);
+
+        let body = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, handed(&db)).await;
+        assert_eq!(status, 200, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["not_on_a_flow"],
+            json!([{ "id": "pms-add-competency", "title": "Add a competency", "module": "PMS / Performance Cycle" }]),
+            "only the template no flow places: {v}"
+        );
+        let message = v["message"].as_str().unwrap_or("");
+        assert!(message.contains("pms-add-competency"), "{message}");
+        assert!(message.contains("on no flow yet"), "{message}");
+        assert!(!message.contains("pms-set-eval-rules"), "{message}");
     }
 
     #[tokio::test]
