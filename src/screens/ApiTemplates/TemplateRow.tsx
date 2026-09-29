@@ -243,6 +243,7 @@ export default function TemplateRow({
                     <th className="py-1 pr-3 font-medium">Name</th>
                     <th className="py-1 pr-3 font-medium">Type</th>
                     <th className="py-1 pr-3 font-medium">Required</th>
+                    <th className="py-1 pr-3 font-medium">Default</th>
                     <th className="py-1 pr-3 font-medium">Description</th>
                     <th className="py-1 font-medium">Lookup hint</th>
                   </tr>
@@ -253,6 +254,10 @@ export default function TemplateRow({
                       <td className="id-mono py-1 pr-3 text-text">{p.name}</td>
                       <td className="py-1 pr-3 text-muted">{p.type}</td>
                       <td className="py-1 pr-3 text-muted">{p.required ? "yes" : "no"}</td>
+                      {/* What a run that leaves an optional param out sends. */}
+                      <td className="id-mono break-all py-1 pr-3 text-muted">
+                        {p.default === undefined || p.default === null ? "" : JSON.stringify(p.default)}
+                      </td>
                       <td className="py-1 pr-3 text-muted">{p.description ?? ""}</td>
                       <td className="id-mono break-all py-1 text-faint">{p.lookup ?? ""}</td>
                     </tr>

@@ -780,3 +780,32 @@ test("a flow page that cannot be opened says why", async () => {
   fireEvent.click(within(flow).getByRole("button", { name: /^View flow/ }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("the flow pms-performance-cycle is no longer saved"));
 });
+
+test("the details count the parameters and show what an optional one sends when left out", async () => {
+  mockOverview({
+    ...OVERVIEW,
+    templates: [
+      {
+        template: template({
+          params: [
+            { name: "cycleId", type: "number", required: true },
+            { name: "comments", type: "list", required: false, default: [] },
+          ],
+        }),
+        runs: [],
+      },
+    ],
+  });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const details = within(row).getByTestId("template-details");
+  expect(within(details).getByText("Parameters (2)")).toBeInTheDocument();
+  const table = within(details).getByRole("table", { name: "Parameters" });
+  const header = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+  expect(header).toContain("Default");
+  const comments = within(table).getByText("comments").closest("tr")!;
+  const cells = within(comments).getAllByRole("cell").map((c) => c.textContent);
+  expect(cells.slice(0, 4)).toEqual(["comments", "list", "no", "[]"]);
+});

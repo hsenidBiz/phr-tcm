@@ -208,7 +208,15 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     if let Err(e) = prepare(root, &req.org, &req.project, &req.account) {
         problems.push(e);
     }
-    problems.extend(stage_problems(root, req));
+    let (stage, missing_subject) = stage_problems(root, req);
+    // A flow template left without its record id gets the flow's own
+    // sentence, which says why the value is needed - not also the general
+    // one about an optional param with no default.
+    if let Some(subject) = missing_subject {
+        let general = format!("param '{subject}' is optional but has no default");
+        problems.retain(|p| !p.starts_with(&general));
+    }
+    problems.extend(stage);
     if let (Some(_), Mode::Prove { replace, why }) = (existing, &req.mode) {
         let has_why = why.as_deref().is_some_and(|w| !w.trim().is_empty());
         if !(*replace && has_why) {
@@ -244,24 +252,27 @@ pub fn stage_flow(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Opt
 /// have the shape that stage needs, and - unless it creates the record -
 /// the call must carry the record's id. The subject param is not forced
 /// `required`, so a missing value is caught here, by name, before any
-/// database is asked.
-fn stage_problems(root: &Path, req: &RunRequest) -> Vec<String> {
+/// database is asked - and its name comes back beside the problems.
+fn stage_problems(root: &Path, req: &RunRequest) -> (Vec<String>, Option<String>) {
     let t = &req.template;
-    let Some(r) = &t.stage else { return Vec::new() };
+    let Some(r) = &t.stage else { return (Vec::new(), None) };
     let f = stage_flow(root, &req.org, &req.project, t);
     let problems = check_stage_ref(t, f.as_ref());
     if !problems.is_empty() {
-        return problems;
+        return (problems, None);
     }
-    let Some(f) = f else { return problems };
+    let Some(f) = f else { return (problems, None) };
     let creates = f.stages.iter().any(|s| s.id == r.id && s.creates);
     let name = &f.subject.name;
     // A required param that is missing already has check_values' sentence.
     let required = t.params.iter().any(|p| &p.name == name && p.required);
     if !creates && !required && !req.values.contains_key(name) {
-        return vec![format!("this template belongs to flow {}, so it needs \"{name}\" in values", f.id)];
+        return (
+            vec![format!("this template belongs to flow {}, so it needs \"{name}\" in values", f.id)],
+            Some(name.clone()),
+        );
     }
-    Vec::new()
+    (Vec::new(), None)
 }
 
 /// Whether a template run is going, process-wide. Only `claim` sets it;
@@ -528,7 +539,8 @@ async fn drive<D: Driver>(
     progress.at(TOKEN_PAGE, None);
     let Some((mut doc, mut token)) = token(d, &ctx, progress).await else { return };
 
-    let mut vars: BTreeMap<String, Value> = req.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    // What a run left out of an optional param, its default stands in for.
+    let mut vars: BTreeMap<String, Value> = crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
     for step in &req.template.steps {
         let handler = step.query.get("handler").map(|h| exec::substitute_str(h, &vars));
         progress.at(&step.name, handler.clone());

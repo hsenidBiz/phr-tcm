@@ -64,6 +64,12 @@ pub struct Param {
     /// Guidance for the assistant only - the app never runs this.
     #[serde(default)]
     pub lookup: Option<String>,
+    /// What an optional param stands for when a run does not give it: what
+    /// the application's own UI sends when the person leaves it empty
+    /// (usually `[]` or `""`). Only an optional param has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<specta_typescript::Unknown>)]
+    pub default: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -357,6 +363,24 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
     // capture from a step strictly earlier than the one being checked -
     // captures accumulate as the loop walks forward, so a step can never
     // see its own capture or one from a step after it.
+    // A default stands in for an optional param a run leaves out, so it is
+    // a value of the param's type - and a required param, which every run
+    // gives, has no use for one.
+    for p in &t.params {
+        match (&p.default, p.required) {
+            (Some(_), true) => problems.push(format!(
+                "param '{}' is required, so it has no use for a default - drop the default, or make it optional",
+                p.name
+            )),
+            (Some(d), false) if !value_matches(p.kind, d) => problems.push(format!(
+                "param '{}' has a default that is not {}",
+                p.name,
+                wanted(p.kind)
+            )),
+            _ => {}
+        }
+    }
+
     let mut known: HashSet<&str> = t.params.iter().map(|p| p.name.as_str()).collect();
 
     for step in &t.steps {
@@ -416,6 +440,31 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
     problems
 }
 
+/// What a value of `kind` must be, for a sentence.
+fn wanted(kind: ParamType) -> &'static str {
+    match kind {
+        ParamType::String => "a string",
+        ParamType::Number => "a number",
+        ParamType::Boolean => "a boolean",
+        ParamType::Date => "a date in YYYY-MM-DD form",
+        ParamType::List => "a list",
+    }
+}
+
+/// `values` with every optional param a run left out filled in from its
+/// `default` - the values a run's placeholders are read from. A param with
+/// no default is never filled in: `check_values` has already refused a run
+/// that leaves one out.
+pub fn with_defaults(t: &ApiTemplate, values: &serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
+    let mut out = values.clone();
+    for p in &t.params {
+        if let (false, Some(d)) = (out.contains_key(&p.name), &p.default) {
+            out.insert(p.name.clone(), d.clone());
+        }
+    }
+    out
+}
+
 fn value_matches(kind: ParamType, v: &Value) -> bool {
     match kind {
         ParamType::String => v.is_string(),
@@ -437,19 +486,19 @@ pub fn check_values(t: &ApiTemplate, values: &serde_json::Map<String, Value>) ->
         match values.get(&param.name) {
             Some(v) => {
                 if !value_matches(param.kind, v) {
-                    let want = match param.kind {
-                        ParamType::String => "a string",
-                        ParamType::Number => "a number",
-                        ParamType::Boolean => "a boolean",
-                        ParamType::Date => "a date in YYYY-MM-DD form",
-                        ParamType::List => "a list",
-                    };
-                    problems.push(format!("param '{}' must be {want}", param.name));
+                    problems.push(format!("param '{}' must be {}", param.name, wanted(param.kind)));
                 }
             }
             None => {
                 if param.required {
                     problems.push(format!("param '{}' is required but missing", param.name));
+                } else if param.default.is_none() {
+                    // Left out with nothing to stand in for it, its placeholder
+                    // would go to the application as the text `{{name}}`.
+                    problems.push(format!(
+                        "param '{}' is optional but has no default, so a run must give it - or give the template a default: what the application's UI sends when it is left empty",
+                        param.name
+                    ));
                 }
             }
         }
