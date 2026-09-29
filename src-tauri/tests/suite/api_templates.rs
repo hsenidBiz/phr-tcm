@@ -655,10 +655,10 @@ fn an_invalid_id_never_reaches_the_disk() {
 /// Cookie paths are case-sensitive. A hosted server kept its anti-forgery
 /// cookie on `/hr/pmsv10` while a template called `/hr/PMSV10/...`, so every
 /// save went without it and came back an empty 400. These are the rules
-/// the runner uses to catch that before it sends anything.
+/// the runner uses to send such a step in the cookie's letter case instead.
 mod cookie_case {
     use serde_json::json;
-    use v2_lib::api_templates::cookies::{case_blind_cookies, in_cookie_case, jar_cookies};
+    use v2_lib::api_templates::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
 
     fn jar() -> Vec<v2_lib::api_templates::cookies::JarCookie> {
         jar_cookies(&json!([
@@ -697,8 +697,38 @@ mod cookie_case {
         assert_eq!(names("/reports/y"), vec!["trailing".to_string()]);
     }
 
+    /// A cookie the browser holds WITHOUT a leading dot is host-only (RFC
+    /// 6265 §5.3): it goes to that exact host, never to its subdomains.
     #[test]
-    fn the_suggested_path_takes_the_cookies_letter_case() {
+    fn a_host_only_cookie_on_a_parent_host_does_not_count() {
+        let jar = jar_cookies(&json!([
+            { "name": "parent-host-only", "value": "v", "domain": "example.internal", "path": "/hr/pmsv10" },
+            { "name": "parent-domain", "value": "v", "domain": ".example.internal", "path": "/hr/pmsv10" }
+        ]));
+        let found: Vec<String> =
+            case_blind_cookies(&jar, "hr.example.internal", "/hr/PMSV10/x").iter().map(|c| c.name.clone()).collect();
+        assert_eq!(found, vec!["parent-domain".to_string()]);
+    }
+
+    /// Adapting must not trade one cookie for another: when the path as
+    /// written already carries a cookie (on a path other than "/") that the
+    /// adapted path would not, the path is left alone.
+    #[test]
+    fn a_cookie_the_written_path_already_carries_is_not_given_up() {
+        let jar = jar_cookies(&json!([
+            { "name": "upper", "value": "v", "domain": "hr.example.internal", "path": "/hr/PMSV10" },
+            { "name": "lower", "value": "v", "domain": "hr.example.internal", "path": "/hr/pmsv10" },
+            { "name": "root", "value": "v", "domain": "hr.example.internal", "path": "/" }
+        ]));
+        let lost = lost_by_adapting(&jar, "hr.example.internal", "/hr/PMSV10/x", "/hr/pmsv10/x");
+        assert_eq!(lost.map(|c| c.name.as_str()), Some("upper"));
+        // "/" covers both, so on its own it is never a reason to hold back.
+        let only_root = jar_cookies(&json!([{ "name": "root", "value": "v", "domain": "hr.example.internal", "path": "/" }]));
+        assert!(lost_by_adapting(&only_root, "hr.example.internal", "/hr/PMSV10/x", "/hr/pmsv10/x").is_none());
+    }
+
+    #[test]
+    fn the_adapted_path_takes_the_cookies_letter_case() {
         assert_eq!(in_cookie_case("/hr/PMSV10/PerformanceCycle", "/hr/pmsv10"), "/hr/pmsv10/PerformanceCycle");
         assert_eq!(in_cookie_case("/reports/y", "/Reports/"), "/Reports/y");
     }

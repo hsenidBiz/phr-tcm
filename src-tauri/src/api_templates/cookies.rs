@@ -5,8 +5,9 @@
 //! hosted PMSV10 did exactly that with its anti-forgery cookie while a
 //! template called the capitalised path, so every save went without it and
 //! came back an empty 400 - which says nothing about why. The runner reads
-//! the browser's jar before each step and refuses one that would miss a
-//! cookie this way, naming the path to write instead.
+//! the browser's jar before each step and, when a step would miss a cookie
+//! this way, sends it in the cookie's letter case instead (the application's
+//! routing ignores case; only the cookie cares).
 //!
 //! A cookie is kept here by name, domain and path only. Its value is never
 //! copied, so nothing built from this can leak one.
@@ -46,8 +47,8 @@ pub fn case_blind_cookies<'a>(jar: &'a [JarCookie], host: &str, path: &str) -> V
 }
 
 /// `path` with its leading `cookie_path.len()` characters written as the
-/// cookie has them: the path a template should use. Only meaningful for a
-/// cookie `case_blind_cookies` returned for this path.
+/// cookie has them: the path the runner sends instead. Only meaningful for
+/// a cookie `case_blind_cookies` returned for this path.
 pub fn in_cookie_case(path: &str, cookie_path: &str) -> String {
     match path.get(cookie_path.len()..) {
         Some(rest) => format!("{cookie_path}{rest}"),
@@ -55,12 +56,27 @@ pub fn in_cookie_case(path: &str, cookie_path: &str) -> String {
     }
 }
 
-/// RFC 6265 domain-match: the cookie's domain (a leading `.` ignored) is the
-/// host itself or a parent of it.
+/// A cookie on `host` - on a path other than `/`, which covers every path
+/// in any case - that `from` carries as written and `to` would not: what
+/// sending `to` instead would give up. Adapting must never trade one of the
+/// application's cookies for another.
+pub fn lost_by_adapting<'a>(jar: &'a [JarCookie], host: &str, from: &str, to: &str) -> Option<&'a JarCookie> {
+    jar.iter().find(|c| on_host(&c.domain, host) && c.path != "/" && covers(&c.path, from) && !covers(&c.path, to))
+}
+
+/// RFC 6265 domain-match. A domain with a leading `.` is a domain cookie:
+/// that host and every host under it. One without is host-only (§5.3):
+/// that exact host and no other - the browser never sends it to a
+/// subdomain.
 fn on_host(domain: &str, host: &str) -> bool {
-    let domain = domain.trim_start_matches('.').to_ascii_lowercase();
     let host = host.to_ascii_lowercase();
-    !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+    match domain.strip_prefix('.') {
+        Some(parent) => {
+            let parent = parent.to_ascii_lowercase();
+            !parent.is_empty() && (host == parent || host.ends_with(&format!(".{parent}")))
+        }
+        None => !domain.is_empty() && host == domain.to_ascii_lowercase(),
+    }
 }
 
 /// RFC 6265 path-match, case-sensitive as browsers apply it: the paths are

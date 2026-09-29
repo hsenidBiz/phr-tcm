@@ -21,7 +21,7 @@
 use super::exec::{
     self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_tokens, scrub_value, Body,
 };
-use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies};
+use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
 use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
@@ -793,11 +793,24 @@ async fn adapt_path_case<D: Driver>(
             return None;
         }
     };
+    // `scheme://host[:port]`. An IPv6 origin (`https://[::1]:8443`) does not
+    // parse here: its paths go as written, which is the safe way to fail.
     let host = ctx.origin.split("://").nth(1)?.split(':').next()?;
     let at = built.url.find(['?', '#']).unwrap_or(built.url.len());
     let (from, rest) = (built.url[..at].to_string(), built.url[at..].to_string());
     let cookie = case_blind_cookies(&jar, host, &from).into_iter().max_by_key(|c| c.path.len())?.clone();
     let to = in_cookie_case(&from, &cookie.path);
+    if let Some(kept) = lost_by_adapting(&jar, host, &from, &to) {
+        applog::warn(format!(
+            "api template {}: step {}: sent {from} as written - {to} would carry the cookie {} but lose {} on {}",
+            ctx.id(),
+            step.name,
+            cookie.name,
+            kept.name,
+            kept.path
+        ));
+        return None;
+    }
     applog::info(format!(
         "api template {}: step {}: sent {to} rather than {from} - the application keeps its cookie {} on {}, \
          and cookie paths are case-sensitive",

@@ -56,6 +56,9 @@ struct Script {
     /// What `Network.getAllCookies` answers; `None` leaves it to the
     /// sign-in fake underneath.
     all_cookies: Option<Value>,
+    /// `Network.getAllCookies` fails once the run has signed in (the
+    /// sign-in's own session capture still gets its answer).
+    all_cookies_fail: bool,
 }
 
 struct App {
@@ -92,7 +95,12 @@ impl Driver for App {
             return Ok(json!({ "result": { "value": reply.expect("a request nobody scripted an answer for") } }));
         }
         if method == "Network.getAllCookies" {
-            if let Some(all) = self.script.lock().unwrap().all_cookies.clone() {
+            let s = self.script.lock().unwrap();
+            // The token page has been asked for: the run is past its sign-in.
+            if s.all_cookies_fail && !s.cookie_urls.is_empty() {
+                return Err(CdpError::Protocol { method: method.into(), message: "not allowed here".into() });
+            }
+            if let Some(all) = s.all_cookies.clone() {
                 return Ok(json!({ "cookies": all }));
             }
         }
@@ -1032,6 +1040,57 @@ async fn a_step_that_would_miss_a_cookie_by_letter_case_is_sent_in_the_cookies_c
     assert!(
         log.iter().any(|l| l.message.contains("/hr/PMSV10/PerformanceCycle") && l.message.contains("/hr/pmsv10/PerformanceCycle")),
         "the adaptation was not logged"
+    );
+}
+
+/// A jar holding the step's cookie in BOTH casings: adapting would gain one
+/// and lose the other, so the path goes as written, unadapted.
+#[tokio::test]
+async fn a_path_that_already_carries_a_cookie_is_not_adapted_away_from_it() {
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().all_cookies = Some(json!([
+        { "name": "upper", "value": "v", "domain": "hr.example.internal", "path": "/hr/PMSV10", "session": true },
+        { "name": "lower", "value": "v", "domain": "hr.example.internal", "path": "/hr/pmsv10", "session": true }
+    ]));
+    let mut t = template();
+    for step in &mut t.steps {
+        step.path = "/hr/PMSV10/PerformanceCycle".into();
+    }
+    let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.fetched()[0][0]["url"], "/hr/PMSV10/PerformanceCycle?handler=SaveProgress");
+    for step in step_records(&activity_records(activity.path(), "api")) {
+        assert_eq!(step["path_case_adapted"], Value::Null, "{step}");
+    }
+}
+
+/// A browser that will not list its cookies leaves every path as written:
+/// the adaptation can prevent a failure, never cause one.
+#[tokio::test]
+async fn a_browser_that_will_not_list_its_cookies_sends_paths_as_written() {
+    let _log = crate::serial::log_tail();
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().all_cookies_fail = true;
+    let mut t = template();
+    for step in &mut t.steps {
+        step.path = "/hr/PMSV10/PerformanceCycle".into();
+    }
+    let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.fetched()[0][0]["url"], "/hr/PMSV10/PerformanceCycle?handler=SaveProgress");
+    assert!(
+        v2_lib::applog::recent(400).iter().any(|l| l.message.contains("listing the cookies")),
+        "the browser's refusal to list cookies was not logged"
     );
 }
 

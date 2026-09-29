@@ -256,7 +256,11 @@ from the app log.
   the application's routing is not. When a step's path is covered by an
   application cookie only if case is ignored, the step is sent in the
   cookie's letter case and its record carries
-  `path_case_adapted: { from, to, cookie }`.
+  `path_case_adapted: { from, to, cookie }` - unless the path as written
+  already carries another cookie (not on `/`) that the adapted one would
+  lose; then it goes as written. Steps only: the `antiforgery.page`
+  navigation is sent as written, and the guide tells authors to use the
+  application's own letter case for it.
 - **`db_query`'s statement logging moves here.** Its `log_line` and
   `refusal_log_line` calls in `db/query.rs` stop writing SQL to the app
   log.

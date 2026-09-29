@@ -248,7 +248,7 @@ async fn run_steps<D: Driver>(
                     )));
                     continue;
                 }
-                run.appeared.push(w.selector.describe());
+                run.appeared.push(redact(&w.selector.describe(), run.account));
                 w.then.iter().collect()
             }
         };
