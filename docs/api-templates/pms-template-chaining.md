@@ -84,7 +84,15 @@ WHERE performance_cycle_id = 280 AND emp_number = '00000147' ORDER BY stage_stat
 3. `manager-reject-goal-plan` (manager, `rejectComment`) -> manager `rejected`.
 4. `submit-goal-plan` again with the corrected goal in `upserts` (same `participantGoalId`s - never re-send new goals, they duplicate).
 5. `manager-approve-goal-plan` (manager).
-6. `acknowledge-goal-plan` (employee, `nextStageId` = the annual stage) - also opens the annual Goals and Competencies steps, which creates the goal and competency ids the ratings need.
+6. `acknowledge-goal-plan` (employee) - acknowledge only. The annual goal and
+   competency ids appear when the rating templates first open the annual
+   stage's steps.
+7. Optional, between 6 and the first rating: `revise-goal-plan` (employee,
+   `stageId` = the goal-planning stage). Needs `goal_revision_enabled = 1`
+   (else 179000146) and is refused once the annual copy of the plan exists
+   (179000147). Send each changed goal in `upserts` with its
+   `participantGoalId` (a `null` id adds a goal, every time it is sent); each
+   group must still meet its minimum count and total 100.
 
 **Self-assessment (annual stage), with a rejection:**
 
@@ -96,9 +104,9 @@ WHERE performance_cycle_id = 280 AND emp_number = '00000147' ORDER BY stage_stat
 6. `manager-reject-goals` (manager) -> employee `not_started` again.
 7. The employee re-rates what was flagged and runs `submit-assessment` again.
 
-Not proven yet: `revise-goal-plan` (needs goal revision enabled in the cycle
-configuration) and the three attachment deletes (need a file uploaded
-through the UI first - uploads cannot be templated).
+`revise-goal-plan` was proven on cycle 281 "H2 2026 Performance Review"
+(goal revision on). Not proven: the three attachment deletes (need a file
+uploaded through the UI first - uploads cannot be templated).
 
 ## Known gaps
 
