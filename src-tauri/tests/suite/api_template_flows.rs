@@ -7,6 +7,8 @@ use v2_lib::api_templates::flow::{
     check_flow, check_stage_ref, creating_stage, parse_flow, required_before, substitute_check, Flow, Subject,
     SubjectType,
 };
+use v2_lib::api_templates::flow_store;
+use v2_lib::api_templates::store;
 use v2_lib::api_templates::ApiTemplate;
 
 /// The design doc's §3 example, with Competencies optional.
@@ -375,4 +377,70 @@ fn a_template_saved_before_flows_still_reads() {
     assert_eq!(check_stage_ref(&t, None), Vec::<String>::new());
     let back = serde_json::to_value(&t).unwrap();
     assert!(back.get("stage").is_none(), "{back}");
+}
+
+#[test]
+fn flows_live_beside_templates() {
+    let root = std::path::Path::new("data-root");
+    let slug = store::templates_dir(root, "Org", "Proj").file_name().unwrap().to_owned();
+    let dir = flow_store::flows_dir(root, "Org", "Proj");
+    assert_eq!(dir, root.join("flows").join(slug));
+}
+
+#[test]
+fn save_then_load_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = flow();
+    f.saved = Some(serde_json::from_value(json!({ "at": "2026-09-29T10:00:00Z", "sample": { "cycleId": 274 } })).unwrap());
+    flow_store::save(dir.path(), "Org", "Proj", &f).unwrap();
+    assert!(flow_store::flows_dir(dir.path(), "Org", "Proj").join("pms-performance-cycle.json").is_file());
+    let back = flow_store::load(dir.path(), "Org", "Proj", &f.id).unwrap();
+    assert_eq!(back, Some(f));
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", "nothing-here").unwrap(), None);
+}
+
+#[test]
+fn list_skips_a_file_that_does_not_parse() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(flow_store::list(dir.path(), "Org", "Proj").unwrap().is_empty());
+    let good = flow();
+    flow_store::save(dir.path(), "Org", "Proj", &good).unwrap();
+    std::fs::write(flow_store::flows_dir(dir.path(), "Org", "Proj").join("bad.json"), "{").unwrap();
+    let listed = flow_store::list(dir.path(), "Org", "Proj").unwrap();
+    assert_eq!(listed, vec![good]);
+}
+
+#[test]
+fn list_is_sorted_by_title() {
+    let dir = tempfile::tempdir().unwrap();
+    for (id, title) in [("b-flow", "Zeta"), ("a-flow", "Alpha")] {
+        let mut f = flow();
+        f.id = id.into();
+        f.title = title.into();
+        flow_store::save(dir.path(), "Org", "Proj", &f).unwrap();
+    }
+    let titles: Vec<String> = flow_store::list(dir.path(), "Org", "Proj").unwrap().into_iter().map(|f| f.title).collect();
+    assert_eq!(titles, vec!["Alpha", "Zeta"]);
+}
+
+#[test]
+fn remove_deletes_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = flow();
+    flow_store::save(dir.path(), "Org", "Proj", &f).unwrap();
+    flow_store::remove(dir.path(), "Org", "Proj", &f.id).unwrap();
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", &f.id).unwrap(), None);
+    flow_store::remove(dir.path(), "Org", "Proj", &f.id).unwrap();
+}
+
+#[test]
+fn remove_refuses_an_id_with_a_path_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    for id in ["..\\x", "../x", ""] {
+        assert!(flow_store::remove(dir.path(), "Org", "Proj", id).is_err(), "{id:?}");
+        assert!(flow_store::load(dir.path(), "Org", "Proj", id).is_err(), "{id:?}");
+    }
+    let mut f = flow();
+    f.id = "..\\x".into();
+    assert!(flow_store::save(dir.path(), "Org", "Proj", &f).is_err());
 }

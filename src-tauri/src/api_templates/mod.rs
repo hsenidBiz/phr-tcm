@@ -11,6 +11,7 @@
 pub mod cookies;
 pub mod exec;
 pub mod flow;
+pub mod flow_store;
 pub mod guide;
 pub mod runner;
 pub mod store;
