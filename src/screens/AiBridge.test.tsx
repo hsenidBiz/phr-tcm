@@ -623,7 +623,7 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
   // Eight rows in this development build: the wiki search and its page
   // reader share one switch, so do the suite search and its case reader,
-  // the two database tools, the seven Auto Run tools and the four API
+  // the two database tools, the seven Auto Run tools and the six API
   // template tools.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
@@ -631,6 +631,22 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
   expect(screen.getByLabelText("API templates")).toBeInTheDocument();
   expect(within(toolSection).getByText("8 of 8 on")).toBeInTheDocument();
+});
+
+test("the API templates breakdown says the assistant maps a module's stages and checks the order before a run", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  await screen.findByText("Tools an assistant may use");
+  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("API templates:"))!;
+  expect(entry, "the API templates breakdown entry").toBeTruthy();
+  expect(entry.textContent).toMatch(/flow/i);
+  expect(entry.textContent).toMatch(/stage/i);
+  expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
 test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {

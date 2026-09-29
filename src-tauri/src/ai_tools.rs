@@ -141,6 +141,8 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
+    "save_api_flow",
+    "get_api_flow_progress",
 ];
 
 /// Whether this process is a development build: `cargo test` and

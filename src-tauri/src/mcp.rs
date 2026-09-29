@@ -365,7 +365,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, and the newest run. Check here before building a template - the one you need may already exist.",
+            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, and the newest run - and the project's flows, each with its stages and the templates on them. Check here before building a template - the one you need may already exist.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -389,6 +389,24 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "values": { "type": "object", "description": "One value per param, by name, of its declared type." },
                 "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
             }), &["id", "account"]),
+        },
+        {
+            "name": "save_api_flow",
+            "description": "Save a flow - a module's wizard mapped as stages, each with a database check that says whether that stage is done for one record - after checking it and running every stage's check once on a sample record. The answer says each stage's result for the sample. Needs a database chosen on the AI Bridge tab; does not need the API templates switch. Saving an id that is already saved replaces it only with replace: true and a why. Call get_api_template_guide first for the format.",
+            "inputSchema": schema(serde_json::json!({
+                "flow": { "type": "object", "description": "The flow, in the format get_api_template_guide describes - without `saved`, which the app writes." },
+                "sample": { "description": "The subject of a real record, found with db_query - every stage's check is run on it once.", "type": ["string", "number"] },
+                "replace": { "type": "boolean", "description": "Only when a flow with this id is already saved: true to replace it." },
+                "why": { "type": "string", "description": "With replace: why the saved flow is being changed. Logged." },
+            }), &["flow", "sample"]),
+        },
+        {
+            "name": "get_api_flow_progress",
+            "description": "Which stages of a flow are done for this record and which come next. Call it before every run of a template that belongs to a flow, and run the template of a stage marked `next`. Needs a database chosen on the AI Bridge tab; does not need the API templates switch.",
+            "inputSchema": schema(serde_json::json!({
+                "flow": { "type": "string", "description": "The flow's id, from list_api_templates." },
+                "subject": { "description": "The record's identifier - the flow's subject, e.g. the cycle id.", "type": ["string", "number"] },
+            }), &["flow", "subject"]),
         },
         {
             "name": "db_lookup",
@@ -707,6 +725,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // travels whole - the same pattern as `check_spec_coverage`.
         "prove_api_template" => call("POST", "/api-template-prove", &args.to_string()),
         "run_api_template" => call("POST", "/api-template-run", &args.to_string()),
+        "save_api_flow" => call("POST", "/api-template-flow-save", &args.to_string()),
+        "get_api_flow_progress" => call("POST", "/api-template-flow-progress", &args.to_string()),
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

@@ -750,6 +750,19 @@ fn the_guide_says_paths_keep_the_applications_letter_case() {
     assert!(text.contains("/hr/pmsv10"), "{text}");
 }
 
+/// The guide teaches flows: the two tools, the order of work (map the
+/// wizard before any template), and that a stage may be optional.
+#[test]
+fn the_guide_explains_flows() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let lower = text.to_lowercase();
+    assert!(text.contains("save_api_flow"), "no save_api_flow");
+    assert!(text.contains("get_api_flow_progress"), "no get_api_flow_progress");
+    assert!(lower.contains("map the wizard first"), "no order of work");
+    assert!(lower.contains("optional"), "no optional stages");
+    assert!(text.contains("## Flows"), "no Flows section");
+}
+
 /// The guide warns that an account can be signed in in one place at a
 /// time, and what that looks like when it goes wrong.
 #[test]
