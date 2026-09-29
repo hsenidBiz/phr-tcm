@@ -2806,6 +2806,38 @@ mod api_template_routes {
         assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched");
     }
 
+    /// Flow checks are assistant-written reads of the company database, so
+    /// with Company database (read) switched off none of them runs: saving a
+    /// flow, asking its progress and a flow template's run are all refused
+    /// with the switch named, before any database or browser.
+    #[tokio::test]
+    async fn flow_checks_are_refused_while_database_reading_is_off() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let dir = root_with_recipe_and_account();
+        let c = BridgeContext { disabled_tools: vec!["db_query".into()], ..on() };
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let sentence = "flow checks read the company database: switch on Company database (read) on the AI Bridge tab";
+
+        assert_eq!(v2_lib::ai_bridge::real_stage_db(&c).err(), Some((409, sentence.to_string())));
+
+        let progress = json!({ "flow": FLOW, "subject": 274 }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-flow-progress", &progress, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        let save =
+            json!({ "flow": crate::common::cycle_flow_json(), "sample": 274, "replace": true, "why": "again" }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-flow-save", &save, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        let run = json!({ "id": "pms-add-participants", "account": "admin", "values": { "cycleId": 274 } }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-run", &run, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched");
+    }
+
     #[tokio::test]
     async fn saving_a_flow_runs_every_check_on_the_sample() {
         use v2_lib::ai_bridge::api_template_flow_save;

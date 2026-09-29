@@ -189,16 +189,25 @@ with every problem listed together:
   row. The subject is put in by the app by its type, never as text: a
   number must be a whole number, a string is quoted for you. Do not put
   `SET NOCOUNT ON;` in a check - the answer needs its row count.
+- Write each check to return a row only when the stage is done.
+  `SELECT COUNT(*) ...` and `SELECT CASE WHEN EXISTS ...` always return one
+  row, so such a check would always read as done: filter with `WHERE`
+  instead, e.g. `SELECT 1 FROM ... WHERE cycle_id = {{cycleId}} AND ...`.
 - A template that acts on a flow's record names its stage:
   `"stage": { "flow": "pms-performance-cycle", "id": "participants" }`. The
   creating stage's template must `capture` the subject name and list it in
   `outputs`; every other stage's template must declare a param named after
-  the subject, of its type.
+  the subject, of its type. A `number` subject must be captured as a JSON
+  number (`274`, not `"274"`); a capture of the wrong type is not saved.
 
 The gate: a template on a flow is refused, before anything runs, until its
 `requires` stages are done for the record. The refusal names the stage that
 is not done and the template that performs it. A stage with no saved
 template yet says to prove one first.
+
+A prove of a template on a flow is saved only if its own stage's check reads
+done afterwards - for the creating stage, on the subject it captured. A
+check that could not run saves nothing either, and says so.
 
 The order of work - flows first, templates second:
 
@@ -221,7 +230,11 @@ The order of work - flows first, templates second:
    template only if the test needs it.
 
 `save_api_flow` and `get_api_flow_progress` need a database chosen on the AI
-Bridge tab; neither needs the API templates switch.
+Bridge tab; neither needs the API templates switch. Proving or running a
+template on a flow needs a database chosen on the AI Bridge tab too - only a
+run of the creating stage's template checks nothing. Every flow check reads
+the company database, so while the person has switched off Company database
+(read), each call that would run one is refused until it is switched on.
 
 ## When a run fails
 

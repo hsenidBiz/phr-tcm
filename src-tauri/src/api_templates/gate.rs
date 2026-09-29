@@ -156,8 +156,9 @@ pub fn templates_on<'a>(templates: &'a [SavedTemplate], flow: &str, stage: &str)
         .collect()
 }
 
-/// The subject's value as a person reads it in a sentence.
-fn shown(value: &Value) -> String {
+/// The subject's value as a person reads it in a sentence: a string
+/// without its quotes.
+pub fn shown(value: &Value) -> String {
     match value.as_str() {
         Some(s) => s.to_string(),
         None => value.to_string(),
@@ -166,7 +167,7 @@ fn shown(value: &Value) -> String {
 
 /// Refuses a value of the wrong type before any statement runs: the same
 /// sentence `substitute_check` gives, from the first check of the flow.
-fn validate_value(flow: &Flow, value: &Value) -> Result<(), String> {
+pub fn validate_value(flow: &Flow, value: &Value) -> Result<(), String> {
     let Some(first) = flow.stages.first() else { return Ok(()) };
     substitute_check(&first.check, &flow.subject, value).map(|_| ())
 }
@@ -176,7 +177,8 @@ fn validate_value(flow: &Flow, value: &Value) -> Result<(), String> {
 /// that is missing, not just the first thing found.
 ///
 /// The stage that creates the record is never gated (there is no record
-/// yet), and asks nothing of the database.
+/// yet), and asks nothing of the database. A stage the flow does not have
+/// is refused, never taken for one with nothing before it.
 pub async fn gate<D: StageDb>(
     db: &D,
     flow: &Flow,
@@ -185,6 +187,9 @@ pub async fn gate<D: StageDb>(
     templates: &[SavedTemplate],
     template_id: &str,
 ) -> Result<(), String> {
+    if !flow.stages.iter().any(|s| s.id == stage_id) {
+        return Err(format!("stage \"{stage_id}\" is no longer in flow {}", flow.id));
+    }
     if creating_stage(flow).is_some_and(|s| s.id == stage_id) {
         return Ok(());
     }

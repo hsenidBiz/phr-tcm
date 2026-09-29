@@ -196,7 +196,7 @@ export default function ApiTemplates({
         <>
           <Input
             aria-label="Search templates"
-            placeholder="Search by title, module or id"
+            placeholder="Search by title, module, id or stage"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full max-w-sm"

@@ -26,7 +26,8 @@ pub enum SubjectType {
 }
 
 impl SubjectType {
-    fn word(self) -> &'static str {
+    /// `number` or `string`, as a sentence names the type.
+    pub fn word(self) -> &'static str {
         match self {
             SubjectType::Number => "number",
             SubjectType::String => "string",

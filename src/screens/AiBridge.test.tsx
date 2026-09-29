@@ -646,6 +646,8 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   expect(entry, "the API templates breakdown entry").toBeTruthy();
   expect(entry.textContent).toMatch(/flow/i);
   expect(entry.textContent).toMatch(/stage/i);
+  // The stage checks read the database, so they need reading switched on.
+  expect(entry.textContent).toMatch(/need Company database \(read\) switched on/);
   expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 

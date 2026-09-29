@@ -531,14 +531,6 @@ fn saved_templates(root: &std::path::Path, org: &str, project: &str) -> Vec<crat
     })
 }
 
-/// A JSON value as a sentence shows it: a string without its quotes.
-fn shown(v: &serde_json::Value) -> String {
-    match v.as_str() {
-        Some(s) => s.to_string(),
-        None => v.to_string(),
-    }
-}
-
 /// An argument that may arrive as JSON or as a JSON string - the shape
 /// every sibling tool on this server takes its payload in. A string that
 /// does not parse is handed on as the string, so the complaint about it
@@ -782,42 +774,72 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
 
     // A proven template on a flow must have done its own stage: the
     // subject from the values, or - creating it - from what was captured.
+    // The flow is read again first: one replaced or removed while the steps
+    // ran decides what is saved, and a stage it no longer has is not.
     let mut incomplete = None;
-    if let (true, Mode::Prove { .. }, Some((f, stage_id)), Some(d)) = (report.ok, &req.mode, &on_flow, &db) {
-        if let Some(stage) = f.stages.iter().find(|s| &s.id == stage_id) {
-            let name = &f.subject.name;
-            let value = if stage.creates { report.outputs.get(name) } else { req.values.get(name) }
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let why = CheckFor { purpose: "prove", template: Some(id) };
-            // A check that could not run - a database error, a timeout, no
-            // row count, or a subject of the wrong type (which `stage_state`
-            // refuses before any statement, and records) - is never "not
-            // done": either way nothing is saved, but each says what it is.
-            match gate::stage_state(d, f, stage, &value, &why).await {
-                StageState::Done => {}
-                StageState::NotDone => {
+    if let (true, Mode::Prove { .. }, Some((_, stage_id)), Some(d)) = (report.ok, &req.mode, &on_flow, &db) {
+        let reloaded = stage_flow(root, org, project, &req.template);
+        match reloaded.as_ref().and_then(|f| f.stages.iter().find(|s| &s.id == stage_id).map(|s| (f, s))) {
+            None => {
+                let flow_id = req.template.stage.as_ref().map(|r| r.flow.as_str()).unwrap_or_default();
+                let gone = match &reloaded {
+                    None => format!("this template's flow {flow_id} is no longer saved"),
+                    Some(_) => format!("stage \"{stage_id}\" is no longer in flow {flow_id}"),
+                };
+                crate::applog::info(format!("api template {id}: every step passed but {gone}, so it was not saved"));
+                incomplete =
+                    Some(format!("every step passed, but {gone}, so the template was not saved; {}", report.message()));
+            }
+            Some((f, stage)) => {
+                let name = &f.subject.name;
+                let value = if stage.creates { report.outputs.get(name) } else { req.values.get(name) }
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                // A creating stage's subject is what a step captured: one of
+                // the wrong type is said as that, never as a check that could
+                // not run - a retry would only create another record with the
+                // same capture.
+                let wrong_type = if stage.creates { gate::validate_value(f, &value).err() } else { None };
+                if let Some(e) = wrong_type {
+                    let kind = f.subject.kind.word();
                     crate::applog::info(format!(
-                        "api template {id}: every step passed but stage {} is not done, so it was not saved",
-                        stage.id
+                        "api template {id}: every step passed but the captured {name} is not a {kind}, so it was not saved"
                     ));
                     incomplete = Some(format!(
-                        "every step passed, but {} is still not done for {name} {}, so the template was not saved; {}",
-                        stage.title,
-                        shown(&value),
+                        "every step passed, but the captured {name} is not a {kind} ({e}), so the template was not saved; {}",
                         report.message()
                     ));
-                }
-                StageState::CouldNotRun => {
-                    crate::applog::info(format!(
-                        "api template {id}: every step passed but the check for stage {} could not be run, so it was not saved",
-                        stage.id
-                    ));
-                    incomplete = Some(format!(
-                        "every step passed, but the check for {} could not be run - see the activity folder in Settings, Logs, so the template was not saved; {}",
-                        stage.title,
-                        report.message()
-                    ));
+                } else {
+                    let why = CheckFor { purpose: "prove", template: Some(id) };
+                    // A check that could not run - a database error, a
+                    // timeout, no row count - is never "not done": either way
+                    // nothing is saved, but each says what it is.
+                    match gate::stage_state(d, f, stage, &value, &why).await {
+                        StageState::Done => {}
+                        StageState::NotDone => {
+                            crate::applog::info(format!(
+                                "api template {id}: every step passed but stage {} is not done, so it was not saved",
+                                stage.id
+                            ));
+                            incomplete = Some(format!(
+                                "every step passed, but {} is still not done for {name} {}, so the template was not saved; {}",
+                                stage.title,
+                                gate::shown(&value),
+                                report.message()
+                            ));
+                        }
+                        StageState::CouldNotRun => {
+                            crate::applog::info(format!(
+                                "api template {id}: every step passed but the check for stage {} could not be run, so it was not saved",
+                                stage.id
+                            ));
+                            incomplete = Some(format!(
+                                "every step passed, but the check for {} could not be run - see the activity folder in Settings, Logs, so the template was not saved; {}",
+                                stage.title,
+                                report.message()
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -902,7 +924,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
     body: &str,
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
 ) -> (u16, String) {
-    use crate::api_templates::flow::{parse_flow, substitute_check, FlowSaved};
+    use crate::api_templates::flow::{parse_flow, FlowSaved};
     use crate::api_templates::flow_store;
     use crate::api_templates::gate::{self, CheckFor, StageState};
     let root = match autorun_root() {
@@ -937,7 +959,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
             "this call needs a \"sample\": the subject of a real record, found with db_query. Expected {FLOW_SAVE_SHAPE}."
         )),
         (Some(f), Some(s)) => {
-            if let Some(Err(e)) = f.stages.first().map(|first| substitute_check(&first.check, &f.subject, s)) {
+            if let Err(e) = gate::validate_value(f, s) {
                 problems.push(e);
             }
         }
@@ -983,7 +1005,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
             format!(
                 "the check for {title} could not be run on {} {} - see the activity folder in Settings, Logs",
                 f.subject.name,
-                shown(&sample)
+                gate::shown(&sample)
             )
         })
         .collect();
@@ -1013,7 +1035,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
         })
         .collect();
     let message = if orphaned.is_empty() {
-        format!("flow {} saved; every check ran on {} {}", f.id, f.subject.name, shown(&sample))
+        format!("flow {} saved; every check ran on {} {}", f.id, f.subject.name, gate::shown(&sample))
     } else {
         let ids: Vec<&str> = orphaned.iter().map(|(id, _, _)| id.as_str()).collect();
         format!(
@@ -1053,7 +1075,6 @@ pub async fn api_template_flow_progress<D: crate::api_templates::gate::StageDb>(
     body: &str,
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
 ) -> (u16, String) {
-    use crate::api_templates::flow::substitute_check;
     use crate::api_templates::{flow_store, gate, valid_id};
     let root = match autorun_root() {
         Ok(r) => r,
@@ -1087,7 +1108,7 @@ pub async fn api_template_flow_progress<D: crate::api_templates::gate::StageDb>(
         }
     };
     // The wrong type is said before any database is asked for.
-    if let Some(Err(e)) = f.stages.first().map(|first| substitute_check(&first.check, &f.subject, &subject)) {
+    if let Err(e) = gate::validate_value(&f, &subject) {
         return (400, e);
     }
     let db = match open_db(ctx) {
@@ -1447,21 +1468,32 @@ fn db_ready(
 pub const FLOW_NEEDS_DB: &str =
     "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
 
+/// Said when a flow check would run while the person has switched off
+/// Company database (read): every check is an assistant-written read of
+/// that database, so none runs until reading is switched on again.
+pub const FLOW_NEEDS_READING: &str =
+    "flow checks read the company database: switch on Company database (read) on the AI Bridge tab";
+
 /// The chosen database as the place flow checks are asked, with
 /// `db_ready`'s refusals as they are - what saving a flow and a flow's
-/// progress answer with.
+/// progress answer with. Refused first while database reading is switched
+/// off (`db_query` among the disabled tools), before any connection is
+/// looked at.
 fn stage_db(
     ctx: &BridgeContext,
 ) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
+    if ctx.disabled_tools.iter().any(|t| t == "db_query") {
+        return Err((409, FLOW_NEEDS_READING.to_string()));
+    }
     let (conn, exe) = db_ready(ctx)?;
     Ok(crate::api_templates::gate::SqlcmdStageDb { runner: crate::db::RealRunner, exe, conn })
 }
 
 /// The database a prove or a run of a template on a flow gates on. With
 /// nothing chosen the answer says why a template needs one at all
-/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; every other refusal -
-/// no login saved, a store that cannot be read, no sqlcmd - is
-/// `db_ready`'s, unchanged.
+/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; reading switched off is
+/// `stage_db`'s `FLOW_NEEDS_READING`; every other refusal - no login saved,
+/// a store that cannot be read, no sqlcmd - is `db_ready`'s, unchanged.
 pub fn real_stage_db(
     ctx: &BridgeContext,
 ) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {

@@ -761,6 +761,24 @@ fn the_guide_explains_flows() {
     assert!(lower.contains("map the wizard first"), "no order of work");
     assert!(lower.contains("optional"), "no optional stages");
     assert!(text.contains("## Flows"), "no Flows section");
+
+    // The Flows section, one line: the guide wraps its sentences.
+    let flows = text[text.find("## Flows").unwrap()..text.find("## When a run fails").unwrap()]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Proving or running on a flow needs a database, and reading switched on.
+    assert!(flows.contains("Proving or running a template on a flow needs a database chosen on the AI Bridge tab"), "{flows}");
+    assert!(flows.contains("Company database (read)"), "no reading switch: {flows}");
+    // A prove on a flow is saved only once its own stage reads as done.
+    assert!(flows.contains("saved only if its own stage's check reads done afterwards"), "{flows}");
+    // A number subject must be captured as a JSON number.
+    assert!(flows.contains("captured as a JSON number"), "{flows}");
+    // A check that always returns one row would always read as done.
+    assert!(flows.contains("SELECT COUNT(*)"), "{flows}");
+    assert!(flows.contains("SELECT CASE WHEN EXISTS"), "{flows}");
+    assert!(flows.contains("always return one row"), "{flows}");
+    assert!(flows.contains("a row only when the stage is done"), "{flows}");
 }
 
 /// The guide warns that an account can be signed in in one place at a

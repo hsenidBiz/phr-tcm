@@ -1127,8 +1127,9 @@ mod flows_through_the_bridge {
 
         let body = run_body(PARTICIPANTS, json!({ "cycleId": "274" }));
         let (status, out) = api_template_run(&ctx(), &body, never_opened, handed(&db), &quick()).await;
-        assert_eq!(status, 400, "{out}");
-        assert!(out.contains("cycleId"), "{out}");
+        // The template's own param check says it first, naming the subject
+        // and its type - the value is never quoted into a check.
+        assert_eq!((status, out.as_str()), (400, "param 'cycleId' must be a number"));
         assert!(db.calls().is_empty(), "{:?}", db.calls());
     }
 
@@ -1277,8 +1278,10 @@ mod flows_through_the_bridge {
     }
 
     /// The creating step captured the record id as a string, but the
-    /// flow's subject is a number: the check cannot be written, so it could
-    /// not run - never quoted into the SQL, never "not done".
+    /// flow's subject is a number: the answer says the capture has the wrong
+    /// type - never quoted into the SQL, never "not done", and never "could
+    /// not be run", which would send the assistant to retry a prove that
+    /// creates another record each time.
     #[tokio::test]
     async fn a_creating_prove_whose_capture_has_the_wrong_type_is_not_saved() {
         let _root = crate::serial::autorun();
@@ -1300,10 +1303,95 @@ mod flows_through_the_bridge {
         assert_eq!(status, 502, "{out}");
         assert_eq!(
             out,
-            "every step passed, but the check for Cycle setup could not be run - see the activity folder in Settings, Logs, so the template was not saved; every step passed (2 steps); cycleId 274 created"
+            "every step passed, but the captured cycleId is not a number (cycleId is a number subject: give a whole number, 0 or more), so the template was not saved; every step passed (2 steps); cycleId 274 created"
         );
+        assert!(!out.contains("could not be run"), "{out}");
         assert!(db.calls().is_empty(), "nothing reached the database: {:?}", db.calls());
         assert_eq!(store::load(r.root.path(), ORG, PROJECT, "pms-create-draft-cycle").unwrap(), None);
+        assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
+    /// The flow a prove's gate passed on, with `participants` taken out -
+    /// what a `save_api_flow` replacing it during the run leaves behind.
+    fn flow_without_participants() -> Flow {
+        let mut f = flow();
+        f.stages.retain(|s| s.id != "participants");
+        for s in &mut f.stages {
+            if s.id == "publish" {
+                s.requires = vec!["rules".to_string()];
+            }
+        }
+        f
+    }
+
+    /// The flow is read again once the steps have passed: a stage it no
+    /// longer has is not saved, and its own check is never asked.
+    #[tokio::test]
+    async fn a_prove_whose_stage_left_the_flow_during_the_run_is_not_saved() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let r = rig(vec![answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new().answer("/*setup*/", Ok(true)).answer("/*rules*/", Ok(true));
+
+        let body = json!({
+            "template": template_on_stage(PARTICIPANTS, "Add the participants", "participants"),
+            "account": "admin",
+            "values": { "cycleId": 274 },
+        })
+        .to_string();
+        let root = r.root.path().to_path_buf();
+        let browsers = r.browsers;
+        let open = move |_| {
+            flow_store::save(&root, ORG, PROJECT, &flow_without_participants()).unwrap();
+            browsers
+        };
+        let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(
+            out,
+            "every step passed, but stage \"participants\" is no longer in flow pms-performance-cycle, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
+        );
+        assert_eq!(asked(&db), ["setup", "rules"], "the gate only - no check for a stage that is gone");
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
+        assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
+    /// The same when the whole flow was removed during the run.
+    #[tokio::test]
+    async fn a_prove_whose_flow_was_removed_during_the_run_is_not_saved() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let r = rig(vec![answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new().answer("/*setup*/", Ok(true)).answer("/*rules*/", Ok(true));
+
+        let body = json!({
+            "template": template_on_stage(PARTICIPANTS, "Add the participants", "participants"),
+            "account": "admin",
+            "values": { "cycleId": 274 },
+        })
+        .to_string();
+        let root = r.root.path().to_path_buf();
+        let browsers = r.browsers;
+        let open = move |_| {
+            flow_store::remove(&root, ORG, PROJECT, FLOW).unwrap();
+            browsers
+        };
+        let (status, out) = api_template_prove(&ctx(), &body, open, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(
+            out,
+            "every step passed, but this template's flow pms-performance-cycle is no longer saved, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
+        );
+        assert_eq!(asked(&db), ["setup", "rules"]);
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
         assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
     }
 

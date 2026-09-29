@@ -526,6 +526,17 @@ mod gate_tests {
         assert!(db.calls().is_empty());
     }
 
+    /// A stage the flow does not have is refused, not waved through as one
+    /// with nothing before it - and nothing is asked of the database.
+    #[test]
+    fn a_stage_not_in_the_flow_is_refused() {
+        let _g = crate::serial::activity_log();
+        let db = FakeStageDb::new();
+        let r = block(gate(&db, &cycle_flow(), "reviews", &json!(274), &[], "t"));
+        assert_eq!(r, Err("stage \"reviews\" is no longer in flow pms-performance-cycle".to_string()));
+        assert!(db.calls().is_empty());
+    }
+
     #[test]
     fn every_required_stage_done_lets_it_through() {
         let _g = crate::serial::activity_log();
