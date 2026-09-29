@@ -69,6 +69,13 @@ with every problem listed together:
   `query`). Every request goes to the origin of this
   project's sign-in recipe, named at the end of this guide. `query` values
   are URL-encoded by the app.
+- Write every `path`, and `antiforgery.page`, in exactly the letter case
+  the application's own UI requests it - read it from the UI's network
+  calls or the app's routing, not from a class or file name. Cookie paths
+  are case-sensitive: an application that keeps its anti-forgery cookie on
+  `/hr/pmsv10` never receives it at `/hr/PMSV10/...`, and a save without
+  it comes back an empty 400. The runner refuses such a step before sending
+  it and names the path to write.
 - A step has at most one body: `json` (any JSON value) or `form` (string
   values, sent as multipart/form-data - what the application's own forms
   send). File fields are not supported.
@@ -102,7 +109,8 @@ capture that finds nothing fails the step.
    `antiforgery` page. Record each request's location in `sources`.
 3. Find real values with `db_query` (and `db_lookup` for the tables): an id
    the form expects, a name that must be unique. Put the query you used in
-   the param's `lookup`.
+   the param's `lookup`. Ids differ between environments, so look them up
+   against the database of the site the recipe signs into, every time.
 4. Call `prove_api_template` with `{ template, account, values }`. It runs
    the draft; only if every step passes is the template saved.
 5. Afterwards, `run_api_template` with `{ id, account, values }` returns the

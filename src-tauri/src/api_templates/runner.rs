@@ -21,6 +21,7 @@
 use super::exec::{
     self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_tokens, scrub_value, Body,
 };
+use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies};
 use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
@@ -578,6 +579,9 @@ async fn run_step<D: Driver>(
     progress: &mut Progress,
 ) -> StepResult {
     let built = build_request(step, vars).map_err(|e| (None, e))?;
+    if let Some(why) = cookie_case_problem(d, ctx, &built.url).await {
+        return Err((None, why));
+    }
     let wire = serde_json::to_value(&built).map_err(|e| (None, format!("the request could not be built: {e}")))?;
     // Which cookies the browser holds for this address - the one thing a
     // rejected save (a 400 with no body) cannot say for itself.
@@ -725,6 +729,33 @@ fn record_token_page(ctx: &Ctx<'_>, final_url: &str, token: Option<&str>, cookie
             "cookies": cookies,
         }),
     );
+}
+
+/// A step whose path would miss one of the application's cookies only
+/// because of letter case (see `cookies`): the sentence refusing it, with
+/// the path to write, before anything is sent. A browser that will not list
+/// its cookies is logged and the step goes ahead - this check can prevent a
+/// failure, never cause one.
+async fn cookie_case_problem<D: Driver>(d: &mut D, ctx: &Ctx<'_>, url: &str) -> Option<String> {
+    let jar = match d.call("Network.getAllCookies", json!({})).await {
+        Ok(answer) => jar_cookies(&answer["cookies"]),
+        Err(e) => {
+            applog::warn(format!("api template {}: listing the cookies to check a path's case: {e}", ctx.id()));
+            return None;
+        }
+    };
+    let host = ctx.origin.split("://").nth(1)?.split(':').next()?;
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let missed = case_blind_cookies(&jar, host, path);
+    let cookie = missed.first()?;
+    Some(format!(
+        "this step calls {path}, but the application keeps its cookie {} on {} - cookie paths are case-sensitive, \
+         so the browser would send the request without it and the application would refuse it. Write the path \
+         as {}, and the antiforgery page in the same letter case",
+        cookie.name,
+        cookie.path,
+        in_cookie_case(path, &cookie.path)
+    ))
 }
 
 /// The cookies the browser holds for `url`, as a record may show them -

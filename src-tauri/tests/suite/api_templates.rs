@@ -652,6 +652,74 @@ fn an_invalid_id_never_reaches_the_disk() {
     );
 }
 
+/// Cookie paths are case-sensitive. A hosted server kept its anti-forgery
+/// cookie on `/hr/pmsv10` while a template called `/hr/PMSV10/...`, so every
+/// save went without it and came back an empty 400. These are the rules
+/// the runner uses to catch that before it sends anything.
+mod cookie_case {
+    use serde_json::json;
+    use v2_lib::api_templates::cookies::{case_blind_cookies, in_cookie_case, jar_cookies};
+
+    fn jar() -> Vec<v2_lib::api_templates::cookies::JarCookie> {
+        jar_cookies(&json!([
+            { "name": ".AspNetCore.Antiforgery.X", "value": "VALUE-1", "domain": "hr.example.internal", "path": "/hr/pmsv10" },
+            { "name": "sid", "value": "VALUE-2", "domain": ".example.internal", "path": "/" },
+            { "name": "elsewhere", "value": "VALUE-3", "domain": "other.internal", "path": "/hr/pmsv10" },
+            { "name": "partial", "value": "VALUE-4", "domain": "hr.example.internal", "path": "/hr/pm" },
+            { "name": "trailing", "value": "VALUE-5", "domain": "hr.example.internal", "path": "/Reports/" }
+        ]))
+    }
+
+    fn names(path: &str) -> Vec<String> {
+        let jar = jar();
+        case_blind_cookies(&jar, "hr.example.internal", path).iter().map(|c| c.name.clone()).collect()
+    }
+
+    #[test]
+    fn a_cookie_whose_path_differs_only_in_letter_case_is_found() {
+        assert_eq!(names("/hr/PMSV10/PerformanceCycle"), vec![".AspNetCore.Antiforgery.X".to_string()]);
+    }
+
+    #[test]
+    fn the_same_case_finds_nothing() {
+        assert!(names("/hr/pmsv10/performancecycle").is_empty(), "{:?}", names("/hr/pmsv10/performancecycle"));
+    }
+
+    #[test]
+    fn only_whole_segments_on_this_host_count() {
+        // "/hr/pm" is not a whole segment of "/hr/PMSV10"; "other.internal"
+        // is not this host; "/" covers every path in any case.
+        let found = names("/hr/PMSV10/x");
+        assert!(!found.contains(&"partial".to_string()), "{found:?}");
+        assert!(!found.contains(&"elsewhere".to_string()), "{found:?}");
+        assert!(!found.contains(&"sid".to_string()), "{found:?}");
+        // A path ending in "/" covers what follows it.
+        assert_eq!(names("/reports/y"), vec!["trailing".to_string()]);
+    }
+
+    #[test]
+    fn the_suggested_path_takes_the_cookies_letter_case() {
+        assert_eq!(in_cookie_case("/hr/PMSV10/PerformanceCycle", "/hr/pmsv10"), "/hr/pmsv10/PerformanceCycle");
+        assert_eq!(in_cookie_case("/reports/y", "/Reports/"), "/Reports/y");
+    }
+
+    #[test]
+    fn a_jar_cookie_keeps_no_value() {
+        let text = format!("{:?}", jar());
+        assert!(!text.contains("VALUE-"), "a cookie value was kept: {text}");
+    }
+}
+
+/// The guide tells the assistant to write paths in the application's own
+/// letter case, and why.
+#[test]
+fn the_guide_says_paths_keep_the_applications_letter_case() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    assert!(text.contains("letter case"), "{text}");
+    assert!(text.contains("case-sensitive"), "{text}");
+    assert!(text.contains("/hr/pmsv10"), "{text}");
+}
+
 /// The guide hands the assistant this project's account KEYS and the
 /// recipe's origin - so it never has to guess a host or an account - and
 /// nothing else about an account: the guide is built from the keys alone,

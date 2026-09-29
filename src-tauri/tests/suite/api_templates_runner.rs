@@ -53,6 +53,9 @@ struct Script {
     cookies_fail: bool,
     /// The `urls` of every `Network.getCookies` call, in order.
     cookie_urls: Vec<Value>,
+    /// What `Network.getAllCookies` answers; `None` leaves it to the
+    /// sign-in fake underneath.
+    all_cookies: Option<Value>,
 }
 
 struct App {
@@ -87,6 +90,11 @@ impl Driver for App {
                 std::future::pending::<()>().await;
             }
             return Ok(json!({ "result": { "value": reply.expect("a request nobody scripted an answer for") } }));
+        }
+        if method == "Network.getAllCookies" {
+            if let Some(all) = self.script.lock().unwrap().all_cookies.clone() {
+                return Ok(json!({ "cookies": all }));
+            }
         }
         if method == "Network.getCookies" {
             let mut s = self.script.lock().unwrap();
@@ -967,6 +975,55 @@ mod through_the_bridge {
         assert_eq!(runs[0].outputs, BTreeMap::from([("cycleId".to_string(), json!(276))]), "what it had created");
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
     }
+}
+
+/// The hosted failure, caught before it is sent: the application keeps its
+/// anti-forgery cookie on `/hr/pmsv10`, the template calls `/hr/PMSV10/...`,
+/// and cookie paths are case-sensitive - so the browser would send the save
+/// without it and get an empty 400. The step is refused instead, with the
+/// cookie, its path and the path to write, and no host.
+#[tokio::test]
+async fn a_step_that_misses_a_cookie_by_letter_case_is_refused_before_it_is_sent() {
+    let _log = crate::serial::log_tail();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().all_cookies = Some(json!([
+        { "name": ".AspNetCore.Antiforgery.Ab1", "value": "JAR-SECRET-1", "domain": "hr.example.internal",
+          "path": "/hr/pmsv10", "httpOnly": true, "secure": true, "session": true },
+        { "name": "sid", "value": "JAR-SECRET-2", "domain": "hr.example.internal", "path": "/", "session": true }
+    ]));
+    let mut t = template();
+    for step in &mut t.steps {
+        step.path = "/hr/PMSV10/PerformanceCycle".into();
+    }
+    let report = run(&mut r, t).await;
+
+    assert!(!report.ok, "{report:?}");
+    assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
+    let detail = &report.steps.last().unwrap().detail;
+    for part in [".AspNetCore.Antiforgery.Ab1", "/hr/pmsv10", "/hr/PMSV10/PerformanceCycle", "/hr/pmsv10/PerformanceCycle", "case"] {
+        assert!(detail.contains(part), "the sentence never says {part}: {detail}");
+    }
+    assert!(!detail.contains("://"), "a host reached the sentence: {detail}");
+    assert!(!detail.contains("JAR-SECRET"), "a cookie value reached the sentence: {detail}");
+    assert!(r.fetched().is_empty(), "the step was sent anyway: {:?}", r.fetched());
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
+    for line in v2_lib::applog::recent(400) {
+        assert!(!line.message.contains("JAR-SECRET"), "a cookie value reached the app log: {}", line.message);
+    }
+}
+
+/// When the paths already match the cookies' letter case, nothing is refused.
+#[tokio::test]
+async fn paths_in_the_cookies_letter_case_run_as_before() {
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().all_cookies = Some(json!([
+        { "name": ".AspNetCore.Antiforgery.Ab1", "value": "v", "domain": "hr.example.internal", "path": "/hr/pmsv10", "session": true }
+    ]));
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
 }
 
 /// A jar as the browser reports it: two cookies, each with a value that

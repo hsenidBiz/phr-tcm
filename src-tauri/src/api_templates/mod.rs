@@ -8,6 +8,7 @@
 //! `check` leans on rather than re-implementing - and, once Task 3 lands,
 //! request building.
 
+pub mod cookies;
 pub mod exec;
 pub mod guide;
 pub mod runner;
