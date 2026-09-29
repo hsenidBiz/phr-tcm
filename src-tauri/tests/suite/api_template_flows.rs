@@ -841,10 +841,8 @@ mod gate_tests {
 // joined by connectors that blend from one stage's colour into the next.
 
 mod page_tests {
-    use std::collections::HashMap;
-
     use v2_lib::api_templates::flow::Flow;
-    use v2_lib::api_templates::flow_page::{connector, layout, page_html, tone_of, Tone, COL_W, GAP_X, GAP_Y, HEAD, PAD, PER_TEMPLATE};
+    use v2_lib::api_templates::flow_page::{columns, page_html, tone_of, Tone};
     use v2_lib::api_templates::store::SavedTemplate;
     use v2_lib::api_templates::{ApiTemplate, Effect};
     use v2_lib::webtheme::PagePalette;
@@ -859,22 +857,10 @@ mod page_tests {
     }
 
     #[test]
-    fn stages_sit_in_columns_by_their_longest_path_each_column_centred() {
-        let counts: HashMap<String, usize> = HashMap::from([("participants".to_string(), 3)]);
-        let (placed, width, height) = layout(&flow(), &counts);
-        let col: Vec<(&str, u32)> = placed.iter().map(|p| (p.id.as_str(), p.col)).collect();
-        assert_eq!(col, [("setup", 0), ("rules", 1), ("competencies", 2), ("participants", 2), ("publish", 3)]);
-        assert_eq!(width, 4 * (COL_W + GAP_X) - GAP_X);
-
-        let one = HEAD + PER_TEMPLATE + PAD;
-        let three = HEAD + 3 * PER_TEMPLATE + PAD;
-        // Column 2 is the tallest: competencies over participants.
-        assert_eq!(height, one + GAP_Y + three);
-        let setup = &placed[0];
-        assert_eq!((setup.x, setup.h), (0, one));
-        assert_eq!(setup.y, (height - one) / 2, "a lone stage is centred on the tallest column");
-        let (comp, part) = (&placed[2], &placed[3]);
-        assert_eq!((comp.y, part.y), (0, one + GAP_Y));
+    fn stages_sit_in_columns_by_their_longest_path() {
+        let f = flow();
+        let ids: Vec<Vec<&str>> = columns(&f).iter().map(|c| c.iter().map(|s| s.id.as_str()).collect()).collect();
+        assert_eq!(ids, [vec!["setup"], vec!["rules"], vec!["competencies", "participants"], vec!["publish"]]);
     }
 
     #[test]
@@ -911,12 +897,19 @@ mod page_tests {
         assert!(html.contains("<stop offset='0' style='stop-color:var(--success)'/><stop offset='1' style='stop-color:var(--warning)'/>"), "{html}");
         assert!(html.contains("data-from='setup' data-to='rules'"));
 
+        // The browser lays the columns out, so text wraps rather than
+        // being cut short; the page's script draws the connectors.
+        assert_eq!(html.matches("<div class='col'>").count(), 4);
+        assert!(!html.contains("text-overflow:ellipsis"), "nothing is truncated");
+        assert!(html.contains("overflow-wrap:anywhere"));
+        assert!(html.contains("data-grad='g0'"));
+        assert!(html.contains("window.FlowPage"), "the connector script is in the page");
         // Motion only for those who have not asked for less.
         assert!(html.contains("@media (prefers-reduced-motion:no-preference)"));
         // The same in words, for a screen reader.
         assert!(html.contains("<li>Evaluation rules. Requires: Cycle setup. Templates: Save the rules.</li>"), "{html}");
-        // The page's own light/dark switch, and no other script.
-        assert_eq!(html.matches("<script").count(), 1);
+        // The light/dark switch, and the connector script.
+        assert_eq!(html.matches("<script").count(), 2);
     }
 
     #[test]
@@ -933,20 +926,10 @@ mod page_tests {
     }
 
     #[test]
-    fn a_connector_leaves_right_and_arrives_left() {
-        let (placed, _, _) = layout(&flow(), &HashMap::new());
-        let d = connector(&placed[0], &placed[1]);
-        let start = format!("M{} {}", COL_W, placed[0].y + placed[0].h / 2);
-        assert!(d.starts_with(&start), "{d}");
-        assert!(d.ends_with(&format!("{} {}", placed[1].x, placed[1].y + placed[1].h / 2)), "{d}");
-    }
-
-    #[test]
     fn a_hand_edited_loop_still_draws() {
         let mut f = flow();
         f.stages[0].requires = vec!["publish".into()];
-        let (placed, _, _) = layout(&f, &HashMap::new());
-        assert_eq!(placed.len(), 5);
+        assert_eq!(columns(&f).iter().map(Vec::len).sum::<usize>(), 5);
         // Every connector is drawable, even one running backwards.
         let _ = page_html(&f, &[], &PagePalette::default());
     }
