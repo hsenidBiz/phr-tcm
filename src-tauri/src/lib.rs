@@ -262,7 +262,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_beta_updates,
             app_settings::set_stay_signed_in,
             api_templates::api_templates_overview,
-            api_templates::api_templates_remove
+            api_templates::api_templates_remove,
+            api_templates::api_templates_remove_flow
         ])
 }
 
