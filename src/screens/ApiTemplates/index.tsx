@@ -17,7 +17,7 @@ import { toast } from "../../lib/toast";
 import FlowMap from "./FlowMap";
 import RemoveFlow from "./RemoveFlow";
 import RemoveTemplate from "./RemoveTemplate";
-import TemplateRow, { hostOf } from "./TemplateRow";
+import TemplateRow, { hostOf, type StageLine } from "./TemplateRow";
 
 /** The query's key prefix: the change event invalidates every project's. */
 const KEY = "api-templates";
@@ -33,15 +33,27 @@ function stageOf(t: SavedTemplate["template"], flows: Map<string, Flow>) {
   return { flow, stage };
 }
 
-/** A template's stage, spelled out for its row: "Evaluation rules
- * (Performance cycle wizard)", or - when its flow or its stage is no longer
- * saved - the ids it names, marked missing. */
-function stageLine(t: SavedTemplate["template"], flows: Map<string, Flow>) {
+/** A template's stage for its row: the stage's title, and the flow it is
+ * in - or, when that flow or stage is no longer saved, the ids it names,
+ * marked missing. */
+function stageLine(t: SavedTemplate["template"], flows: Map<string, Flow>): StageLine | undefined {
   const ref = t.stage;
   if (!ref) return undefined;
   const { flow, stage } = stageOf(t, flows);
-  if (flow && stage) return { text: `${stage.title} (${flow.title})`, missing: false };
-  return { text: `${ref.id} (${flow ? flow.title : ref.flow})`, missing: true };
+  if (flow && stage) return { stage: stage.title, flow: flow.title, missing: false };
+  return { stage: ref.id, flow: flow ? flow.title : ref.flow, missing: true };
+}
+
+/** The tab's two views: the templates as rows, or the flows as maps. */
+type View = "templates" | "flows";
+const VIEW_KEY = "tcm-v2-api-templates-view";
+
+function loadView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "flows" ? "flows" : "templates";
+  } catch {
+    return "templates";
+  }
 }
 
 /**
@@ -74,6 +86,18 @@ export default function ApiTemplates({
     "tcm-v2-api-templates-collapsed-groups",
   );
   const [search, setSearch] = useState("");
+  const [view, setViewState] = useState<View>(loadView);
+  const setView = (next: View) => {
+    setViewState(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Remembering the view is a convenience; without storage it resets.
+    }
+  };
+  // A row opened from a flow map, to scroll to once the Templates view has
+  // drawn it.
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
   const [removing, setRemoving] = useState<SavedTemplate["template"] | null>(null);
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
   // Rows opened by their own toggle or from a flow map. A set, so opening
@@ -119,14 +143,16 @@ export default function ApiTemplates({
         )
       : flows;
 
+    // Each view groups only its own kind: the templates' modules, or the
+    // flows'.
     const byModule = new Map<string, { flows: Flow[]; list: SavedTemplate[] }>();
     const entry = (module: string) => {
       const e = byModule.get(module) ?? { flows: [], list: [] };
       byModule.set(module, e);
       return e;
     };
-    for (const f of shownFlows) entry(f.module).flows.push(f);
-    for (const s of shown) entry(s.template.module).list.push(s);
+    if (view === "flows") for (const f of shownFlows) entry(f.module).flows.push(f);
+    else for (const s of shown) entry(s.template.module).list.push(s);
     return [...byModule.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([module, e]) => ({
@@ -134,7 +160,7 @@ export default function ApiTemplates({
         flows: [...e.flows].sort((a, b) => a.title.localeCompare(b.title)),
         list: [...e.list].sort((a, b) => a.template.title.localeCompare(b.template.title)),
       }));
-  }, [templates, flows, flowsById, q]);
+  }, [templates, flows, flowsById, q, view]);
 
   const setRowOpen = (id: string, open: boolean) =>
     setOpenIds((prev) => {
@@ -144,10 +170,18 @@ export default function ApiTemplates({
       return next;
     });
 
+  // A template clicked on a flow map: over to the Templates view, its row
+  // open, and scrolled to once that view has drawn it.
   const openFromMap = (id: string) => {
     setRowOpen(id, true);
-    document.getElementById(`api-template-${id}`)?.scrollIntoView({ block: "nearest" });
+    setView("templates");
+    setScrollTo(id);
   };
+  useEffect(() => {
+    if (!scrollTo || view !== "templates") return;
+    document.getElementById(`api-template-${scrollTo}`)?.scrollIntoView({ block: "nearest" });
+    setScrollTo(null);
+  }, [scrollTo, view]);
 
   // The saved templates that name each flow in their `stage` - one array per
   // flow across renders, so a map's layout is not worked out again for nothing.
@@ -161,10 +195,15 @@ export default function ApiTemplates({
   }, [templates]);
   const onFlow = (flowId: string) => byFlow.get(flowId) ?? NONE;
 
-  // A search opens every group, so a match is never hidden in a fold.
-  const isFolded = (module: string) => !q && folded.has(module);
+  // A search opens every group, so a match is never hidden in a fold. Each
+  // view folds its own groups: a module can be folded among the templates
+  // and open among the flows.
+  const foldKey = (module: string) => (view === "flows" ? `flows:${module}` : module);
+  const isFolded = (module: string) => !q && folded.has(foldKey(module));
   const moduleNames = groups.map((g) => g.module);
   const openGroups = moduleNames.filter((m) => !isFolded(m));
+  const shownCount = (list: SavedTemplate[], moduleFlows: Flow[]) =>
+    view === "flows" ? moduleFlows.length : list.length;
 
   if (!org || !project) {
     return <p className="text-sm text-muted">Pick an organization and project in the bar above first.</p>;
@@ -173,7 +212,9 @@ export default function ApiTemplates({
   const origin = overview.data?.origin ?? null;
 
   return (
-    <div className="space-y-4">
+    // Room below the last group, so the sticky Collapse all never sits over
+    // the last row's controls once the page is scrolled to its end.
+    <div className="space-y-4 pb-20">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
         <span>
           Project <span className="font-medium text-text">{project}</span>
@@ -213,15 +254,45 @@ export default function ApiTemplates({
 
       {(templates.length > 0 || flows.length > 0) && (
         <>
+          <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-border">
+            {(
+              [
+                ["templates", "Templates", templates.length],
+                ["flows", "Flows", flows.length],
+              ] as const
+            ).map(([id, label, count]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={view === id}
+                className={cn(
+                  "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
+                  view === id ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
+                )}
+                onClick={() => setView(id)}
+              >
+                {label} <span className="text-xs text-faint">{count}</span>
+              </button>
+            ))}
+          </div>
           <Input
-            aria-label="Search templates"
-            placeholder="Search by title, module, id or stage"
+            aria-label={view === "flows" ? "Search flows" : "Search templates"}
+            placeholder={view === "flows" ? "Search by title, module or stage" : "Search by title, module, id or stage"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full max-w-sm"
           />
-          {groups.length === 0 ? (
-            <p className="text-sm text-muted">No template matches “{search.trim()}”.</p>
+          {view === "flows" && flows.length === 0 ? (
+            <p className="text-sm text-muted">
+              No flows yet. Your assistant maps each wizard as a flow - its stages in order - before it builds the
+              templates that perform them.
+            </p>
+          ) : view === "templates" && templates.length === 0 ? (
+            <p className="text-sm text-muted">No templates yet - only flows so far.</p>
+          ) : groups.length === 0 ? (
+            <p className="text-sm text-muted">
+              No {view === "flows" ? "flow" : "template"} matches “{search.trim()}”.
+            </p>
           ) : (
             groups.map(({ module, flows: moduleFlows, list }) => (
               <section key={module} aria-label={module} className="space-y-1">
@@ -233,18 +304,17 @@ export default function ApiTemplates({
                     aria-expanded={!isFolded(module)}
                     title={isFolded(module) ? "Expand group" : "Collapse group"}
                     className="text-muted transition-colors hover:text-accent"
-                    onClick={() => toggleFolded(module)}
+                    onClick={() => toggleFolded(foldKey(module))}
                   >
                     {isFolded(module) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                   </button>
                   <button
                     className="group"
                     title={isFolded(module) ? "Expand group" : "Collapse group"}
-                    onClick={() => toggleFolded(module)}
+                    onClick={() => toggleFolded(foldKey(module))}
                   >
                     <h2 className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                      {module}
-                      {list.length > 0 && ` (${list.length})`}
+                      {module} ({shownCount(list, moduleFlows)})
                     </h2>
                   </button>
                   <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
@@ -304,7 +374,9 @@ export default function ApiTemplates({
               size="sm"
               variant="ghost"
               className="rounded-full text-text hover:bg-surface-2 hover:text-text"
-              onClick={() => (openGroups.length > 0 ? foldGroups(openGroups) : unfoldGroups(moduleNames))}
+              onClick={() =>
+                openGroups.length > 0 ? foldGroups(openGroups.map(foldKey)) : unfoldGroups(moduleNames.map(foldKey))
+              }
             >
               {openGroups.length > 0 ? (
                 <>

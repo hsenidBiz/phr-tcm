@@ -125,6 +125,11 @@ function renderScreen(onOpenAiBridge = vi.fn(), project = "proj") {
   return { onOpenAiBridge };
 }
 
+/** Over to the Flows view, where the maps are, once the overview is in. */
+async function showFlows() {
+  fireEvent.click(await screen.findByRole("tab", { name: /^Flows/ }));
+}
+
 test("groups templates by module and filters by title, module or id", async () => {
   mockOverview(OVERVIEW);
   renderScreen();
@@ -158,7 +163,7 @@ test("groups templates by module and filters by title, module or id", async () =
   expect(screen.getByText(/No template matches/)).toBeInTheDocument();
 });
 
-test("a row shows its effect badge, parameter count, proven line and last run", async () => {
+test("a row shows its effect badge and last run, and keeps its parameters and proof for its details", async () => {
   mockOverview(OVERVIEW);
   renderScreen();
 
@@ -166,8 +171,9 @@ test("a row shows its effect badge, parameter count, proven line and last run", 
   const badge = within(create).getByText("create");
   expect(badge.className).toContain("text-success");
   expect(badge.className).toContain("bg-success/15");
-  expect(within(create).getByText("2 parameters")).toBeInTheDocument();
-  expect(within(create).getByText("proven 28 Sep as hr.admin")).toBeInTheDocument();
+  // The count and the proof are in the details, not the line to scan.
+  expect(within(create).queryByText(/parameters?$/)).toBeNull();
+  expect(within(create).queryByText(/^proven /)).toBeNull();
   // The newest run is first: it succeeded.
   expect(within(create).getByText(/last run/)).toBeInTheDocument();
   expect(within(create).getByText("succeeded")).toBeInTheDocument();
@@ -176,7 +182,6 @@ test("a row shows its effect badge, parameter count, proven line and last run", 
   const edit = within(publish).getByText("edit");
   expect(edit.className).toContain("text-warning");
   expect(edit.className).toContain("bg-warning/15");
-  expect(within(publish).getByText("1 parameter")).toBeInTheDocument();
   expect(within(publish).getByText("never run")).toBeInTheDocument();
 
   const goal = screen.getByRole("listitem", { name: "Remove a goal" });
@@ -453,6 +458,7 @@ const FLOW_OVERVIEW = {
 test("the flow map's text equivalent names every stage in order, with what it requires", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   // It sits inside its module, above the templates.
@@ -486,6 +492,7 @@ test("the flow map's text equivalent names every stage in order, with what it re
 test("the map marks the optional stage and the stages no template performs yet", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   expect(within(flow).getAllByText("Optional")).toHaveLength(1);
@@ -505,18 +512,22 @@ test("the map marks the optional stage and the stages no template performs yet",
   expect(badge.className).toContain("text-warning");
 });
 
-test("clicking a template in the map opens its row below", async () => {
+test("clicking a template in the map switches to Templates and opens its row", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
-  const row = screen.getByRole("listitem", { name: "Save the rules" });
-  expect(row).toHaveAttribute("id", "api-template-pms-save-rules");
-  const toggle = within(row).getByRole("button", { name: "Show details of Save the rules" });
-  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // The Flows view shows flows only.
+  expect(screen.queryByRole("listitem", { name: "Save the rules" })).toBeNull();
 
   const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
   fireEvent.click(within(flow).getByRole("button", { name: /^Save the rules/ }));
+
+  expect(screen.getByRole("tab", { name: /^Templates/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).toBeNull();
+  const row = screen.getByRole("listitem", { name: "Save the rules" });
+  expect(row).toHaveAttribute("id", "api-template-pms-save-rules");
   expect(within(row).getByRole("button", { name: "Hide details of Save the rules" })).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -533,13 +544,41 @@ test("clicking a template in the map opens its row below", async () => {
   );
 });
 
+test("Templates and Flows are separate views, and the one chosen is remembered", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const templatesTab = await screen.findByRole("tab", { name: "Templates 2" });
+  const flowsTab = screen.getByRole("tab", { name: "Flows 1" });
+  expect(templatesTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("listitem", { name: "Save the rules" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).toBeNull();
+
+  fireEvent.click(flowsTab);
+  expect(flowsTab).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("region", { name: "Performance cycle wizard" })).toBeInTheDocument();
+  expect(screen.queryByRole("listitem", { name: "Save the rules" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Search flows" })).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-api-templates-view")).toBe("flows");
+});
+
+test("a project with templates but no flows says so in the Flows view", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+  await showFlows();
+  expect(await screen.findByText(/No flows yet/)).toBeInTheDocument();
+});
+
 test("a template row names its stage, and says when that stage is no longer saved", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
 
   const rules = await screen.findByRole("listitem", { name: "Save the rules" });
-  const ok = within(rules).getByText("Stage: Evaluation rules (Performance cycle wizard)");
+  // The row names the stage; its details name the flow.
+  const ok = within(rules).getByText("Stage: Evaluation rules");
   expect(ok.className).not.toContain("text-warning");
+  fireEvent.click(within(rules).getByRole("button", { name: "Show details of Save the rules" }));
+  expect(within(rules).getByTestId("template-flow")).toHaveTextContent("Evaluation rules, in Performance cycle wizard");
 
   const orphan = screen.getByRole("listitem", { name: "Add a reviewer" });
   const line = within(orphan).getByText(/^Stage:/);
@@ -557,6 +596,7 @@ test("a template on no flow has no stage line", async () => {
 test("Remove flow asks first, says the templates stay, then removes it and reloads", async () => {
   const calls = mockOverview(FLOW_OVERVIEW, (cmd) => (cmd === "api_templates_remove_flow" ? null : undefined));
   renderScreen(vi.fn(), "Web");
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   fireEvent.click(within(flow).getByRole("button", { name: /^Remove flow/ }));
@@ -579,17 +619,18 @@ test("Remove flow asks first, says the templates stay, then removes it and reloa
   await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_overview").length).toBeGreaterThan(1));
 });
 
-test("searching a stage title keeps the flow and the templates on that stage", async () => {
+test("searching a stage title keeps the templates on that stage, and the flow in the Flows view", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
 
-  await screen.findByRole("region", { name: "Performance cycle wizard" });
-  const search = screen.getByRole("textbox", { name: "Search templates" });
-
-  fireEvent.change(search, { target: { value: "evaluation" } });
-  expect(screen.getByRole("region", { name: "Performance cycle wizard" })).toBeInTheDocument();
+  await screen.findByRole("listitem", { name: "Save the rules" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search templates" }), { target: { value: "evaluation" } });
   expect(screen.getByRole("listitem", { name: "Save the rules" })).toBeInTheDocument();
   expect(screen.queryByRole("listitem", { name: "Add a reviewer" })).not.toBeInTheDocument();
+
+  await showFlows();
+  const search = screen.getByRole("textbox", { name: "Search flows" });
+  expect(screen.getByRole("region", { name: "Performance cycle wizard" })).toBeInTheDocument();
 
   // The flow's own title finds it too.
   fireEvent.change(search, { target: { value: "wizard" } });
@@ -598,11 +639,13 @@ test("searching a stage title keeps the flow and the templates on that stage", a
   // Nothing about the flow matches: it goes.
   fireEvent.change(search, { target: { value: "zzzz" } });
   expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).not.toBeInTheDocument();
+  expect(screen.getByText(/No flow matches/)).toBeInTheDocument();
 });
 
 test("a module with a flow and no templates still shows its map", async () => {
   mockOverview({ origin: OVERVIEW.origin, templates: [], flows: [FLOW] });
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   expect(within(flow).getAllByText("No template yet")).toHaveLength(5);
@@ -612,6 +655,7 @@ test("a module with a flow and no templates still shows its map", async () => {
 test("a wide map scrolls inside its own box", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   const map = within(flow).getByTestId("flow-map");
@@ -639,6 +683,7 @@ test("each arrow is coloured by what its stage does, and pulses", async () => {
     flows: [FLOW],
   });
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   const edges = [...within(flow).getByTestId("flow-map").querySelectorAll("g[data-tone]")];
@@ -712,6 +757,7 @@ test("Collapse all folds every open group, then becomes Expand all", async () =>
 test("View flow asks Rust to open the flow's own page, in the app's palette", async () => {
   const calls = mockOverview(FLOW_OVERVIEW, (cmd) => (cmd === "api_templates_open_flow" ? null : undefined));
   renderScreen(vi.fn(), "Web");
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   fireEvent.click(within(flow).getByRole("button", { name: "View flow Performance cycle wizard in the browser" }));
@@ -728,8 +774,38 @@ test("a flow page that cannot be opened says why", async () => {
     if (cmd === "api_templates_open_flow") throw "the flow pms-performance-cycle is no longer saved";
   });
   renderScreen();
+  await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   fireEvent.click(within(flow).getByRole("button", { name: /^View flow/ }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("the flow pms-performance-cycle is no longer saved"));
+});
+
+test("the details count the parameters and show what an optional one sends when left out", async () => {
+  mockOverview({
+    ...OVERVIEW,
+    templates: [
+      {
+        template: template({
+          params: [
+            { name: "cycleId", type: "number", required: true },
+            { name: "comments", type: "list", required: false, default: [] },
+          ],
+        }),
+        runs: [],
+      },
+    ],
+  });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const details = within(row).getByTestId("template-details");
+  expect(within(details).getByText("Parameters (2)")).toBeInTheDocument();
+  const table = within(details).getByRole("table", { name: "Parameters" });
+  const header = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+  expect(header).toContain("Default");
+  const comments = within(table).getByText("comments").closest("tr")!;
+  const cells = within(comments).getAllByRole("cell").map((c) => c.textContent);
+  expect(cells.slice(0, 4)).toEqual(["comments", "list", "no", "[]"]);
 });

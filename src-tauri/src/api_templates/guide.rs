@@ -60,6 +60,20 @@ with every problem listed together:
   application's data. You declare it; the tab shows it as a badge.
 - `sources`: where in the application's code each request comes from, as
   `file:line`.
+- `params[].required`: true ONLY when the application refuses the request
+  without the value. Check the code, do not guess: the handler's model
+  (`[Required]`, `[BindRequired]`, `[MinLength]`, and the like), its
+  `ModelState` checks, and the handler's own null or empty checks before
+  it saves. The UI always sending a field does not make it required - the
+  question is whether validation fails without it. When in doubt, prove
+  the template leaving the value out: if the save still succeeds, the
+  param is optional.
+- An optional param (`required: false`) takes a `default`: exactly what
+  the application's UI sends when the person leaves the field empty -
+  usually `[]` for a list, `""` for text - of the param's type. A run that
+  leaves the param out sends the default. An optional param with no
+  default must be given on every run, and a required param has no
+  default.
 - `params[].type`: `string`, `number`, `boolean`, `date` (`YYYY-MM-DD`) or
   `list` (a JSON array). `lookup` records the query that finds a value; the
   app never runs it - it is there for the next person, or you, to repeat.

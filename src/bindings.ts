@@ -967,7 +967,7 @@ export type ApiTemplate_Deserialize = {
 	description: string,
 	sources: string[],
 	antiforgery: Antiforgery,
-	params: Param[],
+	params: Param_Deserialize[],
 	steps: ApiTemplateStep[],
 	outputs: string[],
 	/**
@@ -991,7 +991,7 @@ export type ApiTemplate_Serialize = {
 	description: string,
 	sources: string[],
 	antiforgery: Antiforgery,
-	params: Param[],
+	params: Param_Serialize[],
 	steps: ApiTemplateStep[],
 	outputs: string[],
 	/**
@@ -1931,16 +1931,39 @@ export type PagePalette = {
 	dark_first: boolean,
 };
 
-export type Param = {
+export type Param = Param_Serialize | Param_Deserialize;
+
+export type ParamType = "string" | "number" | "boolean" | "date" | "list";
+
+export type Param_Deserialize = {
 	name: string,
 	type: ParamType,
 	required?: boolean,
 	description?: string | null,
 	/**  Guidance for the assistant only - the app never runs this. */
 	lookup?: string | null,
+	/**
+	 *  What an optional param stands for when a run does not give it: what
+	 *  the application's own UI sends when the person leaves it empty
+	 *  (usually `[]` or `""`). Only an optional param has one.
+	 */
+	default?: unknown | null,
 };
 
-export type ParamType = "string" | "number" | "boolean" | "date" | "list";
+export type Param_Serialize = {
+	name: string,
+	type: ParamType,
+	required: boolean,
+	description: string | null,
+	/**  Guidance for the assistant only - the app never runs this. */
+	lookup: string | null,
+	/**
+	 *  What an optional param stands for when a run does not give it: what
+	 *  the application's own UI sends when the person leaves it empty
+	 *  (usually `[]` or `""`). Only an optional param has one.
+	 */
+	default?: unknown | null,
+};
 
 export type PbiHit = {
 	id: number,

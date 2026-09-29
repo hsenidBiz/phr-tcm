@@ -912,3 +912,79 @@ fn removing_a_flow_removes_only_that_flow() {
     assert!(flow_store::load(dir.path(), "Org", "Proj", "other-flow").unwrap().is_some());
     assert!(remove_flow_at(true, dir.path(), "Org", "Proj", "../escape").is_err(), "a bad id is refused");
 }
+
+// ---------------------------------------------------------------------------
+// Optional params and their defaults: a param is required only when the
+// application refuses the request without it; an optional one stands for
+// what the UI sends when it is left empty.
+
+/// The design doc's draft with one more param: an optional list of
+/// comments, sent as the whole JSON body of a third step.
+fn with_optional(default: Option<Value>, required: bool) -> ApiTemplate {
+    let mut d = draft();
+    let mut p = json!({ "name": "comments", "type": "list", "required": required });
+    if let Some(v) = default {
+        p["default"] = v;
+    }
+    d["params"].as_array_mut().unwrap().push(p);
+    parsed(&d)
+}
+
+fn values() -> serde_json::Map<String, Value> {
+    json!({ "cycleName": "Q3", "startDate": "2026-10-01", "ratingMethodId": 4 }).as_object().unwrap().clone()
+}
+
+#[test]
+fn an_optional_param_left_out_takes_its_default() {
+    let t = with_optional(Some(json!([])), false);
+    assert!(check(&t).is_empty(), "{:?}", check(&t));
+    assert!(check_values(&t, &values()).is_empty(), "{:?}", check_values(&t, &values()));
+    let filled = v2_lib::api_templates::with_defaults(&t, &values());
+    assert_eq!(filled["comments"], json!([]));
+    // A value the run gives wins over the default.
+    let mut given = values();
+    given.insert("comments".into(), json!([{ "entryId": 7, "comment": "ok" }]));
+    assert_eq!(v2_lib::api_templates::with_defaults(&t, &given)["comments"], json!([{ "entryId": 7, "comment": "ok" }]));
+}
+
+#[test]
+fn an_optional_param_with_no_default_must_be_given() {
+    let t = with_optional(None, false);
+    let problems = check_values(&t, &values());
+    assert_eq!(
+        problems,
+        ["param 'comments' is optional but has no default, so a run must give it - or give the template a default: what the application's UI sends when it is left empty"]
+    );
+    // Never filled in, so no `{{comments}}` text can reach the application.
+    assert!(!v2_lib::api_templates::with_defaults(&t, &values()).contains_key("comments"));
+}
+
+#[test]
+fn a_default_is_of_the_params_type_and_only_on_an_optional_param() {
+    let wrong = with_optional(Some(json!("none")), false);
+    assert!(check(&wrong).contains(&"param 'comments' has a default that is not a list".to_string()), "{:?}", check(&wrong));
+    let required = with_optional(Some(json!([])), true);
+    assert!(
+        check(&required).contains(
+            &"param 'comments' is required, so it has no use for a default - drop the default, or make it optional".to_string()
+        ),
+        "{:?}",
+        check(&required)
+    );
+}
+
+#[test]
+fn a_param_saved_before_defaults_reads_and_writes_as_before() {
+    let t = parsed(&draft());
+    assert!(t.params.iter().all(|p| p.default.is_none()));
+    let back = serde_json::to_value(&t).unwrap();
+    assert!(back["params"].as_array().unwrap().iter().all(|p| p.get("default").is_none()), "{back}");
+}
+
+#[test]
+fn the_guide_says_required_is_what_validation_refuses_without() {
+    let text = v2_lib::api_templates::guide::text(&[], None).split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(text.contains("true ONLY when the application refuses the request without the value"), "{text}");
+    assert!(text.contains("Check the code, do not guess"), "{text}");
+    assert!(text.contains("An optional param (`required: false`) takes a `default`"), "{text}");
+}
