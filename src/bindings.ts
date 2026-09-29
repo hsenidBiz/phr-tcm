@@ -969,6 +969,12 @@ export type ApiTemplate_Deserialize = {
 	steps: ApiTemplateStep[],
 	outputs: string[],
 	/**
+	 *  The flow stage this template performs, if it belongs to a flow.
+	 *  Checked where a flow can be loaded (`flow::check_stage_ref`), not by
+	 *  `check`, so a template saved before flows existed keeps loading.
+	 */
+	stage?: StageRef | null,
+	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
@@ -986,6 +992,12 @@ export type ApiTemplate_Serialize = {
 	params: Param[],
 	steps: ApiTemplateStep[],
 	outputs: string[],
+	/**
+	 *  The flow stage this template performs, if it belongs to a flow.
+	 *  Checked where a flow can be loaded (`flow::check_stage_ref`), not by
+	 *  `check`, so a template saved before flows existed keeps loading.
+	 */
+	stage?: StageRef | null,
 	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
@@ -2583,6 +2595,12 @@ export type SkippedCase = {
 export type SlowdownRequested = {
 	/**  Seconds the pacer is holding requests for, after the 30s cap. */
 	secs: number,
+};
+
+/**  A template's pointer at the flow and stage it performs. */
+export type StageRef = {
+	flow: string,
+	id: string,
 };
 
 export type StateInfo = {

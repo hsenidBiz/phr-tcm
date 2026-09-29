@@ -29,6 +29,7 @@ mod ado_share;
 mod ado_testplan;
 mod ai_bridge;
 mod ai_tools;
+mod api_template_flows;
 mod api_templates;
 mod api_templates_runner;
 mod app_settings;
