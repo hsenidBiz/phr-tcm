@@ -8,6 +8,12 @@
 // Main-window shots are taken at 1440x900; a shot that sets `size` (the
 // runner window) is taken at that size, its real one.
 //
+// The review page and its Test map are pages the app writes for the
+// browser, so a `reviewPage` step has the running app write them from a
+// fixed sample (src/dev/reviewSample.ts) and opens them in Microsoft Edge
+// at the shot's size - Edge ships with Windows, and Playwright drives it
+// the same way it drives the app's own WebView2.
+//
 // The shots and controls come from the help content itself
 // (docs-site/src/content/), loaded through Vite, so what is documented and
 // what is captured cannot drift apart. A control that cannot be found on
@@ -31,10 +37,10 @@
 //               (decided before the content is loaded, so it works even
 //               while the content is broken mid-edit)
 
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync, copyFileSync, readdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync, copyFileSync, readdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import {
@@ -205,6 +211,67 @@ async function captureSharp(page, size, path) {
   }
 }
 
+// ---- the review page ------------------------------------------------------
+
+/** Where the sample's case file and spec are written for the app to read. */
+const REVIEW_DIR = join(tmpdir(), "tcm-docs-review");
+/** Edge, launched on the first review page shot and closed with the run. */
+let edge = null;
+/** The review page of the current shot, closed by the next reset. */
+let reviewContext = null;
+
+/** The newest file in the temp folder matching `pattern` written since
+ *  `since` - the app names its pages after its own process id. */
+function newestWritten(pattern, since) {
+  const dir = tmpdir();
+  const hits = readdirSync(dir)
+    .filter((n) => pattern.test(n))
+    .map((n) => ({ n, t: statSync(join(dir, n)).mtimeMs }))
+    .filter((f) => f.t >= since)
+    .sort((a, b) => b.t - a.t);
+  return hits.length ? join(dir, hits[0].n) : null;
+}
+
+/** Have the app write its review page from the sample, then open it - or
+ *  the Test map beside it - in Edge at `size`. Written afresh for every
+ *  shot, so each theme pass gets the page in that pass's theme. */
+async function openReview(main, kind, size) {
+  edge ??= await chromium.launch({ channel: "msedge", headless: true }).catch((e) => {
+    throw new Error(`Microsoft Edge could not be started for the review page: ${firstLine(e)}`);
+  });
+  mkdirSync(REVIEW_DIR, { recursive: true });
+  const sample = await main.evaluate(async () => {
+    const m = await import("/src/dev/reviewSample.ts");
+    return { spec: m.REVIEW_SAMPLE_SPEC, cases: m.REVIEW_SAMPLE_CASES, shownPath: m.REVIEW_SAMPLE_SHOWN_PATH };
+  });
+  // The spec pane reads the spec from beside the case file.
+  writeFileSync(join(REVIEW_DIR, "leave-spec.md"), sample.spec);
+  writeFileSync(join(REVIEW_DIR, "leave-cases.json"), JSON.stringify(sample.cases, null, 2));
+  const since = Date.now() - 1_000;
+  await main.evaluate(async (dir) => {
+    const m = await import("/src/dev/reviewSample.ts");
+    await m.writeReviewSample(dir);
+  }, REVIEW_DIR);
+  const file =
+    kind === "map"
+      ? newestWritten(/^test-map-draft-\d+\.html$/, since)
+      : newestWritten(/^test-cases-draft-\d+\.html$/, since);
+  if (!file) throw new Error(`the app did not write the ${kind === "map" ? "Test map" : "review page"}`);
+  await reviewContext?.close().catch(() => {});
+  reviewContext = await edge.newContext({ viewport: viewportOf(size) });
+  const page = await reviewContext.newPage();
+  await page.goto(pathToFileURL(file).href, { waitUntil: "load" });
+  // The spec pane names the file's real path, and a temp folder's path
+  // names the Windows user: the shots show the sample's own instead.
+  await page.evaluate((shown) => {
+    for (const el of document.querySelectorAll(".spec-path")) {
+      el.textContent = shown;
+      el.setAttribute("title", shown);
+    }
+  }, sample.shownPath);
+  return page;
+}
+
 /** The runner window, once the route has opened it, at the shot's size. */
 async function waitForRunner(browser, size) {
   for (let i = 0; i < 75; i++) {
@@ -325,6 +392,7 @@ async function connectAndDrive(mode, shots, backup, only = false) {
   try {
     return await drive(browser, mode, shots, backup, only);
   } finally {
+    await edge?.close().catch(() => {});
     await browser.close().catch(() => {});
   }
 }
@@ -490,6 +558,8 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
   /** Back to a known start: no runner window, a fresh load of the app. */
   const reset = async () => {
     guard();
+    await reviewContext?.close().catch(() => {});
+    reviewContext = null;
     await closeRunners(browser);
     await main.reload({ waitUntil: "load" });
     await waitForApp(main);
@@ -531,7 +601,14 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
         for (const [i, step] of shot.route.entries()) {
           guard();
           try {
-            target = await runStep({ page: target, openRunner: () => waitForRunner(browser, size) }, step);
+            target = await runStep(
+              {
+                page: target,
+                openRunner: () => waitForRunner(browser, size),
+                openReview: (kind) => openReview(main, kind, size),
+              },
+              step,
+            );
           } catch (e) {
             if (e instanceof Interrupted) throw e;
             throw new Error(`route step ${i + 1} ${JSON.stringify(step)}: ${firstLine(e)}`);
@@ -557,13 +634,6 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
       await target.mouse.move(2, 2).catch(() => {});
       await settle(target);
       await untilStill(target, controls, size);
-      guard();
-      if (staging) {
-        const dir = join(staging, pass.dir);
-        mkdirSync(dir, { recursive: true });
-        await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
-      }
-
       let placed = 0;
       if (passIndex === 0) positions[shot.id] = { size, controls: {} };
       for (const control of controls) {
@@ -591,6 +661,21 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
           }
         }
       }
+      // Photographed AFTER the boxes are measured. Leaving the capture's
+      // density override also drops Playwright's viewport (it is set the
+      // same way), and the page falls back to its real window. The app's
+      // window is the shot's size anyway, but headless Edge's is 1410x805:
+      // measured after the picture, the review page had re-laid itself out
+      // narrower and every box sat 30 px beside what the picture shows. The
+      // override itself changes only the density, so boxes measured now
+      // describe exactly what it photographs.
+      guard();
+      if (staging) {
+        const dir = join(staging, pass.dir);
+        mkdirSync(dir, { recursive: true });
+        await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
+      }
+
       console.log(`  ${shot.id}  ${placed}/${controls.length} controls`);
     }
   }

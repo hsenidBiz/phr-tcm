@@ -12,15 +12,18 @@ export type Locate =
   | { role: string; nameRe: string } // RegExp source, e.g. "^Run \\d+ in runner$"
   | { label: string } // getByLabel
   | { text: string } // getByText exact
-  | { testId: string }; // data-testid / data-tour
+  | { testId: string } // data-testid / data-tour
+  | { css: string }; // a CSS selector - for the pages the app writes for the browser, which have ids, not roles
 
 export type Step =
   | { nav: string } // sidebar item's visible label, e.g. "Run Tests"
   | { click: Locate }
+  | { activate: Locate } // a click sent to the element itself, for a control reached by keyboard that the page draws something over (the Test map's case list)
   | { press: string } // e.g. "Control+K", "Escape"
   | { waitFor: Locate }
   | { scrollTo: Locate }
-  | { runnerWindow: true }; // following steps and the shot target the runner window
+  | { runnerWindow: true } // following steps and the shot target the runner window
+  | { reviewPage: "cases" | "map" }; // the app writes its review page from sample cases; following steps and the shot target that page (or its Test map) in Edge
 
 /** A size in CSS pixels. */
 export type Size = { w: number; h: number };

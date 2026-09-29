@@ -10,6 +10,7 @@ import { importFile } from "./import-file";
 import { manualEntry } from "./manual-entry";
 import { newWorkItem } from "./new-work-item";
 import { pullRequests } from "./pull-requests";
+import { reviewPage } from "./review-page";
 import { runTests } from "./run-tests";
 import { searchSuites } from "./search-suites";
 import { settings } from "./settings";
@@ -25,6 +26,7 @@ export const screens: Screen[] = [
   importFile,
   updateTestCases,
   viewTestCases,
+  reviewPage,
   runTests,
   searchSuites,
   suiteManagement,

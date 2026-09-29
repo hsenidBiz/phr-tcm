@@ -73,8 +73,14 @@ describe("locatorFor", () => {
     ]);
   });
 
+  test("css is a plain locator - the review page's own markup", () => {
+    const { root, calls } = recorder();
+    locatorFor(root, { css: '[data-key="d0"] .tc-mark' });
+    expect(calls).toEqual([["locator", '[data-key="d0"] .tc-mark']]);
+  });
+
   test("an unknown shape throws", () => {
-    expect(() => locatorFor(recorder().root, { css: ".x" })).toThrow(/Unknown locate/);
+    expect(() => locatorFor(recorder().root, { xpath: "//x" })).toThrow(/Unknown locate/);
   });
 });
 
@@ -119,9 +125,24 @@ describe("runStep", () => {
     ]);
   });
 
+  test("activate sends the click to the element itself", async () => {
+    const { root, calls } = recorder();
+    await runStep({ page: root, openRunner: async () => null }, { activate: { css: "#map-list button" } });
+    expect(calls).toEqual([["locator", "#map-list button"], ["locator().first"], ["locator().first().dispatchEvent", "click"]]);
+  });
+
   test("runnerWindow switches the target to the runner", async () => {
     const { root } = recorder();
     expect(await runStep({ page: root, openRunner: async () => "runner" }, { runnerWindow: true })).toBe("runner");
+  });
+
+  test("reviewPage switches the target to the page the app wrote, or its Test map", async () => {
+    const { root } = recorder();
+    const opened = [];
+    const ctx = { page: root, openRunner: async () => null, openReview: async (kind) => (opened.push(kind), `page:${kind}`) };
+    expect(await runStep(ctx, { reviewPage: "cases" })).toBe("page:cases");
+    expect(await runStep(ctx, { reviewPage: "map" })).toBe("page:map");
+    expect(opened).toEqual(["cases", "map"]);
   });
 
   test("nav clicks the sidebar item", async () => {
