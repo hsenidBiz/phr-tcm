@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.4",
+    date: "2026-09-29",
+    items: [
+      "Every database statement your AI tools run is now kept in full in its own activity log, and Settings has an Open activity folder button beside Open log folder. The app log you send with a bug report now only notes that a statement ran.",
+    ],
+  },
+  {
     version: "2.0.4-beta.3",
     date: "2026-09-29",
     items: [
