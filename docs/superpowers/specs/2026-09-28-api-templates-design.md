@@ -210,16 +210,24 @@ and **run** (a saved template).
      the run.**
    - A step whose final URL is the login page fails the run; the runner
      does not sign in again halfway through.
-   - **One retry, for one case** (2026-09-29): a 400 with an EMPTY body
+   - **Retries, for one case** (2026-09-29): a 400 with an EMPTY body
      (on a step that does not expect a 400) means the application refused
      the request before any handler read it - hosted PeoplesHR does this at
      busy moments and when the account's session was taken over - so
-     nothing was saved. After a one-second pause the runner reads a fresh
-     token (which signs in again if the session had ended) and sends the
-     step once more. Each attempt has its own activity record (`attempt` 1
-     or 2); a second empty 400 fails the step, saying it was refused the
-     same way twice. A 400 with a body is a real refusal and is never
+     nothing was saved. The runner reads a fresh token (which signs in
+     again if the session had ended) and sends the step again, up to three
+     times, after pauses of 1, 3 and 5 seconds (`RETRY_PAUSES`). Each
+     attempt has its own activity record (`attempt` 1 to 4); an empty 400
+     on the fourth try fails the step, saying it was refused the same way
+     on all 4 tries. A 400 with a body is a real refusal and is never
      retried.
+     *Why three:* on hosted dev01 about 41% of first tries of a write came
+     back as empty 400s (13 of 32 on 2026-09-29), and a single retry failed
+     just as often (5 of 12) - the refusals are independent of the try
+     before, and a fresh token or sign-in changes nothing. 36 POSTs that
+     the server refused with a 422 all passed anti-forgery on the same
+     session, so it is not the token. Four tries at that rate go through
+     about 97% of the time, against 84% for two.
    - **No rollback.** A failed run reports exactly which steps landed and
      what they captured: `cycleId 274 created; failed at Evaluation rules:
      400 ...`. The application has no undo, and nothing is reversed

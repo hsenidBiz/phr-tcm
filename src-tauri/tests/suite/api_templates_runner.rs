@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use v2_lib::api_templates::runner::{
-    claim, preflight, run_template, run_template_within, Mode, RunReport, RunRequest, FETCH_FN, TOKEN_FN,
+    claim, preflight, run_template_within, Mode, RunReport, RunRequest, FETCH_FN, RETRY_PAUSES, RUN_LIMIT, TOKEN_FN,
 };
 use v2_lib::api_templates::{ApiTemplate, Proven};
 use v2_lib::autorun::accounts::save_accounts;
@@ -286,9 +286,12 @@ fn step_records(records: &[Value]) -> Vec<&Value> {
     records.iter().filter(|r| r.get("step").is_some()).collect()
 }
 
+/// The retry pauses the tests use: as many as the real ones, but short.
+const QUICK_PAUSES: [Duration; 3] = [Duration::from_millis(10); 3];
+
 async fn run(r: &mut Rig, t: ApiTemplate) -> RunReport {
     let req = request(t, prove());
-    run_template(&mut r.browsers, r.root.path(), &req, &quick()).await
+    run_template_within(&mut r.browsers, r.root.path(), &req, &quick(), RUN_LIMIT, &QUICK_PAUSES).await
 }
 
 #[tokio::test]
@@ -497,7 +500,7 @@ async fn the_browser_is_closed_on_every_path() {
     r.script.lock().unwrap().hang_fetch = true;
     let req = request(template(), prove());
     let report =
-        run_template_within(&mut r.browsers, r.root.path(), &req, &quick(), Duration::from_secs(2)).await;
+        run_template_within(&mut r.browsers, r.root.path(), &req, &quick(), Duration::from_secs(2), &QUICK_PAUSES).await;
     assert!(!report.ok);
     assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
     assert_eq!(report.steps.last().unwrap().detail, "the run took longer than 3 minutes");
@@ -1292,11 +1295,11 @@ async fn cookies_that_cannot_be_read_do_not_stop_the_run() {
 }
 
 /// An empty 400 means the application refused the request before reading
-/// it, so nothing was saved and trying again is safe. The step is sent once
-/// more with a fresh token, the run goes on, and each attempt has its own
+/// it, so nothing was saved and trying again is safe. The step is sent
+/// again with a fresh token, the run goes on, and each attempt has its own
 /// activity record.
 #[tokio::test]
-async fn an_empty_400_is_retried_once_with_a_fresh_token() {
+async fn an_empty_400_is_retried_with_a_fresh_token() {
     let _log = crate::serial::log_tail();
     let _act = crate::serial::activity_log();
     let activity = tempfile::tempdir().unwrap();
@@ -1325,18 +1328,58 @@ async fn an_empty_400_is_retried_once_with_a_fresh_token() {
     );
 }
 
-/// Refused unread twice: the step fails, and says so in words a person can act on.
+/// Hosted PeoplesHR refuses writes unread independently of the try before,
+/// so a step refused three times running can still go through on the
+/// fourth - each try reading its own fresh token.
 #[tokio::test]
-async fn an_empty_400_twice_fails_the_step() {
+async fn a_step_refused_unread_three_times_goes_through_on_the_fourth_try() {
     let _act = crate::serial::activity_log();
-    let mut r = rig(vec![empty_400(), empty_400()], None);
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![
+            empty_400(),
+            empty_400(),
+            empty_400(),
+            answer(200, json!({ "success": true, "cycleId": 274 })),
+            answer(200, json!({ "success": true })),
+        ],
+        None,
+    );
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(report.outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
+    assert_eq!(r.fetched().len(), 5, "step 1 four times, step 2 once");
+    assert_eq!(r.navigations_to_the_page(), 4, "a fresh token before every retry");
+
+    let records = activity_records(activity.path(), "api");
+    let attempts: Vec<_> = step_records(&records).iter().map(|s| (s["status"].as_u64(), s["attempt"].as_u64())).collect();
+    assert_eq!(
+        attempts,
+        vec![(Some(400), Some(1)), (Some(400), Some(2)), (Some(400), Some(3)), (Some(200), Some(4)), (Some(200), Some(1))]
+    );
+}
+
+/// Refused unread on every try: the step fails, and says so in words a
+/// person can act on.
+#[tokio::test]
+async fn an_empty_400_on_every_try_fails_the_step() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![empty_400(), empty_400(), empty_400(), empty_400()], None);
     let report = run(&mut r, template()).await;
     assert!(!report.ok);
     assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
     let detail = &report.steps.last().unwrap().detail;
-    assert!(detail.contains("empty 400") && detail.contains("second try"), "{detail}");
-    assert_eq!(r.fetched().len(), 2, "one retry, no more");
+    assert!(detail.contains("empty 400") && detail.contains("all 4 tries"), "{detail}");
+    assert_eq!(r.fetched().len(), 4, "three retries, no more");
     assert_eq!(r.browsers.closed, 1);
+}
+
+/// The real pauses: three retries, spaced further apart each time.
+#[test]
+fn the_retry_pauses_are_1_3_and_5_seconds() {
+    assert_eq!(RETRY_PAUSES.map(|p| p.as_secs()), [1, 3, 5]);
 }
 
 /// A 400 WITH a body was read and answered by the application: it is a real

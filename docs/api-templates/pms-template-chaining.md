@@ -24,7 +24,10 @@ on 2026-09-29.
   as empty 400s.
 - **Empty 400s.** A 400 with no body means the request was refused before
   any handler read it (busy shared server, or a taken-over session). The
-  runner retries such a step once with a fresh token; a second one fails it.
+  runner retries such a step up to three times (1, 3 and 5 seconds apart),
+  each with a fresh token; a fourth one fails it. On 2026-09-29 about two
+  in five writes on hosted came back this way, independently of the try
+  before.
 - **Letter case.** Hosted PMSV10 keeps its anti-forgery cookie on the
   lowercase path `/hr/pmsv10`. Write paths as the UI calls them (lowercase);
   the runner adapts a path whose case differs only from a cookie's.

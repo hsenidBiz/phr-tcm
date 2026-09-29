@@ -758,8 +758,10 @@ fn the_guide_says_an_account_is_signed_in_in_one_place_at_a_time() {
     assert!(text.contains("one place at a time"), "{text}");
     assert!(text.contains("Continue here"), "{text}");
     assert!(text.contains("empty 400"), "{text}");
-    // ...and that an empty 400 is tried once more before a step fails.
-    assert!(text.contains("once more with a fresh token"), "{text}");
+    // ...and that an empty 400 is tried again, three times, before a step fails.
+    assert!(text.contains("up to three more times"), "{text}");
+    assert!(text.contains("each with a fresh token"), "{text}");
+    assert!(text.contains("all 4 tries"), "{text}");
 }
 
 /// The guide hands the assistant this project's account KEYS and the

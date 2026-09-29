@@ -407,18 +407,20 @@ fn without_hosts(text: &str) -> String {
 /// happened. The browser is closed on every path out, a timeout included.
 /// Saves nothing: see the module comment.
 pub async fn run_template<B: Browsers>(browsers: &mut B, root: &Path, req: &RunRequest, timing: &Timing) -> RunReport {
-    run_template_within(browsers, root, req, timing, RUN_LIMIT).await
+    run_template_within(browsers, root, req, timing, RUN_LIMIT, &RETRY_PAUSES).await
 }
 
-/// `run_template` with the run limit given rather than `RUN_LIMIT` - the
-/// only way a test reaches the timeout path without waiting three minutes.
-/// The sentence a timeout reports still says three minutes.
+/// `run_template` with the run limit and retry pauses given rather than
+/// `RUN_LIMIT` and `RETRY_PAUSES` - the only way a test reaches the timeout
+/// path, or every retry, without waiting for them. The sentence a timeout
+/// reports still says three minutes.
 pub async fn run_template_within<B: Browsers>(
     browsers: &mut B,
     root: &Path,
     req: &RunRequest,
     timing: &Timing,
     limit: Duration,
+    retry_pauses: &[Duration],
 ) -> RunReport {
     let mut progress = Progress::new();
     match browsers.open().await {
@@ -426,7 +428,7 @@ pub async fn run_template_within<B: Browsers>(
         Ok(mut d) => {
             // `close` sits outside the timed future on purpose: dropping
             // that future on a timeout must not skip it.
-            let timed = tokio::time::timeout(limit, drive(&mut d, root, req, timing, &mut progress)).await;
+            let timed = tokio::time::timeout(limit, drive(&mut d, root, req, timing, retry_pauses, &mut progress)).await;
             if timed.is_err() && progress.failed.is_none() {
                 progress.fail(None, RUN_TOO_LONG);
             }
@@ -453,7 +455,14 @@ pub async fn run_template_within<B: Browsers>(
 
 /// Everything after the browser is open: sign in, fetch the token, run the
 /// steps. Stops at the first failure, recording it in `progress`.
-async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Timing, progress: &mut Progress) {
+async fn drive<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    req: &RunRequest,
+    timing: &Timing,
+    retry_pauses: &[Duration],
+    progress: &mut Progress,
+) {
     progress.at(SIGN_IN, None);
     let (recipe, account) = match prepare(root, &req.org, &req.project, &req.account) {
         Ok(x) => x,
@@ -485,28 +494,38 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
         let mut result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
         d.set_deadline(None);
         // Refused before any handler read it: nothing was saved, so it is
-        // sent once more - after a pause, with a fresh token (reading one
-        // signs in again if the session had ended). Once, never more.
-        if matches!(&result, Err(f) if f.unread) {
+        // sent again - after each of `retry_pauses`, with a fresh token
+        // (reading one signs in again if the session had ended).
+        let mut attempt: u8 = 1;
+        for pause in retry_pauses {
+            if !matches!(&result, Err(f) if f.unread) {
+                break;
+            }
+            attempt += 1;
             applog::info(format!(
-                "api template {}: step {} was refused unread (an empty 400) - trying once more with a fresh token",
+                "api template {}: step {} was refused unread (an empty 400) - try {attempt} of {} in {} s, with a fresh token",
                 ctx.id(),
-                step.name
+                step.name,
+                retry_pauses.len() + 1,
+                pause.as_secs_f32()
             ));
-            tokio::time::sleep(RETRY_PAUSE).await;
+            tokio::time::sleep(*pause).await;
             progress.at(TOKEN_PAGE, None);
             // `self::` because the loop's own `token` (the string) shadows the function.
             let Some((fresh_doc, fresh_token)) = self::token(d, &ctx, progress).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
             d.set_deadline(Some(Instant::now() + STEP_LIMIT));
-            result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 2).await.map_err(|mut f| {
+            result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, attempt).await;
+            d.set_deadline(None);
+        }
+        if attempt > 1 {
+            result = result.map_err(|mut f| {
                 if f.unread {
-                    f.detail = format!("{} - it was refused the same way on a second try", f.detail);
+                    f.detail = format!("{} - it was refused the same way on all {attempt} tries", f.detail);
                 }
                 f
             });
-            d.set_deadline(None);
         }
         match result {
             Ok((status, detail)) => progress.steps.push(StepReport {
@@ -610,7 +629,7 @@ fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
     }
 }
 
-/// Why a step failed. `unread` marks the one failure worth a second try: a
+/// Why a step failed. `unread` marks the one failure worth trying again: a
 /// 400 with no body, which the application sends when it refuses a request
 /// before any handler reads it (hosted PeoplesHR does this at busy moments
 /// and when the account's session was taken over) - so nothing was saved,
@@ -629,8 +648,12 @@ impl From<(Option<u16>, String)> for StepFailure {
 
 type StepResult = Result<(u16, String), StepFailure>;
 
-/// How long to wait before sending a step the application refused unread.
-pub const RETRY_PAUSE: Duration = Duration::from_secs(1);
+/// The pauses before each new try of a step the application refused
+/// unread - one per retry, so a step is sent at most `len() + 1` times.
+/// Hosted PeoplesHR refuses about two in five writes this way at busy
+/// moments, each try independently of the last (a fresh token or a fresh
+/// sign-in makes no difference), so what helps is more tries, spaced out.
+pub const RETRY_PAUSES: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(3), Duration::from_secs(5)];
 
 /// The sentence for a step refused unread, as the person reads it.
 const REFUSED_UNREAD: &str = "the application refused this request without reading it (an empty 400) - \
@@ -766,7 +789,8 @@ struct Sent<'a> {
     /// `{ from, to, cookie }` when the step's path was sent in a cookie's
     /// letter case - see `adapt_path_case`.
     path_case_adapted: Option<&'a Value>,
-    /// 1, or 2 for the one retry of a step the application refused unread.
+    /// 1, then 2, 3... for each retry of a step the application refused
+    /// unread (see `RETRY_PAUSES`).
     attempt: u8,
 }
 

@@ -85,10 +85,10 @@ with every problem listed together:
   nobody is using by hand.
 - An empty 400 means the application refused a request before reading it
   (a busy moment on a shared server does it too), so nothing was saved:
-  the runner sends that step once more with a fresh token before failing
-  it. A step that fails "refused the same way on a second try" needs a
-  quiet moment or the account's other session closed - not a changed
-  template.
+  the runner sends that step up to three more times, 1, 3 and 5 seconds
+  apart, each with a fresh token, before failing it. A step that fails
+  "refused the same way on all 4 tries" needs a quiet moment or the
+  account's other session closed - not a changed template.
 - A step has at most one body: `json` (any JSON value) or `form` (string
   values, sent as multipart/form-data - what the application's own forms
   send). File fields are not supported.
