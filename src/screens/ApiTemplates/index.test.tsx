@@ -704,3 +704,32 @@ test("Collapse all folds every open group, then becomes Expand all", async () =>
   expect(screen.getByText("Remove a goal")).toBeInTheDocument();
   expect(screen.getByText("Create a draft performance cycle")).toBeInTheDocument();
 });
+
+// ---------------------------------------------------------------------------
+// View flow: the flow on its own page in the browser, as the review page's
+// tree view opens the Test map.
+
+test("View flow asks Rust to open the flow's own page, in the app's palette", async () => {
+  const calls = mockOverview(FLOW_OVERVIEW, (cmd) => (cmd === "api_templates_open_flow" ? null : undefined));
+  renderScreen(vi.fn(), "Web");
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  fireEvent.click(within(flow).getByRole("button", { name: "View flow Performance cycle wizard in the browser" }));
+
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_open_flow")).toHaveLength(1));
+  const args = calls.find((c) => c.cmd === "api_templates_open_flow")?.args as Record<string, unknown>;
+  expect(args).toMatchObject({ organization: "acme", project: "Web", id: "pms-performance-cycle" });
+  expect(args.palette).toMatchObject({ light: expect.any(Object), dark: expect.any(Object) });
+});
+
+test("a flow page that cannot be opened says why", async () => {
+  const { toast } = await import("../../lib/toast");
+  mockOverview(FLOW_OVERVIEW, (cmd) => {
+    if (cmd === "api_templates_open_flow") throw "the flow pms-performance-cycle is no longer saved";
+  });
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  fireEvent.click(within(flow).getByRole("button", { name: /^View flow/ }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("the flow pms-performance-cycle is no longer saved"));
+});

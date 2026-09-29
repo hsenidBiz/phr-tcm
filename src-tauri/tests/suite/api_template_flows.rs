@@ -835,3 +835,139 @@ mod gate_tests {
         assert_eq!(state, StageState::CouldNotRun);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The flow on its own page (the tab's "View flow"): large coloured stages
+// joined by connectors that blend from one stage's colour into the next.
+
+mod page_tests {
+    use std::collections::HashMap;
+
+    use v2_lib::api_templates::flow::Flow;
+    use v2_lib::api_templates::flow_page::{connector, layout, page_html, tone_of, Tone, COL_W, GAP_X, GAP_Y, HEAD, PAD, PER_TEMPLATE};
+    use v2_lib::api_templates::store::SavedTemplate;
+    use v2_lib::api_templates::{ApiTemplate, Effect};
+    use v2_lib::webtheme::PagePalette;
+
+    fn flow() -> Flow {
+        serde_json::from_value(crate::common::cycle_flow_json()).expect("the fixture flow")
+    }
+
+    fn on(id: &str, title: &str, effect: Effect, stage: &str) -> SavedTemplate {
+        let t = ApiTemplate { effect, ..crate::common::saved_on_stage(id, title, stage) };
+        SavedTemplate { template: t, runs: vec![] }
+    }
+
+    #[test]
+    fn stages_sit_in_columns_by_their_longest_path_each_column_centred() {
+        let counts: HashMap<String, usize> = HashMap::from([("participants".to_string(), 3)]);
+        let (placed, width, height) = layout(&flow(), &counts);
+        let col: Vec<(&str, u32)> = placed.iter().map(|p| (p.id.as_str(), p.col)).collect();
+        assert_eq!(col, [("setup", 0), ("rules", 1), ("competencies", 2), ("participants", 2), ("publish", 3)]);
+        assert_eq!(width, 4 * (COL_W + GAP_X) - GAP_X);
+
+        let one = HEAD + PER_TEMPLATE + PAD;
+        let three = HEAD + 3 * PER_TEMPLATE + PAD;
+        // Column 2 is the tallest: competencies over participants.
+        assert_eq!(height, one + GAP_Y + three);
+        let setup = &placed[0];
+        assert_eq!((setup.x, setup.h), (0, one));
+        assert_eq!(setup.y, (height - one) / 2, "a lone stage is centred on the tallest column");
+        let (comp, part) = (&placed[2], &placed[3]);
+        assert_eq!((comp.y, part.y), (0, one + GAP_Y));
+    }
+
+    #[test]
+    fn a_stage_takes_the_colour_of_what_it_does() {
+        let t = |effect: Effect| ApiTemplate { effect, ..crate::common::saved_on_stage("x", "X", "rules") };
+        let (c, e, d) = (t(Effect::Create), t(Effect::Edit), t(Effect::Delete));
+        assert_eq!(tone_of(&[]), Tone::Open);
+        assert_eq!(tone_of(&[&c, &c]), Tone::Create);
+        assert_eq!(tone_of(&[&e]), Tone::Edit);
+        assert_eq!(tone_of(&[&d]), Tone::Delete);
+        assert_eq!(tone_of(&[&c, &d]), Tone::Open, "templates that disagree take the accent");
+        assert_eq!((Tone::Create.var(), Tone::Edit.var(), Tone::Delete.var(), Tone::Open.var()),
+            ("--success", "--warning", "--danger", "--accent"));
+    }
+
+    #[test]
+    fn the_page_colours_each_stage_and_blends_each_connector() {
+        let templates = [
+            on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),
+            on("pms-save-rules", "Save the rules", Effect::Edit, "rules"),
+        ];
+        let html = page_html(&flow(), &templates, &PagePalette::default());
+
+        assert!(html.contains("class='stage create' data-stage='setup'"), "{html}");
+        assert!(html.contains("--tone:var(--success)"));
+        assert!(html.contains("class='stage edit' data-stage='rules'"));
+        assert!(html.contains("class='stage open optional' data-stage='competencies'"), "an optional stage with no template");
+        assert!(html.contains("No template yet"));
+        assert!(html.contains("Creates the record"));
+
+        // One connector per `requires`, each a gradient from the stage it
+        // leaves to the stage it reaches: setup (create) into rules (edit).
+        assert_eq!(html.matches("class='wire'").count(), 4);
+        assert!(html.contains("<stop offset='0' style='stop-color:var(--success)'/><stop offset='1' style='stop-color:var(--warning)'/>"), "{html}");
+        assert!(html.contains("data-from='setup' data-to='rules'"));
+
+        // Motion only for those who have not asked for less.
+        assert!(html.contains("@media (prefers-reduced-motion:no-preference)"));
+        // The same in words, for a screen reader.
+        assert!(html.contains("<li>Evaluation rules. Requires: Cycle setup. Templates: Save the rules.</li>"), "{html}");
+        // The page's own light/dark switch, and no other script.
+        assert_eq!(html.matches("<script").count(), 1);
+    }
+
+    #[test]
+    fn every_title_the_assistant_wrote_is_escaped() {
+        let mut f = flow();
+        f.title = "Cycle </style><script>alert(1)</script>".into();
+        f.stages[1].title = "<img src=x onerror=alert(1)>".into();
+        let templates = [on("pms-x", "Save <b>rules</b>", Effect::Edit, "rules")];
+        let html = page_html(&f, &templates, &PagePalette::default());
+        assert!(!html.contains("<script>alert"), "{html}");
+        assert!(!html.contains("<img src=x"), "{html}");
+        assert!(!html.contains("<b>rules</b>"), "{html}");
+        assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
+    }
+
+    #[test]
+    fn a_connector_leaves_right_and_arrives_left() {
+        let (placed, _, _) = layout(&flow(), &HashMap::new());
+        let d = connector(&placed[0], &placed[1]);
+        let start = format!("M{} {}", COL_W, placed[0].y + placed[0].h / 2);
+        assert!(d.starts_with(&start), "{d}");
+        assert!(d.ends_with(&format!("{} {}", placed[1].x, placed[1].y + placed[1].h / 2)), "{d}");
+    }
+
+    #[test]
+    fn a_hand_edited_loop_still_draws() {
+        let mut f = flow();
+        f.stages[0].requires = vec!["publish".into()];
+        let (placed, _, _) = layout(&f, &HashMap::new());
+        assert_eq!(placed.len(), 5);
+        // Every connector is drawable, even one running backwards.
+        let _ = page_html(&f, &[], &PagePalette::default());
+    }
+
+    #[test]
+    fn opening_writes_the_page_only_where_auto_run_is_offered() {
+        use v2_lib::commands::api_templates::write_flow_page_at;
+        let dir = tempfile::tempdir().unwrap();
+        let (org, project) = ("acme", "Web");
+        let palette = PagePalette::default();
+
+        let refused = write_flow_page_at(false, dir.path(), org, project, "pms-performance-cycle", &palette);
+        assert_eq!(refused.unwrap_err(), "not available in this build");
+
+        let missing = write_flow_page_at(true, dir.path(), org, project, "pms-performance-cycle", &palette);
+        assert_eq!(missing.unwrap_err(), "the flow pms-performance-cycle is no longer saved");
+
+        v2_lib::api_templates::flow_store::save(dir.path(), org, project, &flow()).unwrap();
+        let path = write_flow_page_at(true, dir.path(), org, project, "pms-performance-cycle", &palette).unwrap();
+        let html = std::fs::read_to_string(&path).unwrap();
+        assert!(html.contains("<title>Performance cycle wizard - flow</title>"), "{html}");
+        let _ = std::fs::remove_file(path);
+    }
+}

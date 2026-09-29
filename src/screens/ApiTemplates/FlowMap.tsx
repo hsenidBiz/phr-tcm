@@ -1,7 +1,7 @@
 import { useId, useMemo } from "react";
 import type { Effect, Flow, SavedTemplate } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { IconRemove } from "../../lib/actionIcons";
+import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { GEOMETRY, edgePath, layoutFlow, type Placed } from "../../lib/flowLayout";
 import { EffectBadge, dayMonth, stampDate } from "./TemplateRow";
@@ -47,12 +47,15 @@ export default function FlowMap({
   flow,
   templates,
   onOpenTemplate,
+  onView,
   onRemove,
 }: {
   flow: Flow;
   /** The saved templates whose `stage` names this flow. */
   templates: SavedTemplate[];
   onOpenTemplate: (id: string) => void;
+  /** Open the flow on its own page in the browser. */
+  onView: () => void;
   onRemove: () => void;
 }) {
   const headingId = useId();
@@ -94,6 +97,15 @@ export default function FlowMap({
           size="sm"
           variant="ghost"
           className="ml-auto"
+          aria-label={`View flow ${flow.title} in the browser`}
+          onClick={onView}
+        >
+          <IconOpenInBrowser aria-hidden />
+          View flow
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
           aria-label={`Remove flow ${flow.title}`}
           onClick={onRemove}
         >

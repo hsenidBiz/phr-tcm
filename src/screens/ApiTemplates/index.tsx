@@ -11,7 +11,9 @@ import { IconCollapseAll, IconExpandAll } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
+import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
+import { toast } from "../../lib/toast";
 import FlowMap from "./FlowMap";
 import RemoveFlow from "./RemoveFlow";
 import RemoveTemplate from "./RemoveTemplate";
@@ -256,6 +258,13 @@ export default function ApiTemplates({
                         flow={f}
                         templates={onFlow(f.id)}
                         onOpenTemplate={openFromMap}
+                        onView={() => {
+                          // Rust writes the page and opens it, as the review
+                          // page's tree view does; a failure is a sentence.
+                          unwrapStr(commands.apiTemplatesOpenFlow(org, project, f.id, pagePalette())).catch(
+                            (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)),
+                          );
+                        }}
                         onRemove={() => setRemovingFlow(f)}
                       />
                     ))}
