@@ -509,3 +509,44 @@ pub fn menu_app(
     ));
     (d, app)
 }
+
+/// A database that answers a flow check from a script and remembers the SQL
+/// of every call. An answer is chosen by a marker substring of the SQL
+/// (a fixture puts `/*stage-id*/` in each check); the first marker the SQL
+/// contains wins. SQL no marker matches comes back as an error, so a test
+/// that forgot to script a stage sees "could not run" rather than a
+/// silent "not done".
+pub struct FakeStageDb {
+    answers: Vec<(String, Result<bool, String>)>,
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeStageDb {
+    pub fn new() -> Self {
+        FakeStageDb { answers: Vec::new(), calls: Mutex::new(Vec::new()) }
+    }
+
+    pub fn answer(mut self, marker: &str, result: Result<bool, String>) -> Self {
+        self.answers.push((marker.to_string(), result));
+        self
+    }
+
+    /// The SQL of every check asked, in order.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl v2_lib::api_templates::gate::StageDb for FakeStageDb {
+    fn label(&self) -> String {
+        "fake-server/fake-db".to_string()
+    }
+
+    async fn read(&self, sql: &str) -> Result<bool, String> {
+        self.calls.lock().unwrap().push(sql.to_string());
+        match self.answers.iter().find(|(m, _)| sql.contains(m.as_str())) {
+            Some((_, r)) => r.clone(),
+            None => Err("FakeStageDb: no answer scripted for this SQL".to_string()),
+        }
+    }
+}

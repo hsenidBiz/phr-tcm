@@ -444,3 +444,381 @@ fn remove_refuses_an_id_with_a_path_in_it() {
     f.id = "..\\x".into();
     assert!(flow_store::save(dir.path(), "Org", "Proj", &f).is_err());
 }
+
+// ------------------------------------------------------------------- the gate
+
+mod gate_tests {
+    use super::*;
+    use crate::common::FakeStageDb;
+    use std::path::Path;
+    use std::time::Duration;
+    use v2_lib::api_templates::gate::{
+        gate, progress, stage_state, stage_state_within, templates_on, CheckFor, CHECK_TIMEOUT, SqlcmdStageDb, StageDb, StageProgress, StageState,
+    };
+    use v2_lib::api_templates::store::SavedTemplate;
+    use v2_lib::db::{Connection, Output, Runner};
+
+    /// The flow with `/*stage-id*/` on the end of every check, so FakeStageDb
+    /// can tell them apart.
+    fn marked(mut f: Flow) -> Flow {
+        for s in &mut f.stages {
+            s.check = format!("{} /*{}*/", s.check, s.id);
+        }
+        f
+    }
+
+    fn cycle_flow() -> Flow {
+        marked(flow())
+    }
+
+    fn diamond() -> Flow {
+        marked(flow_of(vec![creating("a"), stage("b", &["a"]), stage("c", &["a"]), stage("d", &["b", "c"])]))
+    }
+
+    fn saved(id: &str, title: &str, stage_id: &str) -> SavedTemplate {
+        let mut t = template(
+            json!({ "flow": "pms-performance-cycle", "id": stage_id }),
+            json!([]),
+            plain_steps(),
+            json!([]),
+        );
+        t.id = id.into();
+        t.title = title.into();
+        SavedTemplate { template: t, runs: vec![] }
+    }
+
+    fn done(marker: &str) -> (String, Result<bool, String>) {
+        (format!("/*{marker}*/"), Ok(true))
+    }
+
+    fn not_done(marker: &str) -> (String, Result<bool, String>) {
+        (format!("/*{marker}*/"), Ok(false))
+    }
+
+    fn broken(marker: &str, why: &str) -> (String, Result<bool, String>) {
+        (format!("/*{marker}*/"), Err(why.to_string()))
+    }
+
+    fn fake(answers: Vec<(String, Result<bool, String>)>) -> FakeStageDb {
+        answers.into_iter().fold(FakeStageDb::new(), |db, (m, r)| db.answer(&m, r))
+    }
+
+    fn markers_asked(db: &FakeStageDb) -> Vec<String> {
+        db.calls()
+            .iter()
+            .map(|sql| {
+                let start = sql.rfind("/*").expect("marker") + 2;
+                sql[start..sql.rfind("*/").unwrap()].to_string()
+            })
+            .collect()
+    }
+
+    fn block<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn the_creating_stage_is_never_gated() {
+        let _g = crate::serial::activity_log();
+        let db = FakeStageDb::new();
+        let r = block(gate(&db, &cycle_flow(), "setup", &json!(274), &[], "t"));
+        assert_eq!(r, Ok(()));
+        assert!(db.calls().is_empty());
+    }
+
+    #[test]
+    fn every_required_stage_done_lets_it_through() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("setup"), done("rules")]);
+        let r = block(gate(&db, &cycle_flow(), "participants", &json!(274), &[], "t"));
+        assert_eq!(r, Ok(()));
+        assert_eq!(markers_asked(&db), vec!["setup", "rules"]);
+    }
+
+    #[test]
+    fn a_missing_stage_is_named_with_its_template() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("setup"), not_done("rules"), not_done("participants")]);
+        let templates = vec![saved("pms-set-eval-rules", "Set the evaluation rules", "rules")];
+        let r = block(gate(&db, &cycle_flow(), "publish", &json!(274), &templates, "pms-publish"));
+        assert_eq!(
+            r,
+            Err("Evaluation rules is not done for cycleId 274 - do it first with pms-set-eval-rules (Set the evaluation rules). Then: Participants."
+                .to_string())
+        );
+        // Every required stage was asked, in flow order.
+        assert_eq!(markers_asked(&db), vec!["setup", "rules", "participants"]);
+    }
+
+    #[test]
+    fn a_missing_stage_with_no_template_says_so() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("setup"), not_done("rules")]);
+        let r = block(gate(&db, &cycle_flow(), "participants", &json!(274), &[], "t"));
+        let said = r.unwrap_err();
+        assert!(said.contains("no template performs Evaluation rules yet: prove one first"), "{said}");
+        assert!(!said.contains("Then:"), "{said}");
+    }
+
+    #[test]
+    fn several_templates_on_one_stage_are_all_offered() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("setup"), not_done("rules")]);
+        let templates =
+            vec![saved("one", "First", "rules"), saved("two", "Second", "rules"), saved("other", "Other", "setup")];
+        let said = block(gate(&db, &cycle_flow(), "participants", &json!(274), &templates, "t")).unwrap_err();
+        assert!(said.contains("do it first with one (First) or two (Second)"), "{said}");
+        assert!(!said.contains("other"), "{said}");
+    }
+
+    #[test]
+    fn a_check_that_cannot_run_is_not_not_done() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("setup"), broken("rules", "Login failed")]);
+        let said = block(gate(&db, &cycle_flow(), "participants", &json!(274), &[], "t")).unwrap_err();
+        assert!(said.contains("the check for Evaluation rules could not be run"), "{said}");
+        assert!(said.contains("see the activity folder in Settings, Logs"), "{said}");
+        assert!(!said.contains("Login failed"), "{said}");
+        assert!(!said.contains("is not done"), "{said}");
+    }
+
+    #[test]
+    fn a_check_that_cannot_run_wins_over_one_that_is_not_done() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![not_done("setup"), broken("rules", "boom")]);
+        let said = block(gate(&db, &cycle_flow(), "participants", &json!(274), &[], "t")).unwrap_err();
+        assert!(said.contains("the check for Evaluation rules could not be run"), "{said}");
+        assert!(!said.contains("is not done"), "{said}");
+    }
+
+    #[test]
+    fn the_diamond_requires_both() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![done("a"), done("b"), not_done("c")]);
+        let said = block(gate(&db, &diamond(), "d", &json!(1), &[], "t")).unwrap_err();
+        assert!(said.starts_with("c is not done for cycleId 1"), "{said}");
+        assert!(!said.contains("b is not done"), "{said}");
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_is_refused_before_any_query() {
+        let _g = crate::serial::activity_log();
+        let db = FakeStageDb::new();
+        for bad in [json!("274"), json!(2.5), json!(-1), json!(null)] {
+            let said = block(gate(&db, &cycle_flow(), "participants", &bad, &[], "t")).unwrap_err();
+            assert!(said.contains("cycleId is a number subject"), "{said}");
+            let said = block(progress(&db, &cycle_flow(), &bad, &[])).unwrap_err();
+            assert!(said.contains("cycleId is a number subject"), "{said}");
+        }
+        assert!(db.calls().is_empty());
+    }
+
+    fn states(p: &[StageProgress]) -> Vec<(&str, &str)> {
+        p.iter().map(|s| (s.id.as_str(), s.state)).collect()
+    }
+
+    #[test]
+    fn progress_marks_each_stage() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![
+            done("setup"),
+            not_done("rules"),
+            not_done("competencies"),
+            not_done("participants"),
+            not_done("publish"),
+        ]);
+        let templates = vec![saved("pms-set-eval-rules", "Set the evaluation rules", "rules")];
+        let p = block(progress(&db, &cycle_flow(), &json!(274), &templates)).unwrap();
+        assert_eq!(
+            states(&p),
+            vec![
+                ("setup", "done"),
+                ("rules", "next"),
+                ("competencies", "blocked"),
+                ("participants", "blocked"),
+                ("publish", "blocked")
+            ]
+        );
+        assert_eq!(db.calls().len(), 5, "every stage is checked once");
+        assert_eq!(p[1].templates, vec!["pms-set-eval-rules".to_string()]);
+        assert_eq!(p[1].title, "Evaluation rules");
+        assert!(p[2].optional && !p[1].optional);
+
+        let db = fake(vec![
+            done("setup"),
+            done("rules"),
+            not_done("competencies"),
+            not_done("participants"),
+            not_done("publish"),
+        ]);
+        let p = block(progress(&db, &cycle_flow(), &json!(274), &[])).unwrap();
+        assert_eq!(
+            states(&p),
+            vec![
+                ("setup", "done"),
+                ("rules", "done"),
+                ("competencies", "skippable"),
+                ("participants", "next"),
+                ("publish", "blocked")
+            ]
+        );
+    }
+
+    #[test]
+    fn progress_marks_a_check_that_could_not_run_and_blocks_what_needs_it() {
+        let _g = crate::serial::activity_log();
+        let db = fake(vec![
+            done("setup"),
+            broken("rules", "timeout"),
+            not_done("competencies"),
+            not_done("participants"),
+            not_done("publish"),
+        ]);
+        let p = block(progress(&db, &cycle_flow(), &json!(274), &[])).unwrap();
+        assert_eq!(
+            states(&p),
+            vec![
+                ("setup", "done"),
+                ("rules", "could_not_check"),
+                ("competencies", "blocked"),
+                ("participants", "blocked"),
+                ("publish", "blocked")
+            ]
+        );
+    }
+
+    #[test]
+    fn templates_on_a_stage_are_found_by_flow_and_stage() {
+        let mut other_flow = saved("elsewhere", "Elsewhere", "rules");
+        other_flow.template.stage.as_mut().unwrap().flow = "another-flow".into();
+        let mut none = saved("plain", "Plain", "rules");
+        none.template.stage = None;
+        let all = vec![saved("a", "A", "rules"), other_flow, none, saved("b", "B", "setup")];
+        let ids: Vec<&str> =
+            templates_on(&all, "pms-performance-cycle", "rules").iter().map(|t| t.template.id.as_str()).collect();
+        assert_eq!(ids, vec!["a"]);
+    }
+
+    // -------------------------------------------------- the sqlcmd-backed reader
+
+    struct FakeRunner {
+        stdout: String,
+    }
+
+    impl Runner for FakeRunner {
+        async fn run(
+            &self,
+            _exe: &Path,
+            _args: &[String],
+            _env: &[(String, String)],
+            _timeout: Duration,
+        ) -> Result<Output, String> {
+            Ok(Output { status: 0, stdout: self.stdout.clone(), stderr: String::new() })
+        }
+    }
+
+    fn conn() -> Connection {
+        v2_lib::db::parse_connection(v2_lib::db_defaults::DB_PRESETS[0].connection_string).unwrap()
+    }
+
+    fn reader(stdout: &str) -> SqlcmdStageDb<FakeRunner> {
+        SqlcmdStageDb { runner: FakeRunner { stdout: stdout.into() }, exe: "sqlcmd.exe".into(), conn: conn() }
+    }
+
+    #[test]
+    fn a_check_without_a_row_count_could_not_run() {
+        // "1" and no "(1 row affected)" - SET NOCOUNT ON, or the output was cut.
+        assert!(block(reader("1\n").read("SELECT 1")).is_err());
+        assert_eq!(block(reader("1\n\n(1 row affected)\n").read("SELECT 1")), Ok(true));
+        assert_eq!(block(reader("\n(0 rows affected)\n").read("SELECT 1 WHERE 1 = 0")), Ok(false));
+    }
+
+    #[test]
+    fn the_reader_is_labelled_server_slash_database() {
+        let r = reader("");
+        let c = conn();
+        assert_eq!(r.label(), format!("{}/{}", c.server, c.database));
+    }
+
+    #[test]
+    fn a_write_is_refused_by_the_reader_not_run() {
+        let r = reader("(1 row affected)");
+        assert!(block(r.read("UPDATE t SET a = 1")).is_err());
+    }
+
+    // ----------------------------------------------------- the activity trail
+
+    #[test]
+    fn every_check_is_in_the_activity_log_and_no_sql_in_the_app_log() {
+        let _g = crate::serial::activity_log();
+        let _l = crate::serial::log_tail();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(dir.path().to_path_buf());
+
+        let f = cycle_flow();
+        let db = fake(vec![done("setup"), not_done("rules")]);
+        let why = CheckFor { purpose: "gate", template: Some("pms-x") };
+        let a = block(stage_state(&db, &f, &f.stages[0], &json!(274), &why));
+        let b = block(stage_state(&db, &f, &f.stages[1], &json!(274), &why));
+        let c = block(stage_state(
+            &fake(vec![broken("rules", "Login failed for user sa")]),
+            &f,
+            &f.stages[1],
+            &json!(274),
+            &CheckFor { purpose: "progress", template: None },
+        ));
+        assert_eq!((a, b, c), (StageState::Done, StageState::NotDone, StageState::CouldNotRun));
+
+        let recs = crate::common::activity_records(dir.path(), "db");
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0]["verdict"], "flow check");
+        assert_eq!(recs[0]["flow"], "pms-performance-cycle");
+        assert_eq!(recs[0]["stage"], "setup");
+        assert_eq!(recs[0]["purpose"], "gate");
+        assert_eq!(recs[0]["template"], "pms-x");
+        assert_eq!(recs[0]["ok"], true);
+        assert_eq!(recs[0]["done"], true);
+        assert_eq!(recs[0]["connection"], "fake-server/fake-db");
+        assert!(recs[0]["duration_ms"].is_u64());
+        let sql = recs[0]["sql"].as_str().unwrap();
+        assert!(sql.starts_with("SELECT 1 FROM PeoplesHR.perf_cycle WHERE cycle_id = 274"), "{sql}");
+        assert_eq!(recs[1]["done"], false);
+        assert_eq!(recs[1]["ok"], true);
+        assert_eq!(recs[2]["ok"], false);
+        assert_eq!(recs[2]["done"], false);
+        assert_eq!(recs[2]["error"], "Login failed for user sa");
+        assert_eq!(recs[2]["purpose"], "progress");
+        assert!(recs[2]["template"].is_null());
+
+        let tail: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+        let mine: Vec<&String> = tail.iter().filter(|m| m.starts_with("db flow check on")).collect();
+        assert!(mine.len() >= 3, "{tail:?}");
+        let mine = &mine[mine.len() - 3..];
+        assert!(mine[0].ends_with("pms-performance-cycle/setup done"), "{}", mine[0]);
+        assert!(mine[1].ends_with("pms-performance-cycle/rules not done"), "{}", mine[1]);
+        assert!(mine[2].ends_with("pms-performance-cycle/rules could not run"), "{}", mine[2]);
+        assert!(mine.iter().all(|m| !m.contains("SELECT") && !m.contains("Login failed")), "{mine:?}");
+    }
+
+    struct Hangs;
+
+    impl StageDb for Hangs {
+        fn label(&self) -> String {
+            "s/d".into()
+        }
+        async fn read(&self, _sql: &str) -> Result<bool, String> {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn a_check_that_hangs_gives_up_and_the_limit_is_fifteen_seconds() {
+        let _g = crate::serial::activity_log();
+        assert_eq!(CHECK_TIMEOUT, Duration::from_secs(15));
+        let f = cycle_flow();
+        let why = CheckFor { purpose: "save", template: None };
+        let state = block(stage_state_within(&Hangs, &f, &f.stages[0], &json!(1), &why, Duration::from_millis(50)));
+        assert_eq!(state, StageState::CouldNotRun);
+    }
+}
