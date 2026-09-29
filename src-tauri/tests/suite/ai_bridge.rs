@@ -2531,7 +2531,16 @@ mod api_template_routes {
     use v2_lib::autorun::accounts::save_accounts;
     use v2_lib::autorun::recipe::save_recipe;
 
-    const PATHS: [&str; 4] = ["/api-template-guide", "/api-templates", "/api-template-prove", "/api-template-run"];
+    /// Every API template route. The flow ones start with `/api-template`
+    /// too, so the path guard covers them without a line of their own.
+    const PATHS: [&str; 6] = [
+        "/api-template-guide",
+        "/api-templates",
+        "/api-template-prove",
+        "/api-template-run",
+        "/api-template-flow-save",
+        "/api-template-flow-progress",
+    ];
 
     fn on() -> BridgeContext {
         BridgeContext { api_writes: true, ..ctx() }
@@ -2620,7 +2629,7 @@ mod api_template_routes {
 
         let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
         assert_eq!(status, 200, "{list}");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!([]));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!({ "templates": [], "flows": [] }));
     }
 
     /// The list is one row per saved template, with the newest run - or
@@ -2637,8 +2646,8 @@ mod api_template_routes {
         let (status, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
         assert_eq!(status, 200, "{list}");
         let v: serde_json::Value = serde_json::from_str(&list).unwrap();
-        assert_eq!(v.as_array().unwrap().len(), 1, "{v}");
-        let row = &v[0];
+        assert_eq!(v["templates"].as_array().unwrap().len(), 1, "{v}");
+        let row = &v["templates"][0];
         assert_eq!(row["id"], "pms-create-draft-cycle");
         assert_eq!(row["title"], "Create a draft performance cycle");
         assert_eq!(row["module"], "PMS / Performance Cycle");
@@ -2647,6 +2656,7 @@ mod api_template_routes {
         assert_eq!(row["params"][0]["type"], "string");
         assert_eq!(row["outputs"], json!(["cycleId"]));
         assert_eq!(row["last_run"], serde_json::Value::Null);
+        assert_eq!(row["stage"], serde_json::Value::Null, "a template on no flow: {row}");
         assert!(row.get("steps").is_none(), "the list is a summary: {row}");
 
         let at = |s: &str, mode: &str| RunRecord {
@@ -2662,15 +2672,15 @@ mod api_template_routes {
         append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 09:00:00", "prove")).unwrap();
         let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
         let v: serde_json::Value = serde_json::from_str(&list).unwrap();
-        assert_eq!(v[0]["last_run"], serde_json::Value::Null, "a prove is not a run: {v}");
+        assert_eq!(v["templates"][0]["last_run"], serde_json::Value::Null, "a prove is not a run: {v}");
 
         append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-28 10:00:00", "run")).unwrap();
         append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 11:00:00", "run")).unwrap();
         append_run(dir.path(), &c.org, &c.project, &t.id, at("2026-09-29 12:00:00", "prove")).unwrap();
         let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
         let v: serde_json::Value = serde_json::from_str(&list).unwrap();
-        assert_eq!(v[0]["last_run"]["at"], "2026-09-29 11:00:00", "the newest run: {v}");
-        assert_eq!(v[0]["last_run"]["mode"], "run", "{v}");
+        assert_eq!(v["templates"][0]["last_run"]["at"], "2026-09-29 11:00:00", "the newest run: {v}");
+        assert_eq!(v["templates"][0]["last_run"]["mode"], "run", "{v}");
     }
 
     /// Every problem at once - here three, one per line - and nothing
@@ -2745,5 +2755,286 @@ mod api_template_routes {
     fn the_switch_shows_in_the_contexts_debug() {
         let shown = format!("{:?}", on());
         assert!(shown.contains("api_writes: true"), "{shown}");
+    }
+
+    // ------------------------------------------------------------ flows
+
+    const FLOW: &str = "pms-performance-cycle";
+    const STAGES: [&str; 5] = ["setup", "rules", "competencies", "participants", "publish"];
+
+    fn cycle_flow() -> v2_lib::api_templates::flow::Flow {
+        serde_json::from_value(crate::common::cycle_flow_json()).unwrap()
+    }
+
+    /// A database answering every stage's check with `answer`, except the
+    /// ones named in `but`.
+    fn db_answering(answer: bool, but: &[(&str, Result<bool, String>)]) -> crate::common::FakeStageDb {
+        let db = but.iter().fold(crate::common::FakeStageDb::new(), |db, (id, r)| db.answer(&format!("/*{id}*/"), r.clone()));
+        STAGES.iter().fold(db, |db, id| db.answer(&format!("/*{id}*/"), Ok(answer)))
+    }
+
+    fn handed(
+        db: &crate::common::FakeStageDb,
+    ) -> impl FnOnce(&BridgeContext) -> Result<crate::common::FakeStageDb, (u16, String)> {
+        let db = db.clone();
+        move |_| Ok(db)
+    }
+
+    fn untouched(_: &BridgeContext) -> Result<crate::common::FakeStageDb, (u16, String)> {
+        panic!("the database was asked for by a call that should have been refused first")
+    }
+
+    /// Through `route`, so `real_stage_db` is the database: with none
+    /// chosen, a template on a flow is refused with db_ready's own status
+    /// and the flow's sentence, before any browser.
+    #[tokio::test]
+    async fn no_database_chosen_refuses_a_flow_template() {
+        use v2_lib::ai_bridge::real_stage_db;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let dir = root_with_recipe_and_account();
+        let c = on();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let sentence = "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
+
+        assert_eq!(real_stage_db(&c).err(), Some((409, sentence.to_string())));
+        let body = json!({ "id": "pms-add-participants", "account": "admin", "values": { "cycleId": 274 } }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-run", &body, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched");
+    }
+
+    /// Flow checks are assistant-written reads of the company database, so
+    /// with Company database (read) switched off none of them runs: saving a
+    /// flow, asking its progress and a flow template's run are all refused
+    /// with the switch named, before any database or browser.
+    #[tokio::test]
+    async fn flow_checks_are_refused_while_database_reading_is_off() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let dir = root_with_recipe_and_account();
+        let c = BridgeContext { disabled_tools: vec!["db_query".into()], ..on() };
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let sentence = "flow checks read the company database: switch on Company database (read) on the AI Bridge tab";
+
+        assert_eq!(v2_lib::ai_bridge::real_stage_db(&c).err(), Some((409, sentence.to_string())));
+
+        let progress = json!({ "flow": FLOW, "subject": 274 }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-flow-progress", &progress, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        let save =
+            json!({ "flow": crate::common::cycle_flow_json(), "sample": 274, "replace": true, "why": "again" }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-flow-save", &save, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        let run = json!({ "id": "pms-add-participants", "account": "admin", "values": { "cycleId": 274 } }).to_string();
+        let (status, out) = route(&c, None, "POST", "/api-template-run", &run, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "nothing was launched");
+    }
+
+    #[tokio::test]
+    async fn saving_a_flow_runs_every_check_on_the_sample() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[("competencies", Ok(false))]);
+
+        let body = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, handed(&db)).await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(db.calls().len(), 5, "one check per stage: {:?}", db.calls());
+        assert!(db.calls().iter().all(|sql| sql.contains("274")), "{:?}", db.calls());
+
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["saved"], FLOW, "{v}");
+        let stages = v["stages"].as_array().unwrap();
+        let listed: Vec<(&str, bool)> =
+            stages.iter().map(|s| (s["id"].as_str().unwrap(), s["done"].as_bool().unwrap())).collect();
+        assert_eq!(
+            listed,
+            [("setup", true), ("rules", true), ("competencies", false), ("participants", true), ("publish", true)]
+        );
+        assert_eq!(v["orphaned"], json!([]), "{v}");
+
+        let saved = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().expect("saved");
+        let evidence = saved.saved.clone().expect("the app's saved block");
+        assert_eq!(evidence.sample, json!(274));
+        assert!(!evidence.at.is_empty());
+        assert_eq!(v2_lib::api_templates::flow::Flow { saved: None, ..saved }, cycle_flow(), "saved as sent");
+    }
+
+    #[tokio::test]
+    async fn saving_a_flow_with_a_failing_check_is_refused() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[("rules", Err("Login timeout expired on SQLPROD01".to_string()))]);
+
+        let body = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, handed(&db)).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("Evaluation rules"), "names the stage: {out}");
+        assert!(!out.contains("SQLPROD01"), "the database error goes to the activity log only: {out}");
+        assert_eq!(db.calls().len(), 5, "every check still ran: {:?}", db.calls());
+        assert_eq!(v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap(), None);
+    }
+
+    /// A flow that fails its own checks, a sample of the wrong type or no
+    /// sample: every problem at once, and no database is asked for.
+    #[tokio::test]
+    async fn a_bad_flow_or_sample_is_refused_before_the_database() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _root = crate::serial::autorun();
+        let _dir = root_with_recipe_and_account();
+        let c = ctx();
+
+        let body = json!({ "flow": crate::common::cycle_flow_json(), "sample": "274" }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, untouched).await;
+        assert_eq!((status, out.as_str()), (400, "cycleId is a number subject: give a whole number, 0 or more"));
+
+        let mut bad = crate::common::cycle_flow_json();
+        bad["stages"][1]["requires"] = json!(["nowhere"]);
+        let body = json!({ "flow": bad }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, untouched).await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out.lines().count(), 2, "{out}");
+        assert!(out.contains("'nowhere'"), "{out}");
+        assert!(out.contains("\"sample\""), "{out}");
+
+        let (status, out) = api_template_flow_save(&c, "not json", untouched).await;
+        assert_eq!(status, 400, "{out}");
+    }
+
+    #[tokio::test]
+    async fn replacing_a_flow_needs_replace_and_why_and_lists_orphans() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let t = crate::common::saved_on_stage("pms-set-eval-rules", "Set the evaluation rules", "rules");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let db = db_answering(true, &[]);
+
+        let body = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 }).to_string();
+        let (status, out) = api_template_flow_save(&c, &body, handed(&db)).await;
+        assert_eq!(status, 200, "{out}");
+
+        // Evaluation rules dropped: what required it now requires setup.
+        let mut next = crate::common::cycle_flow_json();
+        let stages = next["stages"].as_array_mut().unwrap();
+        stages.remove(1);
+        stages[1]["requires"] = json!(["setup"]);
+        stages[2]["requires"] = json!(["setup"]);
+        let refused = "a flow called \"pms-performance-cycle\" already exists - send replace: true and a why to change it";
+        for extra in [json!({}), json!({ "replace": true }), json!({ "why": "rules moved" }), json!({ "replace": true, "why": "  " })] {
+            let mut b = json!({ "flow": next, "sample": 274 });
+            for (k, v) in extra.as_object().unwrap() {
+                b[k] = v.clone();
+            }
+            let (status, out) = api_template_flow_save(&c, &b.to_string(), untouched).await;
+            assert_eq!((status, out.as_str()), (400, refused), "{extra}");
+        }
+
+        let b = json!({ "flow": next, "sample": 274, "replace": true, "why": "evaluation rules moved into setup" });
+        let (status, out) = api_template_flow_save(&c, &b.to_string(), handed(&db)).await;
+        assert_eq!(status, 200, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["orphaned"][0]["id"], "pms-set-eval-rules", "{v}");
+        assert_eq!(v["orphaned"][0]["stage"], "rules", "{v}");
+        assert!(v["message"].as_str().unwrap_or("").contains("pms-set-eval-rules"), "{v}");
+        let saved = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().unwrap();
+        assert!(saved.stages.iter().all(|s| s.id != "rules"), "the replacement was saved");
+        let log = v2_lib::applog::recent(400);
+        assert!(
+            log.iter().any(|l| l.message == format!("api template flow {FLOW} replaced: evaluation rules moved into setup")),
+            "the reason was not logged: {:?}",
+            log.iter().map(|l| &l.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn progress_answers_each_stage() {
+        use v2_lib::ai_bridge::api_template_flow_progress;
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let db = db_answering(false, &[("setup", Ok(true)), ("rules", Ok(true))]);
+
+        let body = json!({ "flow": FLOW, "subject": 274 }).to_string();
+        let (status, out) = api_template_flow_progress(&c, &body, handed(&db)).await;
+        assert_eq!(status, 200, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["flow"], FLOW);
+        assert_eq!(v["subject"], 274);
+        let states: Vec<(&str, &str)> = v["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s["id"].as_str().unwrap(), s["state"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            states,
+            [("setup", "done"), ("rules", "done"), ("competencies", "skippable"), ("participants", "next"), ("publish", "blocked")]
+        );
+        assert_eq!(v["stages"][3]["templates"], json!(["pms-add-participants"]));
+
+        // A subject of the wrong type, and a flow that is not saved: said
+        // before any database is asked for.
+        let body = json!({ "flow": FLOW, "subject": "274" }).to_string();
+        let (status, out) = api_template_flow_progress(&c, &body, untouched).await;
+        assert_eq!((status, out.as_str()), (400, "cycleId is a number subject: give a whole number, 0 or more"));
+        let body = json!({ "flow": "never-saved", "subject": 274 }).to_string();
+        let (status, out) = api_template_flow_progress(&c, &body, untouched).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("never-saved"), "{out}");
+    }
+
+    /// The list carries each template's stage and every flow with the
+    /// templates on each stage - and a flow file that no longer parses
+    /// hides nothing else.
+    #[tokio::test]
+    async fn the_list_carries_flows_and_stages() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-set-eval-rules", "Set the evaluation rules", "rules");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let flows = v2_lib::api_templates::flow_store::flows_dir(dir.path(), &c.org, &c.project);
+        std::fs::write(flows.join("broken.json"), "{ not a flow").unwrap();
+
+        let (status, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        assert_eq!(status, 200, "{list}");
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v["templates"][0]["stage"], json!({ "flow": FLOW, "id": "rules" }), "{v}");
+        assert_eq!(v["flows"].as_array().unwrap().len(), 1, "{v}");
+        let f = &v["flows"][0];
+        assert_eq!(f["id"], FLOW);
+        assert_eq!(f["title"], "Performance cycle wizard");
+        assert_eq!(f["module"], "PMS / Performance Cycle");
+        assert_eq!(f["subject"], json!({ "name": "cycleId", "type": "number" }));
+        assert_eq!(f["stages"][1]["id"], "rules");
+        assert_eq!(f["stages"][1]["requires"], json!(["setup"]));
+        assert_eq!(f["stages"][1]["templates"], json!(["pms-set-eval-rules"]));
+        assert_eq!(f["stages"][0]["creates"], true);
+        assert_eq!(f["stages"][2]["optional"], true);
+        assert_eq!(f["stages"][0]["templates"], json!([]));
+        assert!(f["stages"][0].get("check").is_none(), "the list is a summary: {f}");
     }
 }

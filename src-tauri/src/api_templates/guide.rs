@@ -137,6 +137,105 @@ Proving an id that is already saved replaces it only with `replace: true`
 and a `why` (the reason is logged). Both calls take an optional `browser`:
 `"edge"` (the default) or `"chrome"`. One template runs at a time.
 
+## Flows
+
+A wizard (a cycle set up over several pages) is done in an order the
+application enforces. A FLOW maps that order: its stages, and for each a
+database check that says whether the stage is done for one record. Templates
+then name the stage they perform, and the app refuses a template whose
+earlier stages are not done for the record.
+
+One JSON object, saved with `save_api_flow`:
+
+    {
+      "id": "pms-performance-cycle",
+      "title": "Performance cycle wizard",
+      "module": "PMS / Performance Cycle",
+      "subject": { "name": "cycleId", "type": "number" },
+      "sources": ["Pages/PerformanceCycle/Index.cshtml.cs:40"],
+      "stages": [
+        { "id": "setup", "title": "Cycle setup", "creates": true,
+          "check": "SELECT 1 FROM PeoplesHR.perf_cycle WHERE cycle_id = {{cycleId}}" },
+        { "id": "rules", "title": "Evaluation rules", "requires": ["setup"],
+          "check": "SELECT 1 FROM PeoplesHR.perf_cycle_step_progress WHERE cycle_id = {{cycleId}} AND step_key = 'EvalRules' AND is_complete = 1" },
+        { "id": "competencies", "title": "Competencies", "requires": ["rules"], "optional": true,
+          "check": "SELECT 1 FROM ... WHERE cycle_id = {{cycleId}} AND ..." },
+        { "id": "participants", "title": "Participants", "requires": ["rules"],
+          "check": "SELECT 1 FROM ... WHERE cycle_id = {{cycleId}}" },
+        { "id": "publish", "title": "Publish", "requires": ["participants"],
+          "check": "SELECT 1 FROM PeoplesHR.perf_cycle WHERE cycle_id = {{cycleId}} AND status = 'Published'" }
+      ]
+    }
+
+(Table and column names above are illustrative - read the real ones from the
+code and the database.) Rules - a flow that breaks any of them is refused
+with every problem listed together:
+
+- Unknown fields are refused, at every level. `saved` is written by the app;
+  never send one.
+- `id` and each stage `id` follow the template `id` rule; stage ids are
+  unique in the flow. At most 30 stages.
+- `subject`: the name of the value that identifies the record (letters,
+  digits, `_`) and its type, `number` or `string`.
+- Exactly one stage has `creates: true`. It has no `requires`; its check is
+  "the record exists". Every other stage has at least one `requires`, naming
+  stages of this flow - never itself, never in a loop, and every stage must
+  be reachable from the creating one.
+- `optional: true` means the stage MAY BE SKIPPED. No stage may require an
+  optional stage - that is what makes skipping it safe. Do not mark a stage
+  optional unless the application really lets the wizard go on without it.
+- `check`: one read statement containing `{{<subject name>}}` at least once
+  and no other placeholder. The stage is done when it returns at least one
+  row. The subject is put in by the app by its type, never as text: a
+  number must be a whole number, a string is quoted for you. Do not put
+  `SET NOCOUNT ON;` in a check - the answer needs its row count.
+- Write each check to return a row only when the stage is done.
+  `SELECT COUNT(*) ...` and `SELECT CASE WHEN EXISTS ...` always return one
+  row, so such a check would always read as done: filter with `WHERE`
+  instead, e.g. `SELECT 1 FROM ... WHERE cycle_id = {{cycleId}} AND ...`.
+- A template that acts on a flow's record names its stage:
+  `"stage": { "flow": "pms-performance-cycle", "id": "participants" }`. The
+  creating stage's template must `capture` the subject name and list it in
+  `outputs`; every other stage's template must declare a param named after
+  the subject, of its type. A `number` subject must be captured as a JSON
+  number (`274`, not `"274"`); a capture of the wrong type is not saved.
+
+The gate: a template on a flow is refused, before anything runs, until its
+`requires` stages are done for the record. The refusal names the stage that
+is not done and the template that performs it. A stage with no saved
+template yet says to prove one first.
+
+A prove of a template on a flow is saved only if its own stage's check reads
+done afterwards - for the creating stage, on the subject it captured. A
+check that could not run saves nothing either, and says so.
+
+The order of work - flows first, templates second:
+
+1. Map the wizard first. Read the page's steps in the code and find where
+   each step's progress is stored (a progress table, a status column, the
+   rows the step writes). Write one check per stage.
+2. Find a real record with `db_query` and call `save_api_flow` with
+   `{ flow, sample }`, the sample being that record's subject. The answer
+   gives every stage's result for the sample, so a check that is wrong
+   shows at once: fix it and save again (`replace: true` and a `why` for an
+   id already saved).
+3. Then build the templates stage by stage, starting from the creating
+   stage (no record exists before it), each proven with `stage` set.
+4. Before EVERY run of a template on a flow, call `get_api_flow_progress`
+   with `{ flow, subject }` and run the template of a stage marked `next`.
+   A stage is `done`, `next` (not done, and every stage it requires is
+   done), `blocked` (a stage it requires is not done), `skippable` (optional
+   and not done) or `could_not_check` (its check could not run - fix the
+   check or the database choice, never assume). Run an optional stage's
+   template only if the test needs it.
+
+`save_api_flow` and `get_api_flow_progress` need a database chosen on the AI
+Bridge tab; neither needs the API templates switch. Proving or running a
+template on a flow needs a database chosen on the AI Bridge tab too - only a
+run of the creating stage's template checks nothing. Every flow check reads
+the company database, so while the person has switched off Company database
+(read), each call that would run one is refused until it is switched on.
+
 ## When a run fails
 
 The first failing step stops the run. Nothing is rolled back - the

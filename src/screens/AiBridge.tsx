@@ -808,9 +808,14 @@ export default function AiBridge() {
               and this project&apos;s account keys and address, lists every saved template
               with its params, outputs and last run, proves a draft by running it end to
               end and saves it only if every step passed, and runs a saved template for
-              its outputs. Proving and running also need the separate API templates
-              switch above, off by default. Off, template work stays something you drive
-              by hand.
+              its outputs. It can also map a module&apos;s wizard as a flow of stages, each
+              with a check on the chosen company database, save that flow with a sample
+              record, and ask which stages are done for a record before every run, so
+              templates go in the order the application allows. Those stage checks read
+              the company database, so they need Company database (read) switched on;
+              while it is off, flows and the templates that depend on them are refused.
+              Proving and running also need the separate API templates switch above, off
+              by default. Off, template work stays something you drive by hand.
             </li>
           )}
         </ul>

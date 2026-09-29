@@ -2,6 +2,11 @@
 //! the Tauri app wiring. All command handlers live under `commands/`,
 //! grouped by domain; domain logic lives in the modules they call into.
 
+// `mcp::tools_list` is one `json!` literal holding every tool definition;
+// each tool added deepens the macro's recursion, and the default 128 ran out
+// with the flow tools.
+#![recursion_limit = "256"]
+
 pub mod ado;
 pub mod ado_git;
 pub mod ado_share;
@@ -257,7 +262,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_beta_updates,
             app_settings::set_stay_signed_in,
             api_templates::api_templates_overview,
-            api_templates::api_templates_remove
+            api_templates::api_templates_remove,
+            api_templates::api_templates_remove_flow
         ])
 }
 

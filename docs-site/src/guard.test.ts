@@ -37,6 +37,8 @@ const FORBIDDEN = [
   /\bgames?\b/i,
   /api ?templates?/i,
   /api_template/i,
+  /save_api_flow/i,
+  /get_api_flow_progress/i,
 ];
 
 /** What a reader sees, with where it is, for a readable failure. */

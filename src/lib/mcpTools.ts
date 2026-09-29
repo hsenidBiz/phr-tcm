@@ -83,6 +83,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Run a saved template and return its outputs, or what had been created when it failed.",
   },
   {
+    name: "save_api_flow",
+    label: "Save a flow",
+    summary: "Save a module's stages with a check for each, after running every check once on a sample record.",
+  },
+  {
+    name: "get_api_flow_progress",
+    label: "Flow progress",
+    summary: "Which stages are done for one record and which come next.",
+  },
+  {
     name: "db_lookup",
     label: "Find a table",
     summary: "The tables and columns behind a topic, or one table's whole column list.",
@@ -128,6 +138,8 @@ export const DEV_ONLY_TOOLS = [
   "list_api_templates",
   "prove_api_template",
   "run_api_template",
+  "save_api_flow",
+  "get_api_flow_progress",
 ] as const;
 
 /** True in `tauri dev` and in this test suite, false in `tauri build` - a
@@ -197,7 +209,17 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // lists, or a prove with no guide to the format, is half a job. Offered
   // only where Auto Run is. Proving and running also need the separate
   // API templates switch - a different decision, like database writes.
-  ["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"],
+  // The stages a module's wizard is mapped into belong to that job: a
+  // template that writes to a stage is only as good as the order the
+  // application allows, and that order is what the flow tools hold.
+  [
+    "get_api_template_guide",
+    "list_api_templates",
+    "prove_api_template",
+    "run_api_template",
+    "save_api_flow",
+    "get_api_flow_progress",
+  ],
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose
   // answer nothing can query is a map with no road. Creating, updating
@@ -220,7 +242,8 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   },
   get_api_template_guide: {
     label: "API templates",
-    summary: "Build, prove and run templates that write test data through the application's own endpoints.",
+    summary:
+      "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
   },
   db_lookup: {
     label: "Company database (read)",

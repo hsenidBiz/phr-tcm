@@ -115,11 +115,11 @@ function mockOverview(overview: unknown, extra: Handler = () => undefined) {
   return calls;
 }
 
-function renderScreen(onOpenAiBridge = vi.fn()) {
+function renderScreen(onOpenAiBridge = vi.fn(), project = "proj") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ApiTemplates org="acme" project="proj" onOpenAiBridge={onOpenAiBridge} />
+      <ApiTemplates org="acme" project={project} onOpenAiBridge={onOpenAiBridge} />
     </QueryClientProvider>,
   );
   return { onOpenAiBridge };
@@ -403,4 +403,220 @@ test("a history line written before modes were recorded reads as a run", async (
   const lines = within(within(row).getByRole("list", { name: "Runs" })).getAllByRole("listitem");
   expect(within(lines[0]).getByText("run")).toBeInTheDocument();
   expect(within(lines[1]).getByText("run")).toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------
+// Flows: each module's wizard drawn as a map above its templates (spec §8).
+
+/** The spec's performance cycle flow (§3). */
+const FLOW = {
+  id: "pms-performance-cycle",
+  title: "Performance cycle wizard",
+  module: "PMS / Performance Cycle",
+  subject: { name: "cycleId", type: "number" },
+  sources: ["Pages/PerformanceCycle/Index.cshtml.cs:40"],
+  stages: [
+    { id: "setup", title: "Cycle setup", creates: true, check: "SELECT 1" },
+    { id: "rules", title: "Evaluation rules", requires: ["setup"], check: "SELECT 1" },
+    { id: "competencies", title: "Competencies", requires: ["rules"], optional: true, check: "SELECT 1" },
+    { id: "participants", title: "Participants", requires: ["rules"], check: "SELECT 1" },
+    { id: "publish", title: "Publish", requires: ["participants"], check: "SELECT 1" },
+  ],
+  saved: { at: "2026-09-29 09:00:00", sample: 273 },
+};
+
+const FLOW_OVERVIEW = {
+  origin: OVERVIEW.origin,
+  templates: [
+    {
+      template: template({
+        id: "pms-save-rules",
+        title: "Save the rules",
+        effect: "edit",
+        stage: { flow: "pms-performance-cycle", id: "rules" },
+      }),
+      runs: [],
+    },
+    {
+      // Its stage was in an earlier save of the flow, not this one.
+      template: template({
+        id: "pms-add-reviewer",
+        title: "Add a reviewer",
+        stage: { flow: "pms-performance-cycle", id: "reviewers" },
+      }),
+      runs: [],
+    },
+  ],
+  flows: [FLOW],
+};
+
+test("the flow map's text equivalent names every stage in order, with what it requires", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  // It sits inside its module, above the templates.
+  const module = screen.getByRole("region", { name: "PMS / Performance Cycle" });
+  expect(module).toContainElement(flow);
+
+  expect(within(flow).getByText("Tracks cycleId")).toBeInTheDocument();
+  expect(within(flow).getByText(/Saved 29 Sep/)).toBeInTheDocument();
+
+  const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
+  expect(list.tagName).toBe("OL");
+  expect(list.className).toContain("sr-only");
+  const items = within(list)
+    .getAllByRole("listitem")
+    .map((li) => li.textContent);
+  expect(items).toEqual([
+    "Cycle setup. Requires: nothing. Templates: none yet.",
+    "Evaluation rules. Requires: Cycle setup. Templates: Save the rules.",
+    "Competencies. Requires: Evaluation rules. Optional. Templates: none yet.",
+    "Participants. Requires: Evaluation rules. Templates: none yet.",
+    "Publish. Requires: Participants. Templates: none yet.",
+  ]);
+
+  // The drawing itself is for the eye only; one arrow per requires.
+  const svg = within(flow).getByTestId("flow-map").querySelector("svg");
+  expect(svg).not.toBeNull();
+  expect(svg).toHaveAttribute("aria-hidden", "true");
+  expect(svg!.querySelectorAll("path[data-edge]")).toHaveLength(4);
+});
+
+test("the map marks the optional stage and the stages no template performs yet", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  expect(within(flow).getAllByText("Optional")).toHaveLength(1);
+  const competencies = within(flow).getByRole("group", { name: "Competencies" });
+  expect(competencies.className).toContain("border-dashed");
+  expect(within(flow).getByRole("group", { name: "Participants" }).className).not.toContain("border-dashed");
+
+  for (const name of ["Competencies", "Participants", "Publish"]) {
+    const empty = within(within(flow).getByRole("group", { name })).getByText("No template yet");
+    expect(empty.className).toContain("text-faint");
+  }
+  const rules = within(flow).getByRole("group", { name: "Evaluation rules" });
+  expect(within(rules).queryByText("No template yet")).toBeNull();
+
+  // A template on a stage shows its effect badge, as in the list.
+  const badge = within(rules).getByText("edit");
+  expect(badge.className).toContain("text-warning");
+});
+
+test("clicking a template in the map opens its row below", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const row = screen.getByRole("listitem", { name: "Save the rules" });
+  expect(row).toHaveAttribute("id", "api-template-pms-save-rules");
+  const toggle = within(row).getByRole("button", { name: "Show details of Save the rules" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+  fireEvent.click(within(flow).getByRole("button", { name: /^Save the rules/ }));
+  expect(within(row).getByRole("button", { name: "Hide details of Save the rules" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+  expect(scroll.mock.contexts[0]).toBe(row);
+  scroll.mockRestore();
+
+  // The row's own toggle still closes it.
+  fireEvent.click(within(row).getByRole("button", { name: "Hide details of Save the rules" }));
+  expect(within(row).getByRole("button", { name: "Show details of Save the rules" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+});
+
+test("a template row names its stage, and says when that stage is no longer saved", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const rules = await screen.findByRole("listitem", { name: "Save the rules" });
+  const ok = within(rules).getByText("Stage: Evaluation rules (Performance cycle wizard)");
+  expect(ok.className).not.toContain("text-warning");
+
+  const orphan = screen.getByRole("listitem", { name: "Add a reviewer" });
+  const line = within(orphan).getByText(/^Stage:/);
+  expect(line).toHaveTextContent("no longer saved");
+  expect(line.className).toContain("text-warning");
+});
+
+test("a template on no flow has no stage line", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  expect(within(row).queryByText(/^Stage:/)).toBeNull();
+});
+
+test("Remove flow asks first, says the templates stay, then removes it and reloads", async () => {
+  const calls = mockOverview(FLOW_OVERVIEW, (cmd) => (cmd === "api_templates_remove_flow" ? null : undefined));
+  renderScreen(vi.fn(), "Web");
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  fireEvent.click(within(flow).getByRole("button", { name: /^Remove flow/ }));
+
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByRole("heading", { name: "Remove Performance cycle wizard?" })).toBeInTheDocument();
+  expect(dialog).toHaveTextContent(
+    "2 templates perform its stages; they stay, and are refused until a flow with their stage is saved again.",
+  );
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_remove_flow")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "api_templates_remove_flow")?.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    id: "pms-performance-cycle",
+  });
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  // Removing a flow emits no change event: the tab reads again itself.
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "api_templates_overview").length).toBeGreaterThan(1));
+});
+
+test("searching a stage title keeps the flow and the templates on that stage", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const search = screen.getByRole("textbox", { name: "Search templates" });
+
+  fireEvent.change(search, { target: { value: "evaluation" } });
+  expect(screen.getByRole("region", { name: "Performance cycle wizard" })).toBeInTheDocument();
+  expect(screen.getByRole("listitem", { name: "Save the rules" })).toBeInTheDocument();
+  expect(screen.queryByRole("listitem", { name: "Add a reviewer" })).not.toBeInTheDocument();
+
+  // The flow's own title finds it too.
+  fireEvent.change(search, { target: { value: "wizard" } });
+  expect(screen.getByRole("region", { name: "Performance cycle wizard" })).toBeInTheDocument();
+
+  // Nothing about the flow matches: it goes.
+  fireEvent.change(search, { target: { value: "zzzz" } });
+  expect(screen.queryByRole("region", { name: "Performance cycle wizard" })).not.toBeInTheDocument();
+});
+
+test("a module with a flow and no templates still shows its map", async () => {
+  mockOverview({ origin: OVERVIEW.origin, templates: [], flows: [FLOW] });
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  expect(within(flow).getAllByText("No template yet")).toHaveLength(5);
+  expect(screen.getByRole("region", { name: "PMS / Performance Cycle" })).toContainElement(flow);
+});
+
+test("a wide map scrolls inside its own box", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const map = within(flow).getByTestId("flow-map");
+  expect(map.className).toContain("overflow-x-auto");
+  // The drawing is sized from the layout, never measured: four columns.
+  const canvas = map.firstElementChild as HTMLElement;
+  expect(canvas.style.width).toBe(`${4 * 208 + 3 * 56}px`);
 });

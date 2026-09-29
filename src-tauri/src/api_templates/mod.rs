@@ -10,6 +10,9 @@
 
 pub mod cookies;
 pub mod exec;
+pub mod flow;
+pub mod flow_store;
+pub mod gate;
 pub mod guide;
 pub mod runner;
 pub mod store;
@@ -143,6 +146,11 @@ pub struct ApiTemplate {
     pub params: Vec<Param>,
     pub steps: Vec<Step>,
     pub outputs: Vec<String>,
+    /// The flow stage this template performs, if it belongs to a flow.
+    /// Checked where a flow can be loaded (`flow::check_stage_ref`), not by
+    /// `check`, so a template saved before flows existed keeps loading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<flow::StageRef>,
     /// Written by the app from a successful proving run; a draft that
     /// carries one is refused by `check`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -750,6 +750,37 @@ fn the_guide_says_paths_keep_the_applications_letter_case() {
     assert!(text.contains("/hr/pmsv10"), "{text}");
 }
 
+/// The guide teaches flows: the two tools, the order of work (map the
+/// wizard before any template), and that a stage may be optional.
+#[test]
+fn the_guide_explains_flows() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let lower = text.to_lowercase();
+    assert!(text.contains("save_api_flow"), "no save_api_flow");
+    assert!(text.contains("get_api_flow_progress"), "no get_api_flow_progress");
+    assert!(lower.contains("map the wizard first"), "no order of work");
+    assert!(lower.contains("optional"), "no optional stages");
+    assert!(text.contains("## Flows"), "no Flows section");
+
+    // The Flows section, one line: the guide wraps its sentences.
+    let flows = text[text.find("## Flows").unwrap()..text.find("## When a run fails").unwrap()]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Proving or running on a flow needs a database, and reading switched on.
+    assert!(flows.contains("Proving or running a template on a flow needs a database chosen on the AI Bridge tab"), "{flows}");
+    assert!(flows.contains("Company database (read)"), "no reading switch: {flows}");
+    // A prove on a flow is saved only once its own stage reads as done.
+    assert!(flows.contains("saved only if its own stage's check reads done afterwards"), "{flows}");
+    // A number subject must be captured as a JSON number.
+    assert!(flows.contains("captured as a JSON number"), "{flows}");
+    // A check that always returns one row would always read as done.
+    assert!(flows.contains("SELECT COUNT(*)"), "{flows}");
+    assert!(flows.contains("SELECT CASE WHEN EXISTS"), "{flows}");
+    assert!(flows.contains("always return one row"), "{flows}");
+    assert!(flows.contains("a row only when the stage is done"), "{flows}");
+}
+
 /// The guide warns that an account can be signed in in one place at a
 /// time, and what that looks like when it goes wrong.
 #[test]
@@ -796,4 +827,83 @@ fn the_guide_names_the_accounts_and_origin_but_no_password() {
     let bare = guide::text(&[], None);
     assert!(bare.contains("Auto Run"), "{bare}");
     assert!(!bare.contains("https://"), "{bare}");
+}
+
+// ---- the tab's data: flows in the overview, removing a flow --------------
+
+fn a_flow() -> v2_lib::api_templates::flow::Flow {
+    serde_json::from_value(json!({
+        "id": "pms-performance-cycle",
+        "title": "Performance cycle wizard",
+        "module": "PMS / Performance Cycle",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [
+            { "id": "setup", "title": "Cycle setup", "creates": true,
+              "check": "SELECT 1 FROM t WHERE cycle_id = {{cycleId}}" }
+        ]
+    }))
+    .expect("fixture should deserialize")
+}
+
+#[test]
+fn the_overview_carries_flows() {
+    use v2_lib::api_templates::flow_store;
+    use v2_lib::commands::api_templates::overview_at;
+    let dir = tempfile::tempdir().unwrap();
+    store::save(dir.path(), "Org", "Proj", &parsed(&draft())).unwrap();
+    flow_store::save(dir.path(), "Org", "Proj", &a_flow()).unwrap();
+
+    let overview = overview_at(dir.path(), "Org", "Proj").unwrap();
+    assert_eq!(overview.templates.len(), 1);
+    assert_eq!(overview.flows, vec![a_flow()]);
+    assert_eq!(overview.origin, None, "no sign-in recipe was saved");
+}
+
+#[test]
+fn the_overview_still_answers_when_the_flows_cannot_be_listed() {
+    use v2_lib::api_templates::flow_store;
+    use v2_lib::commands::api_templates::overview_at;
+    let dir = tempfile::tempdir().unwrap();
+    store::save(dir.path(), "Org", "Proj", &parsed(&draft())).unwrap();
+    // A file where the flows directory should be: reading it as a
+    // directory fails with something other than "not found".
+    let flows_dir = flow_store::flows_dir(dir.path(), "Org", "Proj");
+    std::fs::create_dir_all(flows_dir.parent().unwrap()).unwrap();
+    std::fs::write(&flows_dir, "not a directory").unwrap();
+    assert!(flow_store::list(dir.path(), "Org", "Proj").is_err(), "the premise: listing must fail here");
+
+    let overview = overview_at(dir.path(), "Org", "Proj").unwrap();
+    assert_eq!(overview.templates.len(), 1, "the templates must survive");
+    assert!(overview.flows.is_empty());
+}
+
+#[test]
+fn removing_a_flow_is_refused_where_auto_run_is_not_offered() {
+    use v2_lib::api_templates::flow_store;
+    use v2_lib::commands::api_templates::remove_flow_at;
+    let dir = tempfile::tempdir().unwrap();
+    flow_store::save(dir.path(), "Org", "Proj", &a_flow()).unwrap();
+
+    let err = remove_flow_at(false, dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap_err();
+    assert_eq!(err, "not available in this build");
+    assert!(
+        flow_store::load(dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap().is_some(),
+        "a refused removal must leave the flow where it is"
+    );
+}
+
+#[test]
+fn removing_a_flow_removes_only_that_flow() {
+    use v2_lib::api_templates::flow_store;
+    use v2_lib::commands::api_templates::remove_flow_at;
+    let dir = tempfile::tempdir().unwrap();
+    let mut other = a_flow();
+    other.id = "other-flow".to_string();
+    flow_store::save(dir.path(), "Org", "Proj", &a_flow()).unwrap();
+    flow_store::save(dir.path(), "Org", "Proj", &other).unwrap();
+
+    remove_flow_at(true, dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap();
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap(), None);
+    assert!(flow_store::load(dir.path(), "Org", "Proj", "other-flow").unwrap().is_some());
+    assert!(remove_flow_at(true, dir.path(), "Org", "Proj", "../escape").is_err(), "a bad id is refused");
 }

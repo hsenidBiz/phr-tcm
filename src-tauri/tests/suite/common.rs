@@ -509,3 +509,111 @@ pub fn menu_app(
     ));
     (d, app)
 }
+
+/// A database that answers a flow check from a script and remembers the SQL
+/// of every call. An answer is chosen by a marker substring of the SQL
+/// (a fixture puts `/*stage-id*/` in each check); the first marker the SQL
+/// contains wins. SQL no marker matches comes back as an error, so a test
+/// that forgot to script a stage sees "could not run" rather than a
+/// silent "not done".
+///
+/// A clone shares the record of calls, so a test can hand one copy to a
+/// handler that takes its database by value and still read what was asked.
+#[derive(Clone)]
+pub struct FakeStageDb {
+    answers: Vec<(String, Result<bool, String>)>,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeStageDb {
+    pub fn new() -> Self {
+        FakeStageDb { answers: Vec::new(), calls: Arc::new(Mutex::new(Vec::new())) }
+    }
+
+    pub fn answer(mut self, marker: &str, result: Result<bool, String>) -> Self {
+        self.answers.push((marker.to_string(), result));
+        self
+    }
+
+    /// The SQL of every check asked, in order.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl v2_lib::api_templates::gate::StageDb for FakeStageDb {
+    fn label(&self) -> String {
+        "fake-server/fake-db".to_string()
+    }
+
+    async fn read(&self, sql: &str) -> Result<bool, String> {
+        self.calls.lock().unwrap().push(sql.to_string());
+        match self.answers.iter().find(|(m, _)| sql.contains(m.as_str())) {
+            Some((_, r)) => r.clone(),
+            None => Err("FakeStageDb: no answer scripted for this SQL".to_string()),
+        }
+    }
+}
+
+/// The design doc "API template flows" §3 example flow, with `/*stage-id*/`
+/// on the end of every check so `FakeStageDb` can tell the checks apart.
+/// Competencies is optional.
+pub fn cycle_flow_json() -> Value {
+    let check = |sql: &str, id: &str| format!("{sql} /*{id}*/");
+    json!({
+        "id": "pms-performance-cycle",
+        "title": "Performance cycle wizard",
+        "module": "PMS / Performance Cycle",
+        "subject": { "name": "cycleId", "type": "number" },
+        "sources": ["Pages/PerformanceCycle/Index.cshtml.cs:40"],
+        "stages": [
+            { "id": "setup", "title": "Cycle setup", "creates": true,
+              "check": check("SELECT 1 FROM PeoplesHR.perf_cycle WHERE cycle_id = {{cycleId}}", "setup") },
+            { "id": "rules", "title": "Evaluation rules", "requires": ["setup"],
+              "check": check("SELECT 1 FROM PeoplesHR.perf_cycle_step_progress WHERE cycle_id = {{cycleId}} AND step_key = 'EvalRules' AND is_complete = 1", "rules") },
+            { "id": "competencies", "title": "Competencies", "requires": ["rules"], "optional": true,
+              "check": check("SELECT 1 FROM PeoplesHR.perf_cycle_competency WHERE cycle_id = {{cycleId}}", "competencies") },
+            { "id": "participants", "title": "Participants", "requires": ["rules"],
+              "check": check("SELECT 1 FROM PeoplesHR.perf_cycle_participant WHERE cycle_id = {{cycleId}}", "participants") },
+            { "id": "publish", "title": "Publish", "requires": ["participants"],
+              "check": check("SELECT 1 FROM PeoplesHR.perf_cycle WHERE cycle_id = {{cycleId}} AND status = 'Published'", "publish") }
+        ]
+    })
+}
+
+/// A draft template performing `stage` of `cycle_flow_json`'s flow on an
+/// existing record: one step, and the `cycleId` number param every such
+/// template declares.
+pub fn template_on_stage(id: &str, title: &str, stage: &str) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "module": "PMS / Performance Cycle",
+        "effect": "edit",
+        "description": format!("{title}, on an existing cycle."),
+        "sources": ["Pages/PerformanceCycle/Index.cshtml.cs:120"],
+        "antiforgery": { "page": "/hr/pmsv10/performancecycle?mode=edit" },
+        "params": [ { "name": "cycleId", "type": "number" } ],
+        "steps": [
+            { "name": title, "method": "POST",
+              "path": "/hr/pmsv10/performancecycle", "query": { "handler": "SaveStage" },
+              "form": { "CycleId": "{{cycleId}}" },
+              "expect": { "status": 200, "json": { "success": true } } }
+        ],
+        "outputs": [],
+        "stage": { "flow": "pms-performance-cycle", "id": stage }
+    })
+}
+
+/// `template_on_stage`, as a template the app has proven and saved.
+pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templates::ApiTemplate {
+    let mut t: v2_lib::api_templates::ApiTemplate =
+        serde_json::from_value(template_on_stage(id, title, stage)).expect("fixture should deserialize");
+    t.proven = Some(v2_lib::api_templates::Proven {
+        at: "2026-09-01 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: Default::default(),
+    });
+    t
+}

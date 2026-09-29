@@ -22,6 +22,8 @@ use super::exec::{
     self, build_request, capture, check_expect, excerpt, parse_capture_path, scrub_tokens, scrub_value, Body,
 };
 use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
+use super::flow::{check_stage_ref, Flow};
+use super::flow_store;
 use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
@@ -185,8 +187,9 @@ impl RunReport {
 
 /// Everything preventing this run, all together, before anything starts:
 /// the template's own checks, the values against its params, a safe
-/// anti-forgery page, the recipe and the account - and, proving over an
-/// existing id, `replace: true` with a non-blank `why`.
+/// anti-forgery page, the recipe and the account, a template's flow stage
+/// (`stage_problems`) - and, proving over an existing id, `replace: true`
+/// with a non-blank `why`.
 pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) -> Result<(), Vec<String>> {
     let t = &req.template;
     // A saved template carries the app's `proven` block, which `check`
@@ -205,6 +208,7 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     if let Err(e) = prepare(root, &req.org, &req.project, &req.account) {
         problems.push(e);
     }
+    problems.extend(stage_problems(root, req));
     if let (Some(_), Mode::Prove { replace, why }) = (existing, &req.mode) {
         let has_why = why.as_deref().is_some_and(|w| !w.trim().is_empty());
         if !(*replace && has_why) {
@@ -219,6 +223,45 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     } else {
         Err(problems)
     }
+}
+
+/// The saved flow a template's `stage` names, or `None` when it is not
+/// saved - or saved but no longer readable, which is logged and otherwise
+/// treated the same: the template is refused with "no longer saved", never
+/// with a 500 (design doc "API template flows", Review Focus 3).
+pub fn stage_flow(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Option<Flow> {
+    let r = t.stage.as_ref()?;
+    match flow_store::load(root, org, project, &r.flow) {
+        Ok(found) => found,
+        Err(e) => {
+            applog::warn(format!("api template {}: its flow {} could not be read: {e}", t.id, r.flow));
+            None
+        }
+    }
+}
+
+/// A template on a flow: its stage must still be in a saved flow, it must
+/// have the shape that stage needs, and - unless it creates the record -
+/// the call must carry the record's id. The subject param is not forced
+/// `required`, so a missing value is caught here, by name, before any
+/// database is asked.
+fn stage_problems(root: &Path, req: &RunRequest) -> Vec<String> {
+    let t = &req.template;
+    let Some(r) = &t.stage else { return Vec::new() };
+    let f = stage_flow(root, &req.org, &req.project, t);
+    let problems = check_stage_ref(t, f.as_ref());
+    if !problems.is_empty() {
+        return problems;
+    }
+    let Some(f) = f else { return problems };
+    let creates = f.stages.iter().any(|s| s.id == r.id && s.creates);
+    let name = &f.subject.name;
+    // A required param that is missing already has check_values' sentence.
+    let required = t.params.iter().any(|p| &p.name == name && p.required);
+    if !creates && !required && !req.values.contains_key(name) {
+        return vec![format!("this template belongs to flow {}, so it needs \"{name}\" in values", f.id)];
+    }
+    Vec::new()
 }
 
 /// Whether a template run is going, process-wide. Only `claim` sets it;

@@ -860,6 +860,7 @@ export const commands = {
 	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
 	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
 	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
+	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
 };
 
 /** Events */
@@ -969,6 +970,12 @@ export type ApiTemplate_Deserialize = {
 	steps: ApiTemplateStep[],
 	outputs: string[],
 	/**
+	 *  The flow stage this template performs, if it belongs to a flow.
+	 *  Checked where a flow can be loaded (`flow::check_stage_ref`), not by
+	 *  `check`, so a template saved before flows existed keeps loading.
+	 */
+	stage?: StageRef | null,
+	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
@@ -986,6 +993,12 @@ export type ApiTemplate_Serialize = {
 	params: Param[],
 	steps: ApiTemplateStep[],
 	outputs: string[],
+	/**
+	 *  The flow stage this template performs, if it belongs to a flow.
+	 *  Checked where a flow can be loaded (`flow::check_stage_ref`), not by
+	 *  `check`, so a template saved before flows existed keeps loading.
+	 */
+	stage?: StageRef | null,
 	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
@@ -1640,6 +1653,37 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+export type Flow = Flow_Serialize | Flow_Deserialize;
+
+/**
+ *  Written by the app when a flow is saved; a draft that carries one is
+ *  refused.
+ */
+export type FlowSaved = {
+	at: string,
+	sample: unknown,
+};
+
+export type Flow_Deserialize = {
+	id: string,
+	title: string,
+	module: string,
+	subject: Subject,
+	sources?: string[],
+	stages: Stage[],
+	saved?: FlowSaved | null,
+};
+
+export type Flow_Serialize = {
+	id: string,
+	title: string,
+	module: string,
+	subject: Subject,
+	sources: string[],
+	stages: Stage[],
+	saved?: FlowSaved | null,
 };
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
@@ -2585,6 +2629,21 @@ export type SlowdownRequested = {
 	secs: number,
 };
 
+export type Stage = {
+	id: string,
+	title: string,
+	requires?: string[],
+	optional?: boolean,
+	creates?: boolean,
+	check: string,
+};
+
+/**  A template's pointer at the flow and stage it performs. */
+export type StageRef = {
+	flow: string,
+	id: string,
+};
+
 export type StateInfo = {
 	name: string,
 	color: string,
@@ -2659,6 +2718,18 @@ export type Step_Serialize = {
 	 */
 	shared?: number | null,
 };
+
+/**
+ *  The record a flow is about: the placeholder name a check uses for it and
+ *  the type of the value.
+ */
+export type Subject = {
+	name: string,
+	type: SubjectType,
+};
+
+/**  What kind of value identifies the flow's record. */
+export type SubjectType = "number" | "string";
 
 export type SubmitItemResult = {
 	index: number,
@@ -2754,7 +2825,7 @@ export type TeamRef = {
  *  Everything the tab needs to draw itself: the recipe's origin (so the
  *  tab can show which host these templates run against - `None` when the
  *  project has no sign-in recipe yet), and every saved template with its
- *  run history.
+ *  run history, and every saved flow.
  */
 export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_Deserialize;
 
@@ -2762,22 +2833,24 @@ export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_
  *  Everything the tab needs to draw itself: the recipe's origin (so the
  *  tab can show which host these templates run against - `None` when the
  *  project has no sign-in recipe yet), and every saved template with its
- *  run history.
+ *  run history, and every saved flow.
  */
 export type TemplatesOverview_Deserialize = {
 	origin: string | null,
 	templates: SavedTemplate_Deserialize[],
+	flows: Flow_Deserialize[],
 };
 
 /**
  *  Everything the tab needs to draw itself: the recipe's origin (so the
  *  tab can show which host these templates run against - `None` when the
  *  project has no sign-in recipe yet), and every saved template with its
- *  run history.
+ *  run history, and every saved flow.
  */
 export type TemplatesOverview_Serialize = {
 	origin: string | null,
 	templates: SavedTemplate_Serialize[],
+	flows: Flow_Serialize[],
 };
 
 export type TestCase = TestCase_Serialize | TestCase_Deserialize;
