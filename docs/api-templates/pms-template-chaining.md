@@ -4,17 +4,27 @@ The ORDER the `pms-cycle-*` and `pms-assessment-*` templates run in, and
 whether a record is ready for the next one, lives in two saved flows - ask
 the app, not this page:
 
-- `pms-performance-cycle` - subject `cycleId`. Setup, evaluation rules,
-  timeline, evaluators, competencies, participants, goal groups,
-  configurations, publish.
+- `pms-performance-cycle` - subject `cycleId`, 29 stages. The wizard spine
+  (setup, evaluation rules, timeline, evaluators, competencies,
+  participants, goal groups, configurations, publish) plus an optional side
+  stage for every other cycle template: the plain Saves, the timeline
+  helpers, split/unsplit, competency assign/weights/removal, goal-group and
+  personalisation edits, copy from a previous cycle, delete, toggle publish.
 - `pms-assessment` - subject `participantId`
-  (`perf_cycle_participant.cycle_participant_id`). Goal plan saved,
-  submitted, approved, acknowledged (optionally revised), self-assessment
-  submitted, manager approved, review complete.
+  (`perf_cycle_participant.cycle_participant_id`), 22 stages. Goal plan
+  saved, submitted, approved, acknowledged (optionally revised); annual
+  stage opened, self-rated, submitted; manager/reviewer rated, approved,
+  review complete - plus optional stages for the manager's goal-plan edits,
+  restore and reject, development-plan comments, flags, clears and the
+  assessment send-back.
 
-Call `get_api_flow_progress` before every run of a template on a flow and
-run the stage marked `next`; `list_api_templates` shows which template
-performs each stage. This page keeps what a flow cannot express: the
+Every saved template sits on one of those stages. Call
+`get_api_flow_progress` before every run of a template on a flow and run the
+stage marked `next` (an optional stage shows `skippable` - run it only when
+the test needs it); `list_api_templates` shows which template performs each
+stage. Optional stages are facts, not steps: "sent back at least once",
+"with the manager right now", "no custom group" - so a later step can make
+one read not done again. This page keeps what a flow cannot express: the
 environment, the values each template needs, the send-back round-trips and
 the gaps. The feature's design is in
 `docs/superpowers/specs/2026-09-28-api-templates-design.md`.
@@ -146,4 +156,6 @@ again.
   has no turn check; `SaveGoalRating` and `SaveGoalRatingAsManager` do not
   check the goal belongs to the caller / appraisee; `SaveGoalPlan` can
   change a plan the manager is reviewing; `SaveFdpAsManager` answers an
-  unknown entry id with a 500 instead of a 422.
+  unknown entry id with a 500 instead of a 422; re-publishing an inactive
+  cycle from Manage (`TogglePublish`, publish=true on cycle 278) fails with
+  a 500 on `UQ_cycle_notif_recipient` (duplicate notification recipient).
