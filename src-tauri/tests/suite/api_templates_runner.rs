@@ -977,15 +977,25 @@ mod through_the_bridge {
     }
 }
 
-/// The hosted failure, caught before it is sent: the application keeps its
-/// anti-forgery cookie on `/hr/pmsv10`, the template calls `/hr/PMSV10/...`,
-/// and cookie paths are case-sensitive - so the browser would send the save
-/// without it and get an empty 400. The step is refused instead, with the
-/// cookie, its path and the path to write, and no host.
+/// The hosted failure, handled: the application keeps its anti-forgery
+/// cookie on `/hr/pmsv10`, the template calls `/hr/PMSV10/...`, and cookie
+/// paths are case-sensitive - sent as written, the save would go without the
+/// cookie and come back an empty 400. The server's routing does not care
+/// about case, so the step is sent in the cookie's letter case instead, and
+/// the activity record says so. One template then runs against a local IIS
+/// that keeps the cookie on `/hr/PMSV10` and a hosted one that keeps it on
+/// `/hr/pmsv10`.
 #[tokio::test]
-async fn a_step_that_misses_a_cookie_by_letter_case_is_refused_before_it_is_sent() {
+async fn a_step_that_would_miss_a_cookie_by_letter_case_is_sent_in_the_cookies_case() {
     let _log = crate::serial::log_tail();
-    let mut r = rig(vec![], None);
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
     r.script.lock().unwrap().all_cookies = Some(json!([
         { "name": ".AspNetCore.Antiforgery.Ab1", "value": "JAR-SECRET-1", "domain": "hr.example.internal",
           "path": "/hr/pmsv10", "httpOnly": true, "secure": true, "session": true },
@@ -996,25 +1006,43 @@ async fn a_step_that_misses_a_cookie_by_letter_case_is_refused_before_it_is_sent
         step.path = "/hr/PMSV10/PerformanceCycle".into();
     }
     let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
 
-    assert!(!report.ok, "{report:?}");
-    assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
-    let detail = &report.steps.last().unwrap().detail;
-    for part in [".AspNetCore.Antiforgery.Ab1", "/hr/pmsv10", "/hr/PMSV10/PerformanceCycle", "/hr/pmsv10/PerformanceCycle", "case"] {
-        assert!(detail.contains(part), "the sentence never says {part}: {detail}");
+    let fetched = r.fetched();
+    assert_eq!(fetched.len(), 2);
+    assert_eq!(fetched[0][0]["url"], "/hr/pmsv10/PerformanceCycle?handler=SaveProgress");
+    assert_eq!(fetched[1][0]["url"], "/hr/pmsv10/PerformanceCycle?handler=SaveEvalRulesProgress");
+
+    let records = activity_records(activity.path(), "api");
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 2, "{records:?}");
+    assert_eq!(steps[0]["url"], "/hr/pmsv10/PerformanceCycle?handler=SaveProgress");
+    assert_eq!(
+        steps[0]["path_case_adapted"],
+        json!({ "from": "/hr/PMSV10/PerformanceCycle", "to": "/hr/pmsv10/PerformanceCycle",
+                "cookie": ".AspNetCore.Antiforgery.Ab1" })
+    );
+    for rec in &records {
+        assert!(!rec.to_string().contains("JAR-SECRET"), "a cookie value reached an activity record: {rec}");
     }
-    assert!(!detail.contains("://"), "a host reached the sentence: {detail}");
-    assert!(!detail.contains("JAR-SECRET"), "a cookie value reached the sentence: {detail}");
-    assert!(r.fetched().is_empty(), "the step was sent anyway: {:?}", r.fetched());
-    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
-    for line in v2_lib::applog::recent(400) {
+    let log = v2_lib::applog::recent(400);
+    for line in &log {
         assert!(!line.message.contains("JAR-SECRET"), "a cookie value reached the app log: {}", line.message);
     }
+    assert!(
+        log.iter().any(|l| l.message.contains("/hr/PMSV10/PerformanceCycle") && l.message.contains("/hr/pmsv10/PerformanceCycle")),
+        "the adaptation was not logged"
+    );
 }
 
-/// When the paths already match the cookies' letter case, nothing is refused.
+/// When the paths already match the cookies' letter case, they are sent as
+/// written and nothing is recorded as adapted.
 #[tokio::test]
-async fn paths_in_the_cookies_letter_case_run_as_before() {
+async fn paths_in_the_cookies_letter_case_are_sent_as_written() {
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
     let mut r = rig(
         vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
         None,
@@ -1024,6 +1052,42 @@ async fn paths_in_the_cookies_letter_case_run_as_before() {
     ]));
     let report = run(&mut r, template()).await;
     assert!(report.ok, "{report:?}");
+    assert_eq!(r.fetched()[0][0]["url"], "/hr/pmsv10/performancecycle?handler=SaveProgress");
+    let records = activity_records(activity.path(), "api");
+    for step in step_records(&records) {
+        assert_eq!(step["path_case_adapted"], Value::Null, "{step}");
+    }
+}
+
+/// The token page record says how the run signed in - from a saved session
+/// or through the recipe, and which optional recipe steps' elements showed
+/// up (PeoplesHR's "Continue here", which logs the account out wherever
+/// else it is signed in). A session the application ended mid-way shows as
+/// a second sign-in.
+#[tokio::test]
+async fn the_token_page_record_says_how_the_run_signed_in() {
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().hrefs.push_back(LOGIN.to_string());
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+
+    let records = activity_records(activity.path(), "api");
+    let page = records.iter().find(|rec| rec["event"] == "token_page").expect("no token page record");
+    assert_eq!(
+        page["sign_ins"],
+        json!([
+            { "via": "sign-in recipe", "appeared": [] },
+            { "via": "sign-in recipe", "appeared": [] }
+        ]),
+        "{page}"
+    );
 }
 
 /// A jar as the browser reports it: two cookies, each with a value that

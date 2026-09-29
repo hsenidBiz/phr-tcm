@@ -248,6 +248,25 @@ async fn an_after_sign_in_prompt_that_does_not_appear_is_carried_past() {
     assert!(out.ok, "{}", out.detail);
     assert_eq!(state.clicks.load(Ordering::SeqCst), 1, "only #go");
     assert!(out.steps.last().unwrap().detail.contains("carried on"), "{:?}", out.steps);
+    assert!(out.appeared.is_empty(), "{:?}", out.appeared);
+}
+
+/// An optional step whose element DID show up is named in `appeared` - so a
+/// caller can say "Continue here was clicked" (PeoplesHR's take-over-the-
+/// other-session button) without reading step sentences.
+#[tokio::test]
+async fn an_optional_step_that_appears_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let r = recipe_with_after(json!([
+        { "kind": "when_visible", "selector": { "css": "#open-menu" }, "within_ms": 200,
+          "then": [ { "kind": "click", "selector": { "css": "#open-menu" } } ] }
+    ]));
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 2, "#go, then the optional #open-menu");
+    assert_eq!(out.appeared.len(), 1, "{:?}", out.appeared);
+    assert!(out.appeared[0].contains("#open-menu"), "{:?}", out.appeared);
 }
 
 /// Signed in, but the page is not the way scripts expect it: that is a

@@ -253,6 +253,9 @@ struct Progress {
     /// Template steps attempted - the summary line's count.
     sent: usize,
     finished: bool,
+    /// How each sign-in of this run went, for the token page's activity
+    /// record - see `signed_in`.
+    sign_ins: Vec<Value>,
 }
 
 impl Progress {
@@ -265,7 +268,26 @@ impl Progress {
             phase_handler: None,
             sent: 0,
             finished: false,
+            sign_ins: vec![],
         }
+    }
+
+    /// Notes how a sign-in went - from a saved session or through the
+    /// recipe, and which optional recipe steps' elements showed up - and
+    /// says so in the app log. PeoplesHR lets an account be signed in in
+    /// one place at a time: a recipe sign-in that met "Continue here" has
+    /// just logged that account out wherever else it was, and a session
+    /// someone else takes over ends this run's with an empty 400.
+    fn signed_in(&mut self, id: &str, account: &str, out: &SignInOutcome) {
+        let (via, how) = if out.used_saved_session {
+            ("saved session", "from a saved session")
+        } else {
+            ("sign-in recipe", "through the sign-in recipe")
+        };
+        let appeared =
+            if out.appeared.is_empty() { String::new() } else { format!(", and {} appeared", out.appeared.join(", ")) };
+        applog::info(format!("api template {id}: signed in as \"{account}\" {how}{appeared}"));
+        self.sign_ins.push(json!({ "via": via, "appeared": out.appeared }));
     }
 
     fn at(&mut self, phase: &str, handler: Option<String>) {
@@ -449,6 +471,7 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
     if !signed.ok {
         return progress.fail(None, ctx.could_not_sign_in(&signed));
     }
+    progress.signed_in(ctx.id(), &ctx.account.key, &signed);
 
     progress.at(TOKEN_PAGE, None);
     let Some((doc, token)) = token(d, &ctx, progress).await else { return };
@@ -510,7 +533,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         }
         if signed_in_again {
             let cookies = cookies_for(d, ctx, &url).await;
-            record_token_page(ctx, &href, None, cookies);
+            record_token_page(ctx, &href, None, cookies, &progress.sign_ins);
             progress.fail(None, "the token page sent us to another page - check the template's antiforgery page");
             return None;
         }
@@ -524,6 +547,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
             progress.fail(None, ctx.could_not_sign_in(&again));
             return None;
         }
+        progress.signed_in(ctx.id(), &ctx.account.key, &again);
         progress.at(TOKEN_PAGE, None);
         signed_in_again = true;
     }
@@ -537,7 +561,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         _ => None,
     };
     let cookies = cookies_for(d, ctx, &url).await;
-    record_token_page(ctx, &href, found, cookies);
+    record_token_page(ctx, &href, found, cookies, &progress.sign_ins);
     match read {
         Ok((doc, Value::String(t))) if !t.is_empty() => Some((doc, t)),
         Ok(_) => {
@@ -578,10 +602,8 @@ async fn run_step<D: Driver>(
     vars: &mut BTreeMap<String, Value>,
     progress: &mut Progress,
 ) -> StepResult {
-    let built = build_request(step, vars).map_err(|e| (None, e))?;
-    if let Some(why) = cookie_case_problem(d, ctx, &built.url).await {
-        return Err((None, why));
-    }
+    let mut built = build_request(step, vars).map_err(|e| (None, e))?;
+    let adapted = adapt_path_case(d, ctx, step, &mut built).await;
     let wire = serde_json::to_value(&built).map_err(|e| (None, format!("the request could not be built: {e}")))?;
     // Which cookies the browser holds for this address - the one thing a
     // rejected save (a 400 with no body) cannot say for itself.
@@ -592,7 +614,13 @@ async fn run_step<D: Driver>(
     let answer = call_value(d, doc, FETCH_FN, &[wire, Value::String(token.to_string())]).await;
     let duration_ms = started.elapsed().as_millis() as u64;
 
-    let sent = Sent { status: None, duration_ms, response: "", cookies: cookies_sent.as_deref() };
+    let sent = Sent {
+        status: None,
+        duration_ms,
+        response: "",
+        cookies: cookies_sent.as_deref(),
+        path_case_adapted: adapted.as_ref(),
+    };
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
@@ -681,6 +709,9 @@ struct Sent<'a> {
     /// The names of the cookies the browser held for the request's
     /// address; `None` when it would not say.
     cookies: Option<&'a [Value]>,
+    /// `{ from, to, cookie }` when the step's path was sent in a cookie's
+    /// letter case - see `adapt_path_case`.
+    path_case_adapted: Option<&'a Value>,
 }
 
 /// One activity record for a request the page made. Never a token: the
@@ -704,6 +735,7 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
             "request": shown(&body_text(&built.body), token),
             "response": shown(sent.response, token),
             "cookies_sent": sent.cookies,
+            "path_case_adapted": sent.path_case_adapted,
         }),
     );
 }
@@ -713,7 +745,13 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
 /// it was - never the token) and what cookies the page holds. It is what
 /// tells a save the server rejected apart from one that never had a
 /// token to send.
-fn record_token_page(ctx: &Ctx<'_>, final_url: &str, token: Option<&str>, cookies: Option<Vec<Value>>) {
+fn record_token_page(
+    ctx: &Ctx<'_>,
+    final_url: &str,
+    token: Option<&str>,
+    cookies: Option<Vec<Value>>,
+    sign_ins: &[Value],
+) {
     activity_log::record(
         Kind::Api,
         json!({
@@ -727,16 +765,27 @@ fn record_token_page(ctx: &Ctx<'_>, final_url: &str, token: Option<&str>, cookie
             "token_found": token.is_some(),
             "token_length": token.map(str::len),
             "cookies": cookies,
+            "sign_ins": sign_ins,
         }),
     );
 }
 
-/// A step whose path would miss one of the application's cookies only
-/// because of letter case (see `cookies`): the sentence refusing it, with
-/// the path to write, before anything is sent. A browser that will not list
-/// its cookies is logged and the step goes ahead - this check can prevent a
-/// failure, never cause one.
-async fn cookie_case_problem<D: Driver>(d: &mut D, ctx: &Ctx<'_>, url: &str) -> Option<String> {
+/// Sends a step's path in the letter case of an application cookie that
+/// covers it only when case is ignored (see `cookies`). Cookie paths are
+/// case-sensitive and the application's routing is not, so as written the
+/// request would go without that cookie - for an anti-forgery cookie, an
+/// empty 400 - while in the cookie's case it reaches the same handler with
+/// it. One template then runs wherever the application keeps its cookies,
+/// `/hr/PMSV10` on one server and `/hr/pmsv10` on another. The most
+/// specific such cookie decides. Returns `{ from, to, cookie }` for the
+/// activity record when the path changed; a browser that will not list its
+/// cookies is logged and the path is sent as written.
+async fn adapt_path_case<D: Driver>(
+    d: &mut D,
+    ctx: &Ctx<'_>,
+    step: &Step,
+    built: &mut exec::BuiltRequest,
+) -> Option<Value> {
     let jar = match d.call("Network.getAllCookies", json!({})).await {
         Ok(answer) => jar_cookies(&answer["cookies"]),
         Err(e) => {
@@ -745,17 +794,20 @@ async fn cookie_case_problem<D: Driver>(d: &mut D, ctx: &Ctx<'_>, url: &str) -> 
         }
     };
     let host = ctx.origin.split("://").nth(1)?.split(':').next()?;
-    let path = url.split(['?', '#']).next().unwrap_or(url);
-    let missed = case_blind_cookies(&jar, host, path);
-    let cookie = missed.first()?;
-    Some(format!(
-        "this step calls {path}, but the application keeps its cookie {} on {} - cookie paths are case-sensitive, \
-         so the browser would send the request without it and the application would refuse it. Write the path \
-         as {}, and the antiforgery page in the same letter case",
+    let at = built.url.find(['?', '#']).unwrap_or(built.url.len());
+    let (from, rest) = (built.url[..at].to_string(), built.url[at..].to_string());
+    let cookie = case_blind_cookies(&jar, host, &from).into_iter().max_by_key(|c| c.path.len())?.clone();
+    let to = in_cookie_case(&from, &cookie.path);
+    applog::info(format!(
+        "api template {}: step {}: sent {to} rather than {from} - the application keeps its cookie {} on {}, \
+         and cookie paths are case-sensitive",
+        ctx.id(),
+        step.name,
         cookie.name,
-        cookie.path,
-        in_cookie_case(path, &cookie.path)
-    ))
+        cookie.path
+    ));
+    built.url = format!("{to}{rest}");
+    Some(json!({ "from": from, "to": to, "cookie": cookie.name }))
 }
 
 /// The cookies the browser holds for `url`, as a record may show them -

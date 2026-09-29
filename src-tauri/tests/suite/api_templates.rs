@@ -720,6 +720,16 @@ fn the_guide_says_paths_keep_the_applications_letter_case() {
     assert!(text.contains("/hr/pmsv10"), "{text}");
 }
 
+/// The guide warns that an account can be signed in in one place at a
+/// time, and what that looks like when it goes wrong.
+#[test]
+fn the_guide_says_an_account_is_signed_in_in_one_place_at_a_time() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    assert!(text.contains("one place at a time"), "{text}");
+    assert!(text.contains("Continue here"), "{text}");
+    assert!(text.contains("empty 400"), "{text}");
+}
+
 /// The guide hands the assistant this project's account KEYS and the
 /// recipe's origin - so it never has to guess a host or an account - and
 /// nothing else about an account: the guide is built from the keys alone,

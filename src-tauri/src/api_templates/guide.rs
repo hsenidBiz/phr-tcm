@@ -74,8 +74,15 @@ with every problem listed together:
   calls or the app's routing, not from a class or file name. Cookie paths
   are case-sensitive: an application that keeps its anti-forgery cookie on
   `/hr/pmsv10` never receives it at `/hr/PMSV10/...`, and a save without
-  it comes back an empty 400. The runner refuses such a step before sending
-  it and names the path to write.
+  it comes back an empty 400. If a path still differs from a cookie's
+  path only in letter case, the runner sends it in the cookie's case (the
+  application's routing does not mind) and says so in the activity log.
+- The account: PeoplesHR lets an account be signed in in
+  one place at a time. When the runner has to sign in afresh, the recipe
+  clicks "Continue here", which logs that account out wherever else it is signed in - and
+  anyone who signs in as it while a template runs ends the run's session,
+  which shows as an empty 400 partway through. Run templates as an account
+  nobody is using by hand.
 - A step has at most one body: `json` (any JSON value) or `form` (string
   values, sent as multipart/form-data - what the application's own forms
   send). File fields are not supported.

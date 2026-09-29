@@ -29,6 +29,13 @@ pub struct SignInOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub harness: bool,
+    /// The optional (`when_visible`) steps whose element DID show up, by
+    /// description - `button "Continue here"` is PeoplesHR taking the
+    /// account's session over from wherever else it was signed in.
+    /// Process-internal like `harness`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub appeared: Vec<String>,
 }
 
 pub fn redact(text: &str, account: &Account) -> String {
@@ -53,6 +60,7 @@ pub fn prepare(root: &Path, org: &str, project: &str, account_key: &str) -> Resu
 struct Run<'a> {
     account: &'a Account,
     steps: Vec<ActionOutcome>,
+    appeared: Vec<String>,
 }
 
 impl Run<'_> {
@@ -63,7 +71,14 @@ impl Run<'_> {
         ok
     }
     fn done(self, ok: bool, detail: String, used_saved_session: bool, harness: bool) -> SignInOutcome {
-        SignInOutcome { ok, detail: redact(&detail, self.account), used_saved_session, steps: self.steps, harness }
+        SignInOutcome {
+            ok,
+            detail: redact(&detail, self.account),
+            used_saved_session,
+            steps: self.steps,
+            harness,
+            appeared: self.appeared,
+        }
     }
 }
 
@@ -87,7 +102,7 @@ pub async fn sign_in<D: Driver>(
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
-    let mut run = Run { account, steps: vec![] };
+    let mut run = Run { account, steps: vec![], appeared: vec![] };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
@@ -233,6 +248,7 @@ async fn run_steps<D: Driver>(
                     )));
                     continue;
                 }
+                run.appeared.push(w.selector.describe());
                 w.then.iter().collect()
             }
         };

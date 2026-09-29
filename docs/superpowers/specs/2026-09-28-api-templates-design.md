@@ -247,7 +247,16 @@ from the app log.
   HttpOnly, Secure, SameSite, session - never its value. Written when the
   token is read or missing, and when the page lands somewhere else.
   Reading the cookies is a diagnostic: when the browser will not say, the
-  fields are `null` and the run goes on.
+  fields are `null` and the run goes on. It also carries `sign_ins`: for
+  each sign-in of the run, `via` ("saved session" or "sign-in recipe") and
+  the optional recipe steps whose element `appeared` - PeoplesHR allows one
+  session per account, and its "Continue here" logs the account out
+  wherever else it is signed in.
+- **Path letter case** (2026-09-29): cookie paths are case-sensitive and
+  the application's routing is not. When a step's path is covered by an
+  application cookie only if case is ignored, the step is sent in the
+  cookie's letter case and its record carries
+  `path_case_adapted: { from, to, cookie }`.
 - **`db_query`'s statement logging moves here.** Its `log_line` and
   `refusal_log_line` calls in `db/query.rs` stop writing SQL to the app
   log.
