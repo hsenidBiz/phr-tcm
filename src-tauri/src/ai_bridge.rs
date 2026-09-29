@@ -1026,7 +1026,16 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
         ));
     }
 
-    let orphaned: Vec<(String, String, String)> = saved_templates(&root, org, project)
+    let saved = saved_templates(&root, org, project);
+    // The rest of the map: saved templates no flow places yet. A flow is
+    // meant to take in every template found for its record, so the answer
+    // hands the assistant the ones still outside one.
+    let loose: Vec<(String, String, String)> = saved
+        .iter()
+        .filter(|s| s.template.stage.is_none())
+        .map(|s| (s.template.id.clone(), s.template.title.clone(), s.template.module.clone()))
+        .collect();
+    let orphaned: Vec<(String, String, String)> = saved
         .into_iter()
         .filter_map(|s| {
             let r = s.template.stage?;
@@ -1034,7 +1043,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
                 .then_some((s.template.id, s.template.title, r.id))
         })
         .collect();
-    let message = if orphaned.is_empty() {
+    let mut message = if orphaned.is_empty() {
         format!("flow {} saved; every check ran on {} {}", f.id, f.subject.name, gate::shown(&sample))
     } else {
         let ids: Vec<&str> = orphaned.iter().map(|(id, _, _)| id.as_str()).collect();
@@ -1044,6 +1053,15 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
             ids.join(", ")
         )
     };
+    if !loose.is_empty() {
+        let ids: Vec<&str> = loose.iter().map(|(id, _, _)| id.as_str()).collect();
+        message.push_str(&format!(
+            ". {} saved template{} on no flow yet: {}. Place each one acting on this record on a stage of this flow (add the stage if it is missing), save the flow again, then re-prove the template with its stage set; one acting on another record belongs in that record's own flow.",
+            loose.len(),
+            if loose.len() == 1 { " is" } else { "s are" },
+            ids.join(", ")
+        ));
+    }
     templates_changed(&f.id);
     let stages: Vec<serde_json::Value> = results
         .iter()
@@ -1053,6 +1071,10 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
         .into_iter()
         .map(|(id, title, stage)| serde_json::json!({ "id": id, "title": title, "stage": stage }))
         .collect();
+    let loose: Vec<serde_json::Value> = loose
+        .into_iter()
+        .map(|(id, title, module)| serde_json::json!({ "id": id, "title": title, "module": module }))
+        .collect();
     (
         200,
         serde_json::json!({
@@ -1060,6 +1082,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
             "sample": sample,
             "stages": stages,
             "orphaned": orphaned,
+            "not_on_a_flow": loose,
             "message": message,
         })
         .to_string(),

@@ -778,6 +778,11 @@ fn the_guide_explains_flows() {
     assert!(flows.contains("SELECT COUNT(*)"), "{flows}");
     assert!(flows.contains("SELECT CASE WHEN EXISTS"), "{flows}");
     assert!(flows.contains("always return one row"), "{flows}");
+    // One large flow per kind of record, placing every template found for it;
+    // the save answer's list of templates on no flow is to be worked to empty.
+    assert!(flows.contains("One large flow per kind of record"), "{flows}");
+    assert!(flows.contains("places EVERY template you have discovered"), "{flows}");
+    assert!(flows.contains("not_on_a_flow"), "{flows}");
     assert!(flows.contains("a row only when the stage is done"), "{flows}");
 }
 
