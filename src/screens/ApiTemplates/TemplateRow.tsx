@@ -155,6 +155,9 @@ function RunLine({ run }: { run: RunRecord }) {
  * Open or folded is its own business unless the tab passes `open` - which
  * it does so that clicking the template on a flow map can open it.
  */
+/** A template's stage, as its row shows it. */
+export type StageLine = { stage: string; flow: string; missing: boolean };
+
 export default function TemplateRow({
   saved,
   onRemove,
@@ -166,9 +169,10 @@ export default function TemplateRow({
   onRemove: () => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** The flow stage it performs, spelled out; `missing` when that flow or
-   * stage is no longer saved, so every run of it is refused. */
-  stage?: { text: string; missing: boolean };
+  /** The flow stage it performs - the stage's title on the row, and which
+   * flow it is in when opened; `missing` when that flow or stage is no
+   * longer saved, so every run of it is refused. */
+  stage?: StageLine;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = openProp ?? ownOpen;
@@ -178,7 +182,6 @@ export default function TemplateRow({
   };
   const t = saved.template;
   const n = t.params.length;
-  const proven = t.proven ? stampDate(t.proven.at) : null;
   const provenOutputs = outputPairs(t.proven?.outputs);
   // The prove that saved it is history, not a run: "last run" is a run's.
   const lastRun = saved.runs.find((r) => runMode(r) === "run");
@@ -195,19 +198,14 @@ export default function TemplateRow({
         >
           {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </button>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{t.title}</span>
+        {/* The line to scan: what it is, what it does, where it sits in its
+            flow, and when it last ran. Its parameters and proof are one
+            click away, in the details. */}
+        <span className="min-w-0 flex-1 text-sm font-medium break-words text-text">{t.title}</span>
         <EffectBadge effect={t.effect} />
         {stage && (
           <span className={cn("text-xs", stage.missing ? "text-warning" : "text-muted")}>
-            {`Stage: ${stage.text}${stage.missing ? " (no longer saved)" : ""}`}
-          </span>
-        )}
-        <span className="text-xs text-muted">
-          {n} parameter{n === 1 ? "" : "s"}
-        </span>
-        {t.proven && (
-          <span className="text-xs text-faint">
-            {`proven ${proven ? dayMonth(proven) : t.proven.at} as ${t.proven.account}`}
+            {`Stage: ${stage.stage}${stage.missing ? " (no longer saved)" : ""}`}
           </span>
         )}
         <LastRun run={lastRun} />
@@ -223,8 +221,19 @@ export default function TemplateRow({
             <p className="id-mono text-faint">{t.id}</p>
           </div>
 
+          {stage && (
+            <section className="space-y-1">
+              <h3 className="font-semibold text-muted">Flow</h3>
+              <p data-testid="template-flow" className={stage.missing ? "text-warning" : "text-muted"}>
+                {stage.missing
+                  ? `${stage.stage} in ${stage.flow} - no longer saved, so every run of this template is refused until a flow with this stage is saved again.`
+                  : `${stage.stage}, in ${stage.flow}`}
+              </p>
+            </section>
+          )}
+
           <section className="space-y-1">
-            <h3 className="font-semibold text-muted">Parameters</h3>
+            <h3 className="font-semibold text-muted">{`Parameters (${n})`}</h3>
             {n === 0 ? (
               <p className="text-faint">None.</p>
             ) : (
