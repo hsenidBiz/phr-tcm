@@ -1242,6 +1242,71 @@ mod flows_through_the_bridge {
         assert_eq!(*changed.lock().unwrap(), vec!["pms-create-draft-cycle".to_string()]);
     }
 
+    /// Its own check could not run (a database error): never read as "not
+    /// done" - nothing saved, nothing announced, and the answer says the
+    /// check could not be run (design doc §5, Review Focus 1).
+    #[tokio::test]
+    async fn a_prove_whose_own_check_could_not_run_is_not_saved_and_says_so() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let r = rig(vec![answer(200, json!({ "success": true }))], None);
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new()
+            .answer("/*setup*/", Ok(true))
+            .answer("/*rules*/", Ok(true))
+            .answer("/*participants*/", Err("Login timeout expired on SQLPROD01".to_string()));
+
+        let body = json!({
+            "template": template_on_stage(PARTICIPANTS, "Add the participants", "participants"),
+            "account": "admin",
+            "values": { "cycleId": 274 },
+        })
+        .to_string();
+        let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(
+            out,
+            "every step passed, but the check for Participants could not be run - see the activity folder in Settings, Logs, so the template was not saved; every step passed (1 steps); nothing had been captured yet"
+        );
+        assert_eq!(asked(&db), ["setup", "rules", "participants"]);
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, PARTICIPANTS).unwrap(), None);
+        assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
+    /// The creating step captured the record id as a string, but the
+    /// flow's subject is a number: the check cannot be written, so it could
+    /// not run - never quoted into the SQL, never "not done".
+    #[tokio::test]
+    async fn a_creating_prove_whose_capture_has_the_wrong_type_is_not_saved() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let changed = changes();
+        let r = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": "274" })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        v2_lib::autorun::store::set_root(r.root.path().to_path_buf());
+        flow_store::save(r.root.path(), ORG, PROJECT, &flow()).unwrap();
+        let db = FakeStageDb::new().answer("/*setup*/", Ok(true));
+
+        let mut creating = serde_json::to_value(template()).unwrap();
+        creating["stage"] = json!({ "flow": FLOW, "id": "setup" });
+        let body = json!({ "template": creating, "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+        let (status, out) = api_template_prove(&ctx(), &body, |_| r.browsers, handed(&db), &quick()).await;
+        assert_eq!(status, 502, "{out}");
+        assert_eq!(
+            out,
+            "every step passed, but the check for Cycle setup could not be run - see the activity folder in Settings, Logs, so the template was not saved; every step passed (2 steps); cycleId 274 created"
+        );
+        assert!(db.calls().is_empty(), "nothing reached the database: {:?}", db.calls());
+        assert_eq!(store::load(r.root.path(), ORG, PROJECT, "pms-create-draft-cycle").unwrap(), None);
+        assert!(changed.lock().unwrap().is_empty(), "nothing saved, nothing announced");
+    }
+
     /// Running the creating stage's template has nothing to gate and
     /// nothing to check afterwards, so it asks nothing of the database.
     #[tokio::test]

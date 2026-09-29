@@ -790,17 +790,35 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             let why = CheckFor { purpose: "prove", template: Some(id) };
-            if gate::stage_state(d, f, stage, &value, &why).await != StageState::Done {
-                crate::applog::info(format!(
-                    "api template {id}: every step passed but stage {} is not done, so it was not saved",
-                    stage.id
-                ));
-                incomplete = Some(format!(
-                    "every step passed, but {} is still not done for {name} {}, so the template was not saved; {}",
-                    stage.title,
-                    shown(&value),
-                    report.message()
-                ));
+            // A check that could not run - a database error, a timeout, no
+            // row count, or a subject of the wrong type (which `stage_state`
+            // refuses before any statement, and records) - is never "not
+            // done": either way nothing is saved, but each says what it is.
+            match gate::stage_state(d, f, stage, &value, &why).await {
+                StageState::Done => {}
+                StageState::NotDone => {
+                    crate::applog::info(format!(
+                        "api template {id}: every step passed but stage {} is not done, so it was not saved",
+                        stage.id
+                    ));
+                    incomplete = Some(format!(
+                        "every step passed, but {} is still not done for {name} {}, so the template was not saved; {}",
+                        stage.title,
+                        shown(&value),
+                        report.message()
+                    ));
+                }
+                StageState::CouldNotRun => {
+                    crate::applog::info(format!(
+                        "api template {id}: every step passed but the check for stage {} could not be run, so it was not saved",
+                        stage.id
+                    ));
+                    incomplete = Some(format!(
+                        "every step passed, but the check for {} could not be run - see the activity folder in Settings, Logs, so the template was not saved; {}",
+                        stage.title,
+                        report.message()
+                    ));
+                }
             }
         }
     }
