@@ -108,6 +108,42 @@ WHERE performance_cycle_id = 280 AND emp_number = '00000147' ORDER BY stage_stat
 (goal revision on). Not proven: the three attachment deletes (need a file
 uploaded through the UI first - uploads cannot be templated).
 
+## Team Assessments (manager and reviewer)
+
+Manager and reviewer use the same `pms-assessment-manager-*` templates. The
+server takes the role from the participant row (manager, else reviewer);
+`actingRole` ("manager" / "reviewer") only settles it for someone who is
+both. Manager and reviewer rate the same goal and competency ids as the
+employee. Each writes only while their own latest status is `in_review`.
+
+**From the employee's submission to a finished stage, with a reviewer rejection:**
+
+1. Manager: `manager-save-goal-rating` per goal, `manager-save-competency-rating`
+   per competency, optionally `manager-save-fdp` (comments go on the
+   employee's entry ids).
+2. Manager: `manager-approve-goals` -> manager `submitted`, reviewer
+   `in_review`. Approval needs the approver's mark on every goal and
+   competency (179000019 otherwise); comments are optional.
+3. Reviewer: the same rating templates with `actingRole` "reviewer".
+4. Reviewer send-back: `manager-flag-revision` then `manager-reject-goals`,
+   both with `actingRole` "reviewer" -> reviewer `rejected`, manager
+   `in_review`. It goes back to the manager, not the employee; every rating
+   stays.
+5. Manager re-rates what was flagged and runs `manager-approve-goals` again,
+   which archives the reviewer's flag (`manager_approve`) -> reviewer
+   `in_review`.
+6. Reviewer: optionally `manager-save-fdp`, then `manager-approve-goals` with
+   `actingRole` "reviewer". This is the final step (there is no manual
+   final-rating handler): it writes the stage completion row, the
+   `perf_cp_stage_score` row and `perf_cp_overall_rating`.
+
+Proven on cycle 280 as `imly` (manager) and `emma` (reviewer): final score
+0.8448 = goals 0.9413 x 60% + competencies 0.70 x 40%.
+
+Not proven: `manager-save-goal-plan` and `manager-restore-goal` (need an
+appraisee with a submitted, undecided goal plan whose account can sign in)
+and the three manager attachment deletes (need a UI upload first).
+
 ## Known gaps
 
 - Several templates build fixed shapes (one designation, first area, two
@@ -116,4 +152,7 @@ uploaded through the UI first - uploads cannot be templated).
 - PMS server issues noticed while mapping (not fixed): `SubmitAssessment`
   has no turn check (re-sending puts the assessment back in the manager's
   queue); `SaveGoalRating` does not check the goal belongs to the caller;
-  `SaveGoalPlan` can change a plan the manager is reviewing.
+  `SaveGoalPlan` can change a plan the manager is reviewing;
+  `SaveGoalRatingAsManager` does not check the goal belongs to the
+  appraisee; `SaveFdpAsManager` answers an unknown entry id with a 500
+  instead of a 422.
