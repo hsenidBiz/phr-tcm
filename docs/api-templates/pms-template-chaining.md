@@ -36,8 +36,8 @@ the gaps. The feature's design is in
   five writes came back this way, independently of the try before. Seen
   twice: `ApproveGoals` as the manager refused on all four tries within a
   couple of minutes of that manager's rating saves, then accepted straight
-  after one more save. A token page with no token right after an empty 400
-  means the session ended - run again.
+  after one more save. A token page with no token means the session ended;
+  the runner signs in once more and reads it again.
 - **Letter case.** Paths as the UI calls them: lowercase `/hr/pmsv10/...`.
 - **Token pages:** `/hr/pmsv10/performancecycle?mode=create` (cycle
   templates, needs cycle-admin rights), `/hr/pmsv10/updatehub` (assessment

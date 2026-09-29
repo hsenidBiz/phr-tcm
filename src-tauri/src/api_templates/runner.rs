@@ -584,9 +584,11 @@ async fn drive<D: Driver>(
     progress.finished = true;
 }
 
-/// Opens the template's anti-forgery page and reads its token. A page that
-/// turns out to be somewhere else (the saved session had gone stale and
-/// the application sent us to its login) gets exactly one more sign-in.
+/// Opens the template's anti-forgery page and reads its token. A session
+/// that has ended gets exactly one more sign-in, whichever way it shows:
+/// the application sends the page to its login, or - where it does not
+/// redirect (hosted PMSV10 renders `/hr/pmsv10/updatehub` for anyone) - the
+/// page opens with no token on it.
 async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> Option<(Handle, String)> {
     let page = &ctx.req.template.antiforgery.page;
     if !is_safe_relative_path(page) {
@@ -596,7 +598,6 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
     let url = format!("{}{page}", ctx.origin);
     let policy = Policy::only(ctx.recipe.origins());
     let mut signed_in_again = false;
-    let mut href;
     loop {
         let went = execute_in(d, &Action::Navigate { url: url.clone() }, ctx.timing, &policy).await;
         if !went.ok {
@@ -604,7 +605,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
             progress.fail(None, format!("the token page {page} did not open - see Settings, Logs"));
             return None;
         }
-        href = match eval_value(d, "location.href").await {
+        let href = match eval_value(d, "location.href").await {
             Ok(v) => v.as_str().unwrap_or("").to_string(),
             Err(e) => {
                 applog::warn(format!("api template {}: reading the token page's address: {e}", ctx.id()));
@@ -614,18 +615,42 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         };
         // The token page on the recipe's own origin - the same path on any
         // other origin (an identity provider's, say) is another page.
-        if same_path(&href, page) && origin_of(&href).as_deref() == Some(ctx.origin.as_str()) {
-            break;
-        }
-        if signed_in_again {
+        let why = if same_path(&href, page) && origin_of(&href).as_deref() == Some(ctx.origin.as_str()) {
+            let read = match document(d).await {
+                Ok(doc) => call_value(d, &doc, TOKEN_FN, &[]).await.map(|v| (doc, v)),
+                Err(e) => Err(e),
+            };
+            let found = match &read {
+                Ok((_, Value::String(t))) if !t.is_empty() => Some(t.as_str()),
+                _ => None,
+            };
             let cookies = cookies_for(d, ctx, &url).await;
-            record_token_page(ctx, &href, None, cookies, &progress.sign_ins);
-            progress.fail(None, "the token page sent us to another page - check the template's antiforgery page");
-            return None;
-        }
-        // The saved session was no longer good: the application sent the
-        // page to its login. Throw it away and sign in properly, once.
-        applog::info(format!("api template {}: the saved session had ended - signing in again", ctx.id()));
+            record_token_page(ctx, &href, found, cookies, &progress.sign_ins);
+            match read {
+                Ok((doc, Value::String(t))) if !t.is_empty() => return Some((doc, t)),
+                Ok(_) if signed_in_again => {
+                    progress.fail(None, format!("no anti-forgery token on {page}"));
+                    return None;
+                }
+                Ok(_) => "the token page had no token",
+                Err(e) => {
+                    applog::warn(format!("api template {}: reading the token: {e}", ctx.id()));
+                    progress.fail(None, "the browser did not answer on the token page - see Settings, Logs");
+                    return None;
+                }
+            }
+        } else {
+            if signed_in_again {
+                let cookies = cookies_for(d, ctx, &url).await;
+                record_token_page(ctx, &href, None, cookies, &progress.sign_ins);
+                progress.fail(None, "the token page sent us to another page - check the template's antiforgery page");
+                return None;
+            }
+            "the token page was sent elsewhere"
+        };
+        // The saved session was no longer good. Throw it away and sign in
+        // properly, once.
+        applog::info(format!("api template {}: the session had ended ({why}) - signing in again", ctx.id()));
         forget_session(ctx.root, &ctx.account.key);
         progress.at(SIGN_IN, None);
         let again = sign_in(d, ctx.root, &ctx.recipe, &ctx.account, ctx.timing).await;
@@ -636,29 +661,6 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
         progress.signed_in(ctx.id(), &ctx.account.key, &again);
         progress.at(TOKEN_PAGE, None);
         signed_in_again = true;
-    }
-
-    let read = match document(d).await {
-        Ok(doc) => call_value(d, &doc, TOKEN_FN, &[]).await.map(|v| (doc, v)),
-        Err(e) => Err(e),
-    };
-    let found = match &read {
-        Ok((_, Value::String(t))) if !t.is_empty() => Some(t.as_str()),
-        _ => None,
-    };
-    let cookies = cookies_for(d, ctx, &url).await;
-    record_token_page(ctx, &href, found, cookies, &progress.sign_ins);
-    match read {
-        Ok((doc, Value::String(t))) if !t.is_empty() => Some((doc, t)),
-        Ok(_) => {
-            progress.fail(None, format!("no anti-forgery token on {page}"));
-            None
-        }
-        Err(e) => {
-            applog::warn(format!("api template {}: reading the token: {e}", ctx.id()));
-            progress.fail(None, "the browser did not answer on the token page - see Settings, Logs");
-            None
-        }
     }
 }
 

@@ -34,6 +34,8 @@ struct Script {
     /// Answers to `location.href`, in turn; once empty, the address last
     /// navigated to.
     hrefs: VecDeque<String>,
+    /// Answers to `TOKEN_FN`, in turn; once empty, `token`.
+    tokens: VecDeque<Option<String>>,
     token: Option<String>,
     /// Answers to `FETCH_FN`, in turn.
     responses: VecDeque<Value>,
@@ -78,7 +80,11 @@ impl Driver for App {
             return Ok(json!({ "result": { "type": "string", "value": href } }));
         }
         if method == "Runtime.callFunctionOn" && f == TOKEN_FN {
-            let token = self.script.lock().unwrap().token.clone();
+            let token = {
+                let mut s = self.script.lock().unwrap();
+                let fallback = s.token.clone();
+                s.tokens.pop_front().unwrap_or(fallback)
+            };
             return Ok(json!({ "result": { "value": token } }));
         }
         if method == "Runtime.callFunctionOn" && f == FETCH_FN {
@@ -422,6 +428,55 @@ async fn a_stale_session_at_the_token_page_signs_in_once_more() {
     assert!(report.ok, "{report:?}");
     assert_eq!(r.sign_ins(), 2, "it should have signed in exactly once more");
     assert_eq!(r.navigations_to_the_page(), 2);
+}
+
+/// The token page at the right address with NO token on it: the session
+/// ended where the application does not redirect (hosted PMSV10 renders
+/// `/hr/pmsv10/updatehub` for anyone). Same as a login redirect - sign in
+/// once more and read the page again.
+#[tokio::test]
+async fn a_token_page_without_a_token_signs_in_once_more() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().tokens.push_back(None);
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.sign_ins(), 2, "it should have signed in exactly once more");
+    assert_eq!(r.navigations_to_the_page(), 2);
+}
+
+/// Still no token after signing in again: the run fails, once, and says so.
+#[tokio::test]
+async fn a_token_page_that_never_has_a_token_fails_after_one_more_sign_in() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().token = None;
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert_eq!(report.steps.last().unwrap().detail, format!("no anti-forgery token on {PAGE}"));
+    assert_eq!(r.sign_ins(), 2);
+    assert_eq!(r.navigations_to_the_page(), 2);
+    assert!(r.fetched().is_empty());
+}
+
+/// What hosted did twice on 2026-09-29: a step refused unread, and the
+/// retry's token page had no token because the session had just ended.
+/// The retry signs in again and goes through.
+#[tokio::test]
+async fn a_retry_whose_token_page_lost_its_token_signs_in_again() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(
+        vec![empty_400(), answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    r.script.lock().unwrap().tokens.extend([Some(TOKEN.to_string()), None]);
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.sign_ins(), 2);
+    assert_eq!(r.fetched().len(), 3, "step 1 twice, step 2 once");
 }
 
 #[tokio::test]

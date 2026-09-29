@@ -194,9 +194,13 @@ and **run** (a saved template).
    stops the run with a sentence saying to sign that account in once from
    Auto Run.
 3. **Token.** Navigate to `antiforgery.page` on the recipe's origin and read
-   `input[name="__RequestVerificationToken"]`. No token: the run stops and
-   names the page. The page turned out to be the login page (the session
-   went stale): forget the session, sign in once more, try once more.
+   `input[name="__RequestVerificationToken"]`. The session went stale -
+   the page turned out to be the login page, or it opened with no token on
+   it (hosted PMSV10 renders `/hr/pmsv10/updatehub` without redirecting a
+   session that has ended; added 2026-09-29): forget the session, sign in
+   once more, try once more. Still no token after that: the run stops and
+   names the page. The retry of a step refused unread reads its token the
+   same way, so a session that ended between the tries is signed in again.
 4. **Steps, in order.**
    - Rust builds each request - substitution, URL building and body
      encoding are pure functions, tested without a browser.
