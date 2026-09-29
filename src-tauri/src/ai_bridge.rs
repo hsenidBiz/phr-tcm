@@ -293,13 +293,30 @@ pub async fn route(
         ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
         ("GET", "/api-templates") => api_template_list(ctx),
         ("POST", "/api-template-prove") => {
-            api_template_prove(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
-                .await
+            api_template_prove(
+                ctx,
+                body,
+                real_template_browsers,
+                real_stage_db,
+                &crate::commands::autorun_replay::replay_timing(false),
+            )
+            .await
         }
         ("POST", "/api-template-run") => {
-            api_template_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
-                .await
+            api_template_run(
+                ctx,
+                body,
+                real_template_browsers,
+                real_stage_db,
+                &crate::commands::autorun_replay::replay_timing(false),
+            )
+            .await
         }
+        // Flows: saving one writes a local file and reads the database, and
+        // progress only reads - neither writes to the application, so
+        // neither needs the API templates switch.
+        ("POST", "/api-template-flow-save") => api_template_flow_save(ctx, body, stage_db).await,
+        ("POST", "/api-template-flow-progress") => api_template_flow_progress(ctx, body, stage_db).await,
         // The database routes. Not Auto Run and not dev-only: they are
         // switchable like any ordinary tool, and what they may do is
         // decided by the connection the person chose and the write switch
@@ -435,36 +452,90 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
 }
 
 /// Every saved template for this project, as a summary: what it is, what
-/// it takes and gives back, and its newest run (null before its first -
-/// the prove that saved it is history, not a run).
+/// it takes and gives back, the flow stage it performs, and its newest run
+/// (null before its first - the prove that saved it is history, not a
+/// run). Beside them, every saved flow with its stages and the templates
+/// on each - a flow file that no longer parses is left out (and logged by
+/// `flow_store::list`), never the whole answer.
 fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
+    use crate::api_templates::{flow_store, gate, store};
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    match crate::api_templates::store::list(&root, &ctx.org, &ctx.project) {
-        Ok(saved) => {
-            let rows: Vec<serde_json::Value> = saved
-                .into_iter()
+    let saved = match store::list(&root, &ctx.org, &ctx.project) {
+        Ok(saved) => saved,
+        Err(e) => {
+            crate::applog::warn(format!("api templates: the list could not be read: {e}"));
+            return (500, "the saved templates could not be read - see Settings, Logs".to_string());
+        }
+    };
+    let flows = flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_else(|e| {
+        crate::applog::warn(format!("api template flows: the list could not be read: {e}"));
+        Vec::new()
+    });
+    let flow_rows: Vec<serde_json::Value> = flows
+        .iter()
+        .map(|f| {
+            let stages: Vec<serde_json::Value> = f
+                .stages
+                .iter()
                 .map(|s| {
-                    let t = s.template;
+                    let on: Vec<&str> =
+                        gate::templates_on(&saved, &f.id, &s.id).iter().map(|t| t.template.id.as_str()).collect();
                     serde_json::json!({
-                        "id": t.id,
-                        "title": t.title,
-                        "module": t.module,
-                        "effect": t.effect,
-                        "params": t.params,
-                        "outputs": t.outputs,
-                        "last_run": s.runs.into_iter().find(|r| r.mode == crate::api_templates::store::MODE_RUN),
+                        "id": s.id,
+                        "title": s.title,
+                        "requires": s.requires,
+                        "optional": s.optional,
+                        "creates": s.creates,
+                        "templates": on,
                     })
                 })
                 .collect();
-            (200, serde_json::Value::Array(rows).to_string())
-        }
-        Err(e) => {
-            crate::applog::warn(format!("api templates: the list could not be read: {e}"));
-            (500, "the saved templates could not be read - see Settings, Logs".to_string())
-        }
+            serde_json::json!({
+                "id": f.id,
+                "title": f.title,
+                "module": f.module,
+                "subject": f.subject,
+                "stages": stages,
+            })
+        })
+        .collect();
+    let rows: Vec<serde_json::Value> = saved
+        .into_iter()
+        .map(|s| {
+            let t = s.template;
+            serde_json::json!({
+                "id": t.id,
+                "title": t.title,
+                "module": t.module,
+                "effect": t.effect,
+                "params": t.params,
+                "outputs": t.outputs,
+                "stage": t.stage,
+                "last_run": s.runs.into_iter().find(|r| r.mode == store::MODE_RUN),
+            })
+        })
+        .collect();
+    (200, serde_json::json!({ "templates": rows, "flows": flow_rows }).to_string())
+}
+
+/// Every saved template for this project, for naming the ones on a stage.
+/// One that cannot be listed leaves that part of a sentence short rather
+/// than refusing the call, and is logged.
+fn saved_templates(root: &std::path::Path, org: &str, project: &str) -> Vec<crate::api_templates::store::SavedTemplate> {
+    crate::api_templates::store::list(root, org, project).unwrap_or_else(|e| {
+        crate::applog::warn(format!("api templates: the list could not be read: {e}"));
+        Vec::new()
+    })
+}
+
+/// A JSON value as a sentence shows it: a string without its quotes.
+fn shown(v: &serde_json::Value) -> String {
+    match v.as_str() {
+        Some(s) => s.to_string(),
+        None => v.to_string(),
     }
 }
 
@@ -521,12 +592,15 @@ const PROVE_SHAPE: &str = "{ \"template\": <the draft>, \"account\": \"<account 
 const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"<account key>\", \"values\": { <param>: <value> }, \"browser\"?: \"edge\" | \"chrome\" }";
 
 /// `POST /api-template-prove`: run a draft and save it only if every step
-/// passed. The route arm with the browser factory handed in (`open`), so a
-/// test reaches all of it but a real browser.
-pub async fn api_template_prove<B: crate::autorun::replay::Browsers>(
+/// passed - and, for a template on a flow, only if its own stage is done
+/// afterwards. The route arm with the browser factory (`open`) and the
+/// flow database (`open_db`, asked for only by a template on a flow)
+/// handed in, so a test reaches all of it but a real browser and server.
+pub async fn api_template_prove<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
     use crate::api_templates::runner::{Mode, RunRequest};
@@ -574,16 +648,18 @@ pub async fn api_template_prove<B: crate::autorun::replay::Browsers>(
         mode: Mode::Prove { replace, why },
         template,
     };
-    run_api_template_request(&root, req, existing.as_ref(), call.browser, open, timing).await
+    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, open, open_db, timing).await
 }
 
 /// `POST /api-template-run`: run a saved template and return its outputs,
 /// or the failing step and what had been created. As
-/// `api_template_prove`, with the browser factory handed in.
-pub async fn api_template_run<B: crate::autorun::replay::Browsers>(
+/// `api_template_prove`, with the browser factory and the flow database
+/// handed in.
+pub async fn api_template_run<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
     use crate::api_templates::runner::{Mode, RunRequest};
@@ -625,7 +701,7 @@ pub async fn api_template_run<B: crate::autorun::replay::Browsers>(
         mode: Mode::Run,
         template,
     };
-    run_api_template_request(&root, req, None, call.browser, open, timing).await
+    run_api_template_request(ctx, &root, req, None, call.browser, open, open_db, timing).await
 }
 
 /// An assistant's free text as one app-log line: every run of whitespace
@@ -635,24 +711,68 @@ fn one_short_line(text: &str) -> String {
 }
 
 /// What a prove and a run share once the call is read: every check
-/// together, the one-at-a-time slot, the run, then the bookkeeping - a
-/// proven template saved with its evidence, the run appended to the
-/// template's history, and the tab told. 200 with the report when it
-/// passed, 502 with the report when it did not.
-async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
+/// together; for a template on a flow, the gate - the stages before its own,
+/// asked of the database - before anything else is taken; the one-at-a-time
+/// slot, the run, then the bookkeeping - a proven template saved with its
+/// evidence (on a flow, only once its own stage checks done), the run
+/// appended to the template's history, and the tab told. 200 with the
+/// report when it passed, 502 with the report when it did not.
+///
+/// `open_db` is called at most once, and never for a template on no flow:
+/// those run exactly as they did before flows existed, database or not.
+#[allow(clippy::too_many_arguments)]
+async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
     root: &std::path::Path,
     req: crate::api_templates::runner::RunRequest,
     existing: Option<&crate::api_templates::ApiTemplate>,
     which: crate::browser::launch::Browser,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    use crate::api_templates::runner::{claim, preflight, run_template, Mode};
+    use crate::api_templates::flow::{check_stage_ref, creating_stage};
+    use crate::api_templates::gate::{self, CheckFor, StageState};
+    use crate::api_templates::runner::{claim, preflight, run_template, stage_flow, Mode};
     use crate::api_templates::store::{self, RunRecord};
     use crate::api_templates::{ApiTemplate, Proven};
     if let Err(problems) = preflight(root, &req, existing) {
         return (400, problems.join("\n"));
     }
+    let id = req.template.id.as_str();
+    let (org, project) = (req.org.as_str(), req.project.as_str());
+
+    // The flow preflight has just found. Gone in between - replaced by
+    // another call - is refused as preflight would have refused it.
+    let on_flow = match &req.template.stage {
+        None => None,
+        Some(r) => match stage_flow(root, org, project, &req.template) {
+            Some(f) => Some((f, r.id.clone())),
+            None => return (400, check_stage_ref(&req.template, None).join("\n")),
+        },
+    };
+    // The creating stage has no record to gate on; its prove still needs
+    // the database afterwards, so that is asked for before the browser too,
+    // rather than after the steps have already written.
+    let mut db = None;
+    if let Some((f, stage_id)) = &on_flow {
+        let creates = creating_stage(f).is_some_and(|s| &s.id == stage_id);
+        if !creates || matches!(req.mode, Mode::Prove { .. }) {
+            let d = match open_db(ctx) {
+                Ok(d) => d,
+                Err(refused) => return refused,
+            };
+            if !creates {
+                let value = req.values.get(&f.subject.name).cloned().unwrap_or(serde_json::Value::Null);
+                let templates = saved_templates(root, org, project);
+                if let Err(sentence) = gate::gate(&d, f, stage_id, &value, &templates, id).await {
+                    return (400, sentence);
+                }
+            }
+            db = Some(d);
+        }
+    }
+
     let Some(_claim) = claim() else {
         return (409, API_TEMPLATE_BUSY.to_string());
     };
@@ -660,11 +780,34 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
     let report = run_template(&mut browsers, root, &req, timing).await;
     drop(browsers);
 
-    let id = req.template.id.as_str();
-    let (org, project) = (req.org.as_str(), req.project.as_str());
+    // A proven template on a flow must have done its own stage: the
+    // subject from the values, or - creating it - from what was captured.
+    let mut incomplete = None;
+    if let (true, Mode::Prove { .. }, Some((f, stage_id)), Some(d)) = (report.ok, &req.mode, &on_flow, &db) {
+        if let Some(stage) = f.stages.iter().find(|s| &s.id == stage_id) {
+            let name = &f.subject.name;
+            let value = if stage.creates { report.outputs.get(name) } else { req.values.get(name) }
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let why = CheckFor { purpose: "prove", template: Some(id) };
+            if gate::stage_state(d, f, stage, &value, &why).await != StageState::Done {
+                crate::applog::info(format!(
+                    "api template {id}: every step passed but stage {} is not done, so it was not saved",
+                    stage.id
+                ));
+                incomplete = Some(format!(
+                    "every step passed, but {} is still not done for {name} {}, so the template was not saved; {}",
+                    stage.title,
+                    shown(&value),
+                    report.message()
+                ));
+            }
+        }
+    }
+
     let mut changed = false;
     let mut not_saved = None;
-    if let (true, Mode::Prove { replace, why }) = (report.ok, &req.mode) {
+    if let (true, Mode::Prove { replace, why }, None) = (report.ok, &req.mode, &incomplete) {
         let proven = Proven {
             at: crate::applog::stamp(),
             origin: recipe_origin(root, org, project).unwrap_or_default(),
@@ -714,11 +857,230 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers>(
     if changed {
         templates_changed(id);
     }
+    if let Some(sentence) = incomplete {
+        return (502, sentence);
+    }
     if let Some(sentence) = not_saved {
         return (500, sentence);
     }
     let text = serde_json::to_string(&report).unwrap_or_default();
     (if report.ok { 200 } else { 502 }, text)
+}
+
+const FLOW_SAVE_SHAPE: &str = "{ \"flow\": <the flow>, \"sample\": <the subject of a real record>, \"replace\"?: true, \"why\"?: \"<reason>\" }";
+const FLOW_PROGRESS_SHAPE: &str = "{ \"flow\": \"<flow id>\", \"subject\": <the record's id> }";
+
+/// `POST /api-template-flow-save` (design doc "API template flows" §6): a
+/// flow is saved only once every stage's check has run on `sample`, a real
+/// record - done or not done both fine, a check that could not run is not.
+/// Every problem with the call comes back together, before the database is
+/// asked for. Replacing a saved flow needs `replace: true` and a `why`, and
+/// the answer names the saved templates whose stage it no longer has: they
+/// are refused until a replacement is proven. The tab is told through the
+/// same sink a prove or a run uses. Writes nothing to the application, so
+/// the API templates switch is not needed.
+pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+) -> (u16, String) {
+    use crate::api_templates::flow::{parse_flow, substitute_check, FlowSaved};
+    use crate::api_templates::flow_store;
+    use crate::api_templates::gate::{self, CheckFor, StageState};
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {FLOW_SAVE_SHAPE}.")),
+    };
+    let Some(draft) = json_arg(v.get("flow")) else {
+        return (400, format!("this call needs a \"flow\". Expected {FLOW_SAVE_SHAPE}."));
+    };
+    let sample = match v.get("sample") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(s) => Some(s.clone()),
+    };
+    let replace = v["replace"].as_bool().unwrap_or(false);
+    let why = v["why"].as_str().map(str::to_string);
+    let (org, project) = (ctx.org.as_str(), ctx.project.as_str());
+
+    let mut problems = Vec::new();
+    let parsed = match parse_flow(&draft) {
+        Ok(f) => Some(f),
+        Err(p) => {
+            problems.extend(p);
+            None
+        }
+    };
+    match (&parsed, &sample) {
+        (_, None) => problems.push(format!(
+            "this call needs a \"sample\": the subject of a real record, found with db_query. Expected {FLOW_SAVE_SHAPE}."
+        )),
+        (Some(f), Some(s)) => {
+            if let Some(Err(e)) = f.stages.first().map(|first| substitute_check(&first.check, &f.subject, s)) {
+                problems.push(e);
+            }
+        }
+        (None, Some(_)) => {}
+    }
+    let mut replacing = false;
+    if let Some(f) = &parsed {
+        replacing = match flow_store::load(&root, org, project, &f.id) {
+            Ok(found) => found.is_some(),
+            // A saved file that no longer reads still stands for a flow of
+            // that id, so replacing it needs the same reason.
+            Err(e) => {
+                crate::applog::warn(format!("api template flow {}: the saved copy could not be read: {e}", f.id));
+                true
+            }
+        };
+        let has_why = why.as_deref().is_some_and(|w| !w.trim().is_empty());
+        if replacing && !(replace && has_why) {
+            problems.push(format!(
+                "a flow called \"{}\" already exists - send replace: true and a why to change it",
+                f.id
+            ));
+        }
+    }
+    let (Some(mut f), Some(sample), true) = (parsed, sample, problems.is_empty()) else {
+        return (400, problems.join("\n"));
+    };
+
+    let db = match open_db(ctx) {
+        Ok(d) => d,
+        Err(refused) => return refused,
+    };
+    let checked = CheckFor { purpose: "save", template: None };
+    let mut results: Vec<(String, String, StageState)> = Vec::with_capacity(f.stages.len());
+    for s in &f.stages {
+        let state = gate::stage_state(&db, &f, s, &sample, &checked).await;
+        results.push((s.id.clone(), s.title.clone(), state));
+    }
+    let failed: Vec<String> = results
+        .iter()
+        .filter(|(_, _, st)| *st == StageState::CouldNotRun)
+        .map(|(_, title, _)| {
+            format!(
+                "the check for {title} could not be run on {} {} - see the activity folder in Settings, Logs",
+                f.subject.name,
+                shown(&sample)
+            )
+        })
+        .collect();
+    if !failed.is_empty() {
+        return (400, failed.join("\n"));
+    }
+
+    f.saved = Some(FlowSaved { at: crate::applog::stamp(), sample: sample.clone() });
+    if let Err(e) = flow_store::save(&root, org, project, &f) {
+        crate::applog::warn(format!("api template flow {}: it could not be saved: {e}", f.id));
+        return (500, "the flow could not be saved - see Settings, Logs".to_string());
+    }
+    if replacing {
+        crate::applog::info(format!(
+            "api template flow {} replaced: {}",
+            f.id,
+            one_short_line(why.as_deref().unwrap_or(""))
+        ));
+    }
+
+    let orphaned: Vec<(String, String, String)> = saved_templates(&root, org, project)
+        .into_iter()
+        .filter_map(|s| {
+            let r = s.template.stage?;
+            (r.flow == f.id && !f.stages.iter().any(|st| st.id == r.id))
+                .then_some((s.template.id, s.template.title, r.id))
+        })
+        .collect();
+    let message = if orphaned.is_empty() {
+        format!("flow {} saved; every check ran on {} {}", f.id, f.subject.name, shown(&sample))
+    } else {
+        let ids: Vec<&str> = orphaned.iter().map(|(id, _, _)| id.as_str()).collect();
+        format!(
+            "flow {} saved. These templates perform a stage it no longer has, so they are refused until a replacement is proven: {}",
+            f.id,
+            ids.join(", ")
+        )
+    };
+    templates_changed(&f.id);
+    let stages: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(id, title, st)| serde_json::json!({ "id": id, "title": title, "done": *st == StageState::Done }))
+        .collect();
+    let orphaned: Vec<serde_json::Value> = orphaned
+        .into_iter()
+        .map(|(id, title, stage)| serde_json::json!({ "id": id, "title": title, "stage": stage }))
+        .collect();
+    (
+        200,
+        serde_json::json!({
+            "saved": f.id,
+            "sample": sample,
+            "stages": stages,
+            "orphaned": orphaned,
+            "message": message,
+        })
+        .to_string(),
+    )
+}
+
+/// `POST /api-template-flow-progress`: every stage of a saved flow for one
+/// record, each checked once - `done`, `next`, `blocked`, `skippable` or
+/// `could_not_check` - with the templates on each (design doc §7). Only
+/// reads, so the API templates switch is not needed.
+pub async fn api_template_flow_progress<D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+) -> (u16, String) {
+    use crate::api_templates::flow::substitute_check;
+    use crate::api_templates::{flow_store, gate, valid_id};
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {FLOW_PROGRESS_SHAPE}.")),
+    };
+    let id = match v.get("flow") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return (400, format!("this call needs a \"flow\" id. Expected {FLOW_PROGRESS_SHAPE}.")),
+    };
+    let subject = match v.get("subject") {
+        None | Some(serde_json::Value::Null) => {
+            return (400, format!("this call needs a \"subject\": the record's id. Expected {FLOW_PROGRESS_SHAPE}."))
+        }
+        Some(s) => s.clone(),
+    };
+    let not_saved =
+        || format!("no flow called \"{id}\" is saved for this project - list_api_templates shows the ones that are");
+    if !valid_id(&id) {
+        return (400, not_saved());
+    }
+    let f = match flow_store::load(&root, &ctx.org, &ctx.project, &id) {
+        Ok(Some(f)) => f,
+        Ok(None) => return (400, not_saved()),
+        Err(e) => {
+            crate::applog::warn(format!("api template flow {id}: it could not be read: {e}"));
+            return (400, format!("flow {id} could not be read - save it again with save_api_flow"));
+        }
+    };
+    // The wrong type is said before any database is asked for.
+    if let Some(Err(e)) = f.stages.first().map(|first| substitute_check(&first.check, &f.subject, &subject)) {
+        return (400, e);
+    }
+    let db = match open_db(ctx) {
+        Ok(d) => d,
+        Err(refused) => return refused,
+    };
+    let templates = saved_templates(&root, &ctx.org, &ctx.project);
+    match gate::progress(&db, &f, &subject, &templates).await {
+        Ok(stages) => (200, serde_json::json!({ "flow": f.id, "subject": subject, "stages": stages }).to_string()),
+        Err(e) => (400, e),
+    }
 }
 
 /// Said when a page route arrives with no browser behind it. The person
@@ -1060,6 +1422,38 @@ fn db_ready(
     let exe = crate::db::sqlcmd_path()
         .ok_or_else(|| (409, crate::db::NOT_INSTALLED.to_string()))?;
     Ok((connection, exe))
+}
+
+/// Said when a template on a flow is proven or run with no database chosen:
+/// its gate is a set of database checks, so without one it cannot run.
+pub const FLOW_NEEDS_DB: &str =
+    "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
+
+/// The chosen database as the place flow checks are asked, with
+/// `db_ready`'s refusals as they are - what saving a flow and a flow's
+/// progress answer with.
+fn stage_db(
+    ctx: &BridgeContext,
+) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
+    let (conn, exe) = db_ready(ctx)?;
+    Ok(crate::api_templates::gate::SqlcmdStageDb { runner: crate::db::RealRunner, exe, conn })
+}
+
+/// The database a prove or a run of a template on a flow gates on. With
+/// nothing chosen the answer says why a template needs one at all
+/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; every other refusal -
+/// no login saved, a store that cannot be read, no sqlcmd - is
+/// `db_ready`'s, unchanged.
+pub fn real_stage_db(
+    ctx: &BridgeContext,
+) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
+    stage_db(ctx).map_err(|(status, why)| {
+        if why == crate::db::query::NO_CONNECTION {
+            (status, FLOW_NEEDS_DB.to_string())
+        } else {
+            (status, why)
+        }
+    })
 }
 
 /// A body's JSON, parsed once, or the refusal that names what could not be

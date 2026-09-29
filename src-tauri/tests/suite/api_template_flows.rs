@@ -750,8 +750,10 @@ mod gate_tests {
 
     #[test]
     fn every_check_is_in_the_activity_log_and_no_sql_in_the_app_log() {
-        let _g = crate::serial::activity_log();
+        // log_tail before activity_log, the order every other module takes
+        // them in - the other way round deadlocks against those tests.
         let _l = crate::serial::log_tail();
+        let _g = crate::serial::activity_log();
         let dir = tempfile::tempdir().unwrap();
         v2_lib::activity_log::init(dir.path().to_path_buf());
 
