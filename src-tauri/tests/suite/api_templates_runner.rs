@@ -268,6 +268,19 @@ fn answer(status: u16, body: Value) -> Value {
     })
 }
 
+/// A 400 with no body: the application refused the request before any
+/// handler read it (hosted PeoplesHR does this at busy moments, and when
+/// the account's session was taken over).
+fn empty_400() -> Value {
+    json!({
+        "status": 400,
+        "contentType": "",
+        "finalUrl": "https://hr.example.internal/hr/pmsv10/performancecycle?handler=x",
+        "redirected": false,
+        "text": "",
+    })
+}
+
 /// The activity records of requests the page made - not the token page's.
 fn step_records(records: &[Value]) -> Vec<&Value> {
     records.iter().filter(|r| r.get("step").is_some()).collect()
@@ -1276,4 +1289,81 @@ async fn cookies_that_cannot_be_read_do_not_stop_the_run() {
     for step in step_records(&records) {
         assert_eq!(step["cookies_sent"], Value::Null, "{step}");
     }
+}
+
+/// An empty 400 means the application refused the request before reading
+/// it, so nothing was saved and trying again is safe. The step is sent once
+/// more with a fresh token, the run goes on, and each attempt has its own
+/// activity record.
+#[tokio::test]
+async fn an_empty_400_is_retried_once_with_a_fresh_token() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(
+        vec![empty_400(), answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    let report = run(&mut r, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(report.outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
+    assert_eq!(report.steps.len(), 2, "one report line per step, retry or not: {:?}", report.steps);
+    assert_eq!(r.fetched().len(), 3, "step 1 twice, step 2 once");
+    assert_eq!(r.navigations_to_the_page(), 2, "a fresh token was read before the retry");
+
+    let records = activity_records(activity.path(), "api");
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 3, "{records:?}");
+    assert_eq!((steps[0]["step"].as_str(), steps[0]["status"].as_u64(), steps[0]["attempt"].as_u64()), (Some("Cycle setup"), Some(400), Some(1)));
+    assert_eq!((steps[1]["step"].as_str(), steps[1]["status"].as_u64(), steps[1]["attempt"].as_u64()), (Some("Cycle setup"), Some(200), Some(2)));
+    assert_eq!(steps[2]["attempt"].as_u64(), Some(1));
+    assert!(
+        v2_lib::applog::recent(400).iter().any(|l| l.message.contains("Cycle setup") && l.message.contains("empty 400")),
+        "the retry was not logged"
+    );
+}
+
+/// Refused unread twice: the step fails, and says so in words a person can act on.
+#[tokio::test]
+async fn an_empty_400_twice_fails_the_step() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![empty_400(), empty_400()], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
+    let detail = &report.steps.last().unwrap().detail;
+    assert!(detail.contains("empty 400") && detail.contains("second try"), "{detail}");
+    assert_eq!(r.fetched().len(), 2, "one retry, no more");
+    assert_eq!(r.browsers.closed, 1);
+}
+
+/// A 400 WITH a body was read and answered by the application: it is a real
+/// refusal, and sending it again would only repeat it.
+#[tokio::test]
+async fn a_400_with_a_body_is_not_retried() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![answer(400, json!({ "errors": ["The cycle name is required."] }))], None);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert_eq!(r.fetched().len(), 1);
+    let detail = &report.steps.last().unwrap().detail;
+    assert!(detail.contains("expected status 200, got 400") && detail.contains("cycle name is required"), "{detail}");
+}
+
+/// A step that expects a 400 gets one, empty or not: nothing to retry.
+#[tokio::test]
+async fn a_step_that_expects_a_400_is_not_retried() {
+    let _act = crate::serial::activity_log();
+    let mut t = template();
+    t.steps.truncate(1);
+    t.steps[0].expect.status = 400;
+    t.steps[0].expect.json = None;
+    t.steps[0].capture.clear();
+    t.outputs.clear();
+    let mut r = rig(vec![empty_400()], None);
+    let report = run(&mut r, t).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(r.fetched().len(), 1);
 }

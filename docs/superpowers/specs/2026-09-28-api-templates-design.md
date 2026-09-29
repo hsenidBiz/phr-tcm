@@ -210,6 +210,16 @@ and **run** (a saved template).
      the run.**
    - A step whose final URL is the login page fails the run; the runner
      does not sign in again halfway through.
+   - **One retry, for one case** (2026-09-29): a 400 with an EMPTY body
+     (on a step that does not expect a 400) means the application refused
+     the request before any handler read it - hosted PeoplesHR does this at
+     busy moments and when the account's session was taken over - so
+     nothing was saved. After a one-second pause the runner reads a fresh
+     token (which signs in again if the session had ended) and sends the
+     step once more. Each attempt has its own activity record (`attempt` 1
+     or 2); a second empty 400 fails the step, saying it was refused the
+     same way twice. A 400 with a body is a real refusal and is never
+     retried.
    - **No rollback.** A failed run reports exactly which steps landed and
      what they captured: `cycleId 274 created; failed at Evaluation rules:
      400 ...`. The application has no undo, and nothing is reversed

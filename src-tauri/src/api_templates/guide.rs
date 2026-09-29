@@ -83,6 +83,12 @@ with every problem listed together:
   anyone who signs in as it while a template runs ends the run's session,
   which shows as an empty 400 partway through. Run templates as an account
   nobody is using by hand.
+- An empty 400 means the application refused a request before reading it
+  (a busy moment on a shared server does it too), so nothing was saved:
+  the runner sends that step once more with a fresh token before failing
+  it. A step that fails "refused the same way on a second try" needs a
+  quiet moment or the account's other session closed - not a changed
+  template.
 - A step has at most one body: `json` (any JSON value) or `form` (string
   values, sent as multipart/form-data - what the application's own forms
   send). File fields are not supported.

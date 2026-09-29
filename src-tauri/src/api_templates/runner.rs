@@ -474,7 +474,7 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
     progress.signed_in(ctx.id(), &ctx.account.key, &signed);
 
     progress.at(TOKEN_PAGE, None);
-    let Some((doc, token)) = token(d, &ctx, progress).await else { return };
+    let Some((mut doc, mut token)) = token(d, &ctx, progress).await else { return };
 
     let mut vars: BTreeMap<String, Value> = req.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     for step in &req.template.steps {
@@ -482,8 +482,32 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
         d.set_deadline(Some(Instant::now() + STEP_LIMIT));
-        let result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress).await;
+        let mut result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
         d.set_deadline(None);
+        // Refused before any handler read it: nothing was saved, so it is
+        // sent once more - after a pause, with a fresh token (reading one
+        // signs in again if the session had ended). Once, never more.
+        if matches!(&result, Err(f) if f.unread) {
+            applog::info(format!(
+                "api template {}: step {} was refused unread (an empty 400) - trying once more with a fresh token",
+                ctx.id(),
+                step.name
+            ));
+            tokio::time::sleep(RETRY_PAUSE).await;
+            progress.at(TOKEN_PAGE, None);
+            // `self::` because the loop's own `token` (the string) shadows the function.
+            let Some((fresh_doc, fresh_token)) = self::token(d, &ctx, progress).await else { return };
+            (doc, token) = (fresh_doc, fresh_token);
+            progress.at(&step.name, handler.clone());
+            d.set_deadline(Some(Instant::now() + STEP_LIMIT));
+            result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 2).await.map_err(|mut f| {
+                if f.unread {
+                    f.detail = format!("{} - it was refused the same way on a second try", f.detail);
+                }
+                f
+            });
+            d.set_deadline(None);
+        }
         match result {
             Ok((status, detail)) => progress.steps.push(StepReport {
                 name: step.name.clone(),
@@ -492,7 +516,7 @@ async fn drive<D: Driver>(d: &mut D, root: &Path, req: &RunRequest, timing: &Tim
                 ok: true,
                 detail,
             }),
-            Err((status, detail)) => return progress.fail(status, detail),
+            Err(StepFailure { status, detail, .. }) => return progress.fail(status, detail),
         }
     }
     progress.finished = true;
@@ -586,7 +610,31 @@ fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
     }
 }
 
-type StepResult = Result<(u16, String), (Option<u16>, String)>;
+/// Why a step failed. `unread` marks the one failure worth a second try: a
+/// 400 with no body, which the application sends when it refuses a request
+/// before any handler reads it (hosted PeoplesHR does this at busy moments
+/// and when the account's session was taken over) - so nothing was saved,
+/// and sending it again with a fresh token cannot save anything twice.
+struct StepFailure {
+    status: Option<u16>,
+    detail: String,
+    unread: bool,
+}
+
+impl From<(Option<u16>, String)> for StepFailure {
+    fn from((status, detail): (Option<u16>, String)) -> Self {
+        StepFailure { status, detail, unread: false }
+    }
+}
+
+type StepResult = Result<(u16, String), StepFailure>;
+
+/// How long to wait before sending a step the application refused unread.
+pub const RETRY_PAUSE: Duration = Duration::from_secs(1);
+
+/// The sentence for a step refused unread, as the person reads it.
+const REFUSED_UNREAD: &str = "the application refused this request without reading it (an empty 400) - \
+     usually a busy moment on the server, or this account being signed in somewhere else";
 
 /// One step: build it, send it from the page, check it, capture from it.
 /// Every request the page actually made is written to the activity log,
@@ -601,6 +649,7 @@ async fn run_step<D: Driver>(
     handler: Option<&str>,
     vars: &mut BTreeMap<String, Value>,
     progress: &mut Progress,
+    attempt: u8,
 ) -> StepResult {
     let mut built = build_request(step, vars).map_err(|e| (None, e))?;
     let adapted = adapt_path_case(d, ctx, step, &mut built).await;
@@ -620,12 +669,13 @@ async fn run_step<D: Driver>(
         response: "",
         cookies: cookies_sent.as_deref(),
         path_case_adapted: adapted.as_ref(),
+        attempt,
     };
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
             record(ctx, step, &built, handler, &sent, token);
-            return Err((None, browser_failed(ctx, step, &e)));
+            return Err((None, browser_failed(ctx, step, &e)).into());
         }
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
@@ -634,7 +684,7 @@ async fn run_step<D: Driver>(
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
-            return Err((None, STEP_TOO_LONG.to_string()));
+            return Err((None, STEP_TOO_LONG.to_string()).into());
         }
         applog::warn(format!(
             "api template {}: step {}: the request did not complete: {}",
@@ -642,7 +692,7 @@ async fn run_step<D: Driver>(
             step.name,
             excerpt(&scrub_tokens(&plain(err), Some(token)))
         ));
-        return Err((None, "the request did not complete - see Settings, Logs".to_string()));
+        return Err((None, "the request did not complete - see Settings, Logs".to_string()).into());
     }
     let Some(status) = status else {
         // Only the answer's shape: whatever it carries may be the body.
@@ -651,7 +701,7 @@ async fn run_step<D: Driver>(
             None => "something that is not an object".to_string(),
         };
         applog::warn(format!("api template {}: step {}: the page answered {keys}", ctx.id(), step.name));
-        return Err((None, "the page gave no answer for this request - see Settings, Logs".to_string()));
+        return Err((None, "the page gave no answer for this request - see Settings, Logs".to_string()).into());
     };
 
     let final_url = answer["finalUrl"].as_str().unwrap_or("");
@@ -662,7 +712,11 @@ async fn run_step<D: Driver>(
             step.name,
             path_of(final_url)
         ));
-        return Err((Some(status), "was sent to another page - the session may have ended".to_string()));
+        return Err((Some(status), "was sent to another page - the session may have ended".to_string()).into());
+    }
+
+    if status == 400 && text.trim().is_empty() && step.expect.status != 400 {
+        return Err(StepFailure { status: Some(400), detail: REFUSED_UNREAD.to_string(), unread: true });
     }
 
     let parsed = check_expect(&step.expect, status, text).map_err(|e| {
@@ -677,7 +731,7 @@ async fn run_step<D: Driver>(
     for (name, path) in &step.capture {
         let segs = parse_capture_path(path).map_err(|e| (Some(status), e))?;
         let Some(value) = parsed.as_ref().and_then(|body| capture(body, &segs)) else {
-            return Err((Some(status), format!("capture {name} found nothing at {path}")));
+            return Err((Some(status), format!("capture {name} found nothing at {path}")).into());
         };
         // Later steps get what was captured; the report - and everything
         // built from it - only ever gets it without a token in it.
@@ -712,6 +766,8 @@ struct Sent<'a> {
     /// `{ from, to, cookie }` when the step's path was sent in a cookie's
     /// letter case - see `adapt_path_case`.
     path_case_adapted: Option<&'a Value>,
+    /// 1, or 2 for the one retry of a step the application refused unread.
+    attempt: u8,
 }
 
 /// One activity record for a request the page made. Never a token: the
@@ -736,6 +792,7 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
             "response": shown(sent.response, token),
             "cookies_sent": sent.cookies,
             "path_case_adapted": sent.path_case_adapted,
+            "attempt": sent.attempt,
         }),
     );
 }
