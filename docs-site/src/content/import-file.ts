@@ -735,6 +735,7 @@ export const importFile: Screen = {
         "Every case is listed with its **NEW** or **UPDATE** mark. Search, and narrow the search to one field (title, ID, prerequisites, steps, tags or module). What it finds is highlighted in each case.",
         "The switches at the end of the search box change how it matches: [[Aa]] matches case, [[ab]] matches whole words only, and [[.*]] searches with a regular expression ([[Alt+C]], [[Alt+W]] and [[Alt+R]] while typing). Put words in quotes to find them together, as written.",
         "Type in the comment box under a case, or in the notes about the whole set. They save by themselves into the file the cases came from.",
+        "To have them dealt with, ask your AI assistant: **Address the comments I made for the test cases**. It reads each comment and fixes the cases in the file. The Review page section has every part of the page.",
         "Press the bookmark on a case to mark where you stopped; **Go to bookmark** brings you back to it later.",
         "**Options** hides the reviewer notes, the findings or the spec pane, and opens the Test map with **View as Tree**. Under **Show on cards**, untick Automation Status, Module or Tags to hide them from every case.",
         "Keep the page open: when the queue changes, a bar offers to refresh it.",

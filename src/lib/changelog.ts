@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.4-beta.3",
+    date: "2026-09-29",
+    items: [
+      "How To Use has a new Review page section: every search option and button on the page that opens with View in browser, and its Test map. It also shows how to ask your AI assistant to address the comments you left on the test cases.",
+      "The interface tour no longer opens a second time when you skip it straight after signing in for the first time.",
+    ],
+  },
+  {
     version: "2.0.4-beta.2",
     date: "2026-09-28",
     items: [

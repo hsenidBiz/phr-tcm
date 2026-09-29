@@ -847,7 +847,11 @@ export default function App() {
   useEffect(() => {
     // Capture mode: the guided tour must never auto-open over a shot.
     if (signedIn && !tourDone() && !isCaptureMode()) {
-      const t = setTimeout(startTour, 800);
+      // Asked again when it fires: a tour opened by hand and skipped inside
+      // the 800 ms has marked itself seen, and must not open a second time.
+      const t = setTimeout(() => {
+        if (!tourDone()) startTour();
+      }, 800);
       return () => clearTimeout(t);
     }
   }, [signedIn, startTour]);
