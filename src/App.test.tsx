@@ -1132,6 +1132,49 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   expect(localStorage.getItem("tcm-v2-cache:suite-seed:Northwind/4821")).toBeNull();
 });
 
+// The first-run tour opens itself 800 ms after sign-in. A tour opened by
+// hand and skipped inside that window marked itself seen - and the timer,
+// set before that, still fired and opened it again, sample queue and all.
+// Whether a test walked the tour faster than 800 ms was down to machine
+// load, which is how this surfaced: as a flake in the test above.
+test("a tour skipped before the first-run timer fires stays closed", async () => {
+  // Only the scheduling primitives, as in the update-check test below.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
+  const tick = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+  try {
+    localStorage.setItem(
+      "tcm-v2-prefs",
+      JSON.stringify({ org: "acme", project: "Payments", section: "manual", pbi: null, workMode: false }),
+    );
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+      if (cmd === "list_plans_with_suites") return [];
+      if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    });
+    renderApp();
+    await tick(50);
+    expect(screen.getByText("a@b.com")).toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new Event(START_TOUR_EVENT));
+    });
+    expect(screen.getByRole("dialog", { name: "Interface tour" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Skip tour"));
+
+    await tick(2_000);
+    expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Guest checkout/)).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 // The walk above starts from Manual Entry, which stop 2 navigates to
 // anyway - so it never actually asked whether the section is put back.
 // Settings is where most people press "Show UI tour", which makes it the
