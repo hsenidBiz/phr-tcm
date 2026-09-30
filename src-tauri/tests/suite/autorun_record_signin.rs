@@ -126,6 +126,10 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     assert!(!LISTENER_JS.contains(".value"), "the listener must never read a value");
     assert!(!LISTENER_JS.contains("'value'") && !LISTENER_JS.contains("\"value\""), "nor a value attribute");
     assert!(LISTENER_JS.contains(BINDING));
+    assert!(
+        LISTENER_JS.contains("near.querySelector('input,textarea,select,[contenteditable]')"),
+        "a click on or around a field sends no words"
+    );
     for ev in ["'input'", "'change'", "'focusout'", "'keydown'", "'click'"] {
         assert!(LISTENER_JS.contains(&format!("addEventListener({ev}")), "listens for {ev}");
     }

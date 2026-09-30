@@ -69,7 +69,10 @@ pub const LISTENER_JS: &str = r#"(() => {
   const isPassword = (el) => el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'password';
   const clicked = (ev, el) => {
     const near = el.closest('a,button,summary,[role]') || el;
-    const quiet = el.isContentEditable || near.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+    // No words at all from a click on, or around, anything a person can
+    // type into: a region's text would carry what was typed there.
+    const quiet = el.isContentEditable || near.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
+      || !!near.querySelector('input,textarea,select,[contenteditable]');
     send({
       ev: ev,
       i: hold(el),
