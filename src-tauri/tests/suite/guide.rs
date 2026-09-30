@@ -1,13 +1,18 @@
 //! The guide on disk: its fingerprint, its installed record, and whether
-//! it is current. Pure file logic - nothing here touches the network.
+//! it is current; then fetching it through a `GuideSource` - here always a
+//! scripted fake, so nothing touches the network.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
+use tokio::sync::oneshot;
 use v2_lib::guide::{
-    adopt_legacy, fingerprint, install, read_installed, state_for, unpack, GuideState, Installed,
-    Published, DAMAGED,
+    adopt_legacy, download, fingerprint, forget_published, guide_url, install, installed_index,
+    read_installed, state_for, status, unpack, GuideSource, GuideState, Installed, Published,
+    DAMAGED, DOWNLOAD_FAILED, MAX_ZIP_BYTES, NOT_PUBLISHED,
 };
 
 fn hex(bytes: &[u8]) -> String {
@@ -341,4 +346,310 @@ fn a_fingerprint_that_is_not_a_plain_name_is_refused() {
         assert_eq!(install(&help, &zip_path, &published_for(&zip_path, fp)), Err(DAMAGED.to_string()));
     }
     assert!(incoming_left(&help).is_empty());
+}
+
+// ---- Fetching: status, download, and what to open -----------------------
+
+/// A scripted release: answers `published` with `answer`, and "downloads"
+/// `zip` in two halves (reporting progress after each) - or, with
+/// `fail_midway`, writes the first half and then drops the connection.
+/// `started`/`gate` let a test hold a download open.
+struct FakeGuide {
+    answer: Result<Option<Published>, String>,
+    zip: Vec<u8>,
+    fail_midway: bool,
+    asked: AtomicU32,
+    downloads: AtomicU32,
+    written_to: Mutex<Option<PathBuf>>,
+    started: Mutex<Option<oneshot::Sender<()>>>,
+    gate: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl FakeGuide {
+    fn new(answer: Result<Option<Published>, String>, zip: Vec<u8>) -> Self {
+        FakeGuide {
+            answer,
+            zip,
+            fail_midway: false,
+            asked: AtomicU32::new(0),
+            downloads: AtomicU32::new(0),
+            written_to: Mutex::new(None),
+            started: Mutex::new(None),
+            gate: Mutex::new(None),
+        }
+    }
+    fn asked(&self) -> u32 {
+        self.asked.load(Ordering::SeqCst)
+    }
+    fn downloads(&self) -> u32 {
+        self.downloads.load(Ordering::SeqCst)
+    }
+    fn written_to(&self) -> PathBuf {
+        self.written_to.lock().unwrap().clone().expect("the fake was asked to download")
+    }
+}
+
+impl GuideSource for FakeGuide {
+    async fn published(&self) -> Result<Option<Published>, String> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        self.answer.clone()
+    }
+
+    async fn download(&self, to: &Path, on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<(), String> {
+        self.downloads.fetch_add(1, Ordering::SeqCst);
+        *self.written_to.lock().unwrap() = Some(to.to_path_buf());
+        let started = self.started.lock().unwrap().take();
+        if let Some(tx) = started {
+            let _ = tx.send(());
+        }
+        let gate = self.gate.lock().unwrap().take();
+        if let Some(rx) = gate {
+            let _ = rx.await;
+        }
+        let total = self.zip.len() as u64;
+        let half = self.zip.len() / 2;
+        fs::write(to, &self.zip[..half]).map_err(|e| e.to_string())?;
+        on_progress(half as u64, total);
+        if self.fail_midway {
+            return Err("connection reset at 50%".to_string());
+        }
+        fs::write(to, &self.zip).map_err(|e| e.to_string())?;
+        on_progress(total, total);
+        Ok(())
+    }
+}
+
+/// A good guide zip and the json a release would publish for it.
+fn release(dir: &Path, fp: &str) -> (Vec<u8>, Published) {
+    let zip_path = dir.join("release.zip");
+    zip_of(&zip_path, &[("index.html", b"<html>new"), ("img/a.jpg", &[1, 2, 3])]);
+    let p = published_for(&zip_path, fp);
+    (fs::read(&zip_path).unwrap(), p)
+}
+
+#[test]
+fn the_urls_point_only_at_the_release() {
+    assert_eq!(
+        guide_url("2.0.6-beta.1", "how-to-use.json"),
+        "https://github.com/hsenidBiz/phr-tcm/releases/download/v2.0.6-beta.1/how-to-use.json"
+    );
+    assert_eq!(
+        guide_url("2.0.6", "how-to-use.zip"),
+        "https://github.com/hsenidBiz/phr-tcm/releases/download/v2.0.6/how-to-use.zip"
+    );
+}
+
+#[tokio::test]
+async fn the_status_asks_the_release_once() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    old_guide(&help);
+    let (zip, p) = release(dir.path(), &"b".repeat(64));
+    let size = p.size as u32;
+    let fake = FakeGuide::new(Ok(Some(p)), zip);
+
+    for _ in 0..3 {
+        let s = status(&help, &fake).await;
+        assert_eq!(s.state, GuideState::UpdateAvailable);
+        assert_eq!(s.size, Some(size));
+    }
+    assert_eq!(fake.asked(), 1, "the json is fetched once per run");
+    forget_published();
+}
+
+#[tokio::test]
+async fn offline_is_ready_never_update() {
+    let _g = crate::serial::guide();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let offline = FakeGuide::new(Err("no route to host".into()), Vec::new());
+
+    // Nothing on disk: Download is offered, and no error comes back.
+    forget_published();
+    let s = status(&help, &offline).await;
+    assert_eq!((s.state, s.size), (GuideState::NotDownloaded, None));
+
+    // A guide adopted from an older install has no fingerprint, but offline
+    // it is Ready like any other - never an Update it cannot fetch.
+    forget_published();
+    put(&help, "2.0.4/index.html", b"legacy");
+    let s = status(&help, &offline).await;
+    assert_eq!((s.state, s.size), (GuideState::Ready, None));
+    assert_eq!(offline.asked(), 2);
+
+    // The offline answer is kept for the run: asking again does not refetch...
+    assert_eq!(status(&help, &offline).await.state, GuideState::Ready);
+    assert_eq!(offline.asked(), 2);
+    // ...but a Download the person asked for does try again.
+    assert_eq!(download(&help, &offline, |_, _| {}).await, Err(DOWNLOAD_FAILED.to_string()));
+    assert_eq!(offline.asked(), 3);
+    assert_eq!(offline.downloads(), 0);
+    assert_eq!(fs::read(help.join("2.0.4/index.html")).unwrap(), b"legacy");
+    forget_published();
+}
+
+#[tokio::test]
+async fn a_download_installs_and_reports_progress() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    old_guide(&help);
+    let fp = "c".repeat(64);
+    let (zip, p) = release(dir.path(), &fp);
+    let total = p.size;
+    let fake = FakeGuide::new(Ok(Some(p)), zip);
+
+    let mut seen = Vec::new();
+    let index = download(&help, &fake, |r, t| seen.push((r, t))).await.expect("downloaded");
+
+    assert_eq!(index, help.join(&fp).join("index.html"));
+    assert_eq!(fs::read(&index).unwrap(), b"<html>new");
+    assert_eq!(read_installed(&help).unwrap().0.fingerprint.as_deref(), Some(fp.as_str()));
+    assert!(!help.join("old").exists(), "the old guide is replaced");
+    assert_eq!(seen.last(), Some(&(total, total)));
+    assert!(seen.len() >= 2, "progress is reported as it goes: {seen:?}");
+
+    // The zip was a temp file outside help/, and it is gone.
+    let tmp = fake.written_to();
+    assert!(tmp.starts_with(std::env::temp_dir()), "{}", tmp.display());
+    assert!(!tmp.starts_with(&help));
+    assert!(!tmp.exists());
+    assert!(incoming_left(&help).is_empty());
+
+    // Straight after, the guide reads Ready - without asking the release again.
+    let s = status(&help, &fake).await;
+    assert_eq!(s.state, GuideState::Ready);
+    assert_eq!(fake.asked(), 1);
+    assert_eq!(installed_index(&help), Some(index));
+    forget_published();
+}
+
+#[tokio::test]
+async fn a_failed_download_leaves_the_old_guide_and_no_temp_file() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let rec = old_guide(&help);
+    let (zip, p) = release(dir.path(), &"d".repeat(64));
+    let mut fake = FakeGuide::new(Ok(Some(p)), zip);
+    fake.fail_midway = true;
+
+    assert_eq!(download(&help, &fake, |_, _| {}).await, Err(DOWNLOAD_FAILED.to_string()));
+
+    assert_eq!(fs::read(help.join("old/index.html")).unwrap(), b"old");
+    assert_eq!(fs::read_to_string(help.join("installed.json")).unwrap(), rec);
+    assert_eq!(names_in(&help), vec!["installed.json".to_string(), "old".to_string()]);
+    assert!(!fake.written_to().exists(), "the half-written zip is removed");
+    assert_eq!(installed_index(&help), Some(help.join("old").join("index.html")));
+    forget_published();
+}
+
+#[tokio::test]
+async fn a_damaged_download_is_not_kept_and_no_temp_file_is_left() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let rec = old_guide(&help);
+    let (mut zip, p) = release(dir.path(), &"e".repeat(64));
+    let last = zip.len() - 1;
+    zip[last] ^= 0xff; // same size, wrong checksum
+    let fake = FakeGuide::new(Ok(Some(p)), zip);
+
+    assert_eq!(download(&help, &fake, |_, _| {}).await, Err(DAMAGED.to_string()));
+    assert_eq!(fs::read_to_string(help.join("installed.json")).unwrap(), rec);
+    assert!(!fake.written_to().exists());
+    assert!(incoming_left(&help).is_empty());
+    forget_published();
+}
+
+#[tokio::test]
+async fn not_published_says_so() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    old_guide(&help);
+    let fake = FakeGuide::new(Ok(None), Vec::new());
+
+    // Nothing to compare against: the guide on disk is Ready.
+    assert_eq!(status(&help, &fake).await.state, GuideState::Ready);
+    assert_eq!(download(&help, &fake, |_, _| {}).await, Err(NOT_PUBLISHED.to_string()));
+    assert_eq!(fake.downloads(), 0);
+    assert_eq!(fs::read(help.join("old/index.html")).unwrap(), b"old");
+    forget_published();
+}
+
+#[tokio::test]
+async fn an_unusable_published_json_is_ignored() {
+    let _g = crate::serial::guide();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    old_guide(&help);
+    let (zip, good) = release(dir.path(), &"f".repeat(64));
+
+    let mut upper = good.clone();
+    upper.sha256 = upper.sha256.to_uppercase();
+    let mut short_fp = good.clone();
+    short_fp.fingerprint = "abc".into();
+    let mut not_hex = good.clone();
+    not_hex.fingerprint = "g".repeat(64);
+    let mut too_big = good.clone();
+    too_big.size = MAX_ZIP_BYTES + 1;
+
+    for bad in [upper, short_fp, not_hex, too_big] {
+        forget_published();
+        let fake = FakeGuide::new(Ok(Some(bad)), zip.clone());
+        let s = status(&help, &fake).await;
+        assert_eq!((s.state, s.size), (GuideState::Ready, None), "treated as could not be fetched");
+        assert_eq!(download(&help, &fake, |_, _| {}).await, Err(DOWNLOAD_FAILED.to_string()));
+        assert_eq!(fake.downloads(), 0);
+    }
+    assert_eq!(fs::read(help.join("old/index.html")).unwrap(), b"old");
+    forget_published();
+}
+
+#[tokio::test]
+async fn a_second_download_while_one_runs_is_refused() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let fp = "a".repeat(64);
+    let (zip, p) = release(dir.path(), &fp);
+    let (started_tx, started_rx) = oneshot::channel();
+    let (gate_tx, gate_rx) = oneshot::channel();
+    let fake = Arc::new(FakeGuide::new(Ok(Some(p)), zip));
+    *fake.started.lock().unwrap() = Some(started_tx);
+    *fake.gate.lock().unwrap() = Some(gate_rx);
+
+    let first = {
+        let (fake, help) = (fake.clone(), help.clone());
+        tokio::spawn(async move { download(&help, &*fake, |_, _| {}).await })
+    };
+    started_rx.await.unwrap();
+
+    assert_eq!(download(&help, &*fake, |_, _| {}).await, Err(DOWNLOAD_FAILED.to_string()));
+    gate_tx.send(()).unwrap();
+    assert_eq!(first.await.unwrap(), Ok(help.join(&fp).join("index.html")));
+    assert_eq!(fake.downloads(), 1, "one download");
+
+    // The claim is released once the first finishes.
+    assert!(download(&help, &*fake, |_, _| {}).await.is_ok());
+    forget_published();
+}
+
+#[test]
+fn the_guide_to_open_is_the_installed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    assert_eq!(installed_index(&help), None);
+
+    // An older install's guide is adopted and opened.
+    put(&help, "2.0.4/index.html", b"legacy");
+    assert_eq!(installed_index(&help), Some(help.join("2.0.4").join("index.html")));
 }

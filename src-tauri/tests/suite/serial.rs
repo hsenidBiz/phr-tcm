@@ -75,3 +75,12 @@ pub fn api_template_run() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The guide's once-per-run published answer (`guide::forget_published`)
+/// and its one-at-a-time download claim: a cached answer from one test
+/// would be another test's answer, and a claim held by one would refuse
+/// another's download.
+pub fn guide() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

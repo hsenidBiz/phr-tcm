@@ -189,3 +189,12 @@ pub struct ApiTemplatesChanged {
     pub id: String,
 }
 
+/// Emitted while How To Use downloads, so Settings can show "12 of 31 MB".
+/// Bytes; u32 because specta refuses u64, and the zip is capped at 200 MB.
+/// `total` is the zip's size (the server's, else the release's json).
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct GuideProgress {
+    pub received: u32,
+    pub total: u32,
+}
+

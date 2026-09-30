@@ -1,17 +1,23 @@
 //! The How To Use guide as a download rather than part of the exe: what is
 //! on disk, how it is fingerprinted, and whether it is current.
 //!
-//! Pure file logic - no network, no Tauri commands. On disk, under the
-//! app's `help/` folder:
+//! On disk, under the app's `help/` folder:
 //!
 //! - `help/<folder>/index.html` - a guide (a downloaded one is filed under
 //!   its fingerprint; one adopted from an older install keeps the version
 //!   number it was unpacked under),
 //! - `help/installed.json` - which folder is current.
+//!
+//! The network is behind `GuideSource`: `GithubGuide` fetches from this
+//! version's own release and nowhere else, and the tests script a fake. No
+//! Tauri commands live here (see `commands/guide.rs`).
 
-use std::io::Read;
+use std::future::Future;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -335,4 +341,284 @@ fn install_inner(help_root: &Path, zip_path: &Path, published: &Published) -> Re
         }
     }
     Ok(target.join("index.html"))
+}
+
+/// The installed guide's `index.html` - the one Settings opens - after
+/// adopting an older install's guide if there is no record yet. None when
+/// no guide is on disk.
+pub fn installed_index(help_root: &Path) -> Option<PathBuf> {
+    adopt_legacy(help_root);
+    read_installed(help_root).map(|(_, folder)| folder.join("index.html"))
+}
+
+// ---- Fetching ---------------------------------------------------------------
+
+/// The two files a release publishes for the guide.
+pub const GUIDE_JSON: &str = "how-to-use.json";
+pub const GUIDE_ZIP: &str = "how-to-use.zip";
+
+/// Where a release's guide files are: github.com itself (not the API - the
+/// updater's reason for its mirror holds here too), under this version's
+/// own tag. The only addresses the guide is ever fetched from.
+pub fn guide_url(version: &str, file: &str) -> String {
+    format!("https://github.com/hsenidBiz/phr-tcm/releases/download/v{version}/{file}")
+}
+
+/// Where the guide comes from. `GithubGuide` in the app; a scripted fake in
+/// the tests.
+pub trait GuideSource {
+    /// This version's `how-to-use.json`. `Ok(None)` when the release has
+    /// none (a 404); `Err` carries the raw reason for the log.
+    fn published(&self) -> impl Future<Output = Result<Option<Published>, String>>;
+
+    /// Write the zip to `to`, calling `on_progress(received, total)` as the
+    /// bytes arrive (`total` is 0 when the server did not say). `Err`
+    /// carries the raw reason for the log; `to` may then hold part of it.
+    /// `Send` because the download runs inside an async command.
+    fn download(
+        &self,
+        to: &Path,
+        on_progress: &mut (dyn FnMut(u64, u64) + Send),
+    ) -> impl Future<Output = Result<(), String>>;
+}
+
+/// This version's release on GitHub.
+pub struct GithubGuide {
+    pub version: String,
+}
+
+impl GithubGuide {
+    /// The release this build came from - betas included.
+    pub fn this_version() -> Self {
+        GithubGuide { version: env!("CARGO_PKG_VERSION").to_string() }
+    }
+}
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The whole json fetch, answer included.
+const JSON_TIMEOUT: Duration = Duration::from_secs(10);
+/// The zip has no total deadline (31 MB on a slow line is minutes), but a
+/// connection that goes quiet this long is given up on.
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn client(total: Option<Duration>) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT);
+    let builder = match total {
+        Some(t) => builder.timeout(t),
+        None => builder,
+    };
+    builder.build().map_err(|e| format!("could not build the HTTP client: {e}"))
+}
+
+impl GuideSource for GithubGuide {
+    async fn published(&self) -> Result<Option<Published>, String> {
+        let url = guide_url(&self.version, GUIDE_JSON);
+        let resp = client(Some(JSON_TIMEOUT))?
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("fetch {GUIDE_JSON}: {e}"))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(format!("{GUIDE_JSON} answered {}", resp.status()));
+        }
+        let text = resp.text().await.map_err(|e| format!("read {GUIDE_JSON}: {e}"))?;
+        serde_json::from_str(&text).map(Some).map_err(|e| format!("parse {GUIDE_JSON}: {e}"))
+    }
+
+    async fn download(&self, to: &Path, on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<(), String> {
+        let url = guide_url(&self.version, GUIDE_ZIP);
+        let mut resp = client(None)?
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("fetch {GUIDE_ZIP}: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("{GUIDE_ZIP} answered {}", resp.status()));
+        }
+        let total = resp.content_length().unwrap_or(0);
+        if total > MAX_ZIP_BYTES {
+            return Err(format!("{GUIDE_ZIP} is {total} bytes, over the {MAX_ZIP_BYTES} limit"));
+        }
+        let mut file = std::fs::File::create(to).map_err(|e| format!("create {}: {e}", to.display()))?;
+        let mut received: u64 = 0;
+        loop {
+            let chunk = tokio::time::timeout(CHUNK_TIMEOUT, resp.chunk())
+                .await
+                .map_err(|_| format!("{GUIDE_ZIP}: no data for {} s", CHUNK_TIMEOUT.as_secs()))?
+                .map_err(|e| format!("read {GUIDE_ZIP}: {e}"))?;
+            let Some(chunk) = chunk else { break };
+            received += chunk.len() as u64;
+            if received > MAX_ZIP_BYTES {
+                return Err(format!("{GUIDE_ZIP} passed the {MAX_ZIP_BYTES} byte limit"));
+            }
+            file.write_all(&chunk).map_err(|e| format!("write {}: {e}", to.display()))?;
+            on_progress(received, total);
+        }
+        file.flush().map_err(|e| format!("write {}: {e}", to.display()))?;
+        Ok(())
+    }
+}
+
+/// This run's answer from the release: None = not asked yet; Some(None) =
+/// asked, and there is nothing usable (404, offline, or a json that does
+/// not parse or validate).
+static PUBLISHED: Mutex<Option<Option<Published>>> = Mutex::new(None);
+
+/// Held while the json is being fetched, so two status calls at once still
+/// fetch it once.
+static FETCHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn published_cache() -> std::sync::MutexGuard<'static, Option<Option<Published>>> {
+    PUBLISHED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Forget this run's answer from the release, so the next status asks
+/// again. For tests.
+pub fn forget_published() {
+    *published_cache() = None;
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Why a parsed json cannot be used, if it cannot: both hashes must be 64
+/// lowercase hex characters and the size within the limit.
+fn unusable(p: &Published) -> Option<String> {
+    if !is_hex64(&p.fingerprint) {
+        return Some(format!("{GUIDE_JSON} has a fingerprint that is not 64 lowercase hex characters"));
+    }
+    if !is_hex64(&p.sha256) {
+        return Some(format!("{GUIDE_JSON} has a sha256 that is not 64 lowercase hex characters"));
+    }
+    if p.size > MAX_ZIP_BYTES {
+        return Some(format!("{GUIDE_JSON} says the zip is {} bytes, over the {MAX_ZIP_BYTES} limit", p.size));
+    }
+    None
+}
+
+/// Ask the release, validate the answer, and keep it for the run. `Ok(None)`
+/// is "not published"; `Err` is "could not be fetched" (or unusable), with
+/// the reason already logged. Either way the cache then holds None.
+async fn fetch_published<S: GuideSource>(source: &S) -> Result<Option<Published>, ()> {
+    let answer = match source.published().await {
+        Ok(Some(p)) => match unusable(&p) {
+            None => Ok(Some(p)),
+            Some(reason) => {
+                crate::applog::warn(format!("the How To Use guide's release answer is unusable: {reason}"));
+                Err(())
+            }
+        },
+        Ok(None) => {
+            crate::applog::info("no How To Use guide is published for this version");
+            Ok(None)
+        }
+        Err(e) => {
+            crate::applog::warn(format!("could not ask the release for the How To Use guide: {e}"));
+            Err(())
+        }
+    };
+    *published_cache() = Some(answer.clone().ok().flatten());
+    answer
+}
+
+/// Whether a guide is on disk and current. An older install's guide is
+/// adopted first. The release is asked at most once per run; offline (or
+/// any failure to ask) counts as nothing published, so an installed guide
+/// reads Ready and nothing nags.
+pub async fn status<S: GuideSource>(help_root: &Path, source: &S) -> GuideStatus {
+    adopt_legacy(help_root);
+    let published = {
+        let _fetching = FETCHING.lock().await;
+        let cached = published_cache().clone();
+        match cached {
+            Some(p) => p,
+            None => fetch_published(source).await.ok().flatten(),
+        }
+    };
+    let installed = read_installed(help_root).map(|(rec, _)| rec);
+    GuideStatus {
+        state: state_for(installed.as_ref(), published.as_ref()),
+        size: published.as_ref().and_then(|p| u32::try_from(p.size).ok()),
+    }
+}
+
+/// One download at a time.
+static DOWNLOADING: AtomicBool = AtomicBool::new(false);
+
+/// The download claim; released on drop, whatever path the download ends by.
+struct Claim;
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        DOWNLOADING.store(false, Ordering::Release);
+    }
+}
+
+static TEMP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// The downloaded zip, in the system temp folder (never under `help/`,
+/// which `install` sweeps); removed on drop.
+struct TempZip(PathBuf);
+
+impl Drop for TempZip {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Download this version's guide and install it. A second call while one
+/// runs is refused. The json is the one this run already has if it is
+/// usable; otherwise it is asked for again (the person asked, so a failed
+/// first try at startup does not strand them until a restart). The zip goes
+/// to a temp file that is removed on every path, then `install` checks and
+/// unpacks it. Every failure leaves the guide on disk as it was and returns
+/// one of the guide's sentences; the raw reason goes to the log. Returns the
+/// new `index.html`.
+pub async fn download<S: GuideSource>(
+    help_root: &Path,
+    source: &S,
+    mut on_progress: impl FnMut(u64, u64) + Send,
+) -> Result<PathBuf, String> {
+    if DOWNLOADING.swap(true, Ordering::AcqRel) {
+        crate::applog::warn("a How To Use download was refused: one is already running");
+        return Err(DOWNLOAD_FAILED.to_string());
+    }
+    let _claim = Claim;
+
+    let published = {
+        let _fetching = FETCHING.lock().await;
+        let cached = published_cache().clone().flatten();
+        match cached {
+            Some(p) => p,
+            None => match fetch_published(source).await {
+                Ok(Some(p)) => p,
+                Ok(None) => return Err(NOT_PUBLISHED.to_string()),
+                Err(()) => return Err(DOWNLOAD_FAILED.to_string()),
+            },
+        }
+    };
+
+    let n = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = TempZip(std::env::temp_dir().join(format!("phr-tcm-how-to-use-{}-{n}.zip", std::process::id())));
+    let _ = std::fs::remove_file(&temp.0);
+    let total = published.size;
+    let mut report = |received: u64, told: u64| on_progress(received, if told == 0 { total } else { told });
+    if let Err(e) = source.download(&temp.0, &mut report).await {
+        crate::applog::warn(format!("the How To Use download failed: {e}"));
+        return Err(DOWNLOAD_FAILED.to_string());
+    }
+
+    let (root, zip) = (help_root.to_path_buf(), temp.0.clone());
+    let installed = tokio::task::spawn_blocking(move || install(&root, &zip, &published))
+        .await
+        .unwrap_or_else(|e| {
+            crate::applog::warn(format!("the How To Use install did not finish: {e}"));
+            Err(DOWNLOAD_FAILED.to_string())
+        });
+    drop(temp);
+    installed
 }

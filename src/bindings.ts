@@ -817,19 +817,21 @@ export const commands = {
 	 */
 	setExtrasUnlocked: (unlocked: boolean) => typedError<null, string>(__TAURI_INVOKE("set_extras_unlocked", { unlocked })),
 	/**
-	 *  Open the bundled "How To Use" help site in the default browser -
-	 *  Settings' "How To Use" button. Stages this build's site under the app's
-	 *  local data dir first if it is not there yet (`help::write_help`), then
-	 *  hands the written `index.html` to the same opener call every other
-	 *  "open in browser" button in this app uses.
-	 * 
-	 *  Runs on a blocking thread. A plain sync `#[tauri::command]` runs on the
-	 *  main thread in Tauri 2, and `write_help` can be copying several
-	 *  megabytes of screenshots - each one antivirus-scanned on this machine -
-	 *  which would freeze the window for however long that scan takes, on the
-	 *  first open after every update.
+	 *  Open the "How To Use" guide in the default browser - Settings' "How To
+	 *  Use" button. Opens the downloaded guide (`help/<installed folder>/`,
+	 *  adopting an older install's guide first), or says to download it when
+	 *  there is none. A development build opens the repository's copy.
 	 */
 	openHelp: () => typedError<null, string>(__TAURI_INVOKE("open_help")),
+	/**  Whether How To Use is on disk and current, and the download's size. */
+	guideStatus: () => __TAURI_INVOKE<GuideStatus>("guide_status"),
+	/**
+	 *  Download this version's How To Use, install it, and open it (as the
+	 *  button did when the guide shipped inside the app). Streams
+	 *  `GuideProgress`. Errors are the guide's sentences; the raw reason is in
+	 *  the log.
+	 */
+	guideDownload: () => typedError<null, string>(__TAURI_INVOKE("guide_download")),
 	/**  The settings as the app is using them now. */
 	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
 	/**  Whether closing the main window keeps the app running in the tray. */
@@ -871,6 +873,7 @@ export const events = {
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
+	guideProgress: makeEvent<GuideProgress>("guide-progress"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	recordingEvent: makeEvent<RecordingEvent>("recording-event"),
@@ -1685,6 +1688,27 @@ export type Flow_Serialize = {
 	sources: string[],
 	stages: Stage[],
 	saved?: FlowSaved | null,
+};
+
+/**
+ *  Emitted while How To Use downloads, so Settings can show "12 of 31 MB".
+ *  Bytes; u32 because specta refuses u64, and the zip is capped at 200 MB.
+ *  `total` is the zip's size (the server's, else the release's json).
+ */
+export type GuideProgress = {
+	received: number,
+	total: number,
+};
+
+export type GuideState = "NotDownloaded" | "Ready" | "UpdateAvailable";
+
+export type GuideStatus = {
+	state: GuideState,
+	/**
+	 *  Bytes of the published zip, when known. `u32` because specta
+	 *  refuses `u64`, and the download is capped at 200 MB.
+	 */
+	size: number | null,
 };
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
