@@ -740,7 +740,9 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites, riskTiered },
+            // The risk-tiered guide is offered only where Auto Run is: a
+            // switch left on before the extras were reset must not apply.
+            { dbWrites: dbWrites && devLogin, apiWrites, riskTiered: riskTiered && autoRunShown },
           ),
         )
         .catch(() => {});
@@ -764,6 +766,7 @@ export default function App() {
     devLogin,
     apiWrites,
     riskTiered,
+    autoRunShown,
     tourOpen,
     dbMigrated,
   ]);

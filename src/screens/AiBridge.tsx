@@ -721,7 +721,9 @@ export default function AiBridge() {
 
       {/* Which rules the writing guide carries. A trial of the team's
           risk-tiering policy: off, the assistant writes cases exactly as
-          before. Not gated - it only changes what the guide says. */}
+          before. Shown only where Auto Run is, like the API templates card
+          below: capture mode and a locked release build hide it. */}
+      {autoRunToolsShown() && (
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Test design rules</h2>
         <div className="space-y-1 rounded-md border border-border/60 p-2">
@@ -742,6 +744,7 @@ export default function AiBridge() {
           </p>
         </div>
       </section>
+      )}
 
       {/* Proving and running a template writes test data through the
           application's own endpoints - a decision separate from whether

@@ -3154,3 +3154,15 @@ async fn switched_on_the_guide_carries_the_risk_tiered_rules() {
     let summary = g.find("6. End with a summary").expect("the summary step");
     assert!(step5 < summary, "the summary closes the workflow");
 }
+
+/// The risk-tiered guide is offered only where Auto Run is: a switch left on
+/// in a release build whose extras were reset (or never unlocked) does not
+/// change the guide.
+#[test]
+fn the_risk_tiered_guide_applies_only_where_auto_run_is_offered() {
+    use v2_lib::ai_bridge::risk_tiered_for;
+    assert!(risk_tiered_for(true, true));
+    assert!(!risk_tiered_for(true, false), "locked: the switch does not apply");
+    assert!(!risk_tiered_for(false, true));
+    assert!(!risk_tiered_for(false, false));
+}

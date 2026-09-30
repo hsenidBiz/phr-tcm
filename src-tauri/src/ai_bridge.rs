@@ -3182,6 +3182,15 @@ impl Modules {
 
 /// Live writing guide: format rules from the importer's own constants +
 /// the org's Module values, fetched fresh (no snapshot staleness).
+/// Whether the writing guide carries the risk-tiered rules: the person's
+/// switch, and only where Auto Run is offered (a development build, or a
+/// release build whose extras are unlocked) - a switch left on before the
+/// extras were reset must not apply. Both inputs explicit, so each case is
+/// testable from this development test binary.
+pub fn risk_tiered_for(requested: bool, offered: bool) -> bool {
+    requested && offered
+}
+
 /// The writing guide's granularity section, as it reads with the
 /// risk-tiered trial switched off.
 const GRANULARITY: &str = "\
@@ -3340,6 +3349,7 @@ const RISK_TIERED_SUMMARY_STEP: &str = "\
 ";
 
 async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
+    let risk_tiered = risk_tiered_for(ctx.risk_tiered, crate::ai_tools::autorun_offered());
     let statuses = crate::model::VALID_STATUSES
         .iter()
         .map(|v| format!("\"{v}\""))
@@ -3588,10 +3598,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         `transform_cases` instead of rewriting the file yourself.\n{summary_step}",
         org = ctx.org,
         project = ctx.project,
-        granularity = if ctx.risk_tiered { RISK_TIERED_DESIGN } else { GRANULARITY },
-        edge_cases = if ctx.risk_tiered { RISK_TIERED_EDGE_CASES } else { EDGE_CASES },
-        scenario_step = if ctx.risk_tiered { RISK_TIERED_SCENARIO_STEP } else { "" },
-        summary_step = if ctx.risk_tiered { RISK_TIERED_SUMMARY_STEP } else { "" },
+        granularity = if risk_tiered { RISK_TIERED_DESIGN } else { GRANULARITY },
+        edge_cases = if risk_tiered { RISK_TIERED_EDGE_CASES } else { EDGE_CASES },
+        scenario_step = if risk_tiered { RISK_TIERED_SCENARIO_STEP } else { "" },
+        summary_step = if risk_tiered { RISK_TIERED_SUMMARY_STEP } else { "" },
     )
 }
 
