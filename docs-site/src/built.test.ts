@@ -3,8 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
-// Checks the BUILT help site - the file that is committed and embedded in
-// the app - not the source. It is opened from disk (file://), where
+// Checks the BUILT help site - the file that is committed and published
+// beside each release for the app to download - not the source. It is opened from disk (file://), where
 // Chromium refuses module scripts and there is no network, so it must be
 // one self-contained page with a classic script.
 // These are required, never skipped: the page is committed and shipped.

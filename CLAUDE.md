@@ -136,8 +136,12 @@ v1 and went with it. The suites above are the gate.
   raising a toast, so the failure travels the real path and the screen's
   own handling is what you are looking at.
 - **Help site (How To Use).** `docs-site/` is the source; it builds to
-  `src-tauri/help/`, which is embedded in the exe and opened from Settings.
-  After a UI or accessible-name change on a documented screen: close
+  `src-tauri/help/` (committed). It is NOT in the exe: each release
+  publishes it beside the app (`scripts/publish-guide.ps1`, see Releases),
+  and Settings downloads it on demand into the app's local data folder
+  (`src-tauri/src/guide.rs`), keeps it across updates, and offers Update
+  Guide when the running version's guide changed. Development builds open
+  `src-tauri/help/index.html` straight from the repository. After a UI or accessible-name change on a documented screen: close
   `tauri dev`, run `npm run docs:dev` (starts the dev app with CDP on
   9333 - leave it signed out, the screenshots use sample data), then
   `npm run docs:shots -- --dry-run`, then `npm run docs:shots` (or
@@ -165,7 +169,12 @@ v1 and went with it. The suites above are the gate.
   the one named upload, never the whole release. A version `X.Y.Z-beta.N`
   is published as a GitHub prerelease that only installs with Download
   beta builds on receive; its changelog entry uses the same version
-  string.
+  string. Right after the app's phr-tcm upload it runs
+  `scripts/publish-guide.ps1`, which uploads the How To Use guide
+  (`how-to-use.zip` + `how-to-use.json`) to the same release - the app
+  downloads the guide from its own version's release, so a release without
+  them cannot open How To Use. If that upload fails, re-run just
+  `scripts/publish-guide.ps1 -Version X.Y.Z` (it replaces the assets).
 - **The version lives in three places** and the release script refuses if
   they disagree: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
   and a matching entry in `src/lib/changelog.ts`.
