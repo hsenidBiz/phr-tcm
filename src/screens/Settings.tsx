@@ -100,6 +100,13 @@ function guideProgressText(p: { received: number; total: number } | null): strin
   return `${mbDown(p.received)} of ${mbUp(p.total)} MB`;
 }
 
+/** How far the guide download is, as a whole percent rounded down, or null
+ * while the total is not yet known. */
+function guideProgressPercent(p: { received: number; total: number } | null): number | null {
+  if (!p || !(p.total > 0)) return null;
+  return Math.min(100, Math.floor((p.received / p.total) * 100));
+}
+
 export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   // The optional extras (settingsExtras.ts): the listener lives only
@@ -146,9 +153,9 @@ export default function Settings({ org, project }: { org: string; project: strin
   const [reporting, setReporting] = useState(false);
   const [bugTitle, setBugTitle] = useState("");
   const [bugText, setBugText] = useState("");
-  // The first open after an update writes the help site to disk (~14 MB) -
+  // Opening finds the downloaded guide on disk and hands it to the browser -
   // a pending state stops repeated clicks from opening several tabs while
-  // that write is in flight.
+  // that call is in flight.
   const [openingHelp, setOpeningHelp] = useState(false);
   // How To Use is fetched on demand. Anything but a clear answer from Rust
   // (offline from the start, a build that does not know the command) counts
@@ -438,14 +445,21 @@ export default function Settings({ org, project }: { org: string; project: strin
                     disabled={openingHelp || downloadingGuide}
                     onClick={() => {
                       setOpeningHelp(true);
+                      // A failure re-asks what is on disk too: a click that
+                      // came before the first answer (How To Use shows until
+                      // then) gets the Download button it needed.
                       commands
                         .openHelp()
                         .then((r) => {
-                          if (r.status === "error") toast.error(r.error);
+                          if (r.status === "error") {
+                            toast.error(r.error);
+                            void askGuideStatus();
+                          }
                         })
-                        .catch(() =>
-                          toast.error("Could not open the help pages. Settings, Logs has the details."),
-                        )
+                        .catch(() => {
+                          toast.error("Could not open the help pages. Settings, Logs has the details.");
+                          void askGuideStatus();
+                        })
                         .finally(() => setOpeningHelp(false));
                     }}
                   >
@@ -460,11 +474,33 @@ export default function Settings({ org, project }: { org: string; project: strin
                   )}
                 </>
               )}
-              {guideProgressText(guideProgress) && (
-                <span role="status" className="text-xs text-muted">
-                  {guideProgressText(guideProgress)}
-                </span>
+              {downloadingGuide && (
+                <div
+                  role="progressbar"
+                  aria-label="Downloading How to Use"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  // Omitted, not zero, until the first bytes arrive: an
+                  // indeterminate bar is what "not known yet" means.
+                  aria-valuenow={guideProgressPercent(guideProgress) ?? undefined}
+                  aria-valuetext={guideProgressText(guideProgress) ?? undefined}
+                  className="h-1.5 w-24 overflow-hidden rounded-full bg-accent/20"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                    style={{ width: `${guideProgressPercent(guideProgress) ?? 0}%` }}
+                  />
+                </div>
               )}
+              {/* Always mounted, empty when idle, so a screen reader is
+                  already listening when the first figure arrives; visually
+                  hidden while empty so it takes no room in the row. */}
+              <span
+                role="status"
+                className={cn("text-xs tabular-nums text-muted", !guideProgressText(guideProgress) && "sr-only")}
+              >
+                {guideProgressText(guideProgress) ?? ""}
+              </span>
               <Button
                 size="sm"
                 variant="outline"

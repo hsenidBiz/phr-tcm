@@ -773,10 +773,11 @@ test("How To Use opens the help site", async () => {
   await waitFor(() => expect(calls).toContain("open_help"));
 });
 
-/// The first open after an update writes ~14 MB to disk - the button must
-/// disable itself and say "Opening" while that call is in flight, so a
-/// second click before it settles cannot open a second tab, then return to
-/// normal once the command resolves.
+/// Opening finds the downloaded guide on disk (adopting an older install's
+/// first) and hands it to the browser - the button must disable itself and
+/// say "Opening" while that call is in flight, so a second click before it
+/// settles cannot open a second tab, then return to normal once the command
+/// resolves.
 test("How To Use disables itself and shows Opening while the command is in flight", async () => {
   let resolveOpen: (v: { status: "ok"; data: null }) => void;
   const opened = new Promise<{ status: "ok"; data: null }>((resolve) => {
@@ -1102,15 +1103,27 @@ test("downloading_shows_progress_then_the_guide_is_ready", async () => {
   );
   renderSettings(guideQc());
 
+  // The live region is there before anything happens, empty, so a screen
+  // reader is already listening when the first figure arrives.
+  const live = await screen.findByRole("status");
+  expect(live).toHaveTextContent(/^$/);
+  expect(screen.queryByRole("progressbar")).toBeNull();
+
   fireEvent.click(await screen.findByRole("button", { name: "Download How to Use (31 MB)" }));
   const busy = await screen.findByRole("button", { name: "Downloading..." });
   expect(busy).toBeDisabled();
+  // A bar from the start; no figure on it until the first bytes arrive.
+  const bar = await screen.findByRole("progressbar", { name: "Downloading How to Use" });
+  expect(bar).not.toHaveAttribute("aria-valuenow");
 
   const { emit } = await import("@tauri-apps/api/event");
   await act(async () => {
     await emit("guide-progress", { received: 12 * MB, total: GUIDE_SIZE });
   });
   expect(await screen.findByText("12 of 31 MB")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toBe(live);
+  expect(bar).toHaveAttribute("aria-valuenow", "38");
+  expect(bar).toHaveAttribute("aria-valuetext", "12 of 31 MB");
   // Whole MB: a part-way byte count rounds down, the total up.
   await act(async () => {
     await emit("guide-progress", { received: 13 * MB - 1, total: 30 * MB + 1 });
@@ -1121,6 +1134,8 @@ test("downloading_shows_progress_then_the_guide_is_ready", async () => {
   resolveDownload({ status: "ok", data: null });
   expect(await screen.findByRole("button", { name: "How To Use" })).toBeEnabled();
   expect(screen.queryByText(/of 31 MB/)).toBeNull();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent(/^$/);
   expect(calls.filter((c) => c === "guide_status")).toHaveLength(2);
   expect(calls.filter((c) => c === "guide_download")).toHaveLength(1);
 });
@@ -1256,4 +1271,30 @@ test("How To Use shows the sentence when nothing is installed to open", async ()
 
   fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Download How to Use from Settings first."));
+});
+
+/// A click on How To Use can land before Settings has heard what is on disk
+/// (it shows How To Use until then). When opening fails, the status is asked
+/// again as well as the toast, so the Download button then appears.
+test("a failed How To Use re-asks the status and offers Download", async () => {
+  let state: "Ready" | "NotDownloaded" = "Ready";
+  let statusCalls = 0;
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") {
+      statusCalls += 1;
+      return { state, size: GUIDE_SIZE };
+    }
+    if (cmd === "open_help") {
+      state = "NotDownloaded";
+      throw "Download How to Use from Settings first.";
+    }
+    return undefined;
+  });
+  renderSettings(guideQc());
+  await waitFor(() => expect(statusCalls).toBe(1));
+
+  fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Download How to Use from Settings first."));
+  expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeEnabled();
+  expect(statusCalls).toBe(2);
 });
