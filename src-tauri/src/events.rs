@@ -165,19 +165,27 @@ pub struct ReplayProgress {
     pub proposed: String,
 }
 
-/// Emitted while a module path is being recorded: one per captured click,
-/// one per click that could not be named, and one if the recording
-/// browser went away. Carries locator words only, never a login.
+/// Emitted while a module path or a sign-in is being recorded: one per
+/// captured click, one per text field typed into (a sign-in only), one
+/// when the signed-in check is picked (a sign-in only), one per click or
+/// field that could not be named, and one if the recording browser went
+/// away. Carries locator words only, never a login and never anything
+/// typed.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct RecordingEvent {
-    /// "click", "unreadable" or "closed"
+    /// "click", "field", "marker", "unreadable" or "closed"
     pub kind: String,
-    /// 1-based position of a captured click; 0 otherwise.
+    /// 1-based position of a captured step ("click" or "field"); 0
+    /// otherwise.
     pub index: u32,
-    /// The click in words (`link "Leave"`), for "click".
+    /// The step in words (`link "Leave"`, `textbox "Email"`), for "click",
+    /// "field" and "marker".
     pub readable: String,
     /// Why, for "unreadable" and "closed".
     pub detail: String,
+    /// A "field" that is a password field. Says which field, never what
+    /// was typed into it.
+    pub password: bool,
 }
 
 /// Emitted when an assistant's prove or run of an API template changed

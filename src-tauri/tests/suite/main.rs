@@ -48,6 +48,7 @@ mod autorun_nav;
 mod autorun_publish;
 mod autorun_quirks;
 mod autorun_recipe;
+mod autorun_record_signin;
 mod autorun_recorder;
 mod autorun_replay;
 mod autorun_runner;

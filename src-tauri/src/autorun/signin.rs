@@ -93,12 +93,47 @@ fn clear_failed(e: CdpError) -> String {
     )
 }
 
+/// How `sign_in`'s words begin when the start address would not open.
+pub const PAGE_DID_NOT_OPEN: &str = "the sign-in page did not open: ";
+/// What `sign_in`'s words hold when the sign-in worked and `after_sign_in`
+/// did not.
+pub const AFTER_SIGN_IN_STOPPED: &str = ", but after_sign_in step ";
+/// How `sign_in`'s words begin when the steps ran and the marker never
+/// showed.
+pub const MARKER_NEVER_APPEARED: &str = "the recipe ran, but ";
+
+/// Sign in, trying the account's saved session first.
 pub async fn sign_in<D: Driver>(
     d: &mut D,
     root: &Path,
     recipe: &SignInRecipe,
     account: &Account,
     timing: &Timing,
+) -> SignInOutcome {
+    sign_in_with(d, root, recipe, account, timing, true).await
+}
+
+/// Sign in through the recipe's own steps, never a saved session: the
+/// check a recorded recipe must pass has to prove the steps themselves
+/// work. A session that works is still saved afterwards, as any sign-in's
+/// is.
+pub async fn sign_in_fresh<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+) -> SignInOutcome {
+    sign_in_with(d, root, recipe, account, timing, false).await
+}
+
+async fn sign_in_with<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    try_saved_session: bool,
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
@@ -110,7 +145,12 @@ pub async fn sign_in<D: Driver>(
         return run.done(false, clear_failed(e), false, true);
     }
 
-    if let Some(saved) = load_fresh_session(root, &account.key, recipe.session_minutes, now_ms()) {
+    let saved = if try_saved_session {
+        load_fresh_session(root, &account.key, recipe.session_minutes, now_ms())
+    } else {
+        None
+    };
+    if let Some(saved) = saved {
         match session::restore(d, &saved).await {
             Ok(ids) => {
                 let arrived = execute_in(d, &go, timing, &policy).await;
@@ -177,7 +217,7 @@ pub async fn sign_in<D: Driver>(
         let last = run.steps.last();
         let why = last.map(|s| s.detail.clone()).unwrap_or_default();
         let harness_failure = last.is_some_and(|s| s.harness);
-        return run.done(false, format!("the sign-in page did not open: {why}"), false, harness_failure);
+        return run.done(false, format!("{PAGE_DID_NOT_OPEN}{why}"), false, harness_failure);
     }
     let steps = for_account(&recipe.steps, account);
     if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, timing, &policy).await {
@@ -190,7 +230,7 @@ pub async fn sign_in<D: Driver>(
         return run.done(
             false,
             format!(
-                "the recipe ran, but {} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
+                "{MARKER_NEVER_APPEARED}{} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
                 recipe.signed_in.describe(),
                 account.key
             ),
@@ -211,7 +251,7 @@ pub async fn sign_in<D: Driver>(
     if let Err((n, why, harness_failure)) = after {
         return run.done(
             false,
-            format!("signed in as {who}, but after_sign_in step {n} stopped: {why}"),
+            format!("signed in as {who}{AFTER_SIGN_IN_STOPPED}{n} stopped: {why}"),
             false,
             harness_failure,
         );

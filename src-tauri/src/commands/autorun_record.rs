@@ -50,9 +50,11 @@ pub fn recording_is_going() -> bool {
     RECORDING.load(Ordering::SeqCst)
 }
 
-pub const ALREADY_RECORDING: &str = "a module path is already being recorded - finish or cancel it first";
-/// Said by an unattended run and the supervised browser while recording.
-pub const RECORDING_BUSY: &str = "a module path is being recorded - finish or cancel it first";
+pub const ALREADY_RECORDING: &str =
+    "something is already being recorded or checked in Auto Run - finish or cancel it first";
+/// Said by an unattended run and the supervised browser while recording (a
+/// module path or a sign-in) or checking.
+pub const RECORDING_BUSY: &str = "something is being recorded or checked in Auto Run - finish or cancel it first";
 
 const WOULD_NOT_LISTEN: &str =
     "the browser would not report clicks - try again, and see Settings, Logs if it keeps happening";
@@ -93,7 +95,7 @@ pub async fn refuse_to_record_now() -> Result<(), String> {
 /// The slot first, then the others: the run claims its slot and then looks
 /// for a recording, so taking ours before looking for it means two that
 /// start at the same moment cannot both miss each other.
-async fn claim_the_recorder() -> Result<RecorderClaim, String> {
+pub(crate) async fn claim_the_recorder() -> Result<RecorderClaim, String> {
     let claim = RecorderClaim::claim().ok_or_else(|| ALREADY_RECORDING.to_string())?;
     refuse_other_sessions().await?;
     Ok(claim)
@@ -101,7 +103,7 @@ async fn claim_the_recorder() -> Result<RecorderClaim, String> {
 
 /// A browser this module started, killed when this drops - on the way out
 /// of an error or a panic as much as at the end.
-struct Owned(Option<LaunchedBrowser>);
+pub(crate) struct Owned(Option<LaunchedBrowser>);
 
 impl Drop for Owned {
     fn drop(&mut self) {
@@ -113,7 +115,7 @@ impl Drop for Owned {
 
 /// `open_real`'s words name no address (the one that would goes to the
 /// log there), and "Edge is not installed" is worth passing on as it is.
-async fn open_browser(which: Browser, visible: bool) -> Result<(crate::browser::cdp::Cdp, Owned), String> {
+pub(crate) async fn open_browser(which: Browser, visible: bool) -> Result<(crate::browser::cdp::Cdp, Owned), String> {
     let (cdp, browser) =
         super::autorun_replay::open_real(which, visible).await.map_err(|e| format!("the browser did not open: {e}"))?;
     Ok((cdp, Owned(Some(browser))))
@@ -154,6 +156,13 @@ pub async fn recording_is_open() -> bool {
 /// is the claim. Decided under the `CURRENT` lock, which Cancel takes too,
 /// so a Cancel cannot fall between the look and the recording being put
 /// there.
+/// Used up by whoever asks: a Cancel that arrived while a Start was still
+/// getting its browser ready. Asked under the Start's own slot lock, which
+/// Cancel also holds while it decides, so neither can fall between.
+pub(crate) fn take_cancel_pending() -> bool {
+    CANCEL_PENDING.swap(false, Ordering::SeqCst)
+}
+
 pub async fn open_the_recording(
     claim: RecorderClaim,
     about: RecordingFor,
@@ -254,9 +263,9 @@ pub async fn listen<D: Driver>(
         tell(match seen {
             Ok(t) => {
                 index += 1;
-                RecordingEvent { kind: "click".into(), index, readable: t.describe(), detail: String::new() }
+                RecordingEvent { kind: "click".into(), index, readable: t.describe(), detail: String::new(), password: false }
             }
-            Err(why) => RecordingEvent { kind: "unreadable".into(), index: 0, readable: String::new(), detail: why.to_string() },
+            Err(why) => RecordingEvent { kind: "unreadable".into(), index: 0, readable: String::new(), detail: why.to_string(), password: false },
         })
     })
     .await;
@@ -267,6 +276,7 @@ pub async fn listen<D: Driver>(
             index: 0,
             readable: String::new(),
             detail: recorder::BROWSER_CLOSED.to_string(),
+            password: false,
         });
         return (captured, None);
     }
@@ -419,20 +429,34 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
 /// ends a check after Stop, or a Try, through `unless_cancelled`.
 #[tauri::command]
 #[specta::specta]
+///
+/// It ends a sign-in recording the same way, and a sign-in's Start or the
+/// check before its save through the same kept Cancel. Both slots are
+/// locked, module first, while it decides: each Start looks for the kept
+/// Cancel under its own slot's lock, so none can fall between.
 pub async fn auto_run_record_cancel() -> Result<(), String> {
-    let rec = {
+    let (rec, sign_in) = {
         let mut slot = CURRENT.lock().await;
+        let mut sign_in_slot = super::autorun_record_signin::CURRENT.lock().await;
         let rec = slot.take();
-        if rec.is_none() && recording_is_going() {
+        let sign_in = sign_in_slot.take();
+        // A recording whose browser was closed has already let the claim
+        // go: whatever holds it now is a Start, a check or a Try.
+        let live = rec.as_ref().is_some_and(|r| !r.task.is_finished())
+            || sign_in.as_ref().is_some_and(|r| !r.is_finished());
+        if !live && recording_is_going() {
             CANCEL_PENDING.store(true, Ordering::SeqCst);
         }
-        rec
+        (rec, sign_in)
     };
     if let Some(rec) = rec {
         rec.cancel.store(true, Ordering::SeqCst);
         // The task closes the browser before it gives the claim back, and
         // the claim is dropped with this result.
         let _ = rec.task.await;
+    }
+    if let Some(rec) = sign_in {
+        rec.end().await;
     }
     Ok(())
 }

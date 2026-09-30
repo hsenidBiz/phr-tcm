@@ -141,7 +141,7 @@ fn collapse(s: &str) -> String {
 
 /// `exact`: a menu has "Leave" and "Apply Leave" side by side, and a
 /// contains-match on the first would find both.
-fn exact_role(role: &str, name: &str) -> Target {
+pub fn exact_role(role: &str, name: &str) -> Target {
     Target::One(LocatorStep {
         role: Some(role.to_string()),
         name: Some(collapse(name)),
@@ -263,14 +263,21 @@ async fn ax_around<D: Driver>(d: &mut D, backend: i64) -> Result<Value, CdpError
     }
 }
 
-async fn from_the_element<D: Driver>(d: &mut D, click: &ClickPayload) -> Result<Option<Target>, CdpError> {
+/// The accessibility chain up from an element the page is holding
+/// (`__tcmRecHeld[i]` of document `doc`), or `None` when it is gone. Any
+/// listener that keeps its elements there can use it.
+pub async fn held_ax_chain<D: Driver>(d: &mut D, doc: &str, i: u32) -> Result<Option<Vec<AxLink>>, CdpError> {
     page::release(d).await;
-    let doc = page::document(d).await?;
-    let found = page::call_elements(d, &doc, HELD_JS, &[json!(click.doc), json!(click.i)]).await?;
+    let document = page::document(d).await?;
+    let found = page::call_elements(d, &document, HELD_JS, &[json!(doc), json!(i)]).await?;
     let Some(el) = found.first() else { return Ok(None) };
     let backend = page::backend_id(d, el).await?;
     let tree = ax_around(d, backend).await?;
-    Ok(locator_from_ax(&ax_chain(&tree, backend)))
+    Ok(Some(ax_chain(&tree, backend)))
+}
+
+async fn from_the_element<D: Driver>(d: &mut D, click: &ClickPayload) -> Result<Option<Target>, CdpError> {
+    Ok(held_ax_chain(d, &click.doc, click.i).await?.and_then(|chain| locator_from_ax(&chain)))
 }
 
 /// The locator for one reported click: from the accessibility tree when

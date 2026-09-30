@@ -508,6 +508,11 @@ export const commands = {
 	 *  signing in there is no recording yet: the Cancel is kept, and Start ends
 	 *  with `recorder::CANCELLED` instead of opening one. The same kept Cancel
 	 *  ends a check after Stop, or a Try, through `unless_cancelled`.
+	 * 
+	 *  It ends a sign-in recording the same way, and a sign-in's Start or the
+	 *  check before its save through the same kept Cancel. Both slots are
+	 *  locked, module first, while it decides: each Start looks for the kept
+	 *  Cancel under its own slot's lock, so none can fall between.
 	 */
 	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
 	/**
@@ -520,6 +525,28 @@ export const commands = {
 	autoRunRecordingIsOpen: () => __TAURI_INVOKE<boolean>("auto_run_recording_is_open"),
 	/**  The same check a recording must pass, on a saved path. */
 	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
+	/**
+	 *  Open a visible browser with nobody signed in, go to `start_url`, and
+	 *  listen. Each step arrives as a `RecordingEvent`.
+	 */
+	autoRunRecordSignInStart: (organization: string, project: string, startUrl: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_sign_in_start", { organization, project, startUrl, browserName })),
+	/**
+	 *  Pick mode: the next click in the recording browser is the signed-in
+	 *  check, and is not carried out. Again picks again.
+	 */
+	autoRunRecordSignInPick: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_sign_in_pick")),
+	/**
+	 *  Close the recording browser and hand back the draft in words. The
+	 *  locators stay here for the save.
+	 */
+	autoRunRecordSignInStop: () => typedError<SignInDraftView, string>(__TAURI_INVOKE("auto_run_record_sign_in_stop")),
+	/**
+	 *  Build the recipe from the draft and the review's field choices, sign in
+	 *  with it as `account` in a fresh background browser, and save it only if
+	 *  that works. A failed check keeps the draft, so the choices can change
+	 *  and be saved again without recording again.
+	 */
+	autoRunRecordSignInSave: (organization: string, project: string, account: string, browserName: string, fields: FieldChoice[]) => typedError<SignInSaveResult, string>(__TAURI_INVOKE("auto_run_record_sign_in_save", { organization, project, account, browserName, fields })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
@@ -1591,6 +1618,17 @@ export type DraftSaveResult_Serialize = {
 	cases: TestCase_Serialize[],
 };
 
+/**
+ *  One recorded step as the dialog shows it: locator words only. There is
+ *  no value to show - none was ever read.
+ */
+export type DraftStepView = {
+	/**  "click" or "field" */
+	kind: string,
+	readable: string,
+	password: boolean,
+};
+
 export type Effect = "create" | "edit" | "delete";
 
 export type EnsuredSuite = {
@@ -1649,6 +1687,15 @@ export type FieldChange = {
 	new: string,
 };
 
+/**
+ *  The review's choice for one field step, in the order the fields were
+ *  recorded. `text` is the fixed text, for `text` only.
+ */
+export type FieldChoice = {
+	role: FieldRole,
+	text?: string,
+};
+
 export type FieldPatch = {
 	reference_name: string,
 	value: string,
@@ -1658,6 +1705,9 @@ export type FieldRef = {
 	name: string,
 	reference_name: string,
 };
+
+/**  What a field step fills in. */
+export type FieldRole = "username" | "password" | "text";
 
 export type FiledBug = {
 	id: number,
@@ -2293,19 +2343,33 @@ export type ReconciledCase = {
 };
 
 /**
- *  Emitted while a module path is being recorded: one per captured click,
- *  one per click that could not be named, and one if the recording
- *  browser went away. Carries locator words only, never a login.
+ *  Emitted while a module path or a sign-in is being recorded: one per
+ *  captured click, one per text field typed into (a sign-in only), one
+ *  when the signed-in check is picked (a sign-in only), one per click or
+ *  field that could not be named, and one if the recording browser went
+ *  away. Carries locator words only, never a login and never anything
+ *  typed.
  */
 export type RecordingEvent = {
-	/**  "click", "unreadable" or "closed" */
+	/**  "click", "field", "marker", "unreadable" or "closed" */
 	kind: string,
-	/**  1-based position of a captured click; 0 otherwise. */
+	/**
+	 *  1-based position of a captured step ("click" or "field"); 0
+	 *  otherwise.
+	 */
 	index: number,
-	/**  The click in words (`link "Leave"`), for "click". */
+	/**
+	 *  The step in words (`link "Leave"`, `textbox "Email"`), for "click",
+	 *  "field" and "marker".
+	 */
 	readable: string,
 	/**  Why, for "unreadable" and "closed". */
 	detail: string,
+	/**
+	 *  A "field" that is a password field. Says which field, never what
+	 *  was typed into it.
+	 */
+	password: boolean,
 };
 
 /**
@@ -2594,6 +2658,12 @@ export type SharedQueue_Serialize = {
 	warnings: string[],
 };
 
+export type SignInDraftView = {
+	steps: DraftStepView[],
+	/**  The signed-in check in words; empty when none was picked. */
+	marker: string,
+};
+
 export type SignInOutcome = SignInOutcome_Serialize | SignInOutcome_Deserialize;
 
 export type SignInOutcome_Deserialize = {
@@ -2664,6 +2734,12 @@ export type SignInRecipe_Serialize = {
 	allowed_origins: string[],
 	/**  How long a saved session is trusted. */
 	session_minutes: number,
+};
+
+export type SignInSaveResult = {
+	saved: boolean,
+	/**  Why nothing was saved; empty when `saved`. */
+	failure: string,
 };
 
 export type SkippedCase = {

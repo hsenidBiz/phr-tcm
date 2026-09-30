@@ -254,12 +254,18 @@ fn check_steps(steps: &[RecipeStep], label: &str, fill_placeholders: bool) -> Re
     Ok(())
 }
 
+/// The rule a recipe's `start_url` must pass, on its own: a recording asks
+/// before it opens a browser, with the same words `validate` refuses in.
+pub fn check_start_url(url: &str) -> Result<(), String> {
+    match origin_of(url) {
+        Some(o) if o != "file://" => Ok(()),
+        _ => Err("the start address must be a full http or https address".to_string()),
+    }
+}
+
 impl SignInRecipe {
     pub fn validate(&self) -> Result<(), String> {
-        match origin_of(&self.start_url) {
-            Some(o) if o != "file://" => {}
-            _ => return Err("the start address must be a full http or https address".to_string()),
-        }
+        check_start_url(&self.start_url)?;
         if self.steps.is_empty() {
             return Err("the recipe has no steps".to_string());
         }

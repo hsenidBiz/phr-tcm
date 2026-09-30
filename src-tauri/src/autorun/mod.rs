@@ -20,6 +20,7 @@ pub mod replay;
 pub mod runner;
 pub mod sessions;
 pub mod signin;
+pub mod signin_recorder;
 pub mod store;
 
 use crate::browser::actions::{Action, ActionOutcome};
