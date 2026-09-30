@@ -88,7 +88,8 @@ A new module, `src-tauri/src/guide.rs`, replaces the embedding in
     it, or could not be fetched (offline: never nag).
   - `UpdateAvailable` - a guide on disk whose fingerprint differs from this
     version's published one (an adopted guide, fingerprint unknown, counts
-    as different).
+    as different - but only once the published one could be fetched:
+    offline, it is `Ready` like any other).
   - `size`: the published zip's size, when known, so the button can say
     "Download How to Use (31 MB)".
   The published `how-to-use.json` is fetched from
