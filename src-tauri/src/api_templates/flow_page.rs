@@ -257,7 +257,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
 
     format!(
         "<!DOCTYPE html>\n\
-         <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">\
+         <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">{restore}\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{title} - flow</title><style>{vars}{css}</style></head><body>{switch}\
          <header class='bar'><h1>{title}</h1>\
@@ -271,6 +271,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
          <ol class='sr-only' aria-label='Stages of {title}'>{words}</ol>\
          <script>{switch_js}</script><script>{flow_js}</script></body></html>",
         scheme = palette.initial_scheme(),
+        restore = crate::webtheme::head_script(),
         vars = palette.css(),
         css = page_css(),
         flow_js = FLOW_JS,

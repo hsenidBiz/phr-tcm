@@ -50,3 +50,43 @@ fn both_schemes_carry_a_shadow_variable() {
     assert_eq!(css.matches("--shadow:").count(), 2, "{css}");
     assert!(css.contains("color-mix(in srgb,"), "{css}");
 }
+
+/// The switch's remembered choice has to be on <html> before anything is
+/// painted - in <head>, not in the switch's own script at the end of the
+/// page. There, a page set to Light opened dark (the app's scheme) and
+/// then went white.
+pub fn assert_scheme_restored_before_paint(page: &str, html: &str) {
+    let head_end = html.find("</head>").unwrap_or_else(|| panic!("{page}: no </head>"));
+    let restore = html
+        .find(v2_lib::webtheme::RESTORE_JS)
+        .unwrap_or_else(|| panic!("{page}: no scheme restore script"));
+    assert!(restore < head_end, "{page}: the restore script must be in <head>");
+    let charset = html.find("<meta charset").unwrap_or(0);
+    assert!(charset < restore, "{page}: charset first, so the script is read as UTF-8");
+    // And only there: the switch no longer restores anything itself.
+    assert!(!v2_lib::webtheme::SWITCH_JS.contains("getItem"), "the switch must not restore it a second time");
+}
+
+#[test]
+fn the_report_and_the_pages_beside_it_restore_the_scheme_before_the_first_paint() {
+    use std::collections::HashMap;
+    let report = v2_lib::report::build_report_html("T", "o", "p", &[], &HashMap::new(), "now", &PagePalette::default());
+    assert_scheme_restored_before_paint("execution report", &report);
+
+    let dir = tempfile::tempdir().unwrap();
+    let cases = dir.path().join("cases.html");
+    v2_lib::import_parser::export_queue_to_html(&[], cases.to_str().unwrap(), "", None, &PagePalette::default()).unwrap();
+    assert_scheme_restored_before_paint("View in browser", &std::fs::read_to_string(&cases).unwrap());
+
+    let map = dir.path().join("map.html");
+    v2_lib::test_map::export_test_map_html(&[], map.to_str().unwrap(), "", &PagePalette::default(), None).unwrap();
+    assert_scheme_restored_before_paint("test map", &std::fs::read_to_string(&map).unwrap());
+}
+
+#[test]
+fn the_restore_script_only_takes_the_two_schemes_and_survives_a_file_origin() {
+    let js = v2_lib::webtheme::RESTORE_JS;
+    assert!(js.contains("'tcm-page-scheme'"), "the key the switch stores under");
+    assert!(js.contains("=== 'dark'") && js.contains("=== 'light'"), "a stored value is checked, never applied raw");
+    assert!(js.contains("try") && js.contains("catch"), "file:// localStorage can throw");
+}

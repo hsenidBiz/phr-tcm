@@ -908,8 +908,9 @@ mod page_tests {
         assert!(html.contains("@media (prefers-reduced-motion:no-preference)"));
         // The same in words, for a screen reader.
         assert!(html.contains("<li>Evaluation rules. Requires: Cycle setup. Templates: Save the rules.</li>"), "{html}");
-        // The light/dark switch, and the connector script.
-        assert_eq!(html.matches("<script").count(), 2);
+        // The scheme restore in <head>, the light/dark switch, and the
+        // connector script.
+        assert_eq!(html.matches("<script").count(), 3);
     }
 
     #[test]
@@ -932,6 +933,12 @@ mod page_tests {
         assert_eq!(columns(&f).iter().map(Vec::len).sum::<usize>(), 5);
         // Every connector is drawable, even one running backwards.
         let _ = page_html(&f, &[], &PagePalette::default());
+    }
+
+    #[test]
+    fn the_flow_page_restores_the_scheme_before_the_first_paint() {
+        let html = page_html(&flow(), &[], &PagePalette::default());
+        crate::webtheme::assert_scheme_restored_before_paint("flow page", &html);
     }
 
     #[test]

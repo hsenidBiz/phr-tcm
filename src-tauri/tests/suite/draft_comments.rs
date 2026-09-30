@@ -311,8 +311,10 @@ fn a_hostile_title_cannot_escape_the_card_or_the_script() {
     // Split on "<script" (no bracket): the #tc-data JSON block opens with
     // `<script type='application/json'>`, and its content is inert text to
     // the parser - a `<img` inside it is data, not markup. The markup
-    // region is everything before the first script of ANY kind.
-    let markup = html.split("<script").next().expect("cards precede the scripts");
+    // region is the body up to its first script of ANY kind - the body, as
+    // <head> carries the scheme-restore script, which comes before any card.
+    let body = html.split("</head>").nth(1).expect("a head, then the body");
+    let markup = body.split("<script").next().expect("cards precede the scripts");
     assert!(!markup.contains("<img"), "markup reached the card");
     assert!(markup.contains("&lt;img src=x"));
 

@@ -332,8 +332,9 @@ pub fn export_queue_page(
     let mut parts: Vec<String> = vec![
         "<!DOCTYPE html>".into(),
         format!(
-            "<html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
-            palette.initial_scheme()
+            "<html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">{}",
+            palette.initial_scheme(),
+            crate::webtheme::head_script()
         ),
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
         format!("<title>Test Cases ({})</title>", queue.len()),

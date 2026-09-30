@@ -16,6 +16,7 @@ runtime, but the Rust files are left holding only logic.
 | `scheme-switch.css` | `src/webtheme.rs` | The light/dark switch in the corner |
 | `scheme-switch.html` | `src/webtheme.rs` | That switch's markup |
 | `scheme-switch.js` | `src/webtheme.rs` | Flips `data-scheme`, remembers the choice |
+| `scheme-restore.js` | `src/webtheme.rs` | Puts the remembered choice back, from `<head>`, before the first paint |
 | `cases-page.css` | `src/import_parser/html.rs` | The test-case view/export page |
 | `cases-page.js` | `src/import_parser/html.rs` | Its collapsing, filtering, Options menu and bookmark |
 | `cases-notes.js` | `src/import_parser/html.rs` | Autosaving comment boxes → the loopback listener |

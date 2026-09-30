@@ -197,7 +197,7 @@ pub fn export_test_map_html(
     let empty = if cases == 0 { "<p id='map-empty' class='empty'>No test cases to map.</p>" } else { "" };
     let html = format!(
         "<!DOCTYPE html>\n\
-         <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">\
+         <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">{restore}\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>Test map ({total})</title>\
          <style>{vars}{css}</style></head><body>{switch}\
@@ -228,6 +228,7 @@ pub fn export_test_map_html(
             None => String::new(),
         },
         scheme = palette.initial_scheme(),
+        restore = crate::webtheme::head_script(),
         vars = palette.css(),
         css = MAP_CSS,
         switch = crate::webtheme::SWITCH_HTML,

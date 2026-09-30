@@ -207,7 +207,7 @@ pub fn build_report_html(
     };
 
     format!(
-        r#"<!doctype html><html lang="en" data-scheme="{scheme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{t}</title><style>{vars}{CSS}</style></head>
+        r#"<!doctype html><html lang="en" data-scheme="{scheme}"><head><meta charset="utf-8">{restore}<meta name="viewport" content="width=device-width, initial-scale=1"><title>{t}</title><style>{vars}{CSS}</style></head>
 <body>{switch}<div class="page">
 <h1>Execution report — {t}</h1>
 <div class="sub">{org} / {proj}</div>
@@ -219,6 +219,7 @@ pub fn build_report_html(
 <div class="footer">Generated {generated_at} by Test Case Manager</div>
 </div><script>{switch_js}</script></body></html>"#,
         scheme = palette.initial_scheme(),
+        restore = crate::webtheme::head_script(),
         vars = palette.css(),
         switch = crate::webtheme::SWITCH_HTML,
         switch_js = crate::webtheme::SWITCH_JS,

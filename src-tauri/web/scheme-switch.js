@@ -3,9 +3,9 @@
   var root = document.documentElement;
   var KEY = 'tcm-page-scheme';
   var store = function (v) { try { localStorage.setItem(KEY, v); } catch (e) { /* file:// */ } };
-  var remembered = null;
-  try { remembered = localStorage.getItem(KEY); } catch (e) { /* file:// */ }
-  if (remembered === 'dark' || remembered === 'light') root.setAttribute('data-scheme', remembered);
+  // The remembered choice is already on <html>: scheme-restore.js puts it
+  // there from <head>, before the first paint. Doing it here, at the end
+  // of the page, is what made a Light page flash dark.
   var btn = document.getElementById('scheme-switch');
   var label = btn && btn.querySelector('.scheme-label');
   var paint = function () {

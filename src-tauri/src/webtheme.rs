@@ -42,6 +42,18 @@ pub const SWITCH_HTML: &str = include_str!("../web/scheme-switch.html");
 /// the life of the tab either way.
 pub const SWITCH_JS: &str = include_str!("../web/scheme-switch.js");
 
+/// Puts the switch's remembered choice back on `<html>`. Every page puts
+/// it in `<head>` (`HEAD_SCRIPT`): a script in the head runs before the
+/// body is painted, so a page the reader set to the other scheme opens in
+/// it, instead of painting the app's scheme first and flipping.
+pub const RESTORE_JS: &str = include_str!("../web/scheme-restore.js");
+
+/// `RESTORE_JS` as the tag each page's `<head>` carries, straight after
+/// its charset.
+pub fn head_script() -> String {
+    format!("<script>{RESTORE_JS}</script>")
+}
+
 /// One scheme's worth of colour, named for the app's own tokens.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct ReportPalette {
