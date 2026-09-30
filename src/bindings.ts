@@ -741,7 +741,7 @@ export const commands = {
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
-	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, dbWrites: boolean, apiWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, dbWrites, apiWrites }),
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, switches: BridgeSwitches) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, switches }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
@@ -1134,6 +1134,19 @@ export type BridgeStatus = {
 	 *  binary, not a separate file).
 	 */
 	mcp_exe: string,
+};
+
+/**
+ *  The AI Bridge tab's on/off switches, pushed together - one argument, so
+ *  `set_bridge_context` stays inside the ten a specta command may take.
+ */
+export type BridgeSwitches = {
+	/**  Company database create/update/delete (see `BridgeContext::db_writes`). */
+	dbWrites: boolean,
+	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
+	apiWrites: boolean,
+	/**  The risk-tiered writing guide (see `BridgeContext::risk_tiered`). */
+	riskTiered: boolean,
 };
 
 /**  What the app hands the reporter. */

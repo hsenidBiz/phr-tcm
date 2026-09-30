@@ -38,6 +38,8 @@ const FORBIDDEN = [
   /api ?templates?/i,
   /api_template/i,
   /save_api_flow/i,
+  /risk-tiered/i,
+  /Test design rules/i,
   /get_api_flow_progress/i,
 ];
 

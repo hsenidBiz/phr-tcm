@@ -83,6 +83,19 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
     Ok(BridgeStatus { port, mcp_exe: mcp_exe_path() })
 }
 
+/// The AI Bridge tab's on/off switches, pushed together - one argument, so
+/// `set_bridge_context` stays inside the ten a specta command may take.
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeSwitches {
+    /// Company database create/update/delete (see `BridgeContext::db_writes`).
+    pub db_writes: bool,
+    /// Proving and running API templates (see `BridgeContext::api_writes`).
+    pub api_writes: bool,
+    /// The risk-tiered writing guide (see `BridgeContext::risk_tiered`).
+    pub risk_tiered: bool,
+}
+
 /// The frontend pushes its current org/project + detected field refs so
 /// bridge routes have defaults the AI never has to guess.
 #[tauri::command]
@@ -96,8 +109,7 @@ pub fn set_bridge_context(
     disabled_tools: Vec<String>,
     working_dir: Option<String>,
     db_id: Option<String>,
-    db_writes: bool,
-    api_writes: bool,
+    switches: BridgeSwitches,
 ) {
     use tauri::Manager;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -116,8 +128,9 @@ pub fn set_bridge_context(
             // runs. See `BridgeContext`.
             db_id,
             db_secrets: Some(secrets),
-            db_writes,
-            api_writes,
+            db_writes: switches.db_writes,
+            api_writes: switches.api_writes,
+            risk_tiered: switches.risk_tiered,
         };
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.

@@ -44,6 +44,7 @@ import {
   subscribeDbSettings,
 } from "./lib/dbServer";
 import { apiWritesSnapshot, subscribeApiWrites } from "./lib/apiTemplates";
+import { riskTieredSnapshot, subscribeRiskTiered } from "./lib/riskTieredGuide";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -685,6 +686,7 @@ export default function App() {
   // tab's own switch, pushed the moment it changes for the same reason the
   // database write switch is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
+  const riskTiered = useSyncExternalStore(subscribeRiskTiered, riskTieredSnapshot);
   // Who each database signs in as - the same list, under the same key, the
   // AI Bridge card reads and refreshes when a login is saved.
   const databases = useQuery({
@@ -738,8 +740,9 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            dbWrites && devLogin,
-            apiWrites,
+            // The risk-tiered guide is offered only where Auto Run is: a
+            // switch left on before the extras were reset must not apply.
+            { dbWrites: dbWrites && devLogin, apiWrites, riskTiered: riskTiered && autoRunShown },
           ),
         )
         .catch(() => {});
@@ -762,6 +765,8 @@ export default function App() {
     dbWrites,
     devLogin,
     apiWrites,
+    riskTiered,
+    autoRunShown,
     tourOpen,
     dbMigrated,
   ]);

@@ -50,6 +50,10 @@ pub struct BridgeContext {
     /// running one writes to the application, so both are refused
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
+    /// The AI Bridge tab's "Risk-tiered test design (trial)" switch: the
+    /// writing guide carries the risk-tiered rules instead of the plain
+    /// granularity and edge-case sections. Off by default.
+    pub risk_tiered: bool,
 }
 
 /// Hand-written so the store - and therefore every password in it - cannot
@@ -75,6 +79,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
+            .field("risk_tiered", &self.risk_tiered)
             .finish()
     }
 }
@@ -3177,7 +3182,174 @@ impl Modules {
 
 /// Live writing guide: format rules from the importer's own constants +
 /// the org's Module values, fetched fresh (no snapshot staleness).
+/// Whether the writing guide carries the risk-tiered rules: the person's
+/// switch, and only where Auto Run is offered (a development build, or a
+/// release build whose extras are unlocked) - a switch left on before the
+/// extras were reset must not apply. Both inputs explicit, so each case is
+/// testable from this development test binary.
+pub fn risk_tiered_for(requested: bool, offered: bool) -> bool {
+    requested && offered
+}
+
+/// The writing guide's granularity section, as it reads with the
+/// risk-tiered trial switched off.
+const GRANULARITY: &str = "\
+        ## Granularity - quality over quantity\n\
+        Similar checks belong in ONE case, not several. Checking a\n\
+        notification's title and checking its body is one case with two\n\
+        steps (or one step with both in the expected result) - not two\n\
+        cases. Split only when the checks need different setup or data, or\n\
+        can fail independently in a way the tester must record separately.\n\
+        A padded case count is not coverage; every extra case is another\n\
+        row someone has to execute and maintain.\n\n\
+";
+
+/// The writing guide's edge-case section, as it reads with the risk-tiered
+/// trial switched off.
+const EDGE_CASES: &str = "\
+        ## Edge cases worth writing\n\
+        A set that only walks the happy path is not finished. For each\n\
+        feature, add the edge cases a tester can run from the application\n\
+        itself in a few minutes, each as its own case with the branch in\n\
+        its title:\n\n\
+        - Access: open the page's address without signing in, or as a role\n\
+        that should not see it; the expected result is what the application\n\
+        shows instead (the sign-in page, a permission message), named\n\
+        exactly.\n\
+        - Required and empty: submit with a required field blank, with only\n\
+        spaces, at the field's maximum length, and one over it.\n\
+        - Boundaries the form shows: the smallest and largest value a field\n\
+        accepts, a date at the edge of the allowed range, zero and a\n\
+        negative number where the field is numeric.\n\
+        - State: the same action twice (double submit, refresh after\n\
+        saving, back button after a save), and an item edited by someone\n\
+        else in between when the application shows that.\n\
+        - Absence: the list with nothing in it, a search with no matches, a\n\
+        filter that removes everything; the expected result is the empty\n\
+        state's own words.\n\n\
+        Do NOT write cases that need developer tools, a modified request,\n\
+        a database change, a disconnected network, or a clock change: a\n\
+        tester cannot run them from the application, and a case nobody can\n\
+        run is worse than none. If a spec names such a behaviour, put it in\n\
+        `reviewer_notes` as a note for the developers instead.\n\n\
+";
+
+/// The risk-tiered trial (the AI Bridge tab's "Risk-tiered test design"
+/// switch): the team's Test Risk-Tiering Policy and test-generation rules,
+/// adapted to test cases in Azure DevOps. It replaces the granularity
+/// section; the rules for code-level tests (data-row attributes, method-style
+/// names, mutation testing) have no meaning here and are left out.
+const RISK_TIERED_DESIGN: &str = "\
+        ## Risk-tiered design (trial rules)\n\
+        These rules replace the plain granularity and edge-case guidance while\n\
+        the developer trials them. They cut the number of cases without\n\
+        cutting coverage: every case earns its place against an acceptance\n\
+        criterion or a named risk.\n\n\
+        ### Tier every scenario\n\
+        - T1 - Critical: financial, legal or statutory, data isolation between\n\
+        companies, or security. Payroll calculations, tax, EPF/ETF, access\n\
+        control.\n\
+        - T2 - Core: a core business workflow whose failure is visible but\n\
+        recoverable. Leave, attendance, onboarding, integrations.\n\
+        - T3 - Low: cosmetic or configuration, with a small blast radius.\n\
+        Labels, report layout, settings screens.\n\n\
+        Tier each SCENARIO, not the whole story. A check that shows or depends\n\
+        on a T1 behaviour - the label that displays a calculated figure, the\n\
+        report column that carries it - is RELATED: it belongs in the T1 case\n\
+        and is T1. A change that stands on its own - an unrelated label renamed\n\
+        in the same story - is UNRELATED: its own case, at its own tier.\n\n\
+        ### Design techniques\n\
+        - Equivalence partitioning: one case per partition, not per value.\n\
+        - Boundary values: the minimum, the maximum and just outside - nothing\n\
+        in between.\n\
+        - Pairwise for three or more interacting inputs. Never every\n\
+        combination unless the developer asks for it on a T1 scenario.\n\
+        - T1 combinations: when three or more inputs feed one calculation or\n\
+        rule, say so in the scenario list with the count - for example \"tax\n\
+        band x employee type x join date feed the EPF calculation: pairwise\n\
+        covers 12 of 48 combinations - generate all 48?\" - and let the\n\
+        developer decide.\n\
+        - Negative cases: one per distinct validation rule, not one per\n\
+        invalid input.\n\n\
+        ### Budget per story\n\
+        New scenarios at most: T1 25, T2 12, T3 5. When that is not enough,\n\
+        STOP and list the extra scenarios with a one-line justification each,\n\
+        instead of writing them.\n\n\
+        ### Consolidate\n\
+        - Before adding a case, read the PBI's existing cases (`get_test_cases`)\n\
+        and extend a matching one - keeping its `id` - rather than writing a\n\
+        near-duplicate.\n\
+        - Checks that differ only in their data are ONE case: one step per data\n\
+        row, each with its own expected result. Different branches still stay\n\
+        separate cases (see One branch per case).\n\
+        - Similar checks on the same screen with the same setup belong in one\n\
+        case. A padded case count is not coverage.\n\n\
+        ### Tags on every case\n\
+        These three are required; a genuinely new tag is fine for them.\n\
+        - A trace: the acceptance criterion or named risk the case covers, as a\n\
+        tag like `AC-3` or `Risk-payroll-rounding`. Never write a case without\n\
+        one.\n\
+        - Its tier: exactly one of `T1`, `T2`, `T3`.\n\
+        - Exactly one run category: `Smoke` (the critical path, runnable in a\n\
+        few minutes with no special data), `Regression` (the default) or\n\
+        `Extended` (slow, data-heavy, or across companies).\n\n\
+        ### Ready to automate\n\
+        - Deterministic: name exact data and fixed dates in preconditions and\n\
+        steps - never \"today\", \"any employee\" or an order the tester cannot\n\
+        see.\n\
+        - Isolated: a case sets up what it needs and never depends on another\n\
+        case having run first.\n\
+        - Data isolation: a case that reads or changes one company's data also\n\
+        checks another company's data is not shown or touched (T1).\n\n\
+";
+
+/// The risk-tiered trial's edge cases: the same kinds of edge case as the
+/// plain guide, chosen by the design techniques instead of listed per input.
+const RISK_TIERED_EDGE_CASES: &str = "\
+        ## Edge cases, the tiered way\n\
+        Choose edge cases with the techniques above, not by habit - each one\n\
+        still traced, tiered and inside the budget:\n\n\
+        - Access: open the page's address without signing in, or as a role\n\
+        that should not see it; the expected result is what the application\n\
+        shows instead (the sign-in page, a permission message), named\n\
+        exactly.\n\
+        - Validation: one negative case per validation rule. A blank required\n\
+        field and a value over the maximum length are two rules; if the\n\
+        application trims input, blank and only spaces are one.\n\
+        - Boundaries: the minimum, the maximum and just outside, for each field\n\
+        the form bounds.\n\
+        - State: the same action twice (double submit, refresh after saving,\n\
+        back button after a save), where the flow allows it.\n\
+        - Absence: the list with nothing in it, a search with no matches; the\n\
+        expected result is the empty state's own words.\n\n\
+        Do NOT write cases that need developer tools, a modified request,\n\
+        a database change, a disconnected network, or a clock change: a\n\
+        tester cannot run them from the application, and a case nobody can\n\
+        run is worse than none. If a spec names such a behaviour, put it in\n\
+        `reviewer_notes` as a note for the developers instead.\n\n\
+";
+
+/// The risk-tiered trial's extra workflow step: the scenario list, approved
+/// before any case is drafted.
+const RISK_TIERED_SCENARIO_STEP: &str = "\
+        1.5. Before drafting, write the SCENARIO LIST in the conversation - one\n\
+        line each: the scenario, its trace (`AC-n` or the named risk), its\n\
+        tier, RELATED or UNRELATED where the story mixes tiers, and any T1\n\
+        combination question. Wait for the developer to approve it, unless\n\
+        they said the scenarios are pre-approved. Then write cases ONLY from\n\
+        the approved list.\n\
+";
+
+/// The risk-tiered trial's closing step: what was covered, and what was not.
+const RISK_TIERED_SUMMARY_STEP: &str = "\
+        6. End with a summary: each approved scenario and the acceptance\n\
+        criterion or risk it covers; cases added against existing cases\n\
+        extended; and every scenario deferred over the budget, with its\n\
+        justification.\n\
+";
+
 async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
+    let risk_tiered = risk_tiered_for(ctx.risk_tiered, crate::ai_tools::autorun_offered());
     let statuses = crate::model::VALID_STATUSES
         .iter()
         .map(|v| format!("\"{v}\""))
@@ -3257,14 +3429,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         ordering groups cases by shared preconditions so the tester changes\n\
         environment as little as possible; 192 bespoke wordings of the same\n\
         few setups leave it nothing to group, and the ordering buys nothing.\n\n\
-        ## Granularity - quality over quantity\n\
-        Similar checks belong in ONE case, not several. Checking a\n\
-        notification's title and checking its body is one case with two\n\
-        steps (or one step with both in the expected result) - not two\n\
-        cases. Split only when the checks need different setup or data, or\n\
-        can fail independently in a way the tester must record separately.\n\
-        A padded case count is not coverage; every extra case is another\n\
-        row someone has to execute and maintain.\n\n\
+        {granularity}\
         ## Writing style - sound like a tester, not a model\n\
         This applies to the TEST CASES THEMSELVES: every title, step,\n\
         expected result, precondition and reviewer note. What you say to the\n\
@@ -3396,31 +3561,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         signs in as one of them, and a weak negative - one unrated goal out\n\
         of two, where four out of five would have caught an implementation\n\
         that passes on any rating.\n\n\
-        ## Edge cases worth writing\n\
-        A set that only walks the happy path is not finished. For each\n\
-        feature, add the edge cases a tester can run from the application\n\
-        itself in a few minutes, each as its own case with the branch in\n\
-        its title:\n\n\
-        - Access: open the page's address without signing in, or as a role\n\
-        that should not see it; the expected result is what the application\n\
-        shows instead (the sign-in page, a permission message), named\n\
-        exactly.\n\
-        - Required and empty: submit with a required field blank, with only\n\
-        spaces, at the field's maximum length, and one over it.\n\
-        - Boundaries the form shows: the smallest and largest value a field\n\
-        accepts, a date at the edge of the allowed range, zero and a\n\
-        negative number where the field is numeric.\n\
-        - State: the same action twice (double submit, refresh after\n\
-        saving, back button after a save), and an item edited by someone\n\
-        else in between when the application shows that.\n\
-        - Absence: the list with nothing in it, a search with no matches, a\n\
-        filter that removes everything; the expected result is the empty\n\
-        state's own words.\n\n\
-        Do NOT write cases that need developer tools, a modified request,\n\
-        a database change, a disconnected network, or a clock change: a\n\
-        tester cannot run them from the application, and a case nobody can\n\
-        run is worse than none. If a spec names such a behaviour, put it in\n\
-        `reviewer_notes` as a note for the developers instead.\n\n\
+        {edge_cases}\
         ## Allowed Module values (live)\n{module_lines}\n\n\
         ## Tags this project already uses\n\
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\
@@ -3433,6 +3574,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         scope are theirs to decide, not yours to assume.\n\
         1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
+        {scenario_step}\
         2. Draft your cases. Write your draft IN SPEC ORDER - cases walking\n\
         down the document, so a reviewer can scroll the spec and the file\n\
         together, and so `check_spec_coverage` (next) can reason about it\n\
@@ -3453,9 +3595,13 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
         5. For later edits - retagging, retitling, setting a module - call\n\
-        `transform_cases` instead of rewriting the file yourself.\n",
+        `transform_cases` instead of rewriting the file yourself.\n{summary_step}",
         org = ctx.org,
         project = ctx.project,
+        granularity = if risk_tiered { RISK_TIERED_DESIGN } else { GRANULARITY },
+        edge_cases = if risk_tiered { RISK_TIERED_EDGE_CASES } else { EDGE_CASES },
+        scenario_step = if risk_tiered { RISK_TIERED_SCENARIO_STEP } else { "" },
+        summary_step = if risk_tiered { RISK_TIERED_SUMMARY_STEP } else { "" },
     )
 }
 

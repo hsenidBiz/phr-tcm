@@ -16,6 +16,7 @@ fn ctx() -> BridgeContext {
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        risk_tiered: false,
     }
 }
 
@@ -1717,6 +1718,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        risk_tiered: false,
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
@@ -3230,4 +3232,94 @@ mod api_template_routes {
         assert_eq!(f["stages"][0]["templates"], json!([]));
         assert!(f["stages"][0].get("check").is_none(), "the list is a summary: {f}");
     }
+}
+
+// ============================================================ risk-tiered trial
+//
+// The AI Bridge tab's "Risk-tiered test design (trial)" switch swaps the
+// guide's granularity and edge-case sections for the team's risk-tiering
+// rules, and adds the scenario-list step and the closing summary. Off, the
+// guide is exactly the plain one.
+
+async fn guide_with(risk_tiered: bool) -> String {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "allowedValues": ["Login"] })))
+        .mount(&server)
+        .await;
+    let c = BridgeContext { risk_tiered, ..ctx() };
+    let (status, g) = route(&c, Some(&client), "GET", "/guide", "", "1.23.2").await;
+    assert_eq!(status, 200, "{g}");
+    g
+}
+
+#[test]
+fn the_risk_tiered_trial_is_off_by_default() {
+    assert!(!BridgeContext::default().risk_tiered);
+}
+
+#[tokio::test]
+async fn switched_off_the_guide_keeps_its_plain_sections() {
+    let g = guide_with(false).await;
+    assert!(g.contains("## Granularity - quality over quantity"), "{g}");
+    assert!(g.contains("## Edge cases worth writing"), "{g}");
+    assert!(!g.contains("Risk-tiered"), "{g}");
+    assert!(!g.contains("1.5. Before drafting"), "{g}");
+    assert!(!g.contains("6. End with a summary"), "{g}");
+}
+
+#[tokio::test]
+async fn switched_on_the_guide_carries_the_risk_tiered_rules() {
+    let g = guide_with(true).await;
+    // The plain granularity and edge-case sections are replaced...
+    assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
+    assert!(!g.contains("## Edge cases worth writing"), "{g}");
+    // ...by the tiers, the techniques, the budget, consolidation and tags.
+    for needle in [
+        "## Risk-tiered design (trial rules)",
+        "Tier each SCENARIO, not the whole story.",
+        "is RELATED: it belongs in the T1 case",
+        "is UNRELATED: its own case, at its own tier",
+        "Equivalence partitioning: one case per partition, not per value.",
+        "pairwise\n        covers 12 of 48 combinations",
+        "one per distinct validation rule",
+        "T1 25, T2 12, T3 5",
+        "STOP and list the extra scenarios",
+        "one step per data\nrow",
+        "exactly one of `T1`, `T2`, `T3`",
+        "`Smoke`",
+        "`Regression`",
+        "`Extended`",
+        "## Edge cases, the tiered way",
+    ] {
+        let flat_needle = needle.split_whitespace().collect::<Vec<_>>().join(" ");
+        let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains(&flat_needle), "missing {needle:?} in:\n{g}");
+    }
+    // Everything else stays.
+    for kept in ["## Format", "## One branch per case", "## Allowed Module values (live)", "## Workflow"] {
+        assert!(g.contains(kept), "lost {kept:?}");
+    }
+    // The scenario list comes between reading the existing cases and
+    // drafting, and the summary closes the workflow.
+    let step1 = g.find("1. Call `get_test_cases`").expect("step 1");
+    let scen = g.find("1.5. Before drafting, write the SCENARIO LIST").expect("the scenario step");
+    let step2 = g.find("2. Draft your cases.").expect("step 2");
+    assert!(step1 < scen && scen < step2, "the scenario list sits between steps 1 and 2");
+    let step5 = g.find("5. For later edits").expect("step 5");
+    let summary = g.find("6. End with a summary").expect("the summary step");
+    assert!(step5 < summary, "the summary closes the workflow");
+}
+
+/// The risk-tiered guide is offered only where Auto Run is: a switch left on
+/// in a release build whose extras were reset (or never unlocked) does not
+/// change the guide.
+#[test]
+fn the_risk_tiered_guide_applies_only_where_auto_run_is_offered() {
+    use v2_lib::ai_bridge::risk_tiered_for;
+    assert!(risk_tiered_for(true, true));
+    assert!(!risk_tiered_for(true, false), "locked: the switch does not apply");
+    assert!(!risk_tiered_for(false, true));
+    assert!(!risk_tiered_for(false, false));
 }
