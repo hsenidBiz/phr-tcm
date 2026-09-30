@@ -165,15 +165,20 @@ test("Finish waits for the signed-in check, which I'm signed in asks for and Pic
   expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
 
   fireEvent.click(screen.getByRole("button", { name: "I'm signed in" }));
-  expect(await screen.findByText(/Now click something only a signed-in person sees/)).toBeInTheDocument();
+  expect(
+    await screen.findByText(/Now click Sign out, or something every signed-in account sees - not your own name/),
+  ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
 
   await send(step("marker", 0, 'link "Kim"'));
   expect(screen.getByText('link "Kim"')).toBeInTheDocument();
-  expect(screen.queryByText(/Now click something only/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Now click Sign out/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled();
 
   fireEvent.click(screen.getByRole("button", { name: "Pick again" }));
+  // Pick mode is on again, and the dialog says so while the old check stays.
+  expect(await screen.findByText(/Now click Sign out/)).toBeInTheDocument();
+  expect(screen.getByText('link "Kim"')).toBeInTheDocument();
   await send(step("marker", 0, 'button "Sign out"'));
   expect(screen.getByText('button "Sign out"')).toBeInTheDocument();
   expect(screen.queryByText('link "Kim"')).not.toBeInTheDocument();
@@ -191,6 +196,14 @@ test("default roles: a password field is the password, the first other field the
     { kind: "field", readable: "#user", password: false },
   ];
   expect(defaultFieldRoles(passwordFirst).map((c) => c.role)).toEqual(["password", "username"]);
+  // The email corrected after the password is still the username.
+  const retyped: DraftStepView[] = [
+    { kind: "field", readable: 'textbox "Email"', password: false },
+    { kind: "field", readable: 'textbox "Password"', password: true },
+    { kind: "field", readable: 'textbox "Email"', password: false },
+    { kind: "field", readable: 'textbox "Domain"', password: false },
+  ];
+  expect(defaultFieldRoles(retyped).map((c) => c.role)).toEqual(["username", "password", "username", "text"]);
   expect(defaultFieldRoles([{ kind: "click", readable: "#go", password: false }])).toEqual([]);
   expect(stepWords({ kind: "click", readable: 'link "Next"', password: false })).toBe('Click link "Next"');
 });
@@ -392,4 +405,35 @@ test("what the dialog is sent carries no typed value", () => {
   type NoValue<T> = "value" extends keyof T ? never : true;
   const none: [NoValue<RecordingEvent>, NoValue<DraftStepView>, NoValue<SignInDraftView>] = [true, true, true];
   expect(none).toEqual([true, true, true]);
+});
+
+test("the checking account can be changed in the review, and not while the check runs", async () => {
+  const saves: { account: string }[] = [];
+  let resolveSave: ((v: unknown) => void) | null = null;
+  mount(
+    recorder((_cmd, args) => {
+      saves.push(args as never);
+      return new Promise((resolve) => {
+        resolveSave = resolve;
+      });
+    }),
+    {
+      recipe: RECIPE,
+      accounts: [...ACCOUNTS, { key: "hr.clerk", label: "HR Clerk", username: "lee", password: "p" }],
+    },
+  );
+  await toReview();
+  const pick = screen.getByRole("combobox", { name: "Check with account" });
+  expect(pick).toHaveTextContent("HR Admin (hr.admin)");
+  fireEvent.click(pick);
+  fireEvent.click(await screen.findByRole("option", { name: "HR Clerk (hr.clerk)" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Fixed text for step 4" }), { target: { value: "CORP" } });
+  fireEvent.click(screen.getByRole("button", { name: "Check and save" }));
+  await waitFor(() => expect(saves).toHaveLength(1));
+  expect(saves[0].account).toBe("hr.clerk");
+  expect(screen.getByRole("combobox", { name: "Check with account" })).toBeDisabled();
+  await act(async () => {
+    resolveSave?.({ saved: false, failure: "the check did not sign in - nothing was saved: x" });
+  });
+  expect(await screen.findByRole("combobox", { name: "Check with account" })).toBeEnabled();
 });

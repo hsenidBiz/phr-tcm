@@ -10,7 +10,7 @@
 // holds that the person wrote is the fixed text they give here.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   commands,
   events,
@@ -52,18 +52,25 @@ const CANCELLED = "The recording was cancelled. Nothing was saved.";
 
 /** What each field step fills in, before the person changes anything: a
  * password field is the password, the first other field the username,
- * and any further field a fixed text still to be written. */
+ * and any further field a fixed text still to be written. A field typed
+ * into again (the email corrected after the password) is what it was the
+ * first time. */
 export function defaultFieldRoles(steps: DraftStepView[]): FieldChoice[] {
   let usernameGiven = false;
+  const seen = new Map<string, FieldChoice["role"]>();
   return steps
     .filter((s) => s.kind === "field")
     .map((s): FieldChoice => {
-      if (s.password) return { role: "password", text: "" };
-      if (!usernameGiven) {
+      const again = seen.get(s.readable);
+      if (again) return { role: again, text: "" };
+      let role: FieldChoice["role"] = "text";
+      if (s.password) role = "password";
+      else if (!usernameGiven) {
         usernameGiven = true;
-        return { role: "username", text: "" };
+        role = "username";
       }
-      return { role: "text", text: "" };
+      seen.set(s.readable, role);
+      return { role, text: "" };
     });
 }
 
@@ -292,6 +299,29 @@ export default function RecordSignInDialog({
 
   const canStart = startValue.trim() !== "" && who !== "";
 
+  /** The account the check signs in as: chosen before recording, and
+   * changeable in the review, so a check that failed for the account's
+   * sake can be tried again without recording again. */
+  const accountPicker = (disabled: boolean) => (
+    <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
+      Check with account
+      <Select
+        aria-label="Check with account"
+        className="w-56"
+        value={who}
+        disabled={disabled || keys.length === 0}
+        onChange={(e) => setPicked(e.target.value)}
+      >
+        {keys.length === 0 && <option value="">No accounts yet</option>}
+        {(accounts.data ?? []).map((a) => (
+          <option key={a.key} value={a.key}>
+            {a.label ? `${a.label} (${a.key})` : a.key}
+          </option>
+        ))}
+      </Select>
+    </label>
+  );
+
   return (
     <Modal onClose={closeIfIdle} className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 p-5">
       <div>
@@ -324,23 +354,7 @@ export default function RecordSignInDialog({
               onChange={(e) => setStart(e.target.value)}
             />
           </label>
-          <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            Check with account
-            <Select
-              aria-label="Check with account"
-              className="w-56"
-              value={who}
-              disabled={keys.length === 0}
-              onChange={(e) => setPicked(e.target.value)}
-            >
-              {keys.length === 0 && <option value="">No accounts yet</option>}
-              {(accounts.data ?? []).map((a) => (
-                <option key={a.key} value={a.key}>
-                  {a.label ? `${a.label} (${a.key})` : a.key}
-                </option>
-              ))}
-            </Select>
-          </label>
+          {accountPicker(false)}
           {noAccounts && (
             <p className="text-xs text-warning">
               Add an account in Accounts first - the recording is checked by signing in with it.
@@ -390,18 +404,17 @@ export default function RecordSignInDialog({
               {n}
             </p>
           ))}
-          {phase.marker ? (
+          {phase.marker && (
             <p className="text-xs text-text">
               <span className="text-muted">Signed-in check: </span>
               {phase.marker}
             </p>
-          ) : (
-            phase.picking && (
-              <p className="text-xs text-accent">
-                Now click something only a signed-in person sees - your name, or Sign out. That click is
-                not carried out.
-              </p>
-            )
+          )}
+          {phase.picking && (
+            <p className="text-xs text-accent">
+              Now click Sign out, or something every signed-in account sees - not your own name. That
+              click is not carried out.
+            </p>
           )}
           <div className="flex flex-wrap justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={cancelRecording}>
@@ -427,6 +440,7 @@ export default function RecordSignInDialog({
           draft={phase.draft}
           roles={phase.roles}
           checking={phase.kind === "checking"}
+          account={accountPicker(phase.kind === "checking")}
           failure={phase.kind === "review" ? phase.failure : ""}
           onRole={setRole}
           onText={setText}
@@ -466,6 +480,7 @@ function Review({
   draft,
   roles,
   checking,
+  account,
   failure,
   onRole,
   onText,
@@ -476,6 +491,8 @@ function Review({
   draft: SignInDraftView;
   roles: FieldChoice[];
   checking: boolean;
+  /** The "Check with account" control. */
+  account: ReactNode;
   failure: string;
   onRole: (i: number, role: FieldRole) => void;
   onText: (i: number, text: string) => void;
@@ -535,6 +552,7 @@ function Review({
         <span className="text-muted">Signed-in check: </span>
         {draft.marker || "none picked"}
       </p>
+      {account}
       {checking && (
         <p className="text-xs text-muted">
           Checking - signing in with this recipe in a fresh browser. This can take a minute…
