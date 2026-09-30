@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.8-beta.1",
+    date: "2026-09-30",
+    items: [
+      "The changelog on a release version now lists release versions only: each one includes what its beta builds changed. Beta builds still list every beta.",
+    ],
+  },
+  {
     version: "2.0.7",
     date: "2026-09-30",
     items: [
