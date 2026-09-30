@@ -117,6 +117,11 @@
   <p><button id="settler" onclick="say('which', 'settled')">Settling target</button></p>
   <p><button id="coverme" onclick="bump()">Cover me</button></p>
 
+  <!-- PeoplesHR's menu rows: the row takes the click and its words let it
+       through (pointer-events: none), so the point at the words' centre
+       belongs to the row around them. -->
+  <div class="menu-row" onclick="say('which', 'menu row')" style="padding:4px"><span style="pointer-events:none">Menu Row Words</span></div>
+
   <!-- A sub-frame loads too, so a navigation has to tell its own load
        apart from this one. -->
   <iframe id="frame" title="inner frame" srcdoc="<p>inner frame body</p>"></iframe>

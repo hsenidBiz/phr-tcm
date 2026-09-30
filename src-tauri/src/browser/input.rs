@@ -60,7 +60,12 @@ pub const PROBE_JS: &str = r#"function() {
   const x = (l + r) / 2, y = (t + bt) / 2;
   const top = onscreen ? document.elementFromPoint(x, y) : null;
   const label = top && top.closest ? top.closest('label') : null;
-  const hit = onscreen && !!top && (top === this || this.contains(top) || (label && label.control === this));
+  // Words that let a click through (pointer-events: none) to the row around
+  // them: the row is what the point belongs to, and what a person's click on
+  // those words reaches - it is not covering them. Only an ancestor counts;
+  // anything else there really is in the way.
+  const through = !!top && top !== this && top.contains(this) && getComputedStyle(this).pointerEvents === 'none';
+  const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this));
   const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
     (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
   const editable =

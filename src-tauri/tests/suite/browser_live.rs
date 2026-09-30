@@ -408,6 +408,18 @@ async fn a_moving_element_is_refused_and_one_that_settles_is_clicked() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "settled" })).await);
 }
 
+/// 2026-09-30, PeoplesHR's menu: the words of an entry are
+/// `pointer-events: none` inside the row that takes the click, so the
+/// point at the words' centre belongs to the row. That is where a person's
+/// click lands too, and the row is not covering its own words.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn words_that_let_a_click_through_to_their_row_are_clicked_through_it() {
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "text": "Menu Row Words", "exact": true } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "menu row" })).await);
+}
+
 /// The outline a watcher sees, and the gap it opens. A page is free to put
 /// a modal up during that gap, and the click must not go through it.
 #[tokio::test]
