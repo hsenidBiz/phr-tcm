@@ -864,3 +864,49 @@ async fn a_save_keeps_the_draft_until_a_check_signs_in_then_saves_and_forgets_it
     assert_eq!(saved, stateful_draft().recipe(&fields, None).unwrap());
     assert!(!recording_is_going());
 }
+
+/// A click on a plain `<span>Username</span>` beside the input in a table
+/// cell: the span holds no field, so the page does not mark it quiet and
+/// sends its own words - but climbing the tree from it reaches the cell,
+/// whose name includes the typed username. It is never the name.
+#[tokio::test]
+async fn an_ordinary_click_is_never_named_by_a_cell_holding_a_typed_value() {
+    let span_in_cell = json!({ "nodes": [
+        { "nodeId": "1", "role": { "value": "RootWebArea" }, "name": { "value": "Sign in" }, "childIds": ["2"] },
+        { "nodeId": "2", "role": { "value": "row" }, "name": { "value": "Username kim" }, "parentId": "1", "childIds": ["3"] },
+        { "nodeId": "3", "role": { "value": "cell" }, "name": { "value": "Username kim" }, "parentId": "2", "childIds": ["4"], "backendDOMNodeId": 70 },
+        { "nodeId": "4", "role": { "value": "StaticText" }, "name": { "value": "Username" }, "parentId": "3", "backendDOMNodeId": 50 }
+    ] });
+    let chain = v2_lib::autorun::recorder::ax_chain(&span_in_cell, 50);
+    assert_eq!(locator_from_ax(&chain), Some(exact_role("cell", "Username kim")), "what the module recorder would take");
+
+    // The span is still there: the tree is asked, and the cell refused.
+    // Its own words ("Username") are all that can name it.
+    let mut d = page_with(vec![Some(span_in_cell.clone())], no_evals());
+    d.events.push_back(click_report("click", 0, "Username"));
+    // The same, reported with no words at all: it cannot be named.
+    d.events.push_back(click_report("click", 0, ""));
+    // And as the picked check.
+    d.events.push_back(click_report("marker", 0, ""));
+    let mut heard: Vec<RecordingEvent> = vec![];
+    let captured =
+        listen(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(true), &mut |e| heard.push(e))
+            .await;
+    assert_eq!(
+        captured.steps,
+        vec![Step::Click(Target::One(LocatorStep { text: Some("Username".into()), exact: true, ..LocatorStep::default() }))]
+    );
+    assert_eq!(captured.marker, None);
+    let notes: Vec<&str> = heard.iter().filter(|e| e.kind == "unreadable").map(|e| e.detail.as_str()).collect();
+    assert_eq!(notes, vec![UNREADABLE_CLICK, UNREADABLE_MARKER]);
+    for e in &heard {
+        assert!(!format!("{e:?}").contains("kim"), "a typed value reached an event: {e:?}");
+    }
+
+    // A button beside the field, with nothing inside it, is still named by
+    // the tree - ordinary sign-in clicks are buttons and links.
+    let mut d = page_with(vec![Some(tree(0, "button", "Next"))], no_evals());
+    d.events.push_back(click_report("click", 0, "something else"));
+    let captured = capture(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(false), &mut |_| {}).await;
+    assert_eq!(captured.steps, vec![Step::Click(exact_role("button", "Next"))]);
+}

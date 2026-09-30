@@ -407,13 +407,15 @@ async fn field_inside<D: Driver>(d: &mut D, backend: Option<i64>) -> bool {
     !matches!(page::call_value(d, &handle, HAS_FIELD_INSIDE_JS, &[]).await, Ok(serde_json::Value::Bool(false)))
 }
 
-/// The locator for a reported click or marker. A quiet one is named only
-/// from a `QUIET_ROLES` node with no field inside, else its role and
-/// aria-label; an ordinary one the way the module recorder names a click.
+/// The locator for a reported click or marker. From the accessibility
+/// tree, EVERY one is named only by a `QUIET_ROLES` node with no field
+/// inside: a plain `<span>Username</span>` beside the input in a table
+/// cell is not quiet, yet climbing from it reaches `cell "Username kim"`.
+/// When the tree gives nothing, a quiet click falls back to its role and
+/// aria-label; an ordinary one to the page's hints as a module click does,
+/// whose words come from an element with no field inside it (the page
+/// marks it quiet otherwise). Else it cannot be named.
 pub async fn locate_click<D: Driver>(d: &mut D, reported: &SignInClick) -> Result<Target, ()> {
-    if !reported.quiet {
-        return recorder::locate(d, &reported.click).await.map_err(|_| ());
-    }
     let click = &reported.click;
     if let Ok(Some(nodes)) = recorder::held_ax_nodes(d, &click.doc, click.i).await {
         let chain: Vec<AxLink> = nodes.iter().map(|(link, _)| link.clone()).collect();
@@ -424,7 +426,11 @@ pub async fn locate_click<D: Driver>(d: &mut D, reported: &SignInClick) -> Resul
             }
         }
     }
-    quiet_locator_from_hints(&click.hints).ok_or(())
+    if reported.quiet {
+        quiet_locator_from_hints(&click.hints).ok_or(())
+    } else {
+        recorder::locator_from_hints(&click.hints).ok_or(())
+    }
 }
 
 pub fn field_locator_from_hints(h: &FieldHints) -> Option<Target> {
