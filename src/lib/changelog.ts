@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.6",
+    date: "2026-09-30",
+    items: [
+      "The app download is much smaller: How To Use is now downloaded the first time you open it from Settings, and kept through updates.",
+    ],
+  },
+  {
     version: "2.0.5-beta.6",
     date: "2026-09-30",
     items: [
