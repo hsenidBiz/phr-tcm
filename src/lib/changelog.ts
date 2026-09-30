@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.5-beta.6",
+    date: "2026-09-30",
+    items: [
+      "The Collapse all button at the bottom left no longer covers the last row: every screen that has it now leaves room to scroll the last row clear of it.",
+    ],
+  },
+  {
     version: "2.0.5-beta.5",
     date: "2026-09-29",
     items: [
