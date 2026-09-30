@@ -119,6 +119,9 @@ export {
   KeyRound as IconRecipe,
   // The menu paths an unattended run follows to each module's screen.
   Route as IconModulePaths,
+  // The site a project's runs sign in to and start from (Auto Run's
+  // Setup card) - a globe, since what it opens is a web address.
+  Globe as IconSiteAddress,
   // Opening the bundled game in Settings' optional extras.
   Gamepad2 as IconPlayGame,
   // The app's own mark, for the way BACK to the test case side - the

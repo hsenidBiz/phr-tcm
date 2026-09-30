@@ -165,6 +165,7 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
       <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
 
       <section className="space-y-2">
+        <h3 className="text-sm font-semibold text-text">Recipe</h3>
         <p className="text-xs text-muted">
           How to sign in to this project's application, once, for every script. Use {"{{username}}"} and{" "}
           {"{{password}}"} where the account's login goes. Use {"{{password}}"} only on a real password

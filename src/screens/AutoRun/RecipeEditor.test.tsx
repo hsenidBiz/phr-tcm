@@ -222,3 +222,12 @@ test("an empty recipe box still saves the quirks, and does not call auto_run_sav
   expect(call.project).toBe("Web");
   expect(call.quirks[0].text).toBe("the grid paginates at 50 rows");
 });
+
+test("the recipe and the quirks are two peer sections, each with its own heading", async () => {
+  mount(RECIPE);
+  await screen.findByLabelText("Sign-in recipe JSON");
+  const recipe = screen.getByRole("heading", { name: "Recipe", level: 3 });
+  const quirks = screen.getByRole("heading", { name: "Known quirks", level: 3 });
+  expect(recipe.closest("section")).toContainElement(screen.getByRole("button", { name: "Save recipe" }));
+  expect(quirks.closest("section")).toContainElement(screen.getByRole("button", { name: "Save quirks" }));
+});

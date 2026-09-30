@@ -7,8 +7,11 @@
 // the same command the recipe editor uses (`auto_run_save_recipe`), which
 // runs `SignInRecipe::validate` - a bad address is refused there, in the
 // app's own words, and nothing is written. Every other field goes back
-// exactly as it was read: the recipe round-trips through serde losslessly
-// (`a_recipe_parses_with_defaults_and_round_trips` in the Rust suite).
+// as it was read: the Rust suite's
+// `a_recipe_parses_with_defaults_and_round_trips` serializes a recipe with
+// every optional field set (after_sign_in, allowed_origins,
+// session_minutes) and checks it deserializes to the same recipe and
+// matches the JSON it came from.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";

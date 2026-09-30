@@ -28,6 +28,7 @@ import {
   IconModulePaths,
   IconRecipe,
   IconRun,
+  IconSiteAddress,
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -135,8 +136,12 @@ export default function AutoRun({
     enabled: setupReady,
     retry: false,
   });
-  const accountCount = accounts.data ? accounts.data.length : null;
-  const moduleCount = nav.data ? nav.data.modules.length : null;
+  /** A count once its query has answered - `null` only while it has not
+   * (pending) or could not (error). An answer of "no data" counts as none:
+   * keyed on the answer rather than on the data, so the row can never sit
+   * on "Loading…" after the query has already settled. */
+  const accountCount = accounts.isSuccess ? (accounts.data?.length ?? 0) : null;
+  const moduleCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every badge is
@@ -385,7 +390,7 @@ export default function AutoRun({
                 title={needsProject}
                 onClick={() => setSiteOpen(true)}
               >
-                <IconEdit aria-hidden />
+                <IconSiteAddress aria-hidden />
                 Edit
               </Button>
             ) : (
@@ -396,7 +401,7 @@ export default function AutoRun({
                 title={needsProject}
                 onClick={() => setRecipeOpen(true)}
               >
-                <IconRecipe aria-hidden />
+                <IconSiteAddress aria-hidden />
                 Set up sign-in
               </Button>
             )}
@@ -436,7 +441,7 @@ export default function AutoRun({
             state={
               accounts.isError ? (
                 <span className="text-danger">The accounts could not be read</span>
-              ) : accountCount == null ? (
+              ) : accounts.isPending || accountCount == null ? (
                 <span className="text-muted">Loading…</span>
               ) : accountCount === 0 ? (
                 <span className="text-muted">None yet</span>
@@ -463,12 +468,12 @@ export default function AutoRun({
                 <span className="text-muted">{needsProject}</span>
               ) : nav.isError ? (
                 <span className="text-danger">The module paths could not be read</span>
-              ) : moduleCount == null ? (
+              ) : nav.isPending || moduleCount == null ? (
                 <span className="text-muted">Loading…</span>
               ) : moduleCount === 0 ? (
                 <span className="text-muted">None mapped yet</span>
               ) : (
-                `${plural(moduleCount, "module")} mapped`
+                `${plural(moduleCount, "module path")} mapped`
               )
             }
           >

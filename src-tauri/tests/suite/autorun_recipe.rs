@@ -37,6 +37,27 @@ fn a_recipe_parses_with_defaults_and_round_trips() {
     let again: SignInRecipe = serde_json::from_value(serde_json::to_value(&r).unwrap()).unwrap();
     assert_eq!(again, r);
     assert_eq!(serde_json::to_value(&r).unwrap()["steps"][3]["kind"], "when_visible");
+
+    // Every optional field set, not defaulted: the Site address dialog
+    // reads a recipe, changes start_url and allowed_origins, and writes the
+    // rest back as it was read - so what is serialized must deserialize to
+    // the same recipe, and read the same as the JSON that was saved.
+    let mut full = sample();
+    full["after_sign_in"] = json!([
+        { "kind": "when_visible", "selector": { "css": "#menu:not(.active)" }, "within_ms": 1500,
+          "then": [ { "kind": "click", "selector": { "css": "#menu" } } ] }
+    ]);
+    full["allowed_origins"] = json!(["https://sso.example.internal", "http://intranet.example.internal:8080"]);
+    full["session_minutes"] = json!(90);
+    let r = recipe(full.clone());
+    assert_eq!(r.after_sign_in.len(), 1);
+    assert_eq!(r.allowed_origins.len(), 2);
+    assert_eq!(r.session_minutes, 90);
+    assert!(r.validate().is_ok());
+    let written = serde_json::to_value(&r).unwrap();
+    let again: SignInRecipe = serde_json::from_value(written.clone()).unwrap();
+    assert_eq!(again, r);
+    assert_eq!(written, full);
 }
 
 #[test]

@@ -14,6 +14,9 @@ import { Modal } from "../../components/ui/modal";
 import { IconAdd, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 
+/** The small word over each field, shown only while a row is stacked. */
+const fieldLabel = "block text-xs font-medium text-muted lg:hidden";
+
 export default function AccountsDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const existing = useQuery({
@@ -63,6 +66,20 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
       <div className="min-h-0 flex-1 space-y-2 overflow-auto">
         {rows?.length === 0 && <p className="text-xs text-muted">No accounts yet.</p>}
+        {/* Column names for the one-line layout. Hidden from assistive
+            tech: every field already carries its own name. */}
+        {(rows?.length ?? 0) > 0 && (
+          <div
+            aria-hidden
+            className="hidden grid-cols-[1fr_1fr_1fr_1fr_2.5rem] gap-2 text-xs font-medium text-muted lg:grid"
+          >
+            <span>Key</span>
+            <span>Name</span>
+            <span>Username</span>
+            <span>Password</span>
+            <span />
+          </div>
+        )}
         {(rows ?? []).map((a, i) => {
           // Row fields are named by POSITION ("Key for account 1"), not by
           // the account's own key: naming them after the key would change
@@ -75,16 +92,33 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
             // four fixed columns squashed every field to a sliver.
             <div
               key={i}
-              className="grid grid-cols-1 items-center gap-2 border-b border-border/60 pb-2 last:border-b-0 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] lg:border-b-0 lg:pb-0"
+              className="grid grid-cols-1 items-center gap-2 border-b border-border/60 pb-2 last:border-b-0 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_2.5rem] lg:border-b-0 lg:pb-0"
             >
-              <Input aria-label={`Key for ${pos}`} placeholder="hr.admin" value={a.key}
-                onChange={(e) => edit(i, { key: e.target.value })} />
-              <Input aria-label={`Name for ${pos}`} placeholder="HR Admin" value={a.label}
-                onChange={(e) => edit(i, { label: e.target.value })} />
-              <Input aria-label={`Username for ${pos}`} placeholder="Username" value={a.username}
-                onChange={(e) => edit(i, { username: e.target.value })} />
-              <Input aria-label={`Password for ${pos}`} placeholder="Password" value={a.password}
-                type={show ? "text" : "password"} onChange={(e) => edit(i, { password: e.target.value })} />
+              {/* A visible word over each field while the row is stacked
+                  (below lg), where a placeholder alone vanishes the moment
+                  the field has a value. On one line the header row above
+                  names the columns instead. The aria-label still wins as
+                  the accessible name, and it starts with the same word. */}
+              <label className="space-y-1">
+                <span className={fieldLabel}>Key</span>
+                <Input aria-label={`Key for ${pos}`} placeholder="hr.admin" value={a.key}
+                  onChange={(e) => edit(i, { key: e.target.value })} />
+              </label>
+              <label className="space-y-1">
+                <span className={fieldLabel}>Name</span>
+                <Input aria-label={`Name for ${pos}`} placeholder="HR Admin" value={a.label}
+                  onChange={(e) => edit(i, { label: e.target.value })} />
+              </label>
+              <label className="space-y-1">
+                <span className={fieldLabel}>Username</span>
+                <Input aria-label={`Username for ${pos}`} placeholder="Username" value={a.username}
+                  onChange={(e) => edit(i, { username: e.target.value })} />
+              </label>
+              <label className="space-y-1">
+                <span className={fieldLabel}>Password</span>
+                <Input aria-label={`Password for ${pos}`} placeholder="Password" value={a.password}
+                  type={show ? "text" : "password"} onChange={(e) => edit(i, { password: e.target.value })} />
+              </label>
               <Button size="sm" variant="ghost" aria-label={`Remove ${who(a, i)}`}
                 className="justify-self-end sm:col-span-2 lg:col-span-1"
                 onClick={() => setRows((r) => (r ?? []).filter((_, j) => j !== i))}>

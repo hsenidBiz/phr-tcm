@@ -414,8 +414,10 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   await waitFor(() => expect(within(row("Site address")).getByText("Not set up yet")).toBeInTheDocument());
   expect(within(row("Sign-in")).getByText("Not set up")).toBeInTheDocument();
   expect(within(row("Accounts")).getByText("None yet")).toBeInTheDocument();
-  // No nav file in this mock reads as nothing to count - the row still says
-  // something rather than a number it does not have.
+  // The nav query answers null in this mock: an answer, so the row reads
+  // "none" rather than sitting on "Loading…" forever.
+  expect(await within(row("Module paths")).findByText("None mapped yet")).toBeInTheDocument();
+  expect(within(row("Module paths")).queryByText("Loading…")).not.toBeInTheDocument();
   expect(within(row("Module paths")).getByRole("button", { name: "Edit module paths" })).toBeEnabled();
   expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
@@ -437,7 +439,8 @@ test("the Setup card and the header line read a project that is set up", async (
   expect(within(row("Sign-in")).getByText("Recipe saved")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeInTheDocument();
   expect(await within(row("Accounts")).findByText("2 accounts on this machine")).toBeInTheDocument();
-  expect(await within(row("Module paths")).findByText("1 module mapped")).toBeInTheDocument();
+  // One wording for the same count, in the row and in the header.
+  expect(await within(row("Module paths")).findByText("1 module path mapped")).toBeInTheDocument();
 
   // The header line: project, the host the runs go to, and the counts.
   expect(screen.getByText("proj")).toBeInTheDocument();
@@ -520,4 +523,25 @@ test("Clear results lives in the Past runs section, and Clear scripts with the t
   expect(within(testCases).getByRole("button", { name: "Clear scripts" })).toBeInTheDocument();
   expect(within(testCases).getByRole("button", { name: "Import scripts" })).toBeInTheDocument();
   expect(within(testCases).queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
+});
+
+test("with no project picked, the project-bound Setup buttons are disabled and say why", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="" pbi={pbi as never} />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Alpha check");
+
+  const why = "Pick an organization and project first";
+  for (const name of ["Set up sign-in", "Set up sign-in recipe", "Edit module paths"]) {
+    const b = screen.getByRole("button", { name });
+    expect(b).toBeDisabled();
+    expect(b).toHaveAttribute("title", why);
+  }
+  // Accounts belong to this machine, not a project - never gated on one.
+  expect(screen.getByRole("button", { name: "Edit accounts" })).toBeEnabled();
+  expect(within(row("Site address")).getByText(why)).toBeInTheDocument();
 });

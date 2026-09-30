@@ -447,3 +447,16 @@ test("the verdict row is the shared picker: one labelled group of three toggles"
   expect(within(group).getByRole("button", { name: "Failed" })).toHaveAttribute("aria-pressed", "true");
   expect(within(group).getByRole("button", { name: "Passed" })).toHaveAttribute("aria-pressed", "false");
 });
+
+test("the verdict group is named once, by its visible label", async () => {
+  mockSession();
+  renderPane([{ id: 1, title: "Valid login" }]);
+
+  const group = await screen.findByRole("group", { name: "Your verdict" });
+  // Named BY the visible "Your verdict" text (aria-labelledby), not by an
+  // aria-label repeating it - otherwise a screen reader reads it twice.
+  expect(group).not.toHaveAttribute("aria-label");
+  const labelId = group.getAttribute("aria-labelledby");
+  expect(labelId).toBeTruthy();
+  expect(document.getElementById(labelId!)).toHaveTextContent("Your verdict");
+});

@@ -11,21 +11,26 @@
 import { cn } from "../../lib/cn";
 import { VERDICTS, verdictTone } from "./verdicts";
 
+/** What names the group: its own `label` when nothing on screen says it
+ * (the review names each case's row "Verdict for #201"), or `labelledBy`,
+ * the id of text already visible beside it (the pane's "Your verdict") - so
+ * a screen reader hears that name once, not the text and then a copy. */
+type Naming = { label: string; labelledBy?: never } | { labelledBy: string; label?: never };
+
 export default function VerdictPicker({
   value,
   onPick,
   label,
+  labelledBy,
   disabled,
 }: {
   /** The verdict currently picked, or "" for none. */
   value: string;
   onPick: (verdict: (typeof VERDICTS)[number]) => void;
-  /** Names the group, e.g. "Your verdict" or "Verdict for #201". */
-  label: string;
   disabled?: boolean;
-}) {
+} & Naming) {
   return (
-    <div role="group" aria-label={label} className="flex gap-2">
+    <div role="group" aria-label={label} aria-labelledby={labelledBy} className="flex gap-2">
       {VERDICTS.map((v) => {
         const pressed = value === v;
         return (

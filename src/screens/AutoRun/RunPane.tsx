@@ -6,7 +6,7 @@
 // rather than the app's. The human presses the button.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type ActionOutcome, type CaseRecord, type SignInOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -84,6 +84,7 @@ export default function RunPane({
   const [saving, setSaving] = useState(false);
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
   const [verdict, setVerdict] = useState("");
+  const verdictLabelId = useId();
   const [note, setNote] = useState("");
 
   /** How many browsers this pane has successfully opened. A sign-in belongs
@@ -466,8 +467,10 @@ export default function RunPane({
       )}
 
       <div className="space-y-2 border-t border-border pt-3">
-        <span className="text-xs font-medium text-muted">Your verdict</span>
-        <VerdictPicker value={verdict} onPick={setVerdict} label="Your verdict" />
+        <span id={verdictLabelId} className="text-xs font-medium text-muted">
+          Your verdict
+        </span>
+        <VerdictPicker value={verdict} onPick={setVerdict} labelledBy={verdictLabelId} />
         <Textarea
           aria-label="Result note"
           className="h-16 w-full text-xs"
