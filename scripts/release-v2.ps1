@@ -69,6 +69,7 @@ if ($DryRun) {
     Write-Host "Dry run: $Version (beta: $IsBeta)"
     Write-Host "  npm $($buildArgs -join ' ')"
     Write-Host "  vpk $($uploadArgs -join ' ') --token *** --outputDir Releases"
+    Write-Host "  then scripts/publish-guide.ps1 -Version ${Version} - zip src-tauri/help, write how-to-use.json, gh release upload to phr-tcm"
     return
 }
 
@@ -143,6 +144,10 @@ $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
 & vpk @uploadArgs --token $token --outputDir (Join-Path $v2 "Releases")
 if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
+# How To Use is downloaded by the app from THIS release (phr-tcm only, never
+# the legacy feed). Failure is fatal: an app without its guide asset shows
+# "not available for this version". Re-run just: scripts/publish-guide.ps1
+& (Join-Path $PSScriptRoot "publish-guide.ps1") -Version $Version
 if ($AlsoLegacy) {
     vpk upload github --repoUrl $legacyRepoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
     if ($LASTEXITCODE -ne 0) { throw "vpk upload to the legacy feed failed with exit code $LASTEXITCODE" }
