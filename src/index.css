@@ -952,14 +952,25 @@ table {
   stroke: none;
 }
 
+/* The flow map's running pulse (below) shows only where motion is welcome. */
+.flow-pulse { display: none; }
+
 @media (prefers-reduced-motion: no-preference) {
-  /* API Templates flow map: each arrow breathes in its stage's colour -
-     brighter, with a soft glow of that same colour - each column a beat
-     after the one before it (FlowMap sets the delay). */
-  .flow-edge { animation: flow-pulse 1.8s ease-in-out infinite; }
-  @keyframes flow-pulse {
-    0%, 100% { opacity: 0.55; filter: none; }
-    50% { opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+  /* API Templates flow map: each arrow keeps its stage's colour, and a
+     short bright stretch runs along it from start to end - the Test map's
+     hover pulse - each column a beat after the one before it (FlowMap sets
+     the delay). The path's length is 1, so the stretch is 0.18 of it. */
+  .flow-pulse {
+    display: inline;
+    stroke: color-mix(in srgb, currentColor 35%, white);
+    stroke-width: 3;
+    stroke-dasharray: 0.18 1;
+    filter: drop-shadow(0 0 2px currentColor);
+    animation: flow-run 1.8s linear infinite;
+  }
+  @keyframes flow-run {
+    from { stroke-dashoffset: 0.18; }
+    to { stroke-dashoffset: -1; }
   }
 
   /* The context bar's bell (GlyphBell): its parts are nav glyphs, so its

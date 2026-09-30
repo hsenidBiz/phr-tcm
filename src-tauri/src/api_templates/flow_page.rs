@@ -183,8 +183,9 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
                 tone[s.id.as_str()].var(),
             ));
             paths.push_str(&format!(
-                "<g class='edge' data-from='{}' data-to='{}' data-grad='g{n}' style='animation-delay:{:.2}s'>\
-                 <path class='wire' d='' stroke='url(#g{n})'/><path class='spark' d=''/></g>",
+                "<g class='edge' data-from='{}' data-to='{}' data-grad='g{n}'>\
+                 <path class='wire' d='' stroke='url(#g{n})'/>\
+                 <path class='spark' d='' pathLength='1' style='animation-delay:{:.2}s'/></g>",
                 esc(r),
                 esc(&s.id),
                 *from as f32 * 0.25,
@@ -311,8 +312,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-a
 .key .open::before{background:transparent;border:2px solid var(--accent);height:10px;width:18px}
 .viewport{overflow:auto;padding:28px 40px 48px}
 .canvas svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
-.wire{fill:none;stroke-width:10;stroke-linecap:round;opacity:.9}
-.spark{fill:none;stroke:var(--bg);stroke-width:2.5;stroke-linecap:round;stroke-dasharray:2 22;opacity:.5}
+.wire{fill:none;stroke-width:10;stroke-linecap:round}
+.spark{display:none;fill:none;stroke:color-mix(in srgb,#fff 88%,transparent);stroke-width:5;stroke-linecap:round;
+ stroke-dasharray:.18 1;filter:drop-shadow(0 0 4px #fff)}
 .stage{position:relative;z-index:1;display:flex;flex-direction:column;padding:12px 14px;border-radius:14px;color:#fff;
  background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 72%,#000));
  box-shadow:0 10px 28px color-mix(in srgb,var(--tone) 35%,transparent),0 2px 6px color-mix(in srgb,#000 25%,transparent)}
@@ -328,10 +330,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-a
 .stage li.none{opacity:.8;font-style:italic}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media (prefers-reduced-motion:no-preference){
- .edge{animation:flow-breathe 2.4s ease-in-out infinite}
- .spark{animation:flow-run 1.6s linear infinite}
- @keyframes flow-breathe{0%,100%{opacity:.7}50%{opacity:1}}
- @keyframes flow-run{to{stroke-dashoffset:-24}}
+ .spark{display:inline;animation:flow-run 1.8s linear infinite}
+ @keyframes flow-run{from{stroke-dashoffset:.18}to{stroke-dashoffset:-1}}
 }
 @media print{.spark{display:none}}
 ";

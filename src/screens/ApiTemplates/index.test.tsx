@@ -668,7 +668,7 @@ test("a wide map scrolls inside its own box", async () => {
 // ---------------------------------------------------------------------------
 // The map's arrows take the colour of what the stage they lead into does.
 
-test("each arrow is coloured by what its stage does, and pulses", async () => {
+test("each arrow is coloured by what its stage does, and a pulse runs along it", async () => {
   const on = (id: string, title: string, effect: string, stage: string) => ({
     template: template({ id, title, effect, stage: { flow: "pms-performance-cycle", id: stage } }),
     runs: [],
@@ -696,9 +696,13 @@ test("each arrow is coloured by what its stage does, and pulses", async () => {
   expect(cls[2]).toContain("text-success");
   expect(cls[3]).toContain("text-danger");
   for (const c of cls) expect(c).toContain("flow-edge");
-  // The pulse runs left to right: a later column starts later.
-  expect(edges[0]).toHaveStyle({ animationDelay: "0s" });
-  expect((edges[3] as SVGElement).style.animationDelay).not.toBe("0s");
+  // Each arrow carries a bright stretch that runs its length (pathLength 1,
+  // so every arrow at the same pace), a later column starting later.
+  const pulses = edges.map((g) => g.querySelector("path.flow-pulse") as SVGElement);
+  for (const p of pulses) expect(p).toHaveAttribute("pathLength", "1");
+  expect(pulses[0].getAttribute("d")).toBe(edges[0].querySelector("path[data-edge]")!.getAttribute("d"));
+  expect(pulses[0]).toHaveStyle({ animationDelay: "0s" });
+  expect(pulses[3].style.animationDelay).not.toBe("0s");
 });
 
 test("a stage whose templates disagree takes the theme's colour", async () => {
