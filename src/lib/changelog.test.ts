@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import {
   CHANGELOG,
+  changelogFor,
   compareVersions,
   entriesSince,
   isBetaVersion,
@@ -95,4 +96,36 @@ test("isBetaVersion", () => {
   expect(isBetaVersion("1.26.0-beta.1")).toBe(true);
   expect(isBetaVersion("1.26.0")).toBe(false);
   expect(isBetaVersion("dev")).toBe(false);
+});
+
+test("a release build lists only releases; a beta build keeps the betas", () => {
+  const stable = changelogFor("2.0.7");
+  expect(stable.length).toBeGreaterThan(0);
+  expect(stable.some((e) => isBetaVersion(e.version))).toBe(false);
+  expect(stable.map((e) => e.version)).toEqual(
+    CHANGELOG.filter((e) => !isBetaVersion(e.version)).map((e) => e.version),
+  );
+  expect(changelogFor("2.0.5-beta.3")).toEqual(CHANGELOG);
+});
+
+test("updating to a release shows no beta entries, updating to a beta does", () => {
+  markChangelogSeen("2.0.3");
+  expect(pendingChangelog("2.0.4").map((e) => e.version)).toEqual(["2.0.4"]);
+  markChangelogSeen("2.0.3");
+  expect(pendingChangelog("2.0.4-beta.3").map((e) => e.version)).toEqual([
+    "2.0.4-beta.3",
+    "2.0.4-beta.2",
+    "2.0.4-beta.1",
+  ]);
+  // A beta tester moving on to the release sees the release's own entry.
+  markChangelogSeen("2.0.5-beta.6");
+  expect(pendingChangelog("2.0.6").map((e) => e.version)).toEqual(["2.0.6"]);
+});
+
+test("a release's entry carries what its betas changed", () => {
+  const items = (v: string) => CHANGELOG.find((e) => e.version === v)!.items.join(" ");
+  expect(items("2.0.4")).toMatch(/spec order/);
+  expect(items("2.0.4")).toMatch(/Review page/);
+  expect(items("2.0.4")).toMatch(/interface tour/);
+  expect(items("2.0.6")).toMatch(/Collapse all/);
 });
