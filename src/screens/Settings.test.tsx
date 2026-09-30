@@ -84,11 +84,12 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(await screen.findByRole("heading", { name: "Changelog" })).toBeInTheDocument();
   // No line of description under the title - the heading says it.
   expect(screen.queryByText(/the same notes the post-update popup shows/)).not.toBeInTheDocument();
-  expect(screen.getByText(`Version ${CHANGELOG[0].version}`)).toBeInTheDocument();
+  // No version is mocked, so this is a release build: it lists releases
+  // only - the betas' changes are in them - newest first.
+  const releases = CHANGELOG.filter((e) => !isBetaVersion(e.version));
+  expect(screen.getByText(`Version ${releases[0].version}`)).toBeInTheDocument();
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 
-  // A release build lists releases only - the betas' changes are in them.
-  const releases = CHANGELOG.filter((e) => !isBetaVersion(e.version));
   const more = screen.getByRole("button", { name: `Show more (${releases.length - 1} earlier versions)` });
   expect(more).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(more);
