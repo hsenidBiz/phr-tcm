@@ -1174,6 +1174,12 @@ export default function QueueSection({
 
     qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
+    // The rows diff against the server's copy fetched for the review. An
+    // update just changed that copy, so drop it: read again, the updated
+    // rows show "no-op" instead of the changes they have already made.
+    if (results.some((r) => r.action === "updated")) {
+      qc.invalidateQueries({ queryKey: ["diff-cases", org] });
+    }
     // A created case can move the suite's spec order and/or the PBI's
     // suggested run order (design doc §4.1, §4.2). Run Tests and Suite
     // Management must not go on serving what they cached before the
