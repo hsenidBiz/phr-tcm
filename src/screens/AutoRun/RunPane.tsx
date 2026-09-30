@@ -16,7 +16,7 @@ import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
-import { VERDICTS, verdictTone } from "./verdicts";
+import VerdictPicker from "./VerdictPicker";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
@@ -467,21 +467,7 @@ export default function RunPane({
 
       <div className="space-y-2 border-t border-border pt-3">
         <span className="text-xs font-medium text-muted">Your verdict</span>
-        <div className="flex gap-2">
-          {VERDICTS.map((v) => (
-            <button
-              key={v}
-              aria-pressed={verdict === v}
-              className={cn(
-                "rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors",
-                verdict === v ? verdictTone[v] : "text-muted hover:border-border-strong",
-              )}
-              onClick={() => setVerdict(v)}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
+        <VerdictPicker value={verdict} onPick={setVerdict} label="Your verdict" />
         <Textarea
           aria-label="Result note"
           className="h-16 w-full text-xs"

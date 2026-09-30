@@ -18,7 +18,7 @@ import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
-import { VERDICTS, verdictTone } from "./verdicts";
+import VerdictPicker from "./VerdictPicker";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -320,14 +320,6 @@ export default function RunReview(props: {
         {when(run.started_at)} - {run.cases.length} case{run.cases.length === 1 ? "" : "s"}
       </h2>
 
-      {!readOnly && (
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={acceptAll}>
-            Accept every proposal
-          </Button>
-        </div>
-      )}
-
       <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
         {run.cases.map((c) => {
           const isExpanded = expanded.has(c.case_id);
@@ -343,26 +335,12 @@ export default function RunReview(props: {
               </div>
               <p className="text-xs text-muted">{proposalLine(c)}</p>
 
-              <div className="flex gap-2">
-                {VERDICTS.map((v) => {
-                  const pressed = c.verdict === v;
-                  return (
-                    <button
-                      key={v}
-                      type="button"
-                      aria-pressed={pressed}
-                      disabled={readOnly}
-                      className={cn(
-                        "rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors",
-                        pressed ? verdictTone[v] : "text-muted hover:border-border-strong",
-                      )}
-                      onClick={() => setVerdict(c.case_id, v)}
-                    >
-                      {v}
-                    </button>
-                  );
-                })}
-              </div>
+              <VerdictPicker
+                value={c.verdict}
+                onPick={(v) => setVerdict(c.case_id, v)}
+                label={`Verdict for #${c.case_id}`}
+                disabled={readOnly}
+              />
 
               <Textarea
                 aria-label={`Note for #${c.case_id}`}
@@ -482,11 +460,21 @@ export default function RunReview(props: {
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted">
-              {confirmed} of {run.cases.length} confirmed
-            </p>
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* The count and the one action that changes it in bulk sit
+                together: "Accept every proposal" is about the tally on its
+                left, not a separate step of its own. */}
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-muted">
+                {confirmed} of {run.cases.length} confirmed
+              </p>
+              {!readOnly && (
+                <Button size="sm" variant="outline" onClick={acceptAll}>
+                  Accept every proposal
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {/* A refusal is an answer, not a toast - it stays on screen
                   until the next attempt changes it. */}
               {sendRefusal && <p className="text-xs text-warning">{sendRefusal}</p>}
@@ -496,13 +484,16 @@ export default function RunReview(props: {
               </Button>
               {!readOnly && (
                 <>
-                  <Button size="sm" disabled={saving} onClick={save}>
+                  {/* Send is the primary action: it is what the whole
+                      review is for, and the one that leaves this machine.
+                      It still goes through the confirm below. Save is the
+                      way to stop part-way and come back. */}
+                  <Button size="sm" variant="outline" disabled={saving} onClick={save}>
                     <IconConfirm aria-hidden />
                     Save review
                   </Button>
                   <Button
                     size="sm"
-                    variant="outline"
                     disabled={sendDisabled}
                     title={sendTitle}
                     onClick={() => setConfirming(true)}

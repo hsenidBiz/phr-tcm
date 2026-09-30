@@ -6,7 +6,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import RunPane from "./RunPane";
 
@@ -432,4 +432,18 @@ test("closing while a sign-in is in flight does not break when the result lands 
     await Promise.resolve();
   });
   expect(consoleError).not.toHaveBeenCalled();
+});
+
+test("the verdict row is the shared picker: one labelled group of three toggles", async () => {
+  mockSession();
+  renderPane([{ id: 1, title: "Valid login" }]);
+
+  const group = await screen.findByRole("group", { name: "Your verdict" });
+  const buttons = within(group).getAllByRole("button");
+  expect(buttons.map((b) => b.textContent)).toEqual(["Passed", "Failed", "Blocked"]);
+  for (const b of buttons) expect(b).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(within(group).getByRole("button", { name: "Failed" }));
+  expect(within(group).getByRole("button", { name: "Failed" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(group).getByRole("button", { name: "Passed" })).toHaveAttribute("aria-pressed", "false");
 });
