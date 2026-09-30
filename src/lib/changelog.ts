@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.7",
+    date: "2026-09-30",
+    items: [
+      "After you update test cases, their rows now read \"no-op - nothing will change\" instead of still showing the changes that were just made.",
+      "Pages opened in your browser no longer flash the app's colour scheme before switching to the one you chose.",
+      "AI tools can now read the results of a PBI's test runs for any outcome, not only failures, with a count of every outcome in its suite.",
+    ],
+  },
+  {
     version: "2.0.6",
     date: "2026-09-30",
     items: [
