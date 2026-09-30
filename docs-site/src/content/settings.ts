@@ -167,7 +167,7 @@ export const settings: Screen = {
       group: "help",
       locate: { role: "button", name: "How To Use" },
       name: "How To Use",
-      does: "Opens this guide in your browser. The first time, it downloads the guide (a one-off download of about 30 MB) and then opens it. After that it opens straight away, works offline, and stays when the app updates. When an app update brings a newer guide, an Update Guide button appears beside it.",
+      does: "Opens this guide in your browser. The first time, it downloads the guide (a one-off download - the button shows its size) and then opens it. After that it opens straight away, works offline, and stays when the app updates. When an app update brings a newer guide, an Update Guide button appears beside it.",
     },
     {
       id: "show-tour",
