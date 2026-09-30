@@ -14,8 +14,9 @@
 //! browser. Nothing here saves anything: the command saves a recipe only
 //! after it has signed in with it in a fresh browser.
 
+use super::accounts::Account;
 use super::recipe::{has_placeholder, SignInRecipe, PASSWORD, USERNAME};
-use super::recorder::{self, exact_role, AxLink, ClickPayload, Ended};
+use super::recorder::{self, exact_role, AxLink, ClickHints, ClickPayload, Ended, CONTAINERS, MAX_CLIMB};
 use super::signin::{AFTER_SIGN_IN_STOPPED, MARKER_NEVER_APPEARED, PAGE_DID_NOT_OPEN};
 use crate::browser::actions::{execute_in, Action, Policy};
 use crate::browser::cdp::{CdpError, Driver};
@@ -35,7 +36,7 @@ pub const BINDING: &str = "__tcmRecordSignIn";
 /// lookup finds them. A field's value is never read: whether a field was
 /// typed into is a flag set by the `input` event, and a field is reported
 /// by its attributes and its place in the page. The only click it ever
-/// stops is the one made in pick mode.
+/// stops is the one made in pick mode (with its press and release).
 pub const LISTENER_JS: &str = r#"(() => {
   if (window.__tcmSignInArmed) return;
   window.__tcmSignInArmed = true;
@@ -69,15 +70,24 @@ pub const LISTENER_JS: &str = r#"(() => {
     return null;
   };
   const isPassword = (el) => el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'password';
+  // Stops what the page would do with an event: used for the picked
+  // click, and only while pick mode is on.
+  const hush = (e) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
   const clicked = (ev, el) => {
     const near = el.closest('a,button,summary,[role]') || el;
-    // No words at all from a click on, or around, anything a person can
-    // type into: a region's text would carry what was typed there.
+    // A click on, or around, anything a person can type into is QUIET: no
+    // words from the page at all, and Rust names it only from a node with
+    // no field inside it - a region's name or text can carry what was
+    // typed there.
     const quiet = el.isContentEditable || near.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)
       || !!near.querySelector('input,textarea,select,[contenteditable]');
     send({
       ev: ev,
       i: hold(el),
+      quiet: quiet,
       tag: near.tagName.toLowerCase(),
       role: near.getAttribute('role') || '',
       label: clean(near.getAttribute('aria-label')),
@@ -113,16 +123,41 @@ pub const LISTENER_JS: &str = r#"(() => {
     const el = entryOf(e.target);
     if (!el || el.tagName !== 'INPUT') return;
     if (typed.get(el)) field(el);
-    const form = el.form || el.closest('form');
-    const button = form && form.querySelector('button[type=submit],input[type=submit],button:not([type])');
-    if (!button) {
-      send({ ev: 'no_submit' });
-      return;
-    }
-    enterButton = button;
-    enterAt = Date.now();
-    clicked('click', button);
+    // Whether this Enter sends the form is known only once the page has
+    // had it: a page that moves to the next field on Enter cancels it. So
+    // the click is decided after the event - where it bubbles back to the
+    // window, or on the next turn if the page stopped it on the way.
+    let decided = false;
+    const decide = () => {
+      if (decided) return;
+      decided = true;
+      window.removeEventListener('keydown', afterPage);
+      if (e.defaultPrevented) {
+        enterButton = null;
+        return;
+      }
+      const form = el.form || el.closest('form');
+      const button = form && form.querySelector('button[type=submit],input[type=submit],button:not([type])');
+      if (!button) {
+        send({ ev: 'no_submit' });
+        return;
+      }
+      enterButton = button;
+      enterAt = Date.now();
+      clicked('click', button);
+    };
+    const afterPage = (ev) => { if (ev === e) decide(); };
+    window.addEventListener('keydown', afterPage);
+    setTimeout(decide, 0);
   }, true);
+  // While pick mode is on, the press and release of the picked click are
+  // stopped too: a menu or Sign out wired to them would act otherwise.
+  const pressWhilePicking = (e) => {
+    if (e.isTrusted && window.__tcmRecPick) hush(e);
+  };
+  for (const kind of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+    document.addEventListener(kind, pressWhilePicking, true);
+  }
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
     const el = elementOf(e.target);
@@ -132,8 +167,7 @@ pub const LISTENER_JS: &str = r#"(() => {
     if (fromEnter) return;
     if (window.__tcmRecPick) {
       window.__tcmRecPick = false;
-      e.preventDefault();
-      e.stopImmediatePropagation();
+      hush(e);
       clicked('marker', el);
       return;
     }
@@ -164,7 +198,18 @@ pub const NO_SUBMIT: &str =
 pub const NO_STEPS: &str =
     "nothing was recorded - sign in by clicking and typing in the recording browser, then press Finish";
 pub const NO_MARKER: &str =
-    "there is no signed-in check - press I'm signed in, then click something only a signed-in person sees";
+    "there is no signed-in check - press I'm signed in, then click Sign out, or something every signed-in account sees";
+pub const MARKER_NAMES_ACCOUNT: &str =
+    "the signed-in check names the account it was recorded with, so it would fail for every other account - record again and pick Sign out, or something every signed-in account sees - not your own name";
+
+/// Roles a quiet click (one on or around a field) may be named by: the
+/// ones a menu is made of, and the controls named by their own label.
+const QUIET_ROLES: [&str; 8] = ["link", "button", "menuitem", "tab", "treeitem", "checkbox", "radio", "switch"];
+
+/// `this` is an element: whether anything inside it can be typed into or
+/// chosen from - its accessible name could then carry what was typed.
+pub const HAS_FIELD_INSIDE_JS: &str =
+    "function() { return !!this.querySelector('input,textarea,select,[contenteditable]'); }";
 
 /// What the listener read about a text field: its attributes, never its
 /// value.
@@ -186,13 +231,24 @@ pub struct FieldPayload {
     pub hints: FieldHints,
 }
 
+/// A click, or the picked marker, as the sign-in listener reports it.
+/// `quiet`: it was on or around a text field, so the page sent no words
+/// and it is named only from something with no field inside.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct SignInClick {
+    #[serde(default)]
+    pub quiet: bool,
+    #[serde(flatten)]
+    pub click: ClickPayload,
+}
+
 /// One report from the page.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum Report {
-    Click(ClickPayload),
+    Click(SignInClick),
     Field(FieldPayload),
-    Marker(ClickPayload),
+    Marker(SignInClick),
     NoSubmit {},
 }
 
@@ -298,6 +354,79 @@ pub fn field_locator_from_ax(chain: &[AxLink]) -> Option<Target> {
     (FIELD_ROLES.contains(&own.role.as_str()) && !name.is_empty()).then(|| exact_role(&own.role, &name))
 }
 
+/// Where in `chain` a quiet click may take its name: the nearest named
+/// node with one of `QUIET_ROLES`, never past a container. Any other node
+/// - a `cell`, a `row`, a generic wrapper - is skipped: its name can be
+/// made of its content, and that content can include a field's value.
+pub fn quiet_candidate(chain: &[AxLink]) -> Option<usize> {
+    chain
+        .iter()
+        .enumerate()
+        .take_while(|(_, n)| !CONTAINERS.contains(&n.role.as_str()))
+        .filter(|(_, n)| !n.ignored)
+        .take(MAX_CLIMB)
+        .find(|(_, n)| QUIET_ROLES.contains(&n.role.as_str()) && !collapse(&n.name).is_empty())
+        .map(|(i, _)| i)
+}
+
+/// A quiet click's locator from the tree: the candidate, unless
+/// `field_inside` says a field sits inside it.
+pub fn quiet_locator_from_ax(chain: &[AxLink], field_inside: impl Fn(usize) -> bool) -> Option<Target> {
+    let i = quiet_candidate(chain)?;
+    (!field_inside(i)).then(|| exact_role(&chain[i].role, &chain[i].name))
+}
+
+/// A quiet click's locator from what the page read: a role attribute
+/// with an aria-label - words an author wrote - and never visible text.
+pub fn quiet_locator_from_hints(h: &ClickHints) -> Option<Target> {
+    let role = h.role.split_whitespace().next().filter(|r| !["none", "presentation"].contains(r))?;
+    let label = collapse(&h.label);
+    (!label.is_empty()).then(|| exact_role(role, &label))
+}
+
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Refuse a signed-in check that names the checking account: the recipe
+/// signs in every account, and the others would never see it.
+pub fn check_marker_for(marker: &Target, who: &Account) -> Result<(), String> {
+    let words = marker.describe().to_lowercase();
+    let names = [who.username.trim(), who.label.trim()];
+    if names.iter().any(|n| !n.is_empty() && words.contains(&n.to_lowercase())) {
+        return Err(MARKER_NAMES_ACCOUNT.to_string());
+    }
+    Ok(())
+}
+
+/// Whether the element behind a tree node has a field inside it. Fails
+/// closed: anything that cannot be asked counts as yes.
+async fn field_inside<D: Driver>(d: &mut D, backend: Option<i64>) -> bool {
+    let Some(backend) = backend else { return true };
+    let Ok(handle) = page::resolve_backend(d, backend).await else { return true };
+    !matches!(page::call_value(d, &handle, HAS_FIELD_INSIDE_JS, &[]).await, Ok(serde_json::Value::Bool(false)))
+}
+
+/// The locator for a reported click or marker. A quiet one is named only
+/// from a `QUIET_ROLES` node with no field inside, else its role and
+/// aria-label; an ordinary one the way the module recorder names a click.
+pub async fn locate_click<D: Driver>(d: &mut D, reported: &SignInClick) -> Result<Target, ()> {
+    if !reported.quiet {
+        return recorder::locate(d, &reported.click).await.map_err(|_| ());
+    }
+    let click = &reported.click;
+    if let Ok(Some(nodes)) = recorder::held_ax_nodes(d, &click.doc, click.i).await {
+        let chain: Vec<AxLink> = nodes.iter().map(|(link, _)| link.clone()).collect();
+        if let Some(i) = quiet_candidate(&chain) {
+            let inside = field_inside(d, nodes[i].1).await;
+            if let Some(t) = quiet_locator_from_ax(&chain, |_| inside) {
+                return Ok(t);
+            }
+        }
+    }
+    quiet_locator_from_hints(&click.hints).ok_or(())
+}
+
 pub fn field_locator_from_hints(h: &FieldHints) -> Option<Target> {
     field_css(h).map(|css| Target::One(LocatorStep { css: Some(css), ..LocatorStep::default() }))
 }
@@ -393,7 +522,7 @@ pub async fn capture<D: Driver>(
         match next_report(d, POLL).await {
             Ok(Some(report)) => {
                 match report {
-                    Report::Click(click) => match recorder::locate(d, &click).await {
+                    Report::Click(click) => match locate_click(d, &click).await {
                         Ok(t) => {
                             steps.push(Step::Click(t));
                             on(Seen::Step(steps.len() as u32, steps.last().expect("just pushed")));
@@ -411,7 +540,7 @@ pub async fn capture<D: Driver>(
                     Report::Marker(click) => {
                         pick.store(false, Ordering::SeqCst);
                         let _ = page::eval_value(d, PICK_OFF_JS).await;
-                        match recorder::locate(d, &click).await {
+                        match locate_click(d, &click).await {
                             Ok(t) => {
                                 marker = Some(t);
                                 on(Seen::Marker(marker.as_ref().expect("just set")));

@@ -79,12 +79,12 @@ const NOT_A_TARGET: [&str; 8] =
 
 /// The climb from a click stops at these: past one, a name would describe
 /// a whole region, not what was clicked.
-const CONTAINERS: [&str; 16] = [
+pub(crate) const CONTAINERS: [&str; 16] = [
     "RootWebArea", "WebArea", "main", "navigation", "menubar", "menu", "tablist", "tree", "dialog", "banner",
     "contentinfo", "form", "region", "document", "application", "list",
 ];
 
-const MAX_CLIMB: usize = 6;
+pub(crate) const MAX_CLIMB: usize = 6;
 const MAX_HINT_TEXT: usize = 80;
 const POLL: Duration = Duration::from_millis(250);
 
@@ -154,6 +154,12 @@ pub fn exact_role(role: &str, name: &str) -> Target {
 /// `Accessibility.getPartialAXTree`'s answer. Parents come from `parentId`
 /// where Chrome gives one, else from the `childIds` that name the node.
 pub fn ax_chain(tree: &Value, backend: i64) -> Vec<AxLink> {
+    ax_chain_with_nodes(tree, backend).into_iter().map(|(link, _)| link).collect()
+}
+
+/// `ax_chain`, each link with the DOM node it stands for when the tree
+/// names one (`backendDOMNodeId`), so a caller can ask the page about it.
+pub fn ax_chain_with_nodes(tree: &Value, backend: i64) -> Vec<(AxLink, Option<i64>)> {
     let nodes: Vec<&Value> = tree["nodes"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
     let by_id: HashMap<String, &Value> =
         nodes.iter().filter_map(|n| n["nodeId"].as_str().map(|id| (id.to_string(), *n))).collect();
@@ -175,11 +181,14 @@ pub fn ax_chain(tree: &Value, backend: i64) -> Vec<AxLink> {
         if !seen.insert(id.clone()) {
             break;
         }
-        out.push(AxLink {
-            role: n["role"]["value"].as_str().unwrap_or("").to_string(),
-            name: n["name"]["value"].as_str().unwrap_or("").to_string(),
-            ignored: n["ignored"].as_bool().unwrap_or(false),
-        });
+        out.push((
+            AxLink {
+                role: n["role"]["value"].as_str().unwrap_or("").to_string(),
+                name: n["name"]["value"].as_str().unwrap_or("").to_string(),
+                ignored: n["ignored"].as_bool().unwrap_or(false),
+            },
+            n["backendDOMNodeId"].as_i64(),
+        ));
         let parent = n["parentId"].as_str().map(str::to_string).or_else(|| parent_of.get(&id).cloned());
         current = parent.and_then(|p| by_id.get(&p).copied());
     }
@@ -267,13 +276,22 @@ async fn ax_around<D: Driver>(d: &mut D, backend: i64) -> Result<Value, CdpError
 /// (`__tcmRecHeld[i]` of document `doc`), or `None` when it is gone. Any
 /// listener that keeps its elements there can use it.
 pub async fn held_ax_chain<D: Driver>(d: &mut D, doc: &str, i: u32) -> Result<Option<Vec<AxLink>>, CdpError> {
+    Ok(held_ax_nodes(d, doc, i).await?.map(|nodes| nodes.into_iter().map(|(link, _)| link).collect()))
+}
+
+/// `held_ax_chain`, each link with its DOM node (`ax_chain_with_nodes`).
+pub async fn held_ax_nodes<D: Driver>(
+    d: &mut D,
+    doc: &str,
+    i: u32,
+) -> Result<Option<Vec<(AxLink, Option<i64>)>>, CdpError> {
     page::release(d).await;
     let document = page::document(d).await?;
     let found = page::call_elements(d, &document, HELD_JS, &[json!(doc), json!(i)]).await?;
     let Some(el) = found.first() else { return Ok(None) };
     let backend = page::backend_id(d, el).await?;
     let tree = ax_around(d, backend).await?;
-    Ok(Some(ax_chain(&tree, backend)))
+    Ok(Some(ax_chain_with_nodes(&tree, backend)))
 }
 
 async fn from_the_element<D: Driver>(d: &mut D, click: &ClickPayload) -> Result<Option<Target>, CdpError> {

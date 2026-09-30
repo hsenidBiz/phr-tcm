@@ -10,10 +10,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::autorun::recipe::{load_recipe, save_recipe, RecipeStep, SignInRecipe, PASSWORD as PASSWORD_SLOT, USERNAME};
-use v2_lib::autorun::recorder::{AxLink, Ended, BROWSER_CLOSED, CANCELLED, HELD_JS};
+use v2_lib::autorun::accounts::save_accounts;
+use v2_lib::autorun::recorder::{locator_from_ax, AxLink, ClickHints, Ended, BROWSER_CLOSED, CANCELLED, HELD_JS};
 use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin_recorder::{
-    arm, capture, check_failure, css_escape, css_string, field_css, field_locator_from_ax, field_locator_from_hints,
+    arm, capture, check_failure, check_marker_for, quiet_candidate, quiet_locator_from_ax, quiet_locator_from_hints,
+    HAS_FIELD_INSIDE_JS, MARKER_NAMES_ACCOUNT, UNREADABLE_MARKER, css_escape, css_string, field_css, field_locator_from_ax, field_locator_from_hints,
     finish, next_report, Captured, Draft, FieldChoice, FieldHints, FieldRole, Report, Seen, Step, BINDING,
     CHECK_BROWSER_SILENT, CHECK_START_DID_NOT_OPEN, LISTENER_JS, NO_MARKER, NO_STEPS, NO_SUBMIT, PICK_OFF_JS,
     PICK_ON_JS, UNREADABLE_CLICK, UNREADABLE_FIELD,
@@ -26,7 +28,7 @@ use v2_lib::commands::autorun::close_autorun_browsers;
 use v2_lib::commands::autorun_record::{auto_run_record_cancel, recording_is_going, RecorderClaim};
 use v2_lib::commands::autorun_record_signin::{
     auto_run_record_sign_in_pick, auto_run_record_sign_in_stop, build_recipe, check_sign_in, current_draft,
-    forget_draft, keep_draft, listen, open_the_recording, sign_in_recording_is_open, Listening, SignInFor,
+    forget_draft, keep_draft, listen, open_the_recording, save_checked, sign_in_recording_is_open, Listening, SignInFor,
     NO_DRAFT, OTHER_PROJECT,
 };
 use v2_lib::events::RecordingEvent;
@@ -56,6 +58,11 @@ fn field_report(i: u32, password: bool, id: &str) -> Event {
     report(json!({ "ev": "field", "doc": "d1", "i": i, "tag": "input", "password": password, "id": id, "name": "", "placeholder": "" }))
 }
 
+/// A click on or around a field: the page sends no words.
+fn quiet_report(ev: &str, i: u32, role: &str, label: &str) -> Event {
+    report(json!({ "ev": ev, "doc": "d1", "i": i, "quiet": true, "tag": "td", "role": role, "label": label, "text": "" }))
+}
+
 fn click_report(ev: &str, i: u32, text: &str) -> Event {
     report(json!({ "ev": ev, "doc": "d1", "i": i, "tag": "button", "role": "", "label": "", "text": text }))
 }
@@ -72,13 +79,15 @@ fn tree(i: usize, role: &str, name: &str) -> Value {
 /// A page holding these elements: `Some(tree)` still there, `None` gone.
 /// Every `Runtime.evaluate` expression is kept in `evals`.
 fn page_with(held: Vec<Option<Value>>, evals: Arc<std::sync::Mutex<Vec<String>>>) -> ScriptedDriver {
-    page_hooked(held, evals, |_| {})
+    page_hooked(held, evals, vec![], |_| {})
 }
 
 /// `page_with`, calling `on_eval` with each expression it is asked to run.
+/// The held elements numbered in `inside` have a field inside them.
 fn page_hooked(
     held: Vec<Option<Value>>,
     evals: Arc<std::sync::Mutex<Vec<String>>>,
+    inside: Vec<usize>,
     mut on_eval: impl FnMut(&str) + Send + 'static,
 ) -> ScriptedDriver {
     let mut last_i = 0usize;
@@ -102,6 +111,11 @@ fn page_hooked(
             "DOM.describeNode" => {
                 let i: i64 = params["objectId"].as_str().unwrap_or("el0")[2..].parse().unwrap_or(0);
                 json!({ "node": { "backendNodeId": 50 + i } })
+            }
+            "DOM.resolveNode" => json!({ "object": { "objectId": format!("node{}", params["backendNodeId"]) } }),
+            "Runtime.callFunctionOn" if params["functionDeclaration"] == HAS_FIELD_INSIDE_JS => {
+                let backend: usize = params["objectId"].as_str().unwrap_or("node0")[4..].parse().unwrap_or(0);
+                json!({ "result": { "value": inside.contains(&(backend - 50)) } })
             }
             "Accessibility.getPartialAXTree" => {
                 let i = (params["backendNodeId"].as_i64().unwrap_or(50) - 50) as usize;
@@ -133,13 +147,26 @@ fn the_listener_never_reads_what_was_typed_and_stops_only_the_picked_click() {
     for ev in ["'input'", "'change'", "'focusout'", "'keydown'", "'click'"] {
         assert!(LISTENER_JS.contains(&format!("addEventListener({ev}")), "listens for {ev}");
     }
-    assert_eq!(LISTENER_JS.matches("isTrusted").count(), 4, "every handler ignores events a script made");
+    assert_eq!(LISTENER_JS.matches("isTrusted").count(), 5, "every handler ignores events a script made");
+    // One place stops an event, and it is reached only in pick mode: the
+    // picked click, and its press and release.
     assert_eq!(LISTENER_JS.matches("preventDefault").count(), 1);
     assert_eq!(LISTENER_JS.matches("stopImmediatePropagation").count(), 1);
-    let pick = LISTENER_JS.find("if (window.__tcmRecPick)").expect("pick mode");
-    let stop = LISTENER_JS.find("preventDefault").unwrap();
-    assert!(pick < stop && stop - pick < 120, "only the picked click is stopped");
+    assert_eq!(LISTENER_JS.matches("hush(e)").count(), 2);
+    assert!(LISTENER_JS.contains("if (e.isTrusted && window.__tcmRecPick) hush(e);"));
+    let pick = LISTENER_JS.find("if (window.__tcmRecPick) {").expect("pick mode");
+    let stop = LISTENER_JS[pick..].find("hush(e)").unwrap();
+    assert!(stop < 80, "only the picked click is stopped");
+    for ev in ["pointerdown", "mousedown", "pointerup", "mouseup"] {
+        assert!(LISTENER_JS.contains(&format!("'{ev}'")), "pick mode stops {ev}");
+    }
     assert!(LISTENER_JS.contains("button[type=submit],input[type=submit],button:not([type])"), "Enter's button");
+    // Enter's click is decided once the page has had the event.
+    assert!(LISTENER_JS.contains("if (e.defaultPrevented) {
+        enterButton = null;"), "{LISTENER_JS}");
+    assert!(LISTENER_JS.contains("window.addEventListener('keydown', afterPage)"));
+    assert!(LISTENER_JS.contains("setTimeout(decide, 0)"));
+    assert!(LISTENER_JS.contains("quiet: quiet,"), "a quiet click says so");
     assert_eq!(PICK_ON_JS, "window.__tcmRecPick = true");
     assert_eq!(PICK_OFF_JS, "window.__tcmRecPick = false");
 }
@@ -170,8 +197,8 @@ async fn each_kind_of_report_is_read_back_and_another_binding_is_ignored() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(matches!(next_report(&mut d, wait).await.unwrap(), Some(Report::Click(c)) if c.i == 1 && c.hints.text == "Next"));
-    assert!(matches!(next_report(&mut d, wait).await.unwrap(), Some(Report::Marker(c)) if c.i == 2));
+    assert!(matches!(next_report(&mut d, wait).await.unwrap(), Some(Report::Click(c)) if c.click.i == 1 && c.click.hints.text == "Next" && !c.quiet));
+    assert!(matches!(next_report(&mut d, wait).await.unwrap(), Some(Report::Marker(c)) if c.click.i == 2));
     assert_eq!(next_report(&mut d, wait).await.unwrap(), Some(Report::NoSubmit {}));
     assert_eq!(next_report(&mut d, wait).await.unwrap(), None, "nothing more: a timeout is not an error");
 }
@@ -280,7 +307,7 @@ async fn pick_mode_is_put_back_on_the_page_until_a_marker_arrives() {
     let stop = Arc::new(AtomicBool::new(false));
     // Stop is pressed once pick mode has been put back on the page once.
     let stop_after = stop.clone();
-    let mut d = page_hooked(vec![], evals.clone(), move |expression| {
+    let mut d = page_hooked(vec![], evals.clone(), vec![], move |expression| {
         if expression == PICK_ON_JS {
             stop_after.store(true, Ordering::SeqCst);
         }
@@ -696,4 +723,144 @@ fn fake_recording_seeing_pick(
             Captured { steps: vec![], marker: None, ended: Ended::Cancelled }
         })
     }
+}
+
+// ---- review fixes ------------------------------------------------------------
+
+/// A login form laid out in a table: a click on the empty part of the
+/// username cell. The cell's accessible name is made of its content, and
+/// that includes the typed username - `cell "Username kim"`.
+#[test]
+fn a_quiet_click_is_never_named_from_content_that_can_hold_a_typed_value() {
+    let cell = [node("generic", ""), node("cell", "Username kim"), node("row", "Username kim"), node("table", "")];
+    assert_eq!(locator_from_ax(&cell), Some(exact_role("cell", "Username kim")), "what an ordinary click would take");
+    assert_eq!(quiet_candidate(&cell), None);
+    assert_eq!(quiet_locator_from_ax(&cell, |_| false), None);
+
+    // A link or button with a field inside: never named from itself.
+    let wrapped = [node("StaticText", "Username"), node("link", "Username kim")];
+    assert_eq!(quiet_candidate(&wrapped), Some(1));
+    assert_eq!(quiet_locator_from_ax(&wrapped, |_| true), None);
+    assert_eq!(quiet_locator_from_ax(&wrapped, |_| false), Some(exact_role("link", "Username kim")));
+    assert_eq!(
+        quiet_locator_from_ax(&[node("checkbox", "Remember me")], |_| false),
+        Some(exact_role("checkbox", "Remember me"))
+    );
+
+    // The hints: a role with an aria-label, never visible words.
+    let words = ClickHints { tag: "td".into(), role: String::new(), label: String::new(), text: "Username kim".into() };
+    assert_eq!(quiet_locator_from_hints(&words), None);
+    let labelled =
+        ClickHints { tag: "div".into(), role: "button".into(), label: "Show password".into(), text: String::new() };
+    assert_eq!(quiet_locator_from_hints(&labelled), Some(exact_role("button", "Show password")));
+    let none = ClickHints { tag: "div".into(), role: "none".into(), label: "Show".into(), text: String::new() };
+    assert_eq!(quiet_locator_from_hints(&none), None);
+}
+
+#[tokio::test]
+async fn a_quiet_click_or_marker_near_a_field_never_carries_what_was_typed() {
+    // 0: the username cell; 1: a button with the field inside it; 2: a
+    // button with nothing inside it.
+    let mut d = page_hooked(
+        vec![
+            Some(tree(0, "cell", "Username kim")),
+            Some(tree(1, "button", "Username kim")),
+            Some(tree(2, "button", "Show")),
+        ],
+        no_evals(),
+        vec![1],
+        |_| {},
+    );
+    d.events.push_back(quiet_report("click", 0, "", ""));
+    d.events.push_back(quiet_report("click", 1, "", ""));
+    d.events.push_back(quiet_report("click", 2, "", ""));
+    d.events.push_back(quiet_report("marker", 0, "", ""));
+    let mut heard: Vec<RecordingEvent> = vec![];
+    let captured =
+        listen(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(true), &mut |e| heard.push(e))
+            .await;
+    assert_eq!(captured.steps, vec![Step::Click(exact_role("button", "Show"))]);
+    assert_eq!(captured.marker, None);
+    let notes: Vec<&str> = heard.iter().filter(|e| e.kind == "unreadable").map(|e| e.detail.as_str()).collect();
+    assert_eq!(notes, vec![UNREADABLE_CLICK, UNREADABLE_CLICK, UNREADABLE_MARKER]);
+    for e in &heard {
+        assert!(!format!("{e:?}").contains("kim"), "a typed value reached an event: {e:?}");
+    }
+}
+
+#[test]
+fn a_signed_in_check_that_names_the_checking_account_is_refused() {
+    // `account()`: username kim, label Administrator.
+    let who = account();
+    assert_eq!(check_marker_for(&exact_role("link", "Kim"), &who).unwrap_err(), MARKER_NAMES_ACCOUNT);
+    assert!(check_marker_for(&exact_role("button", "Account manager for ADMINISTRATOR (x@corp.example)"), &who).is_err());
+    assert!(check_marker_for(&exact_role("button", "Sign out"), &who).is_ok());
+    assert!(check_marker_for(&css("#marker"), &who).is_ok());
+    let mut blank = who.clone();
+    blank.username = "  ".into();
+    blank.label = String::new();
+    assert!(check_marker_for(&exact_role("link", "Anyone"), &blank).is_ok(), "a blank name matches nothing");
+    assert!(MARKER_NAMES_ACCOUNT.contains("not your own name"));
+}
+
+/// The draft `stateful_app` signs in with, as a recording of it makes it.
+fn stateful_draft() -> Draft {
+    Draft {
+        organization: "acme".into(),
+        project: "Web".into(),
+        start_url: "https://hr.example.internal/".into(),
+        steps: vec![
+            Step::Field { target: css("#user"), password: false },
+            Step::Field { target: css("#pass"), password: true },
+            Step::Click(css("#go")),
+        ],
+        marker: Some(css("#marker")),
+    }
+}
+
+#[tokio::test]
+async fn a_save_keeps_the_draft_until_a_check_signs_in_then_saves_and_forgets_it() {
+    let _claims = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let fields = [choice(FieldRole::Username, ""), choice(FieldRole::Password, "")];
+
+    // A check naming the account is refused before any browser opens.
+    let mut named = stateful_draft();
+    named.marker = Some(exact_role("link", "Kim"));
+    keep_draft(named);
+    let opened = AtomicBool::new(false);
+    let err = save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async {
+        opened.store(true, Ordering::SeqCst);
+        Ok::<_, String>((ScriptedDriver::new(|_, _| Ok(json!({}))), ()))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(err, MARKER_NAMES_ACCOUNT);
+    assert!(!opened.load(Ordering::SeqCst));
+    assert!(current_draft().is_some());
+
+    // A check that fails keeps the draft and saves nothing.
+    keep_draft(stateful_draft());
+    let (d, _state) = stateful_app(false, Some("#pass"));
+    let err = save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async move {
+        Ok::<_, String>((d, ()))
+    })
+    .await
+    .unwrap_err();
+    assert!(err.starts_with("the check did not sign in"), "{err}");
+    assert_eq!(current_draft(), Some(stateful_draft()));
+    assert_eq!(load_recipe(dir.path(), "acme", "Web").unwrap(), None);
+    assert!(!recording_is_going(), "the check let the recorder go");
+
+    // A check that signs in saves the recipe and forgets the draft.
+    let (d, state) = stateful_app(false, None);
+    save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async move { Ok::<_, String>((d, ())) })
+        .await
+        .unwrap();
+    assert!(state.typed_password.load(Ordering::SeqCst));
+    assert_eq!(current_draft(), None);
+    let saved = load_recipe(dir.path(), "acme", "Web").unwrap().expect("saved");
+    assert_eq!(saved, stateful_draft().recipe(&fields, None).unwrap());
+    assert!(!recording_is_going());
 }

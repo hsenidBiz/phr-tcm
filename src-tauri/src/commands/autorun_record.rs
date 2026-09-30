@@ -150,12 +150,6 @@ pub async fn recording_is_open() -> bool {
     CURRENT.lock().await.is_some()
 }
 
-/// Start's last step, once its browser is signed in and listening: a Cancel
-/// that came in meanwhile wins, and then `start_listening` is never called -
-/// it is dropped with whatever it owns, which closes the browser - and so
-/// is the claim. Decided under the `CURRENT` lock, which Cancel takes too,
-/// so a Cancel cannot fall between the look and the recording being put
-/// there.
 /// Used up by whoever asks: a Cancel that arrived while a Start was still
 /// getting its browser ready. Asked under the Start's own slot lock, which
 /// Cancel also holds while it decides, so neither can fall between.
@@ -163,6 +157,12 @@ pub(crate) fn take_cancel_pending() -> bool {
     CANCEL_PENDING.swap(false, Ordering::SeqCst)
 }
 
+/// Start's last step, once its browser is signed in and listening: a Cancel
+/// that came in meanwhile wins, and then `start_listening` is never called -
+/// it is dropped with whatever it owns, which closes the browser - and so
+/// is the claim. Decided under the `CURRENT` lock, which Cancel takes too,
+/// so a Cancel cannot fall between the look and the recording being put
+/// there.
 pub async fn open_the_recording(
     claim: RecorderClaim,
     about: RecordingFor,

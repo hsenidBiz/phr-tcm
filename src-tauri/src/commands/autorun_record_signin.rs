@@ -295,36 +295,53 @@ pub async fn auto_run_record_sign_in_save(
     fields: Vec<FieldChoice>,
 ) -> Result<SignInSaveResult, String> {
     let root = super::autorun::root(&app)?;
-    let out = save_checked(&root, &organization, &project, &account, &browser_name, &fields).await;
+    let which = Browser::from_name(&browser_name);
+    let out = save_checked(
+        &root,
+        &organization,
+        &project,
+        &account,
+        &fields,
+        &super::autorun_replay::replay_timing(false),
+        || open_browser(which, false),
+    )
+    .await;
     Ok(match out {
         Ok(()) => SignInSaveResult { saved: true, failure: String::new() },
         Err(failure) => SignInSaveResult { saved: false, failure },
     })
 }
 
-async fn save_checked(
+/// The save, with the check's browser from `open`: a background browser
+/// for the command, a fake page in the tests. `open` gives the page and a
+/// guard that closes it when dropped. It is called only once every refusal
+/// that needs no browser has been made, and after the recorder is claimed.
+/// A check that works saves the recipe and forgets the draft; any failure
+/// keeps the draft for another try.
+pub async fn save_checked<D, G, Fut>(
     root: &Path,
     organization: &str,
     project: &str,
     account: &str,
-    browser_name: &str,
     fields: &[FieldChoice],
-) -> Result<(), String> {
+    timing: &Timing,
+    open: impl FnOnce() -> Fut,
+) -> Result<(), String>
+where
+    D: Driver,
+    Fut: std::future::Future<Output = Result<(D, G), String>>,
+{
     let recipe = build_recipe(root, organization, project, fields)?;
     let who = find_account(root, account)?.ok_or_else(|| {
         format!("there is no account \"{account}\" on this machine - add it in Auto Run, Accounts")
     })?;
+    rec::check_marker_for(&recipe.signed_in, &who)?;
     drop_a_finished_recording().await;
     let _claim = claim_the_recorder().await?;
-    let which = Browser::from_name(browser_name);
-    let (mut cdp, browser) = open_browser(which, false).await?;
-    let out = unless_cancelled(
-        check_sign_in(&mut cdp, root, &recipe, &who, &super::autorun_replay::replay_timing(false)),
-        CHECK_CANCELLED,
-    )
-    .await;
-    drop(cdp);
-    // `Owned`: the check's browser is killed here whichever way it ended.
+    let (mut page, browser) = open().await?;
+    let out = unless_cancelled(check_sign_in(&mut page, root, &recipe, &who, timing), CHECK_CANCELLED).await;
+    drop(page);
+    // The check's browser is closed here whichever way it ended.
     drop(browser);
     if let Err(why) = out {
         crate::applog::info(format!("Auto-run recorded sign-in not saved: {}", redact(&why, &who)));
