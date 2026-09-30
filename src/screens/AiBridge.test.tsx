@@ -964,3 +964,25 @@ test("Forget them wipes the saved logins, the choice and the write switch", asyn
   expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
   expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
 });
+
+/// The risk-tiered writing guide is a trial: off, the assistant writes cases
+/// with the standard guide. The switch is remembered on this machine, and
+/// App pushes it to the bridge with the other switches.
+test("the test design card switches the risk-tiered writing guide on and off", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const card = (await screen.findByRole("heading", { name: "Test design rules" })).closest("section")!;
+  const trial = within(card).getByRole("switch", { name: "Risk-tiered test design (trial)" });
+  expect(trial).toHaveAttribute("aria-checked", "false");
+  expect(card).toHaveTextContent("Off: the assistant writes cases with the standard guide.");
+  expect(card).toHaveTextContent("lists the scenarios for your approval before writing");
+
+  fireEvent.click(trial);
+  expect(trial).toHaveAttribute("aria-checked", "true");
+  expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBe("1");
+
+  fireEvent.click(trial);
+  expect(trial).toHaveAttribute("aria-checked", "false");
+  expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBeNull();
+});
