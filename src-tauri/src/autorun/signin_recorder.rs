@@ -43,7 +43,9 @@ pub const LISTENER_JS: &str = r#"(() => {
   const held = [];
   window.__tcmRecDoc = doc;
   window.__tcmRecHeld = held;
-  const typed = new WeakSet();
+  // Typed-into flags, one per field: set by `input`, cleared once the
+  // field is reported. A flag, never the field's contents.
+  const typed = new WeakMap();
   const TEXT_TYPES = ['text', 'email', 'password', 'search', 'tel', 'url', 'number'];
   let enterButton = null;
   let enterAt = 0;
@@ -83,7 +85,7 @@ pub const LISTENER_JS: &str = r#"(() => {
     });
   };
   const field = (el) => {
-    typed.delete(el);
+    typed.set(el, false);
     send({
       ev: 'field',
       i: hold(el),
@@ -97,12 +99,12 @@ pub const LISTENER_JS: &str = r#"(() => {
   document.addEventListener('input', (e) => {
     if (!e.isTrusted) return;
     const el = entryOf(e.target);
-    if (el) typed.add(el);
+    if (el) typed.set(el, true);
   }, true);
   const typedAway = (e) => {
     if (!e.isTrusted) return;
     const el = entryOf(e.target);
-    if (el && typed.has(el)) field(el);
+    if (el && typed.get(el)) field(el);
   };
   document.addEventListener('change', typedAway, true);
   document.addEventListener('focusout', typedAway, true);
@@ -110,7 +112,7 @@ pub const LISTENER_JS: &str = r#"(() => {
     if (!e.isTrusted || e.key !== 'Enter' || e.isComposing) return;
     const el = entryOf(e.target);
     if (!el || el.tagName !== 'INPUT') return;
-    if (typed.has(el)) field(el);
+    if (typed.get(el)) field(el);
     const form = el.form || el.closest('form');
     const button = form && form.querySelector('button[type=submit],input[type=submit],button:not([type])');
     if (!button) {
