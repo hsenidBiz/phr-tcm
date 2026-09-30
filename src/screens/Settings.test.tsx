@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
-import { CHANGELOG } from "../lib/changelog";
+import { CHANGELOG, isBetaVersion } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
@@ -87,11 +87,14 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   expect(screen.getByText(`Version ${CHANGELOG[0].version}`)).toBeInTheDocument();
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 
-  const more = screen.getByRole("button", { name: `Show more (${CHANGELOG.length - 1} earlier versions)` });
+  // A release build lists releases only - the betas' changes are in them.
+  const releases = CHANGELOG.filter((e) => !isBetaVersion(e.version));
+  const more = screen.getByRole("button", { name: `Show more (${releases.length - 1} earlier versions)` });
   expect(more).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(more);
   expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
+  expect(screen.queryByText(/^Version \d+\.\d+\.\d+-beta/)).not.toBeInTheDocument();
 
   const less = screen.getByRole("button", { name: "Show less" });
   expect(less).toHaveAttribute("aria-expanded", "true");

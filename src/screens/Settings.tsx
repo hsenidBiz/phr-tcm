@@ -1,7 +1,7 @@
 import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
-import { CHANGELOG, isBetaVersion } from "../lib/changelog";
+import { changelogFor, isBetaVersion, type ChangelogEntry } from "../lib/changelog";
 import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
@@ -253,6 +253,7 @@ export default function Settings({ org, project }: { org: string; project: strin
 
   const appSettings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
   const onBeta = isBetaVersion(version.data ?? "");
+  const changelog = changelogFor(version.data ?? "");
   const setBeta = async (on: boolean) => {
     const before = appSettings.data;
     if (before) qc.setQueryData<AppSettings>(["app-settings"], { ...before, beta_updates: on });
@@ -833,7 +834,7 @@ export default function Settings({ org, project }: { org: string; project: strin
           </div>
         ) : (
           <div key={rightPanel} className="t-panel-in space-y-4 rounded-md border border-border p-3">
-          {CHANGELOG.slice(0, 1).map((e) => (
+          {changelog.slice(0, 1).map((e) => (
             <ChangelogVersion key={e.version} entry={e} />
           ))}
           {/* Earlier versions unfold in place, in a box of their own so a
@@ -841,12 +842,12 @@ export default function Settings({ org, project }: { org: string; project: strin
               off the screen. */}
           <Collapse open={tiles.expanded} onGrow={tiles.onGrow} onShrink={tiles.onShrink}>
             <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
-              {CHANGELOG.slice(1).map((e) => (
+              {changelog.slice(1).map((e) => (
                 <ChangelogVersion key={e.version} entry={e} />
               ))}
             </div>
           </Collapse>
-          {CHANGELOG.length > 1 && (
+          {changelog.length > 1 && (
             <Button
               size="sm"
               variant="ghost"
@@ -854,7 +855,7 @@ export default function Settings({ org, project }: { org: string; project: strin
               aria-controls="changelog-history"
               onClick={tiles.toggle}
             >
-              {tiles.expanded ? "Show less" : `Show more (${CHANGELOG.length - 1} earlier versions)`}
+              {tiles.expanded ? "Show less" : `Show more (${changelog.length - 1} earlier versions)`}
             </Button>
           )}
           </div>
@@ -939,7 +940,7 @@ export default function Settings({ org, project }: { org: string; project: strin
 }
 
 /** One version's notes, as the changelog lists them. */
-function ChangelogVersion({ entry }: { entry: (typeof CHANGELOG)[number] }) {
+function ChangelogVersion({ entry }: { entry: ChangelogEntry }) {
   return (
     <div className="space-y-1.5">
       <ChangelogVersionTitle entry={entry} />

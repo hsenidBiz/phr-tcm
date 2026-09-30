@@ -3,6 +3,9 @@
  * first) BEFORE running release-v2.ps1 - the post-update "What's new" modal
  * only fires when an entry newer than the last-seen version exists, so a
  * release without an entry updates silently.
+ *
+ * A release build lists releases only (see `changelogFor`), so a release's
+ * entry carries the user-facing lines of the betas that led to it.
  */
 
 export type ChangelogEntry = {
@@ -26,6 +29,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-30",
     items: [
       "The app download is much smaller: How To Use is now downloaded the first time you open it from Settings, and kept through updates.",
+      "The Collapse all button at the bottom left no longer covers the last row: every screen that has it now leaves room to scroll the last row clear of it.",
+      "Small reliability fixes.",
     ],
   },
   {
@@ -75,6 +80,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-29",
     items: [
       "Every database statement your AI tools run is now kept in full in its own activity log, and Settings has an Open activity folder button beside Open log folder. The app log you send with a bug report now only notes that a statement ran.",
+      "Large uploads: the spec order is now set for every new test case, even when Azure DevOps takes longer to add them all to the suite.",
+      "AI tools that send two database statements in one go are now told how to send them together as one set of changes.",
+      "How To Use has a new Review page section: every search option and button on the page that opens with View in browser, and its Test map. It also shows how to ask your AI assistant to address the comments you left on the test cases.",
+      "The interface tour no longer opens a second time when you skip it straight after signing in for the first time.",
     ],
   },
   {
@@ -1633,9 +1642,16 @@ export function isBetaVersion(v: string): boolean {
   return /^\d+\.\d+\.\d+-beta\.\d+$/.test(v.trim());
 }
 
+/** The changelog as the build running `current` shows it: a beta build
+ * lists every entry, a release build only the releases - their entries
+ * already carry what the betas before them changed. */
+export function changelogFor(current: string): ChangelogEntry[] {
+  return isBetaVersion(current) ? CHANGELOG : CHANGELOG.filter((e) => !isBetaVersion(e.version));
+}
+
 /** Entries strictly newer than `seen`, up to and including `current`. */
 export function entriesSince(seen: string, current: string): ChangelogEntry[] {
-  return CHANGELOG.filter(
+  return changelogFor(current).filter(
     (e) => compareVersions(e.version, seen) > 0 && compareVersions(e.version, current) <= 0,
   );
 }
