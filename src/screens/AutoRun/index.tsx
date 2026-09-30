@@ -8,7 +8,7 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -16,17 +16,18 @@ import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
+import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
   IconCancel,
-  IconClearResults,
   IconClearScripts,
   IconEdit,
   IconImport,
   IconModulePaths,
   IconRecipe,
+  IconRun,
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -40,11 +41,39 @@ import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
+import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
 
 // How many imported case ids the success toast spells out before it falls
 // back to a count - the same shape as the assigned-work notification
 // summary. A 60-case import naming every one of them is unreadable.
 const MAX_IDS_IN_TOAST = 10;
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** One line of the Setup card: what it is, where it stands, one button.
+ * A labelled group, so a screen reader hears the row's name with its state
+ * and its button. */
+function SetupRow({
+  label,
+  state,
+  children,
+}: {
+  label: string;
+  state: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
+    >
+      <span className="w-28 shrink-0 text-xs font-medium text-muted">{label}</span>
+      <span className="min-w-0 flex-1 text-sm text-text">{state}</span>
+      {children}
+    </div>
+  );
+}
 
 export default function AutoRun({
   org,
@@ -80,19 +109,34 @@ export default function AutoRun({
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [siteOpen, setSiteOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
-  const [clearRunsOpen, setClearRunsOpen] = useState(false);
-  /** How many runs `PastRuns` is currently showing, reported up through
-   * `onCount` rather than a second `useQuery(["autorun-runs"])` here - a
-   * duplicate subscriber to the SAME key shifted this screen's own render
-   * timing enough to occasionally paint a run's case title (in Past runs)
-   * and the matching case row at the same instant, which is exactly what
-   * `AutoRun.test.tsx`'s "past runs list newest first" caught: a case
-   * titled the same as a run's only case suddenly matched
-   * `findByText` twice. One subscriber, fed back up, avoids the whole
-   * class of race. */
-  const [runCount, setRunCount] = useState(0);
   const queryClient = useQueryClient();
+
+  /** What the Setup card and the header line report. All three read small
+   * local files, and each shares its query key with the dialog that edits
+   * it, so a save there updates the card here. `?? null` because "nothing
+   * saved yet" is an answer, not a missing one. */
+  const setupReady = Boolean(org && project);
+  const recipe = useQuery({
+    queryKey: ["autorun-recipe", org, project],
+    queryFn: async () => (await unwrapStr(commands.autoRunLoadRecipe(org, project))) ?? null,
+    enabled: setupReady,
+    retry: false,
+  });
+  const accounts = useQuery({
+    queryKey: ["autorun-accounts"],
+    queryFn: async () => (await unwrapStr(commands.autoRunListAccounts())) ?? null,
+    retry: false,
+  });
+  const nav = useQuery({
+    queryKey: ["autorun-nav", org, project],
+    queryFn: async () => (await unwrapStr(commands.autoRunLoadNav(org, project))) ?? null,
+    enabled: setupReady,
+    retry: false,
+  });
+  const accountCount = accounts.data ? accounts.data.length : null;
+  const moduleCount = nav.data ? nav.data.modules.length : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every badge is
@@ -138,7 +182,7 @@ export default function AutoRun({
   const [running, setRunning] = useState<number[] | null>(null);
   /** The case ids queued for an UNATTENDED run. Its own state, separate
    * from `running` - the two panes are never open at once (both come from
-   * the same sticky bar), but they are different flows with different
+   * the same selection dock), but they are different flows with different
    * dialogs. */
   const [replaying, setReplaying] = useState<number[] | null>(null);
   /** The run id under review, or null while no review dialog is open. An
@@ -186,19 +230,6 @@ export default function AutoRun({
       toast.success(`${removed} script${removed === 1 ? "" : "s"} removed.`);
     },
     onError: (e) => toast.error(`Could not clear scripts: ${e.message}`),
-  });
-
-  /** Development-only housekeeping: wipe every saved run and screenshot on
-   * this machine, including runs already sent to Azure DevOps - the
-   * confirm dialog says so before this ever runs. */
-  const clearRuns = useMutation({
-    mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
-    onSuccess: async (removed) => {
-      setClearRunsOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
-      toast.success(`${removed} run${removed === 1 ? "" : "s"} removed.`);
-    },
-    onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
   });
 
   const toggleOne = (id: number) =>
@@ -249,15 +280,23 @@ export default function AutoRun({
           onCheckedChange={() => ready && toggleOne(c.id)}
         />
         <span className="id-mono text-faint">#{c.id}</span>
-        <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+        {/* The title gets the room and wraps, the way Update Test Cases'
+            rows do - a truncated title is exactly the part that tells two
+            similar cases apart. */}
+        <span className="min-w-0 flex-1 break-words text-text">{c.title}</span>
         {ready ? (
-          <Badge className="bg-success/15 text-success">Script ready</Badge>
+          <Badge className="shrink-0 bg-success/15 text-success">Script ready</Badge>
         ) : (
-          <Badge className="bg-surface-2 text-faint">No script</Badge>
+          <Badge className="shrink-0 bg-surface-2 text-faint">No script</Badge>
         )}
+        {/* Script and Run are a pair of equals on every row: the same
+            size and weight, so a list of twenty is not twenty bright
+            buttons. The one primary action on the screen is running the
+            selection, in the dock. */}
         <Button
           size="sm"
           variant="outline"
+          className="shrink-0"
           aria-label={`Edit script for #${c.id}`}
           onClick={() => setEditing(c.id)}
         >
@@ -265,7 +304,14 @@ export default function AutoRun({
           Script
         </Button>
         {ready && (
-          <Button size="sm" aria-label={`Run #${c.id}`} onClick={() => setRunning([c.id])}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            aria-label={`Run #${c.id}`}
+            onClick={() => setRunning([c.id])}
+          >
+            <IconRun aria-hidden />
             Run
           </Button>
         )}
@@ -277,171 +323,329 @@ export default function AutoRun({
     return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
   }
 
+  const needsProject = setupReady ? undefined : "Pick an organization and project first";
+  const saved = recipe.data;
+  const extraSites = saved ? saved.allowed_origins.length : 0;
+
   return (
     <div className="max-w-3xl space-y-4">
-      <p className="rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-xs text-muted">
-        Results are saved on this machine. Nothing goes to Azure DevOps unless you press Send to
-        Azure DevOps on a run you have reviewed.
-      </p>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={importScripts.isPending}
-          onClick={() => importScripts.mutate()}
-        >
-          <IconImport aria-hidden />
-          Import scripts
-        </Button>
-        <span className="text-xs text-faint">
-          One JSON file can carry every case in this PBI.
+      {/* The same header line API Templates opens with: where this screen's
+          runs go, at a glance, before anything else. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
+        <span>
+          Project <span className="font-medium text-text">{project || "none picked"}</span>
         </span>
-        <Button size="sm" variant="outline" onClick={() => setAccountsOpen(true)}>
-          <IconAccounts aria-hidden />
-          Accounts
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!org || !project}
-          title={!org || !project ? "Pick an organization and project first" : undefined}
-          onClick={() => setRecipeOpen(true)}
-        >
-          <IconRecipe aria-hidden />
-          Sign-in recipe
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!org || !project}
-          title={!org || !project ? "Pick an organization and project first" : undefined}
-          onClick={() => setNavOpen(true)}
-        >
-          <IconModulePaths aria-hidden />
-          Module paths
-        </Button>
-        {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
-            whole tab is gated in one place (`autoRunVisible` in
-            lib/extras.ts), so no further gating belongs here. Disabled
-            rather than hidden:
-            a button that vanishes the moment it would do nothing invites
-            "where did it go", where greyed-out with nothing to do reads as
-            exactly that. */}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!rows.some((_, i) => hasScript(i))}
-          onClick={() => setClearScriptsOpen(true)}
-        >
-          <IconClearScripts aria-hidden />
-          Clear scripts
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={runCount === 0}
-          onClick={() => setClearRunsOpen(true)}
-        >
-          <IconClearResults aria-hidden />
-          Clear results
-        </Button>
-        <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
-          <Checkbox
-            checked={grouped}
-            ariaLabel="Group by title"
-            onCheckedChange={(on) => {
-              setGrouped(on);
-              try {
-                localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
-              } catch {
-                // storage unavailable -> the choice lasts this session
-              }
-            }}
-          />
-          Group by title
-        </label>
+        {recipe.isSuccess && (
+          <span>
+            Runs against{" "}
+            <span className="font-medium text-text">
+              {saved ? siteHost(saved.start_url) : "no site set yet"}
+            </span>
+          </span>
+        )}
+        {accountCount != null && <span>{plural(accountCount, "account")}</span>}
+        {moduleCount != null && <span>{plural(moduleCount, "module path")}</span>}
       </div>
 
-      {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
-      {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
+      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+        <h2 className="text-sm font-semibold text-text">Setup</h2>
+        <div className="space-y-3">
+          <SetupRow
+            label="Site address"
+            state={
+              !setupReady ? (
+                <span className="text-muted">{needsProject}</span>
+              ) : recipe.isLoading ? (
+                <span className="text-muted">Loading…</span>
+              ) : recipe.isError ? (
+                <span className="text-danger">The saved recipe could not be read</span>
+              ) : saved ? (
+                <>
+                  <span className="id-mono break-all">{saved.start_url}</span>
+                  {extraSites > 0 && (
+                    <span className="ml-2 text-xs text-faint">
+                      +{plural(extraSites, "allowed site")}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted">Not set up yet</span>
+              )
+            }
+          >
+            {/* The address lives inside the recipe, so there is nothing to
+                edit on its own until a recipe exists - without one, this
+                row's button starts the recipe instead. */}
+            {saved ? (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Edit site address"
+                disabled={!setupReady}
+                title={needsProject}
+                onClick={() => setSiteOpen(true)}
+              >
+                <IconEdit aria-hidden />
+                Edit
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!setupReady || recipe.isLoading || recipe.isError}
+                title={needsProject}
+                onClick={() => setRecipeOpen(true)}
+              >
+                <IconRecipe aria-hidden />
+                Set up sign-in
+              </Button>
+            )}
+          </SetupRow>
 
-      {/* The bar only exists while something is ticked, so the screen is
-          not carrying a permanently disabled button nobody can use. */}
-      {selectedInOrder.length > 0 && (
-        <div className="sticky top-0 z-10 flex items-center justify-end gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2">
-          {/* No "N cases selected" text - the count is already in the
-              button's own label, same as Run Tests' floating pill. */}
-          <Button size="sm" onClick={() => setRunning(selectedInOrder)}>
-            Run {selectedInOrder.length} selected
+          <SetupRow
+            label="Sign-in"
+            state={
+              !setupReady ? (
+                <span className="text-muted">{needsProject}</span>
+              ) : recipe.isLoading ? (
+                <span className="text-muted">Loading…</span>
+              ) : recipe.isError ? (
+                <span className="text-danger">Could not be read - open it to see why</span>
+              ) : saved ? (
+                "Recipe saved"
+              ) : (
+                <span className="text-muted">Not set up</span>
+              )
+            }
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={saved ? "Edit sign-in recipe" : "Set up sign-in recipe"}
+              disabled={!setupReady}
+              title={needsProject}
+              onClick={() => setRecipeOpen(true)}
+            >
+              <IconRecipe aria-hidden />
+              {saved ? "Edit" : "Set up"}
+            </Button>
+          </SetupRow>
+
+          <SetupRow
+            label="Accounts"
+            state={
+              accounts.isError ? (
+                <span className="text-danger">The accounts could not be read</span>
+              ) : accountCount == null ? (
+                <span className="text-muted">Loading…</span>
+              ) : accountCount === 0 ? (
+                <span className="text-muted">None yet</span>
+              ) : (
+                `${plural(accountCount, "account")} on this machine`
+              )
+            }
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label="Edit accounts"
+              onClick={() => setAccountsOpen(true)}
+            >
+              <IconAccounts aria-hidden />
+              Edit
+            </Button>
+          </SetupRow>
+
+          <SetupRow
+            label="Module paths"
+            state={
+              !setupReady ? (
+                <span className="text-muted">{needsProject}</span>
+              ) : nav.isError ? (
+                <span className="text-danger">The module paths could not be read</span>
+              ) : moduleCount == null ? (
+                <span className="text-muted">Loading…</span>
+              ) : moduleCount === 0 ? (
+                <span className="text-muted">None mapped yet</span>
+              ) : (
+                `${plural(moduleCount, "module")} mapped`
+              )
+            }
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label="Edit module paths"
+              disabled={!setupReady}
+              title={needsProject}
+              onClick={() => setNavOpen(true)}
+            >
+              <IconModulePaths aria-hidden />
+              Edit
+            </Button>
+          </SetupRow>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold text-text">
+          Test cases
+          {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={importScripts.isPending}
+            onClick={() => importScripts.mutate()}
+          >
+            <IconImport aria-hidden />
+            Import scripts
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setReplaying(selectedInOrder)}>
-            <IconUnattended aria-hidden />
-            Run {selectedInOrder.length} unattended
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
-            Clear
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox
+              checked={grouped}
+              ariaLabel="Group by title"
+              onCheckedChange={(on) => {
+                setGrouped(on);
+                try {
+                  localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+                } catch {
+                  // storage unavailable -> the choice lasts this session
+                }
+              }}
+            />
+            Group by title
+          </label>
+          {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
+              whole tab is gated in one place (`autoRunVisible` in
+              lib/extras.ts), so no further gating belongs here. Disabled
+              rather than hidden: a button that vanishes the moment it would
+              do nothing invites "where did it go", where greyed-out with
+              nothing to do reads as exactly that. Danger only on hover, the
+              way the import queue's Remove reads: destructive, but
+              secondary, and it still asks first. */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto hover:border-danger hover:bg-danger/10 hover:text-danger"
+            disabled={!rows.some((_, i) => hasScript(i))}
+            onClick={() => setClearScriptsOpen(true)}
+          >
+            <IconClearScripts aria-hidden />
+            Clear scripts
           </Button>
         </div>
-      )}
+        <p className="text-xs text-faint">One JSON file can carry every case in this PBI.</p>
 
-      {grouped ? (
-        groups.map(({ name, indices }) => {
-          const label = name || "Ungrouped";
-          const shut = collapsed.has(label);
-          return (
-            <div key={label} className="space-y-1">
-              <div className="flex w-full items-center gap-3 pb-1 pt-2">
-                {/* Left-anchored with a trailing rule - see ViewCases for why. */}
-                <button
-                  aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
-                  title={shut ? "Expand group" : "Collapse group"}
-                  className="text-muted transition-colors hover:text-accent"
-                  onClick={() => toggleCollapsed(label)}
-                >
-                  {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-                </button>
-                {/* Same contract as the other grouped screens: selection
-                    is the checkbox's job (scripted cases only), the TITLE
-                    toggles the fold like the chevron. */}
-                {(() => {
-                  const runnable = runnableIn(indices);
-                  const on = runnable.filter((id) => selected.has(id)).length;
-                  return (
-                    <Checkbox
-                      ariaLabel={`Select all in ${label}`}
-                      checked={runnable.length > 0 && on === runnable.length}
-                      indeterminate={on > 0 && on < runnable.length}
-                      onCheckedChange={() => toggleGroup(indices)}
-                    />
-                  );
-                })()}
-                <button
-                  className="group flex items-center gap-2"
-                  title={shut ? "Expand group" : "Collapse group"}
-                  onClick={() => toggleCollapsed(label)}
-                >
-                  <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                    {label} ({indices.length})
-                  </span>
-                </button>
-                <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+        {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
+        {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
+
+        {grouped ? (
+          groups.map(({ name, indices }) => {
+            const label = name || "Ungrouped";
+            const shut = collapsed.has(label);
+            return (
+              <div key={label} className="space-y-1">
+                <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                  {/* Left-anchored with a trailing rule - see ViewCases for why. */}
+                  <button
+                    aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
+                    title={shut ? "Expand group" : "Collapse group"}
+                    className="text-muted transition-colors hover:text-accent"
+                    onClick={() => toggleCollapsed(label)}
+                  >
+                    {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                  </button>
+                  {/* Same contract as the other grouped screens: selection
+                      is the checkbox's job (scripted cases only), the TITLE
+                      toggles the fold like the chevron. */}
+                  {(() => {
+                    const runnable = runnableIn(indices);
+                    const on = runnable.filter((id) => selected.has(id)).length;
+                    return (
+                      <Checkbox
+                        ariaLabel={`Select all in ${label}`}
+                        checked={runnable.length > 0 && on === runnable.length}
+                        indeterminate={on > 0 && on < runnable.length}
+                        onCheckedChange={() => toggleGroup(indices)}
+                      />
+                    );
+                  })()}
+                  <button
+                    className="group flex items-center gap-2"
+                    title={shut ? "Expand group" : "Collapse group"}
+                    onClick={() => toggleCollapsed(label)}
+                  >
+                    <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                      {label} ({indices.length})
+                    </span>
+                  </button>
+                  <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+                </div>
+                <Collapse open={!shut} animateIn={settled}>
+                  <ul className="space-y-1">{indices.map(row)}</ul>
+                </Collapse>
               </div>
-              <Collapse open={!shut} animateIn={settled}>
-                <ul className="space-y-1">{indices.map(row)}</ul>
-              </Collapse>
-            </div>
-          );
-        })
-      ) : (
-        <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
-      )}
+            );
+          })
+        ) : (
+          <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
+        )}
 
-      <PastRuns pbiId={pbi.id} onReview={setReviewing} onCount={setRunCount} />
+        {/* Actions on the selection live bottom-right, in the one shared
+            dock (see ActionDock): in place under the list, and floating
+            bottom-right once that row has scrolled away. It only exists
+            while something is ticked, so the screen never carries a
+            permanently disabled button nobody can use. */}
+        {selectedInOrder.length > 0 && (
+          <ActionDock label="Run selection" surface className="pt-1">
+            {(floating) => (
+              <>
+                {/* No "N cases selected" text - the count is already in the
+                    button's own label, same as Run Tests' floating pill. */}
+                <Button
+                  size="sm"
+                  tabIndex={floating ? -1 : undefined}
+                  onClick={() => setRunning(selectedInOrder)}
+                >
+                  <IconRun aria-hidden />
+                  Run {selectedInOrder.length} selected
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  tabIndex={floating ? -1 : undefined}
+                  onClick={() => setReplaying(selectedInOrder)}
+                >
+                  <IconUnattended aria-hidden />
+                  Run {selectedInOrder.length} unattended
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Clear selection"
+                  title="Clear selection"
+                  tabIndex={floating ? -1 : undefined}
+                  className="rounded-full px-2 hover:text-danger"
+                  onClick={() => setSelected(new Set())}
+                >
+                  <IconCancel aria-hidden />
+                </Button>
+              </>
+            )}
+          </ActionDock>
+        )}
+      </section>
+
+      <PastRuns pbiId={pbi.id} onReview={setReviewing} />
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
         <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
+      )}
+      {siteOpen && (
+        <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
       )}
       {navOpen && (
         <ModulePathsDialog
@@ -482,39 +686,6 @@ export default function AutoRun({
               {clearScripts.isPending
                 ? "Clearing"
                 : `Clear ${rows.length} script${rows.length === 1 ? "" : "s"}`}
-            </Button>
-          </div>
-        </Modal>
-      )}
-
-      {clearRunsOpen && (
-        <Modal
-          onClose={() => setClearRunsOpen(false)}
-          className="flex w-full max-w-md flex-col gap-4 p-5"
-        >
-          <h2 className="text-sm font-semibold text-text">Clear results?</h2>
-          <p className="text-xs text-muted">
-            This removes every Auto Run result and picture on this machine, including runs already
-            sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={clearRuns.isPending}
-              onClick={() => setClearRunsOpen(false)}
-            >
-              <IconCancel aria-hidden />
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={clearRuns.isPending}
-              onClick={() => clearRuns.mutate()}
-            >
-              <IconClearResults aria-hidden />
-              {clearRuns.isPending ? "Clearing" : `Clear ${runCount} run${runCount === 1 ? "" : "s"}`}
             </Button>
           </div>
         </Modal>

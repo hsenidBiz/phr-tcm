@@ -2,13 +2,16 @@
 // exists in Azure DevOps too once a person has reviewed it and pressed
 // Send; until then, nothing here has reached Azure DevOps at all.
 
-import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { commands } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Modal } from "../../components/ui/modal";
 import { cn } from "../../lib/cn";
-import { IconReview } from "../../lib/actionIcons";
+import { unwrapStr } from "../../lib/ipc";
+import { toast } from "../../lib/toast";
+import { IconCancel, IconClearResults, IconReview } from "../../lib/actionIcons";
 
 /** A case's own verdict, text-only - a lighter touch than the pressed-button
  * tone in verdicts.ts, which this plain row was never meant to borrow. */
@@ -29,7 +32,6 @@ function when(startedAt: string): string {
 export default function PastRuns({
   pbiId,
   onReview,
-  onCount,
 }: {
   /** The PBI currently selected on the Auto Run screen. A run reviewed
    * here is sent with THIS PBI's title and step ids (see `RunReview`), so
@@ -38,32 +40,56 @@ export default function PastRuns({
    * name with every `step_ids` empty, silently. */
   pbiId: number | null;
   onReview: (runId: string) => void;
-  /** How many runs this machine has, reported to the parent so ITS "Clear
-   * results" button knows whether there is anything to clear - without a
-   * second `useQuery(["autorun-runs"])` up there duplicating this one. A
-   * second subscriber to the same key shifted render timing enough to
-   * occasionally paint a run's case title here and the matching case row
-   * above at the same instant, which a legacy test (`AutoRun.test.tsx`)
-   * caught as two elements answering to one `findByText`. */
-  onCount?: (count: number) => void;
 }) {
+  const queryClient = useQueryClient();
+  // The one subscriber to "autorun-runs" on the screen. "Clear results"
+  // lives here, beside the runs it clears, so it reads the count straight
+  // off this query - a second `useQuery(["autorun-runs"])` in the parent
+  // once shifted render timing enough to paint a run's case title here
+  // and the matching case row above at the same instant.
   const runs = useQuery({
     queryKey: ["autorun-runs"],
     queryFn: () => commands.autoRunListRuns(),
     retry: false,
   });
+  const runCount = runs.data?.length ?? 0;
+  const [clearOpen, setClearOpen] = useState(false);
 
-  useEffect(() => {
-    onCount?.(runs.data?.length ?? 0);
-    // onCount is a state setter passed fresh every render; only the COUNT
-    // itself should re-trigger this effect, or every parent re-render
-    // would run it again for no reason.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runs.data?.length]);
+  /** Housekeeping: wipe every saved run and screenshot on this machine,
+   * including runs already sent to Azure DevOps - the confirm dialog says
+   * so before this ever runs. Shown wherever Auto Run is (dev, or
+   * unlocked); the tab is gated in one place, so no gating here. */
+  const clearRuns = useMutation({
+    mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
+    onSuccess: async (removed) => {
+      setClearOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      toast.success(`${removed} run${removed === 1 ? "" : "s"} removed.`);
+    },
+    onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
+  });
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-sm font-semibold text-muted">Past runs (this machine)</h2>
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-text">Past runs</h2>
+        {/* Disabled rather than hidden: a button that vanishes the moment
+            it would do nothing invites "where did it go". */}
+        <Button
+          size="sm"
+          variant="outline"
+          className="hover:border-danger hover:bg-danger/10 hover:text-danger"
+          disabled={runCount === 0}
+          onClick={() => setClearOpen(true)}
+        >
+          <IconClearResults aria-hidden />
+          Clear results
+        </Button>
+      </div>
+      <p className="text-xs text-faint">
+        Results are saved on this machine. Nothing goes to Azure DevOps unless you press Send to
+        Azure DevOps on a run you have reviewed.
+      </p>
       {(runs.data?.length ?? 0) === 0 && (
         <p className="text-xs text-muted">No runs on this machine yet.</p>
       )}
@@ -126,6 +152,36 @@ export default function PastRuns({
           );
         })}
       </div>
-    </div>
+
+      {clearOpen && (
+        <Modal onClose={() => setClearOpen(false)} className="flex w-full max-w-md flex-col gap-4 p-5">
+          <h2 className="text-sm font-semibold text-text">Clear results?</h2>
+          <p className="text-xs text-muted">
+            This removes every Auto Run result and picture on this machine, including runs already
+            sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clearRuns.isPending}
+              onClick={() => setClearOpen(false)}
+            >
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={clearRuns.isPending}
+              onClick={() => clearRuns.mutate()}
+            >
+              <IconClearResults aria-hidden />
+              {clearRuns.isPending ? "Clearing" : `Clear ${runCount} run${runCount === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </section>
   );
 }
