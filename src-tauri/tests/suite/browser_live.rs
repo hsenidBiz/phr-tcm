@@ -432,6 +432,34 @@ async fn words_that_wrap_are_clicked_on_a_line_they_are_drawn_on() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "wrapped row" })).await);
 }
 
+/// 2026-10-01, PeoplesHR: a menu entry's words were also on the page
+/// elsewhere, so the recorded words matched three things in the fresh
+/// browser's check. The recorder counts at the click and scopes the words
+/// to the widest id that holds them once; twins inside one id get their
+/// place. Each recorded locator must then click the one that was clicked.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_recorded_click_on_words_shown_twice_finds_only_that_one_again() {
+    let mut live = open().await;
+    recorder::arm(&mut live.cdp).await.expect("the recorder could not listen");
+    let menu_echo = json!([{ "css": "#rec-menu-list" }, { "text": "Echoed Entry", "exact": true }]);
+    let child_twin = json!([{ "css": "#rec-menu-list" }, { "text": "Twin Label", "exact": true, "nth": 1 }]);
+    must(run(&mut live, json!({ "kind": "click", "selector": menu_echo })).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": child_twin })).await);
+    let (stop, cancel) = (AtomicBool::new(true), AtomicBool::new(false));
+    let captured = recorder::capture(&mut live.cdp, &stop, &cancel, &mut |_| {}).await;
+    assert_eq!(captured.clicks.len(), 2, "{captured:?}");
+    assert_eq!(captured.clicks[0], action_target(menu_echo.clone()), "scoped to the menu tree, not the sidebar around both lists");
+    assert_eq!(captured.clicks[1], action_target(child_twin.clone()), "the child twin, by its place in the menu tree");
+
+    // And each finds only what was clicked: replayed, the page says so.
+    let replay = |t: &Target| json!({ "kind": "click", "selector": serde_json::to_value(t).unwrap() });
+    must(run(&mut live, replay(&captured.clicks[0])).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "menu echo" })).await);
+    must(run(&mut live, replay(&captured.clicks[1])).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "child twin" })).await);
+}
+
 /// The outline a watcher sees, and the gap it opens. A page is free to put
 /// a modal up during that gap, and the click must not go through it.
 #[tokio::test]

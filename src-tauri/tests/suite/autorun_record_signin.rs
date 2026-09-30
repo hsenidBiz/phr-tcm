@@ -748,12 +748,24 @@ fn a_quiet_click_is_never_named_from_content_that_can_hold_a_typed_value() {
     );
 
     // The hints: a role with an aria-label, never visible words.
-    let words = ClickHints { tag: "td".into(), role: String::new(), label: String::new(), text: "Username kim".into() };
+    let words = ClickHints {
+        tag: "td".into(),
+        role: String::new(),
+        label: String::new(),
+        text: "Username kim".into(),
+        ..ClickHints::default()
+    };
     assert_eq!(quiet_locator_from_hints(&words), None);
-    let labelled =
-        ClickHints { tag: "div".into(), role: "button".into(), label: "Show password".into(), text: String::new() };
+    let labelled = ClickHints {
+        tag: "div".into(),
+        role: "button".into(),
+        label: "Show password".into(),
+        text: String::new(),
+        ..ClickHints::default()
+    };
     assert_eq!(quiet_locator_from_hints(&labelled), Some(exact_role("button", "Show password")));
-    let none = ClickHints { tag: "div".into(), role: "none".into(), label: "Show".into(), text: String::new() };
+    let none =
+        ClickHints { tag: "div".into(), role: "none".into(), label: "Show".into(), text: String::new(), ..ClickHints::default() };
     assert_eq!(quiet_locator_from_hints(&none), None);
 }
 

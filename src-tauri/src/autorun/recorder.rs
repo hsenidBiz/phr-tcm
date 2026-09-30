@@ -41,6 +41,43 @@ pub const LISTENER_JS: &str = r#"(() => {
   window.__tcmRecDoc = doc;
   window.__tcmRecHeld = held;
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const skip = /^(SCRIPT|STYLE|HEAD|HTML|BODY|NOSCRIPT|TEMPLATE)$/;
+  // The runner's text rule (locator.rs TEXT_JS), exact and visible only:
+  // the deepest visible elements whose words are exactly these. It leaves
+  // out TEXT_JS's button-input branch, which reads a field's value - a
+  // click's words here come from innerText, which such an input has none of.
+  const matches = (root, want) => {
+    const lower = want.toLowerCase();
+    const all = Array.from(root.querySelectorAll('*')).filter((x) =>
+      x instanceof HTMLElement && !skip.test(x.tagName) &&
+      norm(x.textContent).toLowerCase().includes(lower) && norm(x.innerText) === want);
+    const set = new Set(all), parents = new Set();
+    for (const x of all) for (let p = x.parentElement; p; p = p.parentElement) if (set.has(p)) parents.add(p);
+    return all.filter((x) => {
+      if (parents.has(x)) return false;
+      const r = x.getBoundingClientRect();
+      return x.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
+    });
+  };
+  // Counted now, at the click: the click that ends a path takes the page
+  // away before anything could ask afterwards.
+  const counts = (el, want) => {
+    const out = { count: 0, scopes: [] };
+    if (!want) return out;
+    try {
+      const mine = (list) => list.findIndex((m) => m === el || m.contains(el) || el.contains(m));
+      out.count = matches(document, want).length;
+      if (out.count <= 1) return out;
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        if (!a.id || document.querySelectorAll('#' + CSS.escape(a.id)).length !== 1) continue;
+        const list = matches(a, want);
+        const nth = mine(list);
+        out.scopes.push({ id: a.id, count: list.length, nth: nth < 0 ? null : nth });
+      }
+    } catch (_) {}
+    return out;
+  };
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
     const t = e.target;
@@ -49,13 +86,17 @@ pub const LISTENER_JS: &str = r#"(() => {
     held.push(el);
     const near = el.closest('a,button,summary,[role]') || el;
     const typed = el.isContentEditable || near.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+    const text = typed ? '' : clean(near.innerText || near.textContent);
+    const counted = counts(el, text);
     const payload = {
       doc: doc,
       i: held.length - 1,
       tag: near.tagName.toLowerCase(),
       role: near.getAttribute('role') || '',
       label: clean(near.getAttribute('aria-label')),
-      text: typed ? '' : clean(near.innerText || near.textContent),
+      text: text,
+      count: counted.count,
+      scopes: counted.scopes,
     };
     try { window.__tcmRecordClick(JSON.stringify(payload)); } catch (_) {}
   }, true);
@@ -101,6 +142,95 @@ pub struct ClickHints {
     pub role: String,
     pub label: String,
     pub text: String,
+    /// How many visible elements the runner's text rule matches for `text`
+    /// on the whole page, counted at the moment of the click - the click
+    /// that ends a path takes the page away, so it cannot be counted after.
+    /// 0 when nothing was counted.
+    pub count: u32,
+    /// Ancestors of the clicked element with an id unique on the page,
+    /// nearest first, each with the same count inside it.
+    pub scopes: Vec<ScopeHint>,
+}
+
+/// One id around a click: how many matches for the words it holds, and
+/// which of them (zero-based, page order) is the clicked one - `None` when
+/// the clicked element was not among them.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ScopeHint {
+    pub id: String,
+    pub count: u32,
+    pub nth: Option<u32>,
+}
+
+/// Said at the click when words shown more than once have nothing around
+/// them that tells them apart.
+pub fn ambiguous(count: u32) -> String {
+    format!(
+        "those words are on the page {count} times and nothing around this click tells them apart - click the entry in the menu itself, or record from a page where it appears once"
+    )
+}
+
+/// Could this id be the same on another machine and another day? Refused:
+/// anything a selector would have to escape, and anything that looks built
+/// from data - a run of three digits (`row-4711`, `ember123`) or a long
+/// hex run with a digit in it (a hash or GUID piece).
+pub fn stable_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return false;
+    }
+    let (mut digits, mut hex, mut hex_has_digit) = (0, 0, false);
+    for c in id.chars() {
+        digits = if c.is_ascii_digit() { digits + 1 } else { 0 };
+        if c.is_ascii_hexdigit() {
+            hex += 1;
+            hex_has_digit |= c.is_ascii_digit();
+        } else {
+            hex = 0;
+            hex_has_digit = false;
+        }
+        if digits >= 3 || (hex >= 8 && hex_has_digit) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Words the page shows more than once, made to find the clicked one only:
+/// scoped to the WIDEST stable id around it that holds them once (the menu
+/// tree rather than an inner group of it), else placed by `nth` inside the
+/// nearest stable id, else refused. Only exact words from the hints are
+/// narrowed - the listener counted words, so its numbers say nothing about
+/// a role and name.
+pub fn narrow(target: Target, h: &ClickHints) -> Result<Target, String> {
+    let words = match &target {
+        Target::One(s) if s.exact && s.role.is_none() && s.css.is_none() && s.nth.is_none() => s.text.clone(),
+        _ => None,
+    };
+    let Some(words) = words else { return Ok(target) };
+    if h.count <= 1 || collapse(&words) != collapse(&h.text) {
+        return Ok(target);
+    }
+    let stable: Vec<&ScopeHint> = h.scopes.iter().filter(|s| stable_id(&s.id)).collect();
+    let within = |s: &ScopeHint, nth: Option<i32>| {
+        Target::Chain(vec![
+            LocatorStep { css: Some(format!("#{}", s.id)), ..LocatorStep::default() },
+            LocatorStep { text: Some(words.clone()), exact: true, nth, ..LocatorStep::default() },
+        ])
+    };
+    if let Some(s) = stable.iter().rev().find(|s| s.count == 1 && s.nth == Some(0)) {
+        return Ok(within(s, None));
+    }
+    if let Some(s) = stable.iter().find(|s| s.count > 1) {
+        if let Some(n) = s.nth {
+            return Ok(within(s, Some(n as i32)));
+        }
+    }
+    Err(ambiguous(h.count))
 }
 
 /// One click as the page reported it.
@@ -299,12 +429,14 @@ async fn from_the_element<D: Driver>(d: &mut D, click: &ClickPayload) -> Result<
 }
 
 /// The locator for one reported click: from the accessibility tree when
-/// the element is still there, else from the hints.
+/// the element is still there, else from the hints - narrowed when the
+/// page showed those words more than once.
 pub async fn locate<D: Driver>(d: &mut D, click: &ClickPayload) -> Result<Target, String> {
     if let Ok(Some(t)) = from_the_element(d, click).await {
         return Ok(t);
     }
-    locator_from_hints(&click.hints).ok_or_else(|| UNREADABLE.to_string())
+    let t = locator_from_hints(&click.hints).ok_or_else(|| UNREADABLE.to_string())?;
+    narrow(t, &click.hints)
 }
 
 /// Where the page is, allowing it a moment if it is between documents.

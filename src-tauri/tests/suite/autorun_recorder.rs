@@ -11,8 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::autorun::nav::{check_path, ModulePath, SIGN_IN_BROWSER_SILENT, SIGN_IN_FAILED};
 use v2_lib::autorun::recorder::{
-    arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, next_click, AxLink, Captured,
-    ClickHints, ClickPayload, Ended, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS, UNREADABLE,
+    arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, narrow, next_click, stable_id, AxLink,
+    Captured, ClickHints, ClickPayload, Ended, ScopeHint, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS,
+    UNREADABLE,
 };
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::launch::Browser;
@@ -39,7 +40,7 @@ fn node(role: &str, name: &str) -> AxLink {
 }
 
 fn hints(role: &str, label: &str, text: &str) -> ClickHints {
-    ClickHints { tag: "a".into(), role: role.into(), label: label.into(), text: text.into() }
+    ClickHints { tag: "a".into(), role: role.into(), label: label.into(), text: text.into(), ..ClickHints::default() }
 }
 
 /// A page's report of one click, the way the binding delivers it.
@@ -582,4 +583,98 @@ async fn a_recording_whose_sign_in_fails_says_so_without_an_address() {
         .await
         .unwrap_err();
     assert_eq!(err, SIGN_IN_BROWSER_SILENT);
+}
+
+fn scope(id: &str, count: u32, nth: Option<u32>) -> ScopeHint {
+    ScopeHint { id: id.into(), count, nth }
+}
+
+/// Words the page shows `count` times, with the ids around the clicked one,
+/// nearest first - what the listener reports at the moment of the click.
+fn echoed(text: &str, count: u32, scopes: Vec<ScopeHint>) -> ClickHints {
+    ClickHints { tag: "div".into(), text: text.into(), count, scopes, ..ClickHints::default() }
+}
+
+fn scoped(css: &str, text: &str, nth: Option<i32>) -> Target {
+    Target::Chain(vec![
+        LocatorStep { css: Some(css.into()), ..LocatorStep::default() },
+        LocatorStep { text: Some(text.into()), exact: true, nth, ..LocatorStep::default() },
+    ])
+}
+
+/// Words the page shows once need nothing more.
+#[test]
+fn words_shown_once_stay_as_they_are() {
+    let h = echoed("Leave", 1, vec![scope("phr-sidebar-menu-list", 1, Some(0))]);
+    assert_eq!(narrow(exact_text("Leave"), &h), Ok(exact_text("Leave")));
+}
+
+/// 2026-10-01, PeoplesHR: "Performance Cycles" was on the page three times
+/// (the menu, the recently-visited list, the page itself), so the recorded
+/// words matched three things in the check. The widest id around the click
+/// that holds them only once is the one kept - the real menu tree, not an
+/// inner group that would tie the path to one layout of it.
+#[test]
+fn words_shown_more_than_once_are_scoped_to_the_widest_id_that_holds_them_once() {
+    let h = echoed(
+        "Performance Cycles",
+        3,
+        vec![scope("pms-group", 1, Some(0)), scope("phr-sidebar-menu-list", 1, Some(0)), scope("phr-sidebar", 2, Some(1))],
+    );
+    assert_eq!(
+        narrow(exact_text("Performance Cycles"), &h),
+        Ok(scoped("#phr-sidebar-menu-list", "Performance Cycles", None))
+    );
+}
+
+/// A parent and child in the same menu can share their words; inside the
+/// nearest id the clicked one is picked by its place, the way the replay's
+/// `nth` counts (page order, inside that one scope).
+#[test]
+fn twins_inside_the_same_id_are_told_apart_by_their_place_in_it() {
+    let h = echoed("Performance", 2, vec![scope("phr-sidebar-menu-list", 2, Some(1)), scope("phr-sidebar", 2, Some(1))]);
+    assert_eq!(narrow(exact_text("Performance"), &h), Ok(scoped("#phr-sidebar-menu-list", "Performance", Some(1))));
+}
+
+/// An id built from data is right on one machine and wrong on the next, so
+/// it is passed over even when it would have made the words unique.
+#[test]
+fn ids_that_look_generated_are_passed_over() {
+    let h = echoed("Leave", 2, vec![scope("row-4711", 1, Some(0)), scope("menu", 2, Some(0))]);
+    assert_eq!(narrow(exact_text("Leave"), &h), Ok(scoped("#menu", "Leave", Some(0))));
+    for bad in ["row-4711", "a1b2c3d4e5f6", "ember123", "1abc", "has space", "x.y", ""] {
+        assert!(!stable_id(bad), "{bad:?} must not count as stable");
+    }
+    for good in ["phr-sidebar-menu-list", "lastAccessedModules", "menu_2", "sidebar-toggle-menu"] {
+        assert!(stable_id(good), "{good:?} must count as stable");
+    }
+}
+
+/// Nothing around the click tells the words apart: said at the click, not
+/// fifteen seconds into the check.
+#[test]
+fn words_nothing_can_tell_apart_are_refused_at_the_click() {
+    let none = echoed("Leave", 2, vec![]);
+    let err = narrow(exact_text("Leave"), &none).unwrap_err();
+    assert!(err.contains("2 times"), "{err}");
+    let unplaced = echoed("Leave", 2, vec![scope("menu", 2, None)]);
+    assert!(narrow(exact_text("Leave"), &unplaced).is_err());
+}
+
+/// A role and name from the accessibility tree is left alone: the listener
+/// counted words, not names, so its numbers say nothing about it.
+#[test]
+fn a_role_locator_is_not_narrowed_by_word_counts() {
+    let h = echoed("Leave", 3, vec![scope("menu", 1, Some(0))]);
+    assert_eq!(narrow(exact_role("link", "Leave"), &h), Ok(exact_role("link", "Leave")));
+}
+
+/// A listener from before this, or a click with no words, reports no
+/// count: the words are kept exactly as they always were.
+#[test]
+fn a_click_reported_without_counts_reads_as_before() {
+    let got: ClickPayload = serde_json::from_value(json!({ "doc": "d", "i": 0, "tag": "a", "role": "", "label": "", "text": "Leave" })).unwrap();
+    assert_eq!(got.hints.count, 0);
+    assert!(got.hints.scopes.is_empty());
+    assert_eq!(narrow(exact_text("Leave"), &got.hints), Ok(exact_text("Leave")));
 }

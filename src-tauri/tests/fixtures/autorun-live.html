@@ -127,6 +127,18 @@
        only the row around them is. Nothing here is pointer-events: none. -->
   <div class="wrap-row" onclick="say('which', 'wrapped row')" style="padding:4px"><span>Wrapped Menu Entry Words<br>X<br>Y</span></div>
 
+  <!-- PeoplesHR's sidebar: the real menu tree and a recently-visited list
+       that repeats its labels, both visible. In the tree, a parent and a
+       child share their words. -->
+  <div id="rec-sidebar">
+    <div id="rec-recent"><div onclick="say('which', 'recent echo')">Echoed Entry</div></div>
+    <div id="rec-menu-list">
+      <div onclick="say('which', 'menu echo')">Echoed Entry</div>
+      <div onclick="say('which', 'parent twin')">Twin Label</div>
+      <div><div onclick="say('which', 'child twin')">Twin Label</div></div>
+    </div>
+  </div>
+
   <!-- A sub-frame loads too, so a navigation has to tell its own load
        apart from this one. -->
   <iframe id="frame" title="inner frame" srcdoc="<p>inner frame body</p>"></iframe>
