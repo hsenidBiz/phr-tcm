@@ -79,48 +79,69 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
   });
   const [text, setText] = useState<string | null>(null);
   const [quirksText, setQuirksText] = useState<string | null>(null);
-  const [problem, setProblem] = useState("");
-  const value = text ?? (existing.data ? JSON.stringify(existing.data, null, 2) : "");
-  const quirksValue = quirksText ?? (existingQuirks.data ?? []).map((q) => q.text).join("\n");
-  const blocked = existing.isLoading || existing.isError || existingQuirks.isLoading || existingQuirks.isError;
+  const [recipeProblem, setRecipeProblem] = useState("");
+  const [quirksProblem, setQuirksProblem] = useState("");
+  const loadedRecipe = existing.data ? JSON.stringify(existing.data, null, 2) : "";
+  const loadedQuirks = (existingQuirks.data ?? []).map((q) => q.text).join("\n");
+  const value = text ?? loadedRecipe;
+  const quirksValue = quirksText ?? loadedQuirks;
+  const recipeBlocked = existing.isLoading || existing.isError;
+  const quirksBlocked = existingQuirks.isLoading || existingQuirks.isError;
   const recipeEmpty = value.trim() === "";
   const quirksEmpty = quirksValue.trim() === "";
   // Clearing every line out of a box that used to have quirks in it is a
-  // real save (an empty list), not nothing to do - so an empty quirks box
-  // must not block Save just because the recipe box is empty too.
+  // real save (an empty list), not nothing to do.
   const quirksWereLoaded = (existingQuirks.data ?? []).length > 0;
+  /** Typed into and not saved yet - what decides whether a save in the
+   * OTHER section may close the dialog. */
+  const recipeDirty = text !== null && text.trim() !== loadedRecipe.trim();
+  const quirksDirty = quirksText !== null && quirksText !== loadedQuirks;
 
-  // `recipe` is `null` for a project with no recipe yet, whose box is left
-  // empty on purpose - that box saves only the quirks, never an
-  // `auto_run_save_recipe` call with nothing behind it.
-  const save = useMutation({
-    mutationFn: async (recipe: SignInRecipe_Deserialize | null) => {
-      // The recipe is saved first; a refusal here (a bad selector, a
-      // missing address) must leave the quirks box exactly as typed and
-      // never write it - saving a fact about the app is not consolation
-      // for a recipe that did not actually save.
-      if (recipe) {
-        await unwrapStr(commands.autoRunSaveRecipe(org, project, recipe));
+  // Two saves, one per section. Each writes only its own file: a recipe
+  // the app refuses never costs the quirks typed below it, and saving a
+  // quirk never re-sends a recipe nobody touched. A save closes the dialog
+  // only when the other section has nothing unsaved in it - otherwise the
+  // dialog stays open so that edit is not thrown away.
+  const saveRecipe = useMutation({
+    mutationFn: async (v: { recipe: SignInRecipe_Deserialize; close: boolean }) => {
+      await unwrapStr(commands.autoRunSaveRecipe(org, project, v.recipe));
+    },
+    onSuccess: async (_data, v) => {
+      toast.success("Sign-in recipe saved.");
+      if (v.close) {
+        qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
+        onClose();
+        return;
       }
-      await unwrapStr(commands.autoRunSaveQuirks(org, project, linesToQuirks(quirksValue, existingQuirks.data ?? [])));
+      // Refetched before the box lets go of the typed text, so it never
+      // flashes back to the old recipe in between.
+      await qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
+      setText(null);
     },
-    onSuccess: (_data, recipe) => {
-      qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
-      qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
-      toast.success(recipe ? "Sign-in recipe saved." : "Quirks saved.");
-      onClose();
-    },
-    onError: (e) => setProblem(e instanceof Error ? e.message : String(e)),
+    onError: (e) => setRecipeProblem(e instanceof Error ? e.message : String(e)),
   });
 
-  const submit = () => {
-    setProblem("");
-    if (recipeEmpty) {
-      // Nothing typed in the recipe box: this project may simply not have
-      // one yet, and that is not a reason to block saving the quirks.
-      save.mutate(null);
-      return;
-    }
+  const saveQuirks = useMutation({
+    mutationFn: async (_v: { close: boolean }) => {
+      await unwrapStr(
+        commands.autoRunSaveQuirks(org, project, linesToQuirks(quirksValue, existingQuirks.data ?? [])),
+      );
+    },
+    onSuccess: async (_data, v) => {
+      toast.success("Quirks saved.");
+      if (v.close) {
+        qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
+        onClose();
+        return;
+      }
+      await qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
+      setQuirksText(null);
+    },
+    onError: (e) => setQuirksProblem(e instanceof Error ? e.message : String(e)),
+  });
+
+  const submitRecipe = () => {
+    setRecipeProblem("");
     // A cast, not a runtime validation: the Rust side is the one place
     // that has to actually validate a recipe (`SignInRecipe::validate`),
     // and the save call below is what surfaces its verdict.
@@ -128,17 +149,24 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
     try {
       parsed = JSON.parse(value) as SignInRecipe_Deserialize;
     } catch (e) {
-      setProblem(`That is not valid JSON: ${(e as Error).message}`);
+      setRecipeProblem(`That is not valid JSON: ${(e as Error).message}`);
       return;
     }
-    save.mutate(parsed);
+    saveRecipe.mutate({ recipe: parsed, close: !quirksDirty });
+  };
+
+  const submitQuirks = () => {
+    setQuirksProblem("");
+    saveQuirks.mutate({ close: !recipeDirty });
   };
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3 overflow-y-auto p-5">
-      <div>
-        <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
-        <p className="mt-1 text-xs text-muted">
+    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-4 overflow-y-auto p-5">
+      <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold text-text">Recipe</h3>
+        <p className="text-xs text-muted">
           How to sign in to this project's application, once, for every script. Use {"{{username}}"} and{" "}
           {"{{password}}"} where the account's login goes. Use {"{{password}}"} only on a real password
           field (type=password): the browser masks it there, and the run's pictures would show it
@@ -147,33 +175,46 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           included, to leave the application the way scripts expect it - here, opening a menu that starts
           closed, only when it is closed.
         </p>
-      </div>
-      {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
-      <Textarea aria-label="Sign-in recipe JSON" className="min-h-[22rem] flex-1 font-mono text-xs"
-        placeholder={PLACEHOLDER} value={value} onChange={(e) => setText(e.target.value)} />
-      <div>
-        <h3 className="text-sm font-semibold text-text">Known quirks</h3>
-        <p className="mt-1 text-xs text-muted">
-          One per line: something learned about this application that the next script - written by a
-          person or an assistant - should not have to rediscover.
-        </p>
-      </div>
-      {existingQuirks.isError && <p className="text-xs text-danger">{existingQuirks.error.message}</p>}
-      <Textarea aria-label="Known quirks" className="min-h-[8rem] font-mono text-xs"
-        value={quirksValue} onChange={(e) => setQuirksText(e.target.value)} />
-      {problem && <p className="text-xs text-danger">{problem}</p>}
-      <div className="flex justify-end gap-2">
+        {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
+        <Textarea aria-label="Sign-in recipe JSON" className="min-h-[18rem] font-mono text-xs"
+          placeholder={PLACEHOLDER} value={value} onChange={(e) => setText(e.target.value)} />
+        {recipeProblem && <p className="text-xs text-danger">{recipeProblem}</p>}
+        <div className="flex justify-end">
+          <Button size="sm" disabled={recipeBlocked || saveRecipe.isPending || recipeEmpty} onClick={submitRecipe}>
+            <IconConfirm aria-hidden />
+            {saveRecipe.isPending ? "Saving" : "Save recipe"}
+          </Button>
+        </div>
+      </section>
+
+      <section className="space-y-2 border-t border-border pt-4">
+        <div>
+          <h3 className="text-sm font-semibold text-text">Known quirks</h3>
+          <p className="mt-1 text-xs text-muted">
+            One per line: something learned about this application that the next script - written by a
+            person or an assistant - should not have to rediscover.
+          </p>
+        </div>
+        {existingQuirks.isError && <p className="text-xs text-danger">{existingQuirks.error.message}</p>}
+        <Textarea aria-label="Known quirks" className="min-h-[8rem] font-mono text-xs"
+          value={quirksValue} onChange={(e) => setQuirksText(e.target.value)} />
+        {quirksProblem && <p className="text-xs text-danger">{quirksProblem}</p>}
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            disabled={quirksBlocked || saveQuirks.isPending || (quirksEmpty && !quirksWereLoaded)}
+            onClick={submitQuirks}
+          >
+            <IconConfirm aria-hidden />
+            {saveQuirks.isPending ? "Saving" : "Save quirks"}
+          </Button>
+        </div>
+      </section>
+
+      <div className="flex justify-end border-t border-border pt-3">
         <Button size="sm" variant="ghost" onClick={onClose}>
           <IconCancel aria-hidden />
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          disabled={blocked || save.isPending || (recipeEmpty && quirksEmpty && !quirksWereLoaded)}
-          onClick={submit}
-        >
-          <IconConfirm aria-hidden />
-          {save.isPending ? "Saving" : recipeEmpty ? "Save quirks" : "Save recipe"}
+          Close
         </Button>
       </div>
     </Modal>

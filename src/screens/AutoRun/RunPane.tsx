@@ -6,7 +6,7 @@
 // rather than the app's. The human presses the button.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type ActionOutcome, type CaseRecord, type SignInOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -16,7 +16,7 @@ import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
-import { VERDICTS, verdictTone } from "./verdicts";
+import VerdictPicker from "./VerdictPicker";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
@@ -84,6 +84,7 @@ export default function RunPane({
   const [saving, setSaving] = useState(false);
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
   const [verdict, setVerdict] = useState("");
+  const verdictLabelId = useId();
   const [note, setNote] = useState("");
 
   /** How many browsers this pane has successfully opened. A sign-in belongs
@@ -466,22 +467,10 @@ export default function RunPane({
       )}
 
       <div className="space-y-2 border-t border-border pt-3">
-        <span className="text-xs font-medium text-muted">Your verdict</span>
-        <div className="flex gap-2">
-          {VERDICTS.map((v) => (
-            <button
-              key={v}
-              aria-pressed={verdict === v}
-              className={cn(
-                "rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors",
-                verdict === v ? verdictTone[v] : "text-muted hover:border-border-strong",
-              )}
-              onClick={() => setVerdict(v)}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
+        <span id={verdictLabelId} className="text-xs font-medium text-muted">
+          Your verdict
+        </span>
+        <VerdictPicker value={verdict} onPick={setVerdict} labelledBy={verdictLabelId} />
         <Textarea
           aria-label="Result note"
           className="h-16 w-full text-xs"

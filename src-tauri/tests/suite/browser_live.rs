@@ -26,6 +26,7 @@ use v2_lib::autorun::recorder;
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::replay::{run_selection, Browsers, SIGN_IN_STEP};
 use v2_lib::autorun::runner::run_step;
+use v2_lib::autorun::signin_recorder::{self, Draft, FieldChoice, FieldRole, Step};
 use v2_lib::autorun::signin::sign_in;
 use v2_lib::autorun::{sessions, store, CaseScript, LocalRun, StepScript};
 use v2_lib::browser::actions::{execute_in, execute_with, Action, ActionOutcome, HIGHLIGHT_JS, Policy};
@@ -35,6 +36,7 @@ use v2_lib::browser::locator::{resolve, Target};
 use v2_lib::browser::page;
 use v2_lib::browser::snapshot::{probe, snapshot, DEFAULT_LIMIT};
 use v2_lib::browser::timing::Timing;
+use v2_lib::commands::autorun_record_signin::check_sign_in;
 use v2_lib::events::ReplayProgress;
 
 /// Windows holds a just-exited browser's profile files open for a moment;
@@ -1264,4 +1266,82 @@ async fn a_recorded_menu_path_is_saved_only_after_it_replays_in_a_fresh_browser(
     assert!(err.contains("the page ended on /leave, not /nowhere"), "{err}");
     put_path(root.path(), "acme", "Web", path).unwrap();
     assert_eq!(load_nav(root.path(), "acme", "Web").unwrap().modules.len(), 1);
+}
+
+/// The sign-in recorder against a real page: what a person does in the
+/// browser - typing, Enter, a real click in pick mode - is what the page
+/// reports, the picked click is not carried out, and the recipe made from
+/// it signs in on its own in a fresh browser.
+#[tokio::test]
+#[ignore = "starts real headless Edge processes"]
+async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_browser() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    let start = format!("{}/", app.base());
+    let mut live = open().await;
+    signin_recorder::prepare(&mut live.cdp, &start, &timing()).await.expect("the recording could not start");
+    let (stop, cancel, no_pick) = (AtomicBool::new(true), AtomicBool::new(false), AtomicBool::new(false));
+    let mut steps: Vec<Step> = vec![];
+
+    // Typing into the username field, then the password: moving on from
+    // the username reports it, named by the accessibility tree.
+    must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "input[name=u]" }, "value": "kim" })).await);
+    must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "input[name=p]" }, "value": "p\"w 1" })).await);
+    let first = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    steps.extend(first.steps);
+
+    // Enter in the password field: the field, then the form's button - once,
+    // though the browser's own Enter also clicks it.
+    for kind in ["keyDown", "keyUp"] {
+        live.cdp
+            .call(
+                "Input.dispatchKeyEvent",
+                json!({ "type": kind, "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13, "text": "\r" }),
+            )
+            .await
+            .expect("the key did not go in");
+    }
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#home" } })).await);
+    let second = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &no_pick, &mut |_| {}).await;
+    steps.extend(second.steps);
+    let words: Vec<String> = steps.iter().map(|s| s.target().describe()).collect();
+    assert_eq!(steps.len(), 3, "{words:?}");
+    assert!(matches!(&steps[0], Step::Field { password: false, .. }), "{words:?}");
+    assert_eq!(words[0], "textbox \"Username\"");
+    assert!(matches!(&steps[1], Step::Field { password: true, .. }), "{words:?}");
+    assert!(matches!(&steps[2], Step::Click(_)) && words[2].contains("Login"), "{words:?}");
+
+    // Pick mode: a real click on Leave is the signed-in check, and the page
+    // does not go to Leave.
+    page::eval_value(&mut live.cdp, signin_recorder::PICK_ON_JS).await.expect("pick mode");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "link", "name": "Leave" } })).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let still_home = page::eval_value(&mut live.cdp, "!!document.getElementById('home')").await.unwrap();
+    assert_eq!(still_home, json!(true), "the picked click was carried out");
+    let pick = AtomicBool::new(true);
+    let third = signin_recorder::capture(&mut live.cdp, &stop, &cancel, &pick, &mut |_| {}).await;
+    assert!(third.steps.is_empty(), "{:?}", third.steps);
+    let marker = third.marker.expect("the pick was not reported");
+    assert_eq!(marker.describe(), "link \"Leave\"");
+    assert!(!pick.load(Ordering::SeqCst));
+    drop(live);
+
+    let draft = Draft { organization: "acme".into(), project: "Web".into(), start_url: start, steps, marker: Some(marker) };
+    let fields = [FieldChoice { role: FieldRole::Username, text: String::new() }, FieldChoice { role: FieldRole::Password, text: String::new() }];
+    let recipe = draft.recipe(&fields, None).expect("the recording made no recipe");
+    let before = app.logins.load(Ordering::SeqCst);
+    let mut fresh = open().await;
+    check_sign_in(&mut fresh.cdp, root.path(), &recipe, &kim(), &timing()).await.expect("the recorded recipe did not sign in");
+    assert_eq!(app.logins.load(Ordering::SeqCst), before + 1, "it signed in through the form");
+    drop(fresh);
+
+    // The wrong password is refused, and the sentence says so without it.
+    let mut wrong = kim();
+    wrong.password = "nope".into();
+    let mut third_browser = open().await;
+    let err = check_sign_in(&mut third_browser.cdp, root.path(), &recipe, &wrong, &Timing { nav_ms: 3000, ..timing() })
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("the recorded steps ran, but the signed-in check never appeared"), "{err}");
+    assert!(!err.contains("nope") && !err.contains("://"), "{err}");
 }

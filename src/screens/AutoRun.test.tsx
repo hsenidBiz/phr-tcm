@@ -564,6 +564,8 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_replay", // local: drives the browser itself, writes nothing to ADO
     "auto_run_list_accounts", // read-only: the Sign in as choices in the unattended run dialog
     "auto_run_load_run", // read-only: the review dialog loading its own run
+    "auto_run_load_recipe", // read-only, local: the Setup card and header's site address
+    "auto_run_load_nav", // read-only, local: the Setup card's module path count
     "plugin:event|listen", // Tauri's own event subscription - ReplayPane's progress feed
     "plugin:event|unlisten", // the same subscription's cleanup on unmount
   ]);

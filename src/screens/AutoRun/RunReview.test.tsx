@@ -579,3 +579,51 @@ test("the review names the sign-in, the trip to the module and each step", () =>
   expect(stepLabel(-1)).toBe("Module");
   expect(stepLabel(3)).toBe("Step 3");
 });
+
+test("each case's verdicts are the shared picker, labelled by the case", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  for (const id of [201, 202, 203]) {
+    const group = screen.getByRole("group", { name: `Verdict for #${id}` });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Passed",
+      "Failed",
+      "Blocked",
+    ]);
+    // The group sits inside its own case's card, not somewhere shared.
+    expect(caseCard(id)).toContainElement(group);
+  }
+  // A second press on the same verdict clears it here - the review's own
+  // rule, kept by the shared picker handing the choice back.
+  const failed = within(screen.getByRole("group", { name: "Verdict for #201" })).getByRole("button", {
+    name: "Failed",
+  });
+  fireEvent.click(failed);
+  expect(failed).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(failed);
+  expect(failed).toHaveAttribute("aria-pressed", "false");
+});
+
+test("Send to Azure DevOps is the primary button and Save review the outline one", async () => {
+  renderReview(SEND_RUN, { stepIds: SEND_STEP_IDS });
+  await screen.findByText("2 of 3 confirmed");
+
+  const send = screen.getByRole("button", { name: "Send to Azure DevOps" });
+  const save = screen.getByRole("button", { name: "Save review" });
+  // The variant classes of components/ui/button: default (primary) fills
+  // with the accent, outline draws a border and no fill.
+  expect(send.className).toContain("bg-accent");
+  expect(save.className).not.toContain("bg-accent");
+  expect(save.className).toContain("border-border");
+});
+
+test("Accept every proposal sits in the footer beside the confirmed count", async () => {
+  renderReview(RUN);
+  const count = await screen.findByText("0 of 3 confirmed");
+  const accept = screen.getByRole("button", { name: "Accept every proposal" });
+  expect(count.parentElement).toContainElement(accept);
+  // ...and the footer is below every case, not a row of its own above them.
+  const lastCard = caseCard(203);
+  expect(lastCard.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

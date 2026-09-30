@@ -3,7 +3,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import AccountsDialog from "./AccountsDialog";
 
@@ -66,4 +66,21 @@ test("removing an account takes its row away", async () => {
   await screen.findByDisplayValue("kim");
   fireEvent.click(screen.getByRole("button", { name: "Remove admin" }));
   expect(screen.queryByDisplayValue("kim")).not.toBeInTheDocument();
+});
+
+test("each field carries a visible label for when the row stacks, and keeps its accessible name", async () => {
+  mount([{ key: "admin", label: "A", username: "kim", password: "p" }]);
+  await screen.findByDisplayValue("kim");
+  for (const [shown, name] of [
+    ["Key", "Key for account 1"],
+    ["Name", "Name for account 1"],
+    ["Username", "Username for account 1"],
+    ["Password", "Password for account 1"],
+  ]) {
+    const input = screen.getByLabelText(name);
+    // The visible word sits in the same <label> as the field it names.
+    const label = input.closest("label");
+    expect(label).not.toBeNull();
+    expect(within(label!).getByText(shown)).toBeInTheDocument();
+  }
 });
