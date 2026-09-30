@@ -90,7 +90,7 @@ fn tools_list_names_every_tool() {
             "get_test_cases",
             "search_test_suites",
             "get_suite_test_cases",
-            "get_run_failures",
+            "get_run_results",
             "check_spec_coverage",
             "merge_case_files",
             "get_autorun_guide",

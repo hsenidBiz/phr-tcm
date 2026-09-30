@@ -758,9 +758,10 @@ export default function AiBridge() {
             a PBI or their own ids alone.
           </li>
           <li>
-            <span className="font-medium text-text">Run failures</span> — what failed the last time this PBI&apos;s cases were run, with the tester&apos;s own
-            comments. The fastest way to turn a failed run into the cases that should
-            have caught it. Switch it off to keep run results away from an assistant.
+            <span className="font-medium text-text">Run results</span> — how this PBI&apos;s cases did the last time they were run: failed, blocked,
+            passed or not run yet, with a count of each and the tester&apos;s own comments.
+            The fastest way to turn a failed run into the cases that should have caught
+            it. Switch it off to keep run results away from an assistant.
           </li>
           <li>
             <span className="font-medium text-text">Project tags</span> — the tag names this project already uses, so an assistant reuses yours instead of

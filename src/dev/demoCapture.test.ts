@@ -197,7 +197,7 @@ test("in capture mode, the AI Bridge, the board and pull requests start from the
   const left = {
     "tcm-v2-ai-global-allowed": "on",
     "tcm-v2-ai-scope": "global",
-    "tcm-v2-mcp-disabled": '["get_run_failures"]',
+    "tcm-v2-mcp-disabled": '["get_run_results"]',
     "tcm-v2-db-mcp": '{"exe_path":"C:\\\\real\\\\server.exe","db_type":"mssql","schema_filter":""}',
     "tcm-v2-db-writes": "1",
     "tcm-v2-working-dir": "C:\\real\\repo",

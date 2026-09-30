@@ -39,7 +39,7 @@ export const aiBridge: Screen = {
       id: SWITCHED_OFF,
       route: [
         NAV,
-        { click: { role: "switch", name: "Run failures" } },
+        { click: { role: "switch", name: "Run results" } },
         { scrollTo: { role: "button", name: "Turn all back on" } },
       ],
       alt: "One tool switched off, with Turn all back on under the list",
@@ -180,7 +180,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run failures, Company database (read), Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Company database (read), Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
     },
     {
       id: "database",
@@ -268,7 +268,7 @@ export const aiBridge: Screen = {
       id: "switched-off",
       shot: SWITCHED_OFF,
       group: "tools",
-      locate: { role: "switch", name: "Run failures" },
+      locate: { role: "switch", name: "Run results" },
       name: "A switched-off tool",
       does: "Its name is greyed out and the count above drops by one.",
     },

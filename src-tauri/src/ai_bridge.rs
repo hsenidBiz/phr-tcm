@@ -338,8 +338,8 @@ pub async fn route(
             })
             .to_string(),
         ),
-        ("GET", "/run-failures") => match client {
-            Some(c) => run_failures(ctx, c, target).await,
+        ("GET", "/run-results") => match client {
+            Some(c) => run_results(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/search-pbis") => match client {
@@ -3749,13 +3749,98 @@ async fn suite_cases(
     }
 }
 
-/// How many failures get their comment + linked bugs fetched. Each one is
-/// its own request; a suite with 80 failures is a suite with a bigger
-/// problem than missing detail text.
+/// How many matching results get their comment + linked bugs fetched. Each
+/// one is its own request; a suite with 80 failures is a suite with a
+/// bigger problem than missing detail text.
 const RUN_FAILURE_DETAIL_CAP: usize = 10;
+/// How many matching results are listed at all - id, title, configuration
+/// and outcome come with the points, so listing costs no extra request.
+const RUN_RESULT_LIST_CAP: usize = 200;
 
-/// The failed cases from a PBI's latest runs, with each failure's comment
-/// and linked bugs - what an assistant needs to draft regression cases.
+/// Every outcome a test point can carry, in the order the summary lists
+/// them: key (Azure DevOps' own value, lowercased), the label an assistant
+/// and a person read, and other spellings accepted when asking for it.
+/// "Never run" is a point with no verdict yet - the Test Plans UI calls it
+/// Active. The last seven are the automated-test outcomes; a manual suite
+/// rarely has them, but a filter for one should not be refused as a typo.
+pub const RUN_OUTCOMES: &[(&str, &str, &[&str])] = &[
+    ("failed", "Failed", &["fail"]),
+    ("blocked", "Blocked", &[]),
+    ("paused", "Paused", &[]),
+    ("inprogress", "In progress", &[]),
+    ("notapplicable", "Not applicable", &["na"]),
+    ("passed", "Passed", &["pass"]),
+    ("neverrun", "Never run", &["notrun", "never", "active", "unspecified", "none"]),
+    ("error", "Error", &[]),
+    ("timeout", "Timeout", &[]),
+    ("aborted", "Aborted", &[]),
+    ("inconclusive", "Inconclusive", &[]),
+    ("warning", "Warning", &[]),
+    ("notexecuted", "Not executed", &[]),
+    ("notimpacted", "Not impacted", &[]),
+];
+
+fn outcome_word(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+}
+
+/// A point's outcome as a RUN_OUTCOMES key. `last_outcome` is empty for a
+/// point with no verdict; anything this table does not know keeps its own
+/// (normalised) spelling, so it is counted, never dropped.
+pub fn outcome_key(last_outcome: &str) -> String {
+    if last_outcome.trim().is_empty() {
+        "neverrun".into()
+    } else {
+        outcome_word(last_outcome)
+    }
+}
+
+/// The label for a key: the table's, or the raw key for one it lacks.
+pub fn outcome_label(key: &str) -> String {
+    RUN_OUTCOMES
+        .iter()
+        .find(|(k, _, _)| *k == key)
+        .map_or_else(|| key.to_string(), |(_, label, _)| label.to_string())
+}
+
+/// The outcomes asked for - a comma-separated list in any spelling
+/// ("Not Applicable", "not_applicable", "notapplicable"), or "all". None or
+/// blank is Failed, what this tool returned before it took a filter. An
+/// unknown word is refused with the list, not silently matched to nothing:
+/// an empty answer to a typo would read as "nothing had that outcome".
+pub fn parse_outcomes(raw: Option<&str>) -> Result<Vec<&'static str>, String> {
+    let Some(raw) = raw.filter(|r| !r.trim().is_empty()) else {
+        return Ok(vec!["failed"]);
+    };
+    let mut keys: Vec<&'static str> = Vec::new();
+    for word in raw.split(',').map(outcome_word).filter(|w| !w.is_empty()) {
+        if word == "all" {
+            return Ok(RUN_OUTCOMES.iter().map(|(k, _, _)| *k).collect());
+        }
+        let Some((key, _, _)) = RUN_OUTCOMES
+            .iter()
+            .find(|(k, _, aliases)| *k == word || aliases.contains(&word.as_str()))
+        else {
+            let known: Vec<&str> = RUN_OUTCOMES.iter().map(|(_, l, _)| *l).collect();
+            return Err(format!(
+                "\"{word}\" is not a test outcome. Use one or more of: {}, or \"all\"",
+                known.join(", ")
+            ));
+        };
+        if !keys.contains(key) {
+            keys.push(key);
+        }
+    }
+    if keys.is_empty() {
+        return Ok(vec!["failed"]);
+    }
+    Ok(keys)
+}
+
+/// The cases from a PBI's latest runs with the outcomes asked for (Failed
+/// unless told otherwise), each with its comment and linked bugs, plus a
+/// count of every outcome in the suite - what an assistant needs to draft
+/// regression cases, or to see where a PBI's testing stands.
 ///
 /// GET-only end to end: `find_pbi_requirement_suite` is the find-ONLY
 /// scan, never the find-or-create one. A PBI with no suite is an answer
@@ -3765,13 +3850,17 @@ const RUN_FAILURE_DETAIL_CAP: usize = 10;
 /// Tests (`ado_testplan::cached_suite`): resolving scans every plan and
 /// took about a minute on a large org, which is what made the MCP proxy
 /// give up at 30s and blame the connection.
-async fn run_failures(
+async fn run_results(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     target: &str,
 ) -> (u16, String) {
     let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
         return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
+    };
+    let wanted = match parse_outcomes(q(target, "outcome").as_deref()) {
+        Ok(w) => w,
+        Err(why) => return (400, why),
     };
     let mut retried = false;
     let (suite, points) = loop {
@@ -3795,8 +3884,9 @@ async fn run_failures(
                             200,
                             serde_json::json!({
                                 "pbi": pbi,
-                                "failures": [],
-                                "note": "This PBI has no test suite, so it has never had a test run - there are no failures to read.",
+                                "summary": [],
+                                "results": [],
+                                "note": "This PBI has no test suite, so it has never had a test run - there are no results to read.",
                             })
                             .to_string(),
                         )
@@ -3821,46 +3911,79 @@ async fn run_failures(
     };
 
     let total = points.len();
-    let failed: Vec<_> = points
-        .into_iter()
-        .filter(|p| p.last_outcome.eq_ignore_ascii_case("failed"))
+    // Every outcome in the suite, counted - the table's order first, then
+    // anything it does not know, so nothing in the suite goes uncounted.
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for p in &points {
+        let key = outcome_key(&p.last_outcome);
+        match counts.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((key, 1)),
+        }
+    }
+    let rank = |k: &str| RUN_OUTCOMES.iter().position(|(key, _, _)| *key == k).unwrap_or(usize::MAX);
+    counts.sort_by_key(|(k, _)| rank(k));
+    let summary: Vec<serde_json::Value> = counts
+        .iter()
+        .map(|(k, n)| serde_json::json!({ "outcome": outcome_label(k), "count": n }))
         .collect();
-    let failed_total = failed.len();
 
-    let mut failures: Vec<serde_json::Value> = vec![];
-    for p in failed.iter().take(RUN_FAILURE_DETAIL_CAP) {
-        // The comment is where the tester wrote what actually went wrong -
-        // fetched per result, best-effort: a failure whose detail cannot be
-        // read is still a failure worth naming.
-        let (comment, bug_ids) = match (p.last_run_id, p.last_result_id) {
-            (Some(run), Some(res)) => client
-                .get_result_report_info(&ctx.org, &ctx.project, run, res)
-                .await
-                .unwrap_or_default(),
-            _ => Default::default(),
+    let matching: Vec<_> = points
+        .into_iter()
+        .filter(|p| wanted.contains(&outcome_key(&p.last_outcome).as_str()))
+        .collect();
+    let matched = matching.len();
+
+    let mut results: Vec<serde_json::Value> = vec![];
+    for (i, p) in matching.iter().take(RUN_RESULT_LIST_CAP).enumerate() {
+        // The comment is where the tester wrote what actually happened -
+        // fetched per result, best-effort, for the first few only: a result
+        // whose detail cannot be read is still a result worth naming. A
+        // point that never ran has no result to read.
+        let detail = match (p.last_run_id, p.last_result_id) {
+            (Some(run), Some(res)) if i < RUN_FAILURE_DETAIL_CAP => Some(
+                client
+                    .get_result_report_info(&ctx.org, &ctx.project, run, res)
+                    .await
+                    .unwrap_or_default(),
+            ),
+            _ => None,
         };
-        failures.push(serde_json::json!({
+        let mut row = serde_json::json!({
             "case_id": p.test_case_id,
             "title": p.test_case_name,
             "configuration": p.config_name,
+            "outcome": outcome_label(&outcome_key(&p.last_outcome)),
             "run_id": p.last_run_id,
-            "comment": comment,
-            "bug_ids": bug_ids,
-        }));
+        });
+        if let Some((comment, bug_ids)) = detail {
+            row["comment"] = serde_json::json!(comment);
+            row["bug_ids"] = serde_json::json!(bug_ids);
+        }
+        results.push(row);
     }
 
     let mut out = serde_json::json!({
         "pbi": pbi,
         "plan": { "id": suite.plan_id, "name": suite.plan_name },
         "cases_in_suite": total,
-        "failed": failed_total,
-        "failures": failures,
-        "note": "Each failure's `comment` is what the tester wrote when it failed, and `bug_ids` are the bugs they linked. To write regression cases for these, start with begin_test_case_writing as usual - and read the failed case itself via get_test_cases so the regression case extends it instead of restating it.",
+        "summary": summary,
+        "outcomes": wanted.iter().map(|k| outcome_label(k)).collect::<Vec<_>>(),
+        "matched": matched,
+        "results": results,
+        "note": "`summary` counts every outcome in the PBI's suite; `results` lists the cases with the outcomes asked for. A result's `comment` is what the tester wrote and `bug_ids` are the bugs they linked. To write regression cases from failures, start with begin_test_case_writing as usual - and read the failed case itself via get_test_cases so the regression case extends it instead of restating it.",
     });
-    if failed_total > RUN_FAILURE_DETAIL_CAP {
-        out["truncated"] = serde_json::json!(format!(
-            "{failed_total} cases are failed; details fetched for the first {RUN_FAILURE_DETAIL_CAP}."
+    let mut limits: Vec<String> = Vec::new();
+    if matched > RUN_RESULT_LIST_CAP {
+        limits.push(format!("{matched} cases matched; the first {RUN_RESULT_LIST_CAP} are listed."));
+    }
+    if matched > RUN_FAILURE_DETAIL_CAP {
+        limits.push(format!(
+            "Comments and linked bugs were read for the first {RUN_FAILURE_DETAIL_CAP} only - ask for fewer outcomes to see the others' detail."
         ));
+    }
+    if !limits.is_empty() {
+        out["truncated"] = serde_json::json!(limits.join(" "));
     }
     (200, out.to_string())
 }

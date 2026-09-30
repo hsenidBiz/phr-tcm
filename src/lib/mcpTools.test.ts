@@ -136,6 +136,16 @@ test("a half-disabled wiki pair is completed on load", () => {
   localStorage.clear();
 });
 
+/// get_run_failures became get_run_results. Someone who had switched it off
+/// had refused an assistant their run results - the new name stays off.
+test("a tool switched off under its old name stays off under its new one", () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_run_failures", "get_tags"]));
+  expect([...loadDisabledTools()].sort()).toEqual(["get_run_results", "get_tags"]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_run_failures", "get_run_results"]));
+  expect(loadDisabledTools()).toEqual(["get_run_results"]);
+  localStorage.clear();
+});
+
 /// The three that finish a draft - validate, optimise, merge - are as much
 /// part of writing a set as the guide is, and a half-set with them switched
 /// off is a set nobody can ship. They joined the always-on group, which
@@ -156,7 +166,7 @@ test("only the switchable tools are left, as eight rows in a development build",
   expect(DEV_BUILD, "this file's default env").toBe(true);
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
-    "get_run_failures",
+    "get_run_results",
     "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress",
     "db_lookup+db_query",

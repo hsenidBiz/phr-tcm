@@ -24,7 +24,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
-  { name: "get_run_failures", label: "Run failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
+  {
+    name: "get_run_results",
+    label: "Run results",
+    summary: "A PBI's latest run results - failed, blocked, passed or any other outcome - with the tester's comments, and a count of each.",
+  },
   { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
   {
@@ -312,13 +316,21 @@ export function visibleTools(): McpToolInfo[] {
   );
 }
 
+/** Tools that were renamed, old name -> new. A saved list naming the old
+ *  one means the person switched it off; the new name has to stay off
+ *  too, or a rename would quietly hand an assistant a tool they refused. */
+export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
+  get_run_failures: "get_run_results",
+};
+
 export function loadDisabledTools(): string[] {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const kept: string[] = parsed.filter(
+    const renamed = parsed.map((t) => (typeof t === "string" ? RENAMED_TOOLS[t] ?? t : t));
+    const kept: string[] = [...new Set(renamed)].filter(
       (t) =>
         typeof t === "string" &&
         !isCoreTool(t) &&

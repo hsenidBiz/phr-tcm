@@ -1263,7 +1263,7 @@ fn a_malformed_request_is_told_apart_from_an_unfinished_one() {
 /// only, never create), points, and the per-failure detail with the
 /// tester's comment and linked bugs.
 #[tokio::test]
-async fn run_failures_returns_failed_cases_with_comment_and_bugs() {
+async fn run_results_returns_failed_cases_with_comment_and_bugs() {
     let (server, client) = ado_stub().await;
 
     // One plan, whose suite list holds PBI 42's requirement suite.
@@ -1319,25 +1319,182 @@ async fn run_failures_returns_failed_cases_with_comment_and_bugs() {
         .await;
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=42", "", "1.18.11").await;
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["failed"], 1, "only the failed point counts - passed and never-run do not");
-    assert_eq!(v["failures"].as_array().unwrap().len(), 1);
-    let f = &v["failures"][0];
+    assert_eq!(v["outcomes"], serde_json::json!(["Failed"]), "no outcome asked for is Failed, as before");
+    assert_eq!(v["matched"], 1, "only the failed point is listed - passed and never-run are not");
+    assert_eq!(v["results"].as_array().unwrap().len(), 1);
+    let f = &v["results"][0];
     assert_eq!(f["case_id"], 201);
     assert_eq!(f["title"], "Valid login");
+    assert_eq!(f["outcome"], "Failed");
     assert_eq!(f["comment"], "Redirect loops back to the sign-in page on the second attempt.");
     assert_eq!(f["bug_ids"][0], 777);
     assert_eq!(v["plan"]["name"], "Web - Auth Plan");
     assert_eq!(v["cases_in_suite"], 3);
+    // Every outcome is counted, whatever was listed.
+    assert_eq!(
+        v["summary"],
+        serde_json::json!([
+            { "outcome": "Failed", "count": 1 },
+            { "outcome": "Passed", "count": 1 },
+            { "outcome": "Never run", "count": 1 },
+        ])
+    );
+}
+
+/// A PBI's suite with one point of each common outcome, for the filter
+/// tests below. Only the blocked point's result has detail to read.
+async fn mount_mixed_suite(server: &wiremock::MockServer) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 91, "name": "45 : Mixed", "suiteType": "requirementTestSuite", "requirementId": 45 }]
+        })))
+        .mount(server)
+        .await;
+    let point = |id: i64, case: i64, name: &str, results: serde_json::Value| {
+        serde_json::json!({
+            "id": id,
+            "testCaseReference": { "id": case, "name": name },
+            "configuration": { "name": "Windows 10" },
+            "results": results,
+        })
+    };
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                point(1, 301, "Passes", serde_json::json!({ "outcome": "passed", "lastTestRunId": 5, "lastResultId": 50 })),
+                point(2, 302, "Passes too", serde_json::json!({ "outcome": "passed", "lastTestRunId": 5, "lastResultId": 51 })),
+                point(3, 303, "Stuck", serde_json::json!({ "outcome": "blocked", "lastTestRunId": 5, "lastResultId": 52 })),
+                point(4, 304, "Irrelevant here", serde_json::json!({ "outcome": "notApplicable", "lastTestRunId": 5, "lastResultId": 53 })),
+                point(5, 305, "Not reached", serde_json::json!({ "outcome": "unspecified" })),
+                point(6, 306, "Flaky", serde_json::json!({ "outcome": "failed", "lastTestRunId": 5, "lastResultId": 55 })),
+            ]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/test/Runs/5/Results/52"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comment": "The approver list is empty, so nothing can be sent.",
+            "associatedBugs": []
+        })))
+        .mount(server)
+        .await;
+}
+
+fn listed(v: &serde_json::Value) -> Vec<i64> {
+    v["results"].as_array().unwrap().iter().map(|r| r["case_id"].as_i64().unwrap()).collect()
+}
+
+#[tokio::test]
+async fn run_results_lists_the_outcome_asked_for_with_its_comment() {
+    let (server, client) = ado_stub().await;
+    mount_mixed_suite(&server).await;
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=45&outcome=Blocked", "", "1.18.11").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["outcomes"], serde_json::json!(["Blocked"]));
+    assert_eq!(listed(&v), vec![303]);
+    assert_eq!(v["results"][0]["outcome"], "Blocked");
+    assert_eq!(v["results"][0]["comment"], "The approver list is empty, so nothing can be sent.");
+    assert_eq!(
+        v["summary"],
+        serde_json::json!([
+            { "outcome": "Failed", "count": 1 },
+            { "outcome": "Blocked", "count": 1 },
+            { "outcome": "Not applicable", "count": 1 },
+            { "outcome": "Passed", "count": 2 },
+            { "outcome": "Never run", "count": 1 },
+        ])
+    );
+}
+
+#[tokio::test]
+async fn run_results_takes_several_outcomes_in_any_spelling_and_never_run() {
+    let (server, client) = ado_stub().await;
+    mount_mixed_suite(&server).await;
+    // A list as the MCP proxy sends it: comma-joined, then URL-encoded.
+    let (status, body) = route(
+        &ctx(),
+        Some(&client),
+        "GET",
+        "/run-results?pbi=45&outcome=Not%20Applicable%2Cnot_run",
+        "",
+        "1.18.11",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["outcomes"], serde_json::json!(["Not applicable", "Never run"]));
+    assert_eq!(listed(&v), vec![304, 305]);
+    // A point that never ran has no result, so no comment is read for it.
+    assert!(v["results"][1].get("comment").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn run_results_all_lists_every_case() {
+    let (server, client) = ado_stub().await;
+    mount_mixed_suite(&server).await;
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=45&outcome=all", "", "1.18.11").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["matched"], 6);
+    assert_eq!(listed(&v), vec![301, 302, 303, 304, 305, 306], "in the suite's own order");
+}
+
+#[tokio::test]
+async fn run_results_refuses_an_outcome_it_does_not_know_and_names_the_real_ones() {
+    let (server, client) = ado_stub().await;
+    mount_mixed_suite(&server).await;
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=45&outcome=blokced", "", "1.18.11").await;
+    assert_eq!(status, 400, "a typo must not read as \"nothing had that outcome\": {body}");
+    assert!(body.contains("blokced") && body.contains("Blocked") && body.contains("Never run"), "{body}");
+}
+
+#[test]
+fn outcomes_parse_in_any_spelling_and_default_to_failed() {
+    use v2_lib::ai_bridge::parse_outcomes;
+    assert_eq!(parse_outcomes(None).unwrap(), vec!["failed"]);
+    assert_eq!(parse_outcomes(Some("  ")).unwrap(), vec!["failed"]);
+    assert_eq!(parse_outcomes(Some("Failed, BLOCKED")).unwrap(), vec!["failed", "blocked"]);
+    assert_eq!(parse_outcomes(Some("In Progress")).unwrap(), vec!["inprogress"]);
+    assert_eq!(parse_outcomes(Some("not_applicable")).unwrap(), vec!["notapplicable"]);
+    for never in ["never run", "Not run", "active", "unspecified"] {
+        assert_eq!(parse_outcomes(Some(never)).unwrap(), vec!["neverrun"], "{never}");
+    }
+    assert_eq!(parse_outcomes(Some("passed,pass")).unwrap(), vec!["passed"], "no duplicates");
+    assert_eq!(parse_outcomes(Some("all")).unwrap().len(), v2_lib::ai_bridge::RUN_OUTCOMES.len());
+    assert!(parse_outcomes(Some("passed,nope")).is_err());
+}
+
+#[test]
+fn a_point_with_no_verdict_is_never_run_and_an_unknown_outcome_keeps_its_name() {
+    use v2_lib::ai_bridge::{outcome_key, outcome_label};
+    assert_eq!(outcome_key(""), "neverrun");
+    assert_eq!(outcome_label(&outcome_key("")), "Never run");
+    assert_eq!(outcome_label(&outcome_key("notApplicable")), "Not applicable");
+    assert_eq!(outcome_label(&outcome_key("somethingNew")), "somethingnew");
 }
 
 /// Resolving a suite scans every test plan in the project (~60s on a
 /// large org) - which is why the bridge remembers the answer: the second
 /// call must reuse it and go straight to the points.
 #[tokio::test]
-async fn run_failures_resolves_the_suite_once_and_reuses_it() {
+async fn run_results_resolves_the_suite_once_and_reuses_it() {
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/testplan/plans"))
@@ -1368,7 +1525,7 @@ async fn run_failures_resolves_the_suite_once_and_reuses_it() {
 
     for _ in 0..2 {
         let (status, body) =
-            route(&ctx(), Some(&client), "GET", "/run-failures?pbi=43", "", "1.18.11").await;
+            route(&ctx(), Some(&client), "GET", "/run-results?pbi=43", "", "1.18.11").await;
         assert_eq!(status, 200, "{body}");
     }
     let scans = server
@@ -1385,7 +1542,7 @@ async fn run_failures_resolves_the_suite_once_and_reuses_it() {
 /// suite was deleted in Azure DevOps), the bridge forgets it, re-scans
 /// once, and answers from whatever suite the PBI has now.
 #[tokio::test]
-async fn run_failures_re_resolves_a_cached_suite_that_was_deleted() {
+async fn run_results_re_resolves_a_cached_suite_that_was_deleted() {
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/testplan/plans"))
@@ -1449,13 +1606,13 @@ async fn run_failures_re_resolves_a_cached_suite_that_was_deleted() {
         .await;
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=44", "", "1.18.11").await;
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=44", "", "1.18.11").await;
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["cases_in_suite"], 1);
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=44", "", "1.18.11").await;
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=44", "", "1.18.11").await;
     assert_eq!(status, 200, "the 404 must trigger a re-resolve, not an error: {body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["cases_in_suite"], 2, "the answer must come from the NEW suite");
@@ -1464,7 +1621,7 @@ async fn run_failures_re_resolves_a_cached_suite_that_was_deleted() {
 /// A PBI with no requirement suite is an ANSWER, not an error - and above
 /// all not a reason to create one. The bridge never writes to Azure DevOps.
 #[tokio::test]
-async fn run_failures_on_a_pbi_with_no_suite_says_so_without_creating_one() {
+async fn run_results_on_a_pbi_with_no_suite_says_so_without_creating_one() {
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/testplan/plans"))
@@ -1480,23 +1637,23 @@ async fn run_failures_on_a_pbi_with_no_suite_says_so_without_creating_one() {
         .await;
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+        route(&ctx(), Some(&client), "GET", "/run-results?pbi=42", "", "1.18.11").await;
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["failures"].as_array().unwrap().len(), 0);
+    assert_eq!(v["results"].as_array().unwrap().len(), 0);
     assert!(v["note"].as_str().unwrap().contains("never had a test run"));
     // No POST reached the mock server - wiremock 404s any unmatched
     // request, and a create would have errored the route before this line.
 }
 
 #[tokio::test]
-async fn run_failures_requires_a_pbi_and_a_signed_in_client() {
-    let (status, _) = route(&ctx(), None, "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+async fn run_results_requires_a_pbi_and_a_signed_in_client() {
+    let (status, _) = route(&ctx(), None, "GET", "/run-results?pbi=42", "", "1.18.11").await;
     assert_eq!(status, 503, "no client means sign in first");
 
     let (_, client) = ado_stub().await;
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/run-failures", "", "1.18.11").await;
+        route(&ctx(), Some(&client), "GET", "/run-results", "", "1.18.11").await;
     assert_eq!(status, 400);
     assert!(body.contains("?pbi="));
 }

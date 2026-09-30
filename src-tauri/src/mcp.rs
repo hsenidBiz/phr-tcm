@@ -266,10 +266,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["plan_id", "suite_id"]),
         },
         {
-            "name": "get_run_failures",
-            "description": "The failed cases from a PBI's latest test runs, each with the tester's failure comment and any bugs they linked. Use this to write regression cases for what actually broke: read the failure, read the failed case itself with get_test_cases, then extend the coverage rather than restating it.",
+            "name": "get_run_results",
+            "description": "The cases from a PBI's latest test runs with the outcomes you ask for - Failed unless you pass `outcome` - each with the tester's comment and any bugs they linked, plus `summary`: a count of every outcome in the PBI's suite (Passed, Failed, Blocked, Never run...). Use the summary to see where a PBI's testing stands; use the failures to write regression cases for what actually broke: read the failure, read the failed case itself with get_test_cases, then extend the coverage rather than restating it.",
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "integer", "description": "Work item id of the PBI whose runs to read" },
+                "outcome": {
+                    "description": "Which outcomes to list: one, a list, or \"all\". Failed, Blocked, Paused, In progress, Not applicable, Passed, Never run (not run yet), or an automated one (Error, Timeout, Aborted, Inconclusive, Warning, Not executed, Not impacted). Default: Failed.",
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "array", "items": { "type": "string" } }
+                    ]
+                },
             }), &["pbi_id"]),
         },
         {
@@ -639,9 +646,22 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             }
             call("GET", &target, "")
         }
-        "get_run_failures" => {
+        "get_run_results" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
-            call("GET", &format!("/run-failures?pbi={pbi}"), "")
+            // One word, or a list: both reach the bridge as one
+            // comma-separated `outcome`, which it parses and validates.
+            let outcome = match &args["outcome"] {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Array(list) => {
+                    list.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",")
+                }
+                _ => String::new(),
+            };
+            let mut target = format!("/run-results?pbi={pbi}");
+            if !outcome.trim().is_empty() {
+                target.push_str(&format!("&outcome={}", urlencoding::encode(&outcome)));
+            }
+            call("GET", &target, "")
         }
         "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
         // The bridge takes one body, so forwarding the raw arguments object
@@ -904,7 +924,7 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
     let resp = req
         .header("x-bridge-token", token)
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
-        // 300s, not 30: get_run_failures resolves a PBI's suite by
+        // 300s, not 30: get_run_results resolves a PBI's suite by
         // scanning every test plan in the project, throttle-paced - ~60s
         // against a large org on a cold cache. At 30s the proxy gave up
         // mid-scan and reported the app as unreachable, which it wasn't.

@@ -78,8 +78,8 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // tool made the picker a list of things nobody should have to know.
     // Auto Run is still in development: its tools are hidden and its
     // commands are gone with them, so nothing in the picker points at it.
-    const TOOLS: [&str; 5] = [
-        "begin-test-case-writing", "failures", "optimize", "get-wiki-info", "page",
+    const TOOLS: [&str; 4] = [
+        "begin-test-case-writing", "optimize", "get-wiki-info", "page",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -129,7 +129,9 @@ fn the_writing_command_is_named_for_what_it_does() {
     let w = COMMANDS.iter().find(|c| c.stem == "get-wiki-info").unwrap();
     assert_eq!(w.tool, "search_wiki");
     assert!(COMMANDS.iter().all(|c| c.stem != "wiki"));
-    for gone in ["fanout", "guide", "examples", "suites", "suite-cases", "coverage", "validate", "transform", "tags", "pbis"] {
+    // "failures" went with get_run_failures: its successor, get_run_results,
+    // is one an assistant reaches for on its own.
+    for gone in ["fanout", "guide", "examples", "suites", "suite-cases", "coverage", "validate", "transform", "tags", "pbis", "failures"] {
         assert!(COMMANDS.iter().all(|c| c.stem != gone), "{gone} is no longer a command");
     }
 }

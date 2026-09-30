@@ -128,7 +128,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Company database (read)"]) {
+  for (const label of ["Test Suites", "Run results", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Company database (read)"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
