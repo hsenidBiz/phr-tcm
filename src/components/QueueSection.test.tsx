@@ -2711,3 +2711,46 @@ test("an upload still stamps new ids into the file when storage is unavailable",
     for (const s of spies) s.mockRestore();
   }
 });
+
+/// After an update lands, Azure DevOps holds exactly what the queue row
+/// says - so the row must read "no-op", not go on showing the changes it
+/// just made. The rows diff against the server's copy fetched for the
+/// review; the upload must drop that copy so the next look is the new one.
+test("an updated row reads no-op once the update has landed", async () => {
+  let landed = false;
+  const onServer = (title: string) => ({
+    id: 777,
+    title,
+    tags: "smoke",
+    automation_status: "Not Automated",
+    steps: [{ action: "Open page", expected: "Page shown" }],
+    step_ids: ["2"],
+    module_value: "",
+    preconditions: "",
+  });
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    // Before the upload the server has the old title; after, the new one.
+    if (cmd === "test_cases_by_ids") return [onServer(landed ? "Login works" : "Login used to work")];
+    if (cmd === "submit_queue") {
+      landed = true;
+      return [{ index: 0, title: "Login works", action: "updated", id: 777, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 777 })]);
+
+  // Before: the row has a change to make.
+  await waitFor(() => expect(screen.queryByText(/no-op/)).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 1/ }));
+  await waitFor(() => expect(landed).toBe(true));
+
+  // After: nothing left to change.
+  expect(await screen.findByText(/no-op — nothing will change/)).toBeInTheDocument();
+});
