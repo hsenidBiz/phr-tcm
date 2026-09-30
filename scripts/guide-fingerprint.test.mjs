@@ -21,8 +21,13 @@ afterEach(() => {
 
 describe("guide fingerprint", () => {
   // The SAME literal src-tauri/tests/suite/guide.rs pins for the same
-  // fixture. If the two implementations ever disagree, every install would
-  // see "Update Guide" forever - change both or neither.
+  // fixture. The app never fingerprints a guide itself: it files a download
+  // under the fingerprint how-to-use.json names and compares that string
+  // with the next release's, so this script alone decides whether Update
+  // Guide appears. The Rust `guide::fingerprint` is a second implementation
+  // of the rule, called only by tests (such as the check that a real
+  // release zip unpacks to the value this script published). Pinning both
+  // keeps the rule meaning one thing - change both or neither.
   test("the_fingerprint_matches_the_apps", () => {
     const root = site({
       "index.html": "<html>",
@@ -47,9 +52,13 @@ describe("guide fingerprint", () => {
 
   test("paths_sort_by_utf8_bytes_not_utf16_units", () => {
     // U+FF5E (3 UTF-8 bytes EF BD 9E) vs U+1F600 (4 bytes F0 9F 98 80):
-    // bytes put U+FF5E first; UTF-16 code units put U+1F600 (D83D) first.
-    const root = site({ "\uFF5E.txt": "x", "\u{1F600}.txt": "y" });
-    const again = site({ "\u{1F600}.txt": "y", "\uFF5E.txt": "x" });
-    expect(fingerprint(root)).toBe(fingerprint(again));
+    // bytes put U+FF5E first; UTF-16 code units put U+1F600 (D83D) first,
+    // which is also JavaScript's default sort. The literal was computed by
+    // hand in byte order - a UTF-16 sort gives 20af4b2d... instead - and
+    // src-tauri/tests/suite/guide.rs pins the same one (PINNED_ORDER).
+    const root = site({ "\u{1F600}.txt": "y", "\uFF5E.txt": "x" });
+    expect(fingerprint(root)).toBe(
+      "da716af538a6719a8017b3d8a89294421242a353dddcfc32002f674cc8df6001",
+    );
   });
 });

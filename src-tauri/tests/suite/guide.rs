@@ -1,17 +1,21 @@
 //! The guide on disk: its fingerprint, its installed record, and whether
-//! it is current; then fetching it through a `GuideSource` - here always a
-//! scripted fake, so nothing touches the network.
+//! it is current; then fetching it through a `GuideSource` - a scripted
+//! fake, or the real `GithubGuide` pointed at a local server that never
+//! answers. Nothing touches the internet.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use v2_lib::guide::{
     adopt_legacy, download, fingerprint, forget_published, guide_url, install, installed_index,
-    read_installed, state_for, status, unpack, GuideSource, GuideState, Installed, Published,
+    read_installed, state_for, status, unpack, GithubGuide, GuideSource, GuideState, Installed,
+    Published,
     DAMAGED, DOWNLOAD_FAILED, MAX_ZIP_BYTES, NOT_PUBLISHED,
 };
 
@@ -73,6 +77,23 @@ fn the_fingerprint_ignores_order_and_times() {
     assert_ne!(fingerprint(a.path()).unwrap(), fingerprint(b.path()).unwrap());
 }
 
+/// Paths sort by their UTF-8 bytes. U+FF5E (EF BD 9E) sorts before U+1F600
+/// (F0 9F 98 80) by bytes, but after it by UTF-16 code units (FF5E against
+/// the surrogate D83D) - so a UTF-16 sort gives a different value. The
+/// literal was computed by hand from byte order, and
+/// scripts/guide-fingerprint.test.mjs pins the same one for the same two
+/// files. Windows stores names as UTF-16; both names are legal there and
+/// come back as the same UTF-8.
+const PINNED_ORDER: &str = "da716af538a6719a8017b3d8a89294421242a353dddcfc32002f674cc8df6001";
+
+#[test]
+fn paths_sort_by_utf8_bytes_not_utf16_units() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), "\u{1F600}.txt", b"y");
+    put(dir.path(), "\u{FF5E}.txt", b"x");
+    assert_eq!(fingerprint(dir.path()).unwrap(), PINNED_ORDER);
+}
+
 fn installed(fp: Option<&str>) -> Installed {
     Installed { fingerprint: fp.map(str::to_string), folder: "x".into(), at: "t".into() }
 }
@@ -122,6 +143,27 @@ fn an_old_guide_is_adopted_newest_first() {
     put(dir2.path(), "2.0.5/index.html", b"a");
     fs::remove_file(dir2.path().join("installed.json")).unwrap();
     assert_eq!(adopt_legacy(dir2.path()).unwrap().folder, "2.0.5");
+}
+
+/// Only a folder an older install could have made is adopted: exactly
+/// `x.y.z` or `x.y.z-beta.N`. Anything else that parses as a version
+/// (another pre-release, build metadata, a half-renamed temp folder) is left
+/// alone, even when it holds an index.html.
+#[test]
+fn only_release_and_beta_folders_are_adopted() {
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path();
+    put(help, "2.0.4/index.html", b"a");
+    for odd in ["2.0.5-beta.6.tmp-1234-0", "2.0.6+build.1", "2.0.7-rc.1", "2.0.8-beta", "2.0.9-beta.x"] {
+        put(help, &format!("{odd}/index.html"), b"odd");
+    }
+    assert_eq!(adopt_legacy(help).expect("adopted").folder, "2.0.4");
+
+    // With only odd folders, nothing is adopted and no record is written.
+    let only_odd = tempfile::tempdir().unwrap();
+    put(only_odd.path(), "2.0.5-beta.6.tmp-1234-0/index.html", b"odd");
+    assert!(adopt_legacy(only_odd.path()).is_none());
+    assert!(!only_odd.path().join("installed.json").exists());
 }
 
 #[test]
@@ -356,6 +398,8 @@ fn a_fingerprint_that_is_not_a_plain_name_is_refused() {
 /// `started`/`gate` let a test hold a download open.
 struct FakeGuide {
     answer: Result<Option<Published>, String>,
+    /// Answers given before `answer`, one per ask.
+    queued: Mutex<VecDeque<Result<Option<Published>, String>>>,
     zip: Vec<u8>,
     fail_midway: bool,
     asked: AtomicU32,
@@ -369,6 +413,7 @@ impl FakeGuide {
     fn new(answer: Result<Option<Published>, String>, zip: Vec<u8>) -> Self {
         FakeGuide {
             answer,
+            queued: Mutex::new(VecDeque::new()),
             zip,
             fail_midway: false,
             asked: AtomicU32::new(0),
@@ -392,7 +437,8 @@ impl FakeGuide {
 impl GuideSource for FakeGuide {
     async fn published(&self) -> Result<Option<Published>, String> {
         self.asked.fetch_add(1, Ordering::SeqCst);
-        self.answer.clone()
+        let queued = self.queued.lock().unwrap().pop_front();
+        queued.unwrap_or_else(|| self.answer.clone())
     }
 
     async fn download(&self, to: &Path, on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<(), String> {
@@ -567,6 +613,33 @@ async fn a_damaged_download_is_not_kept_and_no_temp_file_is_left() {
     forget_published();
 }
 
+/// A json that does not match its zip (a stale or mis-uploaded one) is not
+/// kept for the run after DAMAGED: the next try asks for it again, and a
+/// corrected one then installs.
+#[tokio::test]
+async fn a_damaged_download_asks_for_the_json_again() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let rec = old_guide(&help);
+    let fp = "7".repeat(64);
+    let (zip, good) = release(dir.path(), &fp);
+    let mut stale = good.clone();
+    stale.sha256 = "0".repeat(64);
+    let fake = FakeGuide::new(Ok(Some(good)), zip);
+    fake.queued.lock().unwrap().push_back(Ok(Some(stale)));
+
+    assert_eq!(download(&help, &fake, |_, _| {}).await, Err(DAMAGED.to_string()));
+    assert_eq!(fake.asked(), 1);
+    assert_eq!(fs::read_to_string(help.join("installed.json")).unwrap(), rec);
+
+    let index = download(&help, &fake, |_, _| {}).await.expect("the retry fetched the corrected json");
+    assert_eq!(fake.asked(), 2, "the json was asked for again");
+    assert_eq!(index, help.join(&fp).join("index.html"));
+    forget_published();
+}
+
 #[tokio::test]
 async fn not_published_says_so() {
     let _g = crate::serial::guide();
@@ -652,4 +725,64 @@ fn the_guide_to_open_is_the_installed_one() {
     // An older install's guide is adopted and opened.
     put(&help, "2.0.4/index.html", b"legacy");
     assert_eq!(installed_index(&help), Some(help.join("2.0.4").join("index.html")));
+}
+
+/// This process's download temp files, if any are left.
+fn temp_zips_left() -> Vec<String> {
+    let prefix = format!("phr-tcm-how-to-use-{}-", std::process::id());
+    names_in(&std::env::temp_dir()).into_iter().filter(|n| n.starts_with(&prefix)).collect()
+}
+
+/// A server that takes the connection and then never answers: the real
+/// download path gives up after the quiet period (60 s in the app, a
+/// fraction of a second here) instead of waiting forever for the headers.
+/// The download-failed sentence comes back, the claim is released, and no
+/// temp file is left.
+#[tokio::test]
+async fn a_server_that_never_answers_is_given_up_on() {
+    let _g = crate::serial::guide();
+    forget_published();
+    let dir = tempfile::tempdir().unwrap();
+    let help = dir.path().join("help");
+    let rec = old_guide(&help);
+    let fp = "9".repeat(64);
+    let (zip, p) = release(dir.path(), &fp);
+    // This run already has the json, so the download goes straight to the zip.
+    let fake = FakeGuide::new(Ok(Some(p)), zip);
+    assert_eq!(status(&help, &fake).await.state, GuideState::UpdateAvailable);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepted = Arc::new(AtomicU32::new(0));
+    let server = {
+        let accepted = accepted.clone();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                accepted.fetch_add(1, Ordering::SeqCst);
+                held.push(conn); // kept open, never written to
+            }
+        })
+    };
+
+    let quiet = Duration::from_millis(300);
+    let started = Instant::now();
+    let got = tokio::time::timeout(
+        Duration::from_secs(20),
+        download(&help, &GithubGuide::loopback(port, quiet), |_, _| {}),
+    )
+    .await
+    .expect("the download gave up by itself");
+    assert_eq!(got, Err(DOWNLOAD_FAILED.to_string()));
+    assert!(started.elapsed() >= quiet, "it waited the quiet period first");
+    assert!(accepted.load(Ordering::SeqCst) >= 1, "the request reached the server");
+    server.abort();
+
+    assert!(temp_zips_left().is_empty(), "{:?}", temp_zips_left());
+    assert_eq!(fs::read_to_string(help.join("installed.json")).unwrap(), rec);
+    assert!(incoming_left(&help).is_empty());
+
+    // The claim is released: the next download runs (and installs).
+    assert_eq!(download(&help, &fake, |_, _| {}).await, Ok(help.join(&fp).join("index.html")));
+    forget_published();
 }

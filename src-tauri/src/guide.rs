@@ -150,6 +150,18 @@ pub fn read_installed(help_root: &Path) -> Option<(Installed, PathBuf)> {
     folder.join("index.html").is_file().then_some((rec, folder))
 }
 
+/// The version an older install's guide folder is named for: exactly
+/// `x.y.z` or `x.y.z-beta.N`, the only names it ever made. Anything else
+/// that parses as a version (build metadata, another pre-release, a temp
+/// folder such as `2.0.5-beta.6.tmp-1234-0`) is not one.
+fn legacy_folder_version(name: &str) -> Option<semver::Version> {
+    let v = semver::Version::parse(name).ok()?;
+    let beta_n = |pre: &str| {
+        pre.strip_prefix("beta.").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    (v.build.is_empty() && (v.pre.is_empty() || beta_n(v.pre.as_str()))).then_some(v)
+}
+
 /// An install from before the guide was a download left `help/<version>/`
 /// folders and no record. When there is no record, the newest such folder
 /// that has an `index.html` is recorded (with no fingerprint) so the guide
@@ -167,7 +179,7 @@ pub fn adopt_legacy(help_root: &Path) -> Option<Installed> {
         .filter(|e| e.path().join("index.html").is_file())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            crate::updater::parse_version(&name).map(|v| (v, name))
+            legacy_folder_version(&name).map(|v| (v, name))
         })
         .max_by(|a, b| a.0.cmp(&b.0))?;
     let rec = Installed { fingerprint: None, folder: newest.1, at: crate::applog::stamp() };
@@ -384,13 +396,32 @@ pub trait GuideSource {
 
 /// This version's release on GitHub.
 pub struct GithubGuide {
-    pub version: String,
+    version: String,
+    /// None in the app: github.com, over https only. A test's local server
+    /// on 127.0.0.1 (plain http) otherwise - see `loopback`.
+    loopback: Option<u16>,
+    /// How long the zip download may go without receiving anything.
+    quiet: Duration,
 }
 
 impl GithubGuide {
     /// The release this build came from - betas included.
     pub fn this_version() -> Self {
-        GithubGuide { version: env!("CARGO_PKG_VERSION").to_string() }
+        GithubGuide { version: env!("CARGO_PKG_VERSION").to_string(), loopback: None, quiet: QUIET_TIMEOUT }
+    }
+
+    /// For tests: the same download path against a server on 127.0.0.1
+    /// `port`, giving up after `quiet` without data. Only the loopback
+    /// address can be named, so this cannot fetch from anywhere else.
+    pub fn loopback(port: u16, quiet: Duration) -> Self {
+        GithubGuide { version: env!("CARGO_PKG_VERSION").to_string(), loopback: Some(port), quiet }
+    }
+
+    fn url(&self, file: &str) -> String {
+        match self.loopback {
+            None => guide_url(&self.version, file),
+            Some(port) => format!("http://127.0.0.1:{port}/v{}/{file}", self.version),
+        }
     }
 }
 
@@ -399,21 +430,37 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const JSON_TIMEOUT: Duration = Duration::from_secs(10);
 /// The zip has no total deadline (31 MB on a slow line is minutes), but a
 /// connection that goes quiet this long is given up on.
-const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+const QUIET_TIMEOUT: Duration = Duration::from_secs(60);
 
-fn client(total: Option<Duration>) -> Result<reqwest::Client, String> {
-    let builder = reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT);
-    let builder = match total {
-        Some(t) => builder.timeout(t),
-        None => builder,
-    };
-    builder.build().map_err(|e| format!("could not build the HTTP client: {e}"))
+/// How long a request may take.
+enum Deadline {
+    /// The whole request, answer included.
+    Whole(Duration),
+    /// No total, but the wait for the answer's headers and each read of its
+    /// body must each end within this.
+    Quiet(Duration),
+}
+
+impl GithubGuide {
+    fn client(&self, deadline: Deadline) -> Result<reqwest::Client, String> {
+        let builder = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            // github.com is only ever asked over https; only a test's
+            // loopback server is plain http.
+            .https_only(self.loopback.is_none());
+        let builder = match deadline {
+            Deadline::Whole(t) => builder.timeout(t),
+            Deadline::Quiet(t) => builder.read_timeout(t),
+        };
+        builder.build().map_err(|e| format!("could not build the HTTP client: {e}"))
+    }
 }
 
 impl GuideSource for GithubGuide {
     async fn published(&self) -> Result<Option<Published>, String> {
-        let url = guide_url(&self.version, GUIDE_JSON);
-        let resp = client(Some(JSON_TIMEOUT))?
+        let url = self.url(GUIDE_JSON);
+        let resp = self
+            .client(Deadline::Whole(JSON_TIMEOUT))?
             .get(&url)
             .send()
             .await
@@ -429,8 +476,12 @@ impl GuideSource for GithubGuide {
     }
 
     async fn download(&self, to: &Path, on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<(), String> {
-        let url = guide_url(&self.version, GUIDE_ZIP);
-        let mut resp = client(None)?
+        let url = self.url(GUIDE_ZIP);
+        // Without a read deadline, a server that takes the connection and
+        // never answers would hold `send()` - and the one-at-a-time claim -
+        // for good.
+        let mut resp = self
+            .client(Deadline::Quiet(self.quiet))?
             .get(&url)
             .send()
             .await
@@ -445,9 +496,9 @@ impl GuideSource for GithubGuide {
         let mut file = std::fs::File::create(to).map_err(|e| format!("create {}: {e}", to.display()))?;
         let mut received: u64 = 0;
         loop {
-            let chunk = tokio::time::timeout(CHUNK_TIMEOUT, resp.chunk())
+            let chunk = tokio::time::timeout(self.quiet, resp.chunk())
                 .await
-                .map_err(|_| format!("{GUIDE_ZIP}: no data for {} s", CHUNK_TIMEOUT.as_secs()))?
+                .map_err(|_| format!("{GUIDE_ZIP}: no data for {} ms", self.quiet.as_millis()))?
                 .map_err(|e| format!("read {GUIDE_ZIP}: {e}"))?;
             let Some(chunk) = chunk else { break };
             received += chunk.len() as u64;
@@ -475,8 +526,9 @@ fn published_cache() -> std::sync::MutexGuard<'static, Option<Option<Published>>
     PUBLISHED.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Forget this run's answer from the release, so the next status asks
-/// again. For tests.
+/// Forget this run's answer from the release, so the next status or
+/// download asks again. After a damaged download (a json that does not
+/// match its zip), and in tests.
 pub fn forget_published() {
     *published_cache() = None;
 }
@@ -620,5 +672,10 @@ pub async fn download<S: GuideSource>(
             Err(DOWNLOAD_FAILED.to_string())
         });
     drop(temp);
+    if installed.as_deref().is_err_and(|e| e == DAMAGED) {
+        // The json may be what was wrong (stale, or uploaded beside the
+        // wrong zip): the next try asks for it again.
+        forget_published();
+    }
     installed
 }

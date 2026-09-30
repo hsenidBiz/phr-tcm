@@ -1,7 +1,8 @@
-// The How To Use fingerprint: what the release publishes in how-to-use.json
-// and what the app (src-tauri/src/guide.rs, `fingerprint`) recomputes. The
-// two implementations MUST agree - scripts/guide-fingerprint.test.mjs and
-// tests/suite/guide.rs pin the same value for the same fixture.
+// The How To Use fingerprint: what the release publishes in how-to-use.json.
+// The app compares that published string with the one it installed; it
+// never recomputes it. src-tauri/src/guide.rs (`fingerprint`) implements the
+// same rule for its tests, and scripts/guide-fingerprint.test.mjs and
+// tests/suite/guide.rs pin the same values for the same fixtures.
 //
 // The rule: every regular file under the site root (symlinks are skipped);
 // its path relative to the root with "/" separators; sorted by the path's
