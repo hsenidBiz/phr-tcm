@@ -58,14 +58,21 @@ pub fn prepare(root: &Path, org: &str, project: &str, account_key: &str) -> Resu
 }
 
 struct Run<'a> {
-    account: &'a Account,
+    /// `None` only for `run_after_sign_in`: those steps hold no login.
+    account: Option<&'a Account>,
     steps: Vec<ActionOutcome>,
     appeared: Vec<String>,
 }
 
 impl Run<'_> {
+    fn hide(&self, text: &str) -> String {
+        match self.account {
+            Some(a) => redact(text, a),
+            None => text.to_string(),
+        }
+    }
     fn keep(&mut self, mut out: ActionOutcome) -> bool {
-        out.detail = redact(&out.detail, self.account);
+        out.detail = self.hide(&out.detail);
         let ok = out.ok;
         self.steps.push(out);
         ok
@@ -73,7 +80,7 @@ impl Run<'_> {
     fn done(self, ok: bool, detail: String, used_saved_session: bool, harness: bool) -> SignInOutcome {
         SignInOutcome {
             ok,
-            detail: redact(&detail, self.account),
+            detail: self.hide(&detail),
             used_saved_session,
             steps: self.steps,
             harness,
@@ -137,7 +144,7 @@ async fn sign_in_with<D: Driver>(
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
-    let mut run = Run { account, steps: vec![], appeared: vec![] };
+    let mut run = Run { account: Some(account), steps: vec![], appeared: vec![] };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
@@ -259,6 +266,23 @@ async fn sign_in_with<D: Driver>(
     run.done(true, format!("signed in as {who}"), false, false)
 }
 
+/// The recipe's `after_sign_in` again, on a page that is already signed
+/// in but was just loaded afresh. Going home by address reloads the
+/// application (`nav::go_home`), and a reload can undo what these steps
+/// did: PeoplesHR draws its menu closed on every load (2026-09-30). No
+/// account, because `after_sign_in` holds no login - a placeholder there
+/// is refused - so there is no password to hide. `Err` is the step number,
+/// why it stopped, and whether the browser was the cause.
+pub async fn run_after_sign_in<D: Driver>(
+    d: &mut D,
+    steps: &[RecipeStep],
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<(), (usize, String, bool)> {
+    let mut run = Run { account: None, steps: vec![], appeared: vec![] };
+    run_steps(d, &mut run, steps, timing, policy).await
+}
+
 /// Recipe steps in order, each outcome kept. `Err` is the step number,
 /// why it stopped, and whether the browser (not the page) was the cause.
 /// Shared by the recipe's own steps and `after_sign_in`, so a
@@ -288,7 +312,8 @@ async fn run_steps<D: Driver>(
                     )));
                     continue;
                 }
-                run.appeared.push(redact(&w.selector.describe(), run.account));
+                let seen = run.hide(&w.selector.describe());
+                run.appeared.push(seen);
                 w.then.iter().collect()
             }
         };

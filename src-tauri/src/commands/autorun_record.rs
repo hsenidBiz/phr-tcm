@@ -233,7 +233,7 @@ pub async fn prepare_to_record<D: Driver>(
         ));
         return Err(if signed.harness { nav::SIGN_IN_BROWSER_SILENT } else { nav::SIGN_IN_FAILED }.to_string());
     }
-    let home = nav::go_home(d, &recipe.start_url, &recipe.origins(), timing).await;
+    let home = nav::go_home(d, &nav::Home::of(recipe), timing).await;
     if !home.ok {
         // `go_home` words its failures without the address, and already
         // says it was the home page.

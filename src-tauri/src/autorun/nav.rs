@@ -9,10 +9,11 @@
 //! existed.
 
 use super::accounts::Account;
-use super::recipe::{origin_of, project_slug, SignInRecipe};
+use super::recipe::{origin_of, project_slug, RecipeStep, SignInRecipe};
 use super::CaseScript;
 use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
+use crate::browser::expect::{expect, Check};
 use crate::browser::locator::Target;
 use crate::browser::page;
 use crate::browser::timing::Timing;
@@ -247,18 +248,40 @@ pub fn same_page(href: &str, start_url: &str) -> bool {
 /// Start of the sentence a case gets when its trip to the module fails.
 pub const UNREACHED_PREFIX: &str = "Could not reach module \"";
 
-/// Everything a run needs to take a signed-in browser to one module: where
-/// home is, where `navigate` may go, and the recorded path.
+/// Where home is and how to leave it ready: the recipe's start address,
+/// where `navigate` may go, and - for a home reached by address, which is
+/// a fresh load - the marker that says the page is signed in and the
+/// `after_sign_in` steps a fresh load has to have put back.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Route {
+pub struct Home {
     pub start_url: String,
     pub origins: Vec<String>,
+    pub signed_in: Target,
+    pub after_sign_in: Vec<RecipeStep>,
+}
+
+impl Home {
+    pub fn of(recipe: &SignInRecipe) -> Home {
+        Home {
+            start_url: recipe.start_url.clone(),
+            origins: recipe.origins(),
+            signed_in: recipe.signed_in.clone(),
+            after_sign_in: recipe.after_sign_in.clone(),
+        }
+    }
+}
+
+/// Everything a run needs to take a signed-in browser to one module: its
+/// home, and the recorded path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Route {
+    pub home: Home,
     pub path: ModulePath,
 }
 
 impl Route {
     pub fn new(recipe: &SignInRecipe, path: ModulePath) -> Route {
-        Route { start_url: recipe.start_url.clone(), origins: recipe.origins(), path }
+        Route { home: Home::of(recipe), path }
     }
 }
 
@@ -304,7 +327,15 @@ impl PathFailure {
 /// Back to the recipe's home page unless the browser is already there.
 /// This is the runner's own navigation: the "no direct addresses" rule is
 /// about scripts and does not apply to it.
-pub async fn go_home<D: Driver>(d: &mut D, start_url: &str, origins: &[String], timing: &Timing) -> ActionOutcome {
+///
+/// Going there is a fresh load, and a fresh load can undo `after_sign_in`
+/// (PeoplesHR's recipe starts on its login page, which sends a signed-in
+/// visitor on to a home page whose menu is drawn closed). So once there,
+/// it waits for the signed-in marker - the redirect may still be in flight
+/// when the first load fires - and runs `after_sign_in` again. Already
+/// home means nothing was reloaded: the steps are not run twice, since a
+/// toggle run twice closes what it opened.
+pub async fn go_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> ActionOutcome {
     let href = match page::eval_value(d, "location.href").await {
         Ok(v) => v.as_str().unwrap_or("").to_string(),
         // Right after a sign-in a redirect may still be in flight and the
@@ -312,33 +343,58 @@ pub async fn go_home<D: Driver>(d: &mut D, start_url: &str, origins: &[String], 
         Err(e) if e.is_transient() => String::new(),
         Err(e) => return failed_by(e),
     };
-    if same_page(&href, start_url) {
+    if same_page(&href, &home.start_url) {
         return ActionOutcome::passed("already on the home page");
     }
-    let out = execute_in(d, &Action::Navigate { url: start_url.to_string() }, timing, &Policy::only(origins.to_vec())).await;
-    if out.ok {
+    let policy = Policy::only(home.origins.clone());
+    let out = execute_in(d, &Action::Navigate { url: home.start_url.clone() }, timing, &policy).await;
+    if !out.ok {
+        // The navigate's own words name the address; this sentence reaches
+        // the person, so it does not.
+        let mut failed = ActionOutcome::failed(if out.harness {
+            "the browser did not answer while the home page was opening"
+        } else {
+            "the home page did not load"
+        });
+        failed.harness = out.harness;
+        return failed;
+    }
+    if home.after_sign_in.is_empty() {
         return ActionOutcome::passed("went to the home page");
     }
-    // The navigate's own words name the address; this sentence reaches the
-    // person, so it does not.
-    let mut failed = ActionOutcome::failed(if out.harness {
-        "the browser did not answer while the home page was opening"
-    } else {
-        "the home page did not load"
-    });
-    failed.harness = out.harness;
-    failed
+    let marker = expect(d, &home.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    if !marker.ok {
+        let mut failed = ActionOutcome::failed(if marker.harness {
+            "the browser did not answer while the home page was opening"
+        } else {
+            "the home page opened but never showed it was signed in"
+        });
+        failed.harness = marker.harness;
+        return failed;
+    }
+    match super::signin::run_after_sign_in(d, &home.after_sign_in, timing, &policy).await {
+        Ok(()) => ActionOutcome::passed("went to the home page"),
+        Err((n, why, harness)) => {
+            // A step's own words can name an address (a `navigate` in
+            // after_sign_in); this sentence reaches the person, so they go
+            // to the log instead.
+            crate::applog::warn(format!("going home: after_sign_in step {n} stopped: {why}"));
+            let mut failed = ActionOutcome::failed(format!("went to the home page, but after_sign_in step {n} stopped"));
+            failed.harness = harness;
+            failed
+        }
+    }
 }
 
 /// Home, then each recorded click with the runner's own click (so each
 /// must find exactly one visible element), then wait up to `nav_ms` for
 /// the address path to equal `arrived`. Ok carries the path it reached.
 pub async fn go_to_module<D: Driver>(d: &mut D, route: &Route, timing: &Timing) -> Result<String, PathFailure> {
-    let home = go_home(d, &route.start_url, &route.origins, timing).await;
+    let home = go_home(d, &route.home, timing).await;
     if !home.ok {
         return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
     }
-    let policy = Policy::only(route.origins.clone());
+    let policy = Policy::only(route.home.origins.clone());
     for (i, click) in route.path.clicks.iter().enumerate() {
         let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
         if !out.ok {

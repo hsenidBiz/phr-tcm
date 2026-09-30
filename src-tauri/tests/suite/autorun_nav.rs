@@ -219,8 +219,9 @@ async fn going_home_while_the_page_is_between_documents_navigates_instead_of_giv
         "Page.navigate".into(),
         Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
     ));
-    let origins = vec!["https://hr.example.internal".to_string()];
-    let out = go_home(&mut d, "https://hr.example.internal/hr/home/index", &origins, &common::quick()).await;
+    // `menu_recipe` starts on /hr/home/index and has no `after_sign_in`.
+    let home = v2_lib::autorun::nav::Home::of(&common::menu_recipe());
+    let out = go_home(&mut d, &home, &common::quick()).await;
     assert!(out.ok, "{out:?}");
     assert_eq!(d.calls_to("Page.navigate").len(), 1);
 }
@@ -262,4 +263,68 @@ fn the_guide_section_is_there_only_while_the_switch_is_off() {
         assert!(text.contains(must), "missing {must:?}: {text}");
     }
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
+}
+
+/// A recipe whose home is its login page, like PeoplesHR's: `after_sign_in`
+/// opens a menu that a fresh page load draws closed.
+fn login_home_recipe(start_path: &str) -> v2_lib::autorun::recipe::SignInRecipe {
+    serde_json::from_value(json!({
+        "start_url": format!("https://hr.example.internal{start_path}"),
+        "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+        "after_sign_in": [ { "kind": "when_visible", "selector": { "css": "#toggle:not(.active)" }, "within_ms": 100,
+            "then": [ { "kind": "click", "selector": { "css": "#toggle" } } ] } ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap()
+}
+
+fn leave_path() -> ModulePath {
+    serde_json::from_value(json!({
+        "module": "Leave",
+        "clicks": [ { "role": "link", "name": "Leave", "exact": true } ],
+        "arrived": "/hr/leave",
+        "recorded": "2026-09-30T10:00:00Z"
+    }))
+    .unwrap()
+}
+
+/// 2026-09-30: PeoplesHR's recipe starts on its login page, so going home
+/// after a sign-in is a fresh page load - and a fresh load draws the menu
+/// closed again, undoing what `after_sign_in` had just opened. The module
+/// path's first click then found its menu entry hidden. Going home by
+/// address must leave the page the way `after_sign_in` promises.
+#[tokio::test]
+async fn going_home_by_address_runs_after_sign_in_again_before_the_first_click() {
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let route = v2_lib::autorun::nav::Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/security/login".to_string(), "click #toggle".to_string(), "click Leave".to_string()]
+    );
+}
+
+/// The same from the recording's side: `go_home` on its own, as a recording
+/// calls it right after signing in.
+#[tokio::test]
+async fn go_home_that_navigates_leaves_the_menu_open() {
+    let (mut d, app) = common::menu_app(&[], "/hr/home/index", 0);
+    let home = v2_lib::autorun::nav::Home::of(&login_home_recipe("/hr/security/login"));
+    let out = go_home(&mut d, &home, &common::quick()).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(*app.log.lock().unwrap(), vec!["navigate /hr/security/login".to_string(), "click #toggle".to_string()]);
+}
+
+/// Already home: nothing reloaded, so nothing to put back - `after_sign_in`
+/// already ran when the browser signed in, and a toggle run twice would
+/// close what it opened.
+#[tokio::test]
+async fn already_home_does_not_run_after_sign_in_again() {
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    *app.path.lock().unwrap() = "/hr/home/index".to_string();
+    let route = v2_lib::autorun::nav::Route::new(&login_home_recipe("/hr/home/index"), leave_path());
+    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(*app.log.lock().unwrap(), vec!["click Leave".to_string()]);
 }
