@@ -33,6 +33,7 @@ pub mod commands;
 pub mod events;
 pub mod extras;
 pub mod filewatch;
+pub mod guide;
 pub mod help;
 pub mod import_parser;
 pub mod intake;
