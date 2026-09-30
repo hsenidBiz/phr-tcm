@@ -92,7 +92,7 @@ test("an unchanged line keeps its author and a new line is saved as the person",
   const quirksBox = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
   await waitFor(() => expect(quirksBox.value).toBe("dates render as dd/mm"));
   fireEvent.change(quirksBox, { target: { value: "dates render as dd/mm\nthe grid paginates at 50 rows" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save quirks" }));
   await waitFor(() => expect(calls.length).toBe(1));
   const call = calls[0] as { organization: string; project: string; quirks: { text: string; by: string; at: string }[] };
   expect(call.organization).toBe("acme");
@@ -103,7 +103,7 @@ test("an unchanged line keeps its author and a new line is saved as the person",
   ]);
 });
 
-test("when the recipe save is refused, the quirks are not saved", async () => {
+test("when the recipe save is refused, the quirks are not saved and the typed quirks stay", async () => {
   const quirksCalls: unknown[] = [];
   mount(
     RECIPE,
@@ -113,9 +113,64 @@ test("when the recipe save is refused, the quirks are not saved", async () => {
   );
   const box = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
   await waitFor(() => expect(JSON.parse(box.value)).toEqual(RECIPE));
+  const quirksBox = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
+  fireEvent.change(quirksBox, { target: { value: "the grid paginates at 50 rows" } });
   fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
   expect(await screen.findByText(/step 1: a locator needs/)).toBeInTheDocument();
   expect(quirksCalls).toEqual([]);
+  expect(quirksBox.value).toBe("the grid paginates at 50 rows");
+});
+
+test("each section has its own Save: the recipe's writes only the recipe, the quirks' only the quirks", async () => {
+  const recipeCalls: unknown[] = [];
+  const quirksCalls: unknown[] = [];
+  const onClose = mount(
+    RECIPE,
+    (a) => { recipeCalls.push(a); return null; },
+    [],
+    (a) => { quirksCalls.push(a); return null; },
+  );
+  const box = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(JSON.parse(box.value)).toEqual(RECIPE));
+
+  // An unsaved quirk below keeps the dialog open after the recipe saves,
+  // so that edit is not thrown away with it.
+  const quirksBox = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
+  fireEvent.change(quirksBox, { target: { value: "the grid paginates at 50 rows" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(recipeCalls).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save recipe" })).toBeEnabled());
+  expect(quirksCalls).toEqual([]);
+  expect(onClose).not.toHaveBeenCalled();
+  expect(quirksBox.value).toBe("the grid paginates at 50 rows");
+
+  // Nothing unsaved is left in the recipe box, so saving the quirks closes.
+  fireEvent.click(screen.getByRole("button", { name: "Save quirks" }));
+  await waitFor(() => expect(quirksCalls).toHaveLength(1));
+  expect(recipeCalls).toHaveLength(1);
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+});
+
+test("saving the quirks keeps the dialog open while the recipe box has unsaved edits", async () => {
+  const recipeCalls: unknown[] = [];
+  const quirksCalls: unknown[] = [];
+  const onClose = mount(
+    RECIPE,
+    (a) => { recipeCalls.push(a); return null; },
+    [],
+    (a) => { quirksCalls.push(a); return null; },
+  );
+  const box = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(JSON.parse(box.value)).toEqual(RECIPE));
+  fireEvent.change(box, { target: { value: JSON.stringify({ ...RECIPE, session_minutes: 60 }) } });
+  fireEvent.change(await screen.findByLabelText("Known quirks"), { target: { value: "a quirk" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save quirks" }));
+  await waitFor(() => expect(quirksCalls).toHaveLength(1));
+  // "Saving" while in flight; back to its own name once the save landed.
+  await screen.findByRole("button", { name: "Save quirks" });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(recipeCalls).toEqual([]);
+  expect(JSON.parse(box.value).session_minutes).toBe(60);
 });
 
 test("two identical lines in the quirks box save as one", async () => {
@@ -127,7 +182,7 @@ test("two identical lines in the quirks box save as one", async () => {
   fireEvent.change(quirksBox, {
     target: { value: "the grid paginates at 50 rows\n  THE GRID   paginates AT 50 ROWS  " },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save quirks" }));
   await waitFor(() => expect(calls.length).toBe(1));
   const call = calls[0] as { quirks: { text: string }[] };
   expect(call.quirks).toHaveLength(1);

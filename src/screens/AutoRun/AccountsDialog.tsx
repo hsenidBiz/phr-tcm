@@ -70,7 +70,13 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
           // user mid-edit, right as the key is being typed.
           const pos = `account ${i + 1}`;
           return (
-            <div key={i} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] items-center gap-2">
+            // One column on a narrow window, two on a medium one, the full
+            // row of four plus Remove only where there is room for it -
+            // four fixed columns squashed every field to a sliver.
+            <div
+              key={i}
+              className="grid grid-cols-1 items-center gap-2 border-b border-border/60 pb-2 last:border-b-0 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] lg:border-b-0 lg:pb-0"
+            >
               <Input aria-label={`Key for ${pos}`} placeholder="hr.admin" value={a.key}
                 onChange={(e) => edit(i, { key: e.target.value })} />
               <Input aria-label={`Name for ${pos}`} placeholder="HR Admin" value={a.label}
@@ -80,6 +86,7 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
               <Input aria-label={`Password for ${pos}`} placeholder="Password" value={a.password}
                 type={show ? "text" : "password"} onChange={(e) => edit(i, { password: e.target.value })} />
               <Button size="sm" variant="ghost" aria-label={`Remove ${who(a, i)}`}
+                className="justify-self-end sm:col-span-2 lg:col-span-1"
                 onClick={() => setRows((r) => (r ?? []).filter((_, j) => j !== i))}>
                 <IconRemove aria-hidden />
               </Button>
