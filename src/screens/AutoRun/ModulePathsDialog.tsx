@@ -30,7 +30,7 @@ type Phase =
 
 /** The browser the person last picked in Auto Run (the run panes' own
  * key), so a recording opens in the browser they already chose. */
-function chosenBrowser(): string {
+export function chosenBrowser(): string {
   try {
     return localStorage.getItem("tcm-v2-autorun-browser") === "chrome" ? "chrome" : "edge";
   } catch {

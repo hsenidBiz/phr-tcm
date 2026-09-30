@@ -84,9 +84,18 @@ test("the Setup card's Accounts and Sign-in buttons open their own dialogs", asy
     expect(screen.queryByRole("heading", { name: "Accounts" })).not.toBeInTheDocument(),
   );
 
-  // No recipe saved in this mock, so the Sign-in row offers to set one up.
-  fireEvent.click(screen.getByRole("button", { name: "Set up sign-in recipe" }));
+  // The Sign-in row has two ways in: Edit opens the recipe as JSON...
+  fireEvent.click(screen.getByRole("button", { name: "Edit sign-in recipe" }));
   expect(await screen.findByRole("heading", { name: "Sign-in recipe" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "Sign-in recipe" })).not.toBeInTheDocument(),
+  );
+
+  // ...and Record opens the recorder.
+  fireEvent.click(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" }));
+  expect(await screen.findByRole("heading", { name: "Record sign-in" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Sign-in recipe" })).not.toBeInTheDocument();
 });
 
 test("Group by title folds cases sharing a prefix into one heading", async () => {
@@ -422,10 +431,12 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
   // Without a recipe there is no address to edit on its own: the row's one
-  // button starts the recipe instead.
+  // button records the sign-in instead, which asks for the address.
   expect(within(row("Site address")).queryByRole("button", { name: "Edit site address" })).not.toBeInTheDocument();
   fireEvent.click(within(row("Site address")).getByRole("button", { name: "Set up sign-in" }));
-  expect(await screen.findByRole("heading", { name: "Sign-in recipe" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Record sign-in" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Start address" })).toHaveValue("");
+  expect(screen.queryByRole("heading", { name: "Sign-in recipe" })).not.toBeInTheDocument();
 });
 
 test("the Setup card and the header line read a project that is set up", async () => {
@@ -438,6 +449,7 @@ test("the Setup card and the header line read a project that is set up", async (
   expect(within(site).getByText("+1 allowed site")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByText("Recipe saved")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeInTheDocument();
+  expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
   expect(await within(row("Accounts")).findByText("2 accounts on this machine")).toBeInTheDocument();
   // One wording for the same count, in the row and in the header.
   expect(await within(row("Module paths")).findByText("1 module path mapped")).toBeInTheDocument();
@@ -536,7 +548,7 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   await screen.findByText("Alpha check");
 
   const why = "Pick an organization and project first";
-  for (const name of ["Set up sign-in", "Set up sign-in recipe", "Edit module paths"]) {
+  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit module paths"]) {
     const b = screen.getByRole("button", { name });
     expect(b).toBeDisabled();
     expect(b).toHaveAttribute("title", why);

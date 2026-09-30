@@ -27,6 +27,7 @@ import {
   IconImport,
   IconModulePaths,
   IconRecipe,
+  IconRecord,
   IconRun,
   IconSiteAddress,
   IconUnattended,
@@ -38,6 +39,7 @@ import AccountsDialog from "./AccountsDialog";
 import ModulePathsDialog from "./ModulePathsDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
+import RecordSignInDialog from "./RecordSignInDialog";
 import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
@@ -109,6 +111,7 @@ export default function AutoRun({
   const [editing, setEditing] = useState<number | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
+  const [recordOpen, setRecordOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
@@ -380,7 +383,8 @@ export default function AutoRun({
           >
             {/* The address lives inside the recipe, so there is nothing to
                 edit on its own until a recipe exists - without one, this
-                row's button starts the recipe instead. */}
+                row's button records the sign-in instead, which asks for
+                the address first. */}
             {saved ? (
               <Button
                 size="sm"
@@ -399,7 +403,7 @@ export default function AutoRun({
                 variant="outline"
                 disabled={!setupReady || recipe.isLoading || recipe.isError}
                 title={needsProject}
-                onClick={() => setRecipeOpen(true)}
+                onClick={() => setRecordOpen(true)}
               >
                 <IconSiteAddress aria-hidden />
                 Set up sign-in
@@ -423,16 +427,29 @@ export default function AutoRun({
               )
             }
           >
+            {/* Record: sign in by hand once and the recipe is written.
+                Edit: the recipe as JSON, for what a recording cannot say. */}
             <Button
               size="sm"
               variant="outline"
-              aria-label={saved ? "Edit sign-in recipe" : "Set up sign-in recipe"}
+              aria-label="Record sign-in"
+              disabled={!setupReady}
+              title={needsProject}
+              onClick={() => setRecordOpen(true)}
+            >
+              <IconRecord aria-hidden />
+              Record
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label="Edit sign-in recipe"
               disabled={!setupReady}
               title={needsProject}
               onClick={() => setRecipeOpen(true)}
             >
               <IconRecipe aria-hidden />
-              {saved ? "Edit" : "Set up"}
+              Edit
             </Button>
           </SetupRow>
 
@@ -648,6 +665,9 @@ export default function AutoRun({
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
         <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
+      )}
+      {recordOpen && (
+        <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />
       )}
       {siteOpen && (
         <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
