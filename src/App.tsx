@@ -1184,7 +1184,11 @@ export default function App() {
                   // gap at the bottom of the screen - boards run flush to the
                   // edge, the way every kanban surface does.
                   "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
-                : "min-h-0 flex-1 overflow-y-auto p-6"
+                : // Room under the last thing on every screen, so what floats
+                  // at the bottom - the sticky Collapse all at the left, the
+                  // action dock at the right - never sits over the last row
+                  // once the page is scrolled to its end.
+                  "min-h-0 flex-1 overflow-y-auto px-6 pt-6 pb-24"
             }
           >
             {/* Screens load on demand (see the imports). The boundary sits

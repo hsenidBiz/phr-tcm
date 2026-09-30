@@ -869,7 +869,9 @@ export default function WorkBoard({
         )}
 
         {board.data && swimlanes && (
-          <div ref={laneRegroup.ref} data-tour="board-columns" className="space-y-3">
+          // Room under the last lane, so the sticky Collapse all never sits
+          // over its header once the board is scrolled to its end.
+          <div ref={laneRegroup.ref} data-tour="board-columns" className="space-y-3 pb-20">
             {lanes.map((lane) => {
               const collapsed = collapsedLanes.has(lane.id);
               return (

@@ -30,8 +30,8 @@ export function edgeTone(templates: { effect: Effect }[]): EdgeTone {
   return effects.size === 1 ? [...effects][0] : "none";
 }
 
-/** Seconds between one column's pulse and the next, so the glow runs
- *  through the flow left to right rather than every arrow at once. */
+/** Seconds between one column's pulse and the next, so the pulse runs
+ *  through the flow left to right rather than along every arrow at once. */
 const PULSE_STAGGER = 0.18;
 
 /**
@@ -136,10 +136,19 @@ export default function FlowMap({
                   strokeWidth={1.75}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  style={{ animationDelay: `${a.col * PULSE_STAGGER}s` }}
                 >
                   <path data-edge d={edgePath(a, b)} />
                   <path d={arrowHead(b)} />
+                  {/* A short bright stretch running from the arrow's start to
+                      its end, as the Test map's limbs pulse when a case is
+                      hovered. `pathLength` makes the run the same pace on a
+                      long arrow as a short one. */}
+                  <path
+                    className="flow-pulse"
+                    d={edgePath(a, b)}
+                    pathLength={1}
+                    style={{ animationDelay: `${a.col * PULSE_STAGGER}s` }}
+                  />
                 </g>
               );
             })}

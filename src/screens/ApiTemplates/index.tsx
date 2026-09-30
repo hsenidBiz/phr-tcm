@@ -212,9 +212,7 @@ export default function ApiTemplates({
   const origin = overview.data?.origin ?? null;
 
   return (
-    // Room below the last group, so the sticky Collapse all never sits over
-    // the last row's controls once the page is scrolled to its end.
-    <div className="space-y-4 pb-20">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
         <span>
           Project <span className="font-medium text-text">{project}</span>
