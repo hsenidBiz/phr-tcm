@@ -22,6 +22,9 @@ export {
   // Getting data in and out
   Import as IconImport,
   Download as IconExport,
+  // Fetching something to this machine (the How To Use guide) - the same
+  // arrow as exporting, named for what the button does.
+  Download as IconDownload,
   ExternalLink as IconOpenInBrowser,
   Share2 as IconShare,
   Copy as IconCopy,

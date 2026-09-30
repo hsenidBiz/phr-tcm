@@ -773,10 +773,11 @@ test("How To Use opens the help site", async () => {
   await waitFor(() => expect(calls).toContain("open_help"));
 });
 
-/// The first open after an update writes ~14 MB to disk - the button must
-/// disable itself and say "Opening" while that call is in flight, so a
-/// second click before it settles cannot open a second tab, then return to
-/// normal once the command resolves.
+/// Opening finds the downloaded guide on disk (adopting an older install's
+/// first) and hands it to the browser - the button must disable itself and
+/// say "Opening" while that call is in flight, so a second click before it
+/// settles cannot open a second tab, then return to normal once the command
+/// resolves.
 test("How To Use disables itself and shows Opening while the command is in flight", async () => {
   let resolveOpen: (v: { status: "ok"; data: null }) => void;
   const opened = new Promise<{ status: "ok"; data: null }>((resolve) => {
@@ -1041,4 +1042,259 @@ test("a beta build says so, and says it stays when betas are off", async () => {
   renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   expect(await screen.findByText(/Version 1\.26\.0-beta\.2 \(beta\)/)).toBeInTheDocument();
   expect(screen.getByText("You're on a beta build. It stays until the next stable release.")).toBeInTheDocument();
+});
+
+/// How To Use is downloaded on demand. Settings asks Rust what is on disk
+/// when it opens and shows whichever of Download / How To Use / Update
+/// Guide fits. Sizes are whole MB (1 MB = 1024 * 1024 bytes), the total
+/// rounded up.
+const MB = 1024 * 1024;
+const GUIDE_SIZE = 31 * MB;
+
+function guideQc() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+test("a_guide_not_yet_downloaded_offers_to_download_it_with_its_size", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") return { state: "NotDownloaded", size: GUIDE_SIZE };
+    return undefined;
+  });
+  renderSettings(guideQc());
+
+  expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "How To Use" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update Guide" })).toBeNull();
+});
+
+test("the download size is rounded up to a whole MB, and left out when unknown", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") return { state: "NotDownloaded", size: 30 * MB + 1 };
+    return undefined;
+  });
+  const first = renderSettings(guideQc());
+  expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeInTheDocument();
+  first.unmount();
+  clearMocks();
+
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") return { state: "NotDownloaded", size: null };
+    return undefined;
+  });
+  renderSettings(guideQc());
+  expect(await screen.findByRole("button", { name: "Download How to Use" })).toBeInTheDocument();
+});
+
+test("downloading_shows_progress_then_the_guide_is_ready", async () => {
+  let resolveDownload!: (v: { status: "ok"; data: null }) => void;
+  const download = new Promise<{ status: "ok"; data: null }>((r) => {
+    resolveDownload = r;
+  });
+  let state: "NotDownloaded" | "Ready" = "NotDownloaded";
+  const calls: string[] = [];
+  mockIPC(
+    (cmd) => {
+      calls.push(String(cmd));
+      if (cmd === "guide_status") return { state, size: GUIDE_SIZE };
+      if (cmd === "guide_download") return download;
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  renderSettings(guideQc());
+
+  // The live region is there before anything happens, empty, so a screen
+  // reader is already listening when the first figure arrives.
+  const live = await screen.findByRole("status");
+  expect(live).toHaveTextContent(/^$/);
+  expect(screen.queryByRole("progressbar")).toBeNull();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Download How to Use (31 MB)" }));
+  const busy = await screen.findByRole("button", { name: "Downloading..." });
+  expect(busy).toBeDisabled();
+  // A bar from the start; no figure on it until the first bytes arrive.
+  const bar = await screen.findByRole("progressbar", { name: "Downloading How to Use" });
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("guide-progress", { received: 12 * MB, total: GUIDE_SIZE });
+  });
+  expect(await screen.findByText("12 of 31 MB")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toBe(live);
+  expect(bar).toHaveAttribute("aria-valuenow", "38");
+  expect(bar).toHaveAttribute("aria-valuetext", "12 of 31 MB");
+  // Whole MB: a part-way byte count rounds down, the total up.
+  await act(async () => {
+    await emit("guide-progress", { received: 13 * MB - 1, total: 30 * MB + 1 });
+  });
+  expect(await screen.findByText("12 of 31 MB")).toBeInTheDocument();
+
+  state = "Ready";
+  resolveDownload({ status: "ok", data: null });
+  expect(await screen.findByRole("button", { name: "How To Use" })).toBeEnabled();
+  expect(screen.queryByText(/of 31 MB/)).toBeNull();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent(/^$/);
+  expect(calls.filter((c) => c === "guide_status")).toHaveLength(2);
+  expect(calls.filter((c) => c === "guide_download")).toHaveLength(1);
+});
+
+test("two quick clicks on Download start one download", async () => {
+  let resolveDownload!: (v: { status: "ok"; data: null }) => void;
+  const download = new Promise<{ status: "ok"; data: null }>((r) => {
+    resolveDownload = r;
+  });
+  const calls: string[] = [];
+  mockIPC(
+    (cmd) => {
+      calls.push(String(cmd));
+      if (cmd === "guide_status") return { state: "NotDownloaded", size: GUIDE_SIZE };
+      if (cmd === "guide_download") return download;
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  renderSettings(guideQc());
+
+  const button = await screen.findByRole("button", { name: "Download How to Use (31 MB)" });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await screen.findByRole("button", { name: "Downloading..." });
+  fireEvent.click(screen.getByRole("button", { name: "Downloading..." }));
+  await act(async () => {
+    resolveDownload({ status: "ok", data: null });
+  });
+  expect(calls.filter((c) => c === "guide_download")).toHaveLength(1);
+});
+
+test("a_changed_guide_offers_update_guide", async () => {
+  let resolveDownload!: (v: { status: "ok"; data: null }) => void;
+  const download = new Promise<{ status: "ok"; data: null }>((r) => {
+    resolveDownload = r;
+  });
+  let state: "UpdateAvailable" | "Ready" = "UpdateAvailable";
+  mockIPC(
+    (cmd) => {
+      if (cmd === "guide_status") return { state, size: GUIDE_SIZE };
+      if (cmd === "guide_download") return download;
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  renderSettings(guideQc());
+
+  expect(await screen.findByRole("button", { name: "How To Use" })).toBeEnabled();
+  fireEvent.click(await screen.findByRole("button", { name: "Update Guide" }));
+
+  // Both buttons wait while the update runs.
+  expect(await screen.findByRole("button", { name: "Downloading..." })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "How To Use" })).toBeDisabled();
+
+  state = "Ready";
+  resolveDownload({ status: "ok", data: null });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Update Guide" })).toBeNull());
+  expect(screen.getByRole("button", { name: "How To Use" })).toBeEnabled();
+});
+
+test("a_failed_download_says_why", async () => {
+  const sentence =
+    "Could not download How to Use. Check your connection and try again - Settings, Logs has the details.";
+  let statusCalls = 0;
+  mockIPC(
+    (cmd) => {
+      if (cmd === "guide_status") {
+        statusCalls += 1;
+        return { state: "NotDownloaded", size: GUIDE_SIZE };
+      }
+      if (cmd === "guide_download") throw sentence;
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  renderSettings(guideQc());
+
+  fireEvent.click(await screen.findByRole("button", { name: "Download How to Use (31 MB)" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(sentence));
+  // Still not on disk: the button comes back, and the state was asked again.
+  expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeEnabled();
+  expect(statusCalls).toBe(2);
+});
+
+/// Opening can fail after the guide installed fine (no browser, say), so the
+/// status is re-asked after a failure as well as after a success.
+test("a failed download re-asks the status and shows what is now on disk", async () => {
+  let state: "UpdateAvailable" | "Ready" = "UpdateAvailable";
+  mockIPC(
+    (cmd) => {
+      if (cmd === "guide_status") return { state, size: GUIDE_SIZE };
+      if (cmd === "guide_download") {
+        state = "Ready";
+        throw "Could not open the help pages. Settings, Logs has the details.";
+      }
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+  renderSettings(guideQc());
+
+  fireEvent.click(await screen.findByRole("button", { name: "Update Guide" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Update Guide" })).toBeNull());
+  expect(screen.getByRole("button", { name: "How To Use" })).toBeEnabled();
+});
+
+/// Offline from the start, or a build that does not answer: How To Use as
+/// ever, no toast, no Update Guide.
+test("offline_or_unanswered_status_shows_how_to_use", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") throw new Error("no answer");
+    return undefined;
+  });
+  renderSettings(guideQc());
+
+  expect(await screen.findByRole("button", { name: "How To Use" })).toBeEnabled();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(screen.queryByRole("button", { name: "Update Guide" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Download How to Use/ })).toBeNull();
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+test("How To Use shows the sentence when nothing is installed to open", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "open_help") throw "Download How to Use from Settings first.";
+    return undefined;
+  });
+  renderSettings(guideQc());
+
+  fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Download How to Use from Settings first."));
+});
+
+/// A click on How To Use can land before Settings has heard what is on disk
+/// (it shows How To Use until then). When opening fails, the status is asked
+/// again as well as the toast, so the Download button then appears.
+test("a failed How To Use re-asks the status and offers Download", async () => {
+  let state: "Ready" | "NotDownloaded" = "Ready";
+  let statusCalls = 0;
+  mockIPC((cmd) => {
+    if (cmd === "guide_status") {
+      statusCalls += 1;
+      return { state, size: GUIDE_SIZE };
+    }
+    if (cmd === "open_help") {
+      state = "NotDownloaded";
+      throw "Download How to Use from Settings first.";
+    }
+    return undefined;
+  });
+  renderSettings(guideQc());
+  await waitFor(() => expect(statusCalls).toBe(1));
+
+  fireEvent.click(screen.getByRole("button", { name: "How To Use" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Download How to Use from Settings first."));
+  expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeEnabled();
+  expect(statusCalls).toBe(2);
 });

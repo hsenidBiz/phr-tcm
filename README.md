@@ -319,6 +319,10 @@ Running the script with a version like `X.Y.Z-beta.N` instead publishes a
 GitHub prerelease. Only installs with Download beta builds turned on in
 Settings receive it.
 
+The How To Use guide (`how-to-use.json` and `how-to-use.zip`) is uploaded
+to the phr-tcm release right after the app; if that upload fails, running
+just `.\scripts\publish-guide.ps1 -Version X.Y.Z` repeats it.
+
 ---
 
 ## Architecture

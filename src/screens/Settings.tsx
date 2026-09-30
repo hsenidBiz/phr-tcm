@@ -7,7 +7,7 @@ import { toast } from "../lib/toast";
 import { hydrateExtras, setExtrasUnlocked, useExtrasUnlocked } from "../lib/extras";
 import { isCaptureMode } from "../dev/capture";
 import { saveFailedMessage, useExtrasSequence } from "./settingsExtras";
-import { commands, type AppSettings } from "../bindings";
+import { commands, events, type AppSettings, type GuideStatus } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
@@ -43,6 +43,7 @@ import {
   IconCancel,
   IconCopy,
   IconHelp,
+  IconDownload,
   IconPlayGame,
   IconRefresh,
   IconTour,
@@ -77,6 +78,34 @@ const MOVING_CARDS = ["updates", "backup", "help"] as const;
  * card is the same size in either column and does not change width as it
  * slides. 100cqw is the grid's width (it is the @container). */
 const LEFT_TRACK_WIDTH = "lg:w-[min(32rem,calc(100cqw_-_26rem))]";
+
+const BYTES_PER_MB = 1024 * 1024;
+
+/** Whole MB for a size on a button: rounded up, so a guide never reads
+ * smaller than it is. */
+function mbUp(bytes: number): number {
+  return Math.ceil(bytes / BYTES_PER_MB);
+}
+
+/** A byte count part-way through a download: rounded down, so it never
+ * reads ahead of what has actually arrived. */
+function mbDown(bytes: number): number {
+  return Math.floor(bytes / BYTES_PER_MB);
+}
+
+/** What the guide download shows beside the button, or nothing while the
+ * total is not yet known. */
+function guideProgressText(p: { received: number; total: number } | null): string | null {
+  if (!p || !(p.total > 0)) return null;
+  return `${mbDown(p.received)} of ${mbUp(p.total)} MB`;
+}
+
+/** How far the guide download is, as a whole percent rounded down, or null
+ * while the total is not yet known. */
+function guideProgressPercent(p: { received: number; total: number } | null): number | null {
+  if (!p || !(p.total > 0)) return null;
+  return Math.min(100, Math.floor((p.received / p.total) * 100));
+}
 
 export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
@@ -124,10 +153,69 @@ export default function Settings({ org, project }: { org: string; project: strin
   const [reporting, setReporting] = useState(false);
   const [bugTitle, setBugTitle] = useState("");
   const [bugText, setBugText] = useState("");
-  // The first open after an update writes the help site to disk (~14 MB) -
+  // Opening finds the downloaded guide on disk and hands it to the browser -
   // a pending state stops repeated clicks from opening several tabs while
-  // that write is in flight.
+  // that call is in flight.
   const [openingHelp, setOpeningHelp] = useState(false);
+  // How To Use is fetched on demand. Anything but a clear answer from Rust
+  // (offline from the start, a build that does not know the command) counts
+  // as Ready: How To Use shows and nothing complains.
+  const [guide, setGuide] = useState<GuideStatus>({ state: "Ready", size: null });
+  const [guideProgress, setGuideProgress] = useState<{ received: number; total: number } | null>(null);
+  const [downloadingGuide, setDownloadingGuide] = useState(false);
+  // A ref, not the state, guards the second click: two clicks in one tick
+  // both see `downloadingGuide === false`.
+  const guideBusy = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const askGuideStatus = async () => {
+    try {
+      const s = await commands.guideStatus();
+      if (alive.current && s && typeof s.state === "string") setGuide(s);
+    } catch {
+      // Keep what is shown: a failed question is not a reason to toast.
+    }
+  };
+  useEffect(() => {
+    void askGuideStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const downloadGuide = async () => {
+    if (guideBusy.current) return;
+    guideBusy.current = true;
+    setDownloadingGuide(true);
+    setGuideProgress(null);
+    let unlisten: (() => void) | undefined;
+    try {
+      unlisten = await events.guideProgress.listen((e) => {
+        if (alive.current) setGuideProgress(e.payload);
+      });
+      const r = await commands.guideDownload();
+      if (r.status === "error") toast.error(r.error);
+    } catch {
+      toast.error("Could not download How to Use. Check your connection and try again - Settings, Logs has the details.");
+    } finally {
+      try {
+        // May return a promise (it does in @tauri-apps/api) or nothing.
+        void Promise.resolve(unlisten?.() as unknown).catch(() => {});
+      } catch {
+        // Going away either way.
+      }
+      // Opening can fail after a good install, so the state is asked again
+      // whether this succeeded or not.
+      await askGuideStatus();
+      guideBusy.current = false;
+      if (alive.current) {
+        setDownloadingGuide(false);
+        setGuideProgress(null);
+      }
+    }
+  };
   const logs = useQuery({
     queryKey: ["app-logs"],
     queryFn: () => commands.appLogs(2000),
@@ -340,26 +428,79 @@ export default function Settings({ org, project }: { org: string; project: strin
         <SettingRow
           control={
             <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={openingHelp}
-                onClick={() => {
-                  setOpeningHelp(true);
-                  commands
-                    .openHelp()
-                    .then((r) => {
-                      if (r.status === "error") toast.error(r.error);
-                    })
-                    .catch(() =>
-                      toast.error("Could not open the help pages. Settings, Logs has the details."),
-                    )
-                    .finally(() => setOpeningHelp(false));
-                }}
+              {guide.state === "NotDownloaded" ? (
+                <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide()}>
+                  <IconDownload aria-hidden />
+                  {downloadingGuide
+                    ? "Downloading..."
+                    : guide.size !== null
+                      ? `Download How to Use (${mbUp(guide.size)} MB)`
+                      : "Download How to Use"}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={openingHelp || downloadingGuide}
+                    onClick={() => {
+                      setOpeningHelp(true);
+                      // A failure re-asks what is on disk too: a click that
+                      // came before the first answer (How To Use shows until
+                      // then) gets the Download button it needed.
+                      commands
+                        .openHelp()
+                        .then((r) => {
+                          if (r.status === "error") {
+                            toast.error(r.error);
+                            void askGuideStatus();
+                          }
+                        })
+                        .catch(() => {
+                          toast.error("Could not open the help pages. Settings, Logs has the details.");
+                          void askGuideStatus();
+                        })
+                        .finally(() => setOpeningHelp(false));
+                    }}
+                  >
+                    <IconHelp aria-hidden />
+                    {openingHelp ? "Opening" : "How To Use"}
+                  </Button>
+                  {guide.state === "UpdateAvailable" && (
+                    <Button size="sm" variant="outline" disabled={downloadingGuide} onClick={() => void downloadGuide()}>
+                      <IconRefresh aria-hidden />
+                      {downloadingGuide ? "Downloading..." : "Update Guide"}
+                    </Button>
+                  )}
+                </>
+              )}
+              {downloadingGuide && (
+                <div
+                  role="progressbar"
+                  aria-label="Downloading How to Use"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  // Omitted, not zero, until the first bytes arrive: an
+                  // indeterminate bar is what "not known yet" means.
+                  aria-valuenow={guideProgressPercent(guideProgress) ?? undefined}
+                  aria-valuetext={guideProgressText(guideProgress) ?? undefined}
+                  className="h-1.5 w-24 overflow-hidden rounded-full bg-accent/20"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                    style={{ width: `${guideProgressPercent(guideProgress) ?? 0}%` }}
+                  />
+                </div>
+              )}
+              {/* Always mounted, empty when idle, so a screen reader is
+                  already listening when the first figure arrives; visually
+                  hidden while empty so it takes no room in the row. */}
+              <span
+                role="status"
+                className={cn("text-xs tabular-nums text-muted", !guideProgressText(guideProgress) && "sr-only")}
               >
-                <IconHelp aria-hidden />
-                {openingHelp ? "Opening" : "How To Use"}
-              </Button>
+                {guideProgressText(guideProgress) ?? ""}
+              </span>
               <Button
                 size="sm"
                 variant="outline"

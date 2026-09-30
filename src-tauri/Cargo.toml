@@ -52,6 +52,8 @@ tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "
 thiserror = "2.0.18"
 reqwest = { version = "0.13.4", features = ["form", "json", "native-tls", "blocking"], default-features = false }
 sha2 = "0.11.0"
+# Reads the downloaded How To Use zip (guide.rs); deflate is the only method it uses.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 base64 = "0.22.1"
 rand = "0.10.2"
 urlencoding = "2.1.3"
@@ -81,10 +83,6 @@ tauri-plugin-notification = "2.3.3"
 # 2.11.5 already satisfies.
 tauri-plugin-autostart = "=2.5.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
-# Staging the bundled "How To Use" help site (src-tauri/help/) out to disk
-# so the opener plugin has a real filesystem path to hand the browser -
-# see help.rs.
-include_dir = "0.7"
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().
