@@ -52,10 +52,21 @@ pub struct Ready {
 /// attached some other way could still throttle. The click point is
 /// clamped to the part of the rect actually inside the viewport, and only
 /// hit-tested when some of it is on screen at all.
+///
+/// It is aimed at the first box the element is really drawn in
+/// (`getClientRects`), not the middle of its bounding box: words that wrap
+/// have a box whose middle can sit past the end of a short later line,
+/// where only the element around them is (PeoplesHR's "Performance
+/// Management System", 2026-10-01). A block element has one box, the same
+/// as its bounding box, so for it nothing changes. `rect` stays the
+/// bounding box, which is what the holding-still comparison reads.
 pub const PROBE_JS: &str = r#"function() {
   this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const b = this.getBoundingClientRect();
-  const l = Math.max(b.left, 0), r = Math.min(b.right, innerWidth), t = Math.max(b.top, 0), bt = Math.min(b.bottom, innerHeight);
+  const drawn = Array.from(this.getClientRects()).find((c) =>
+    c.width > 0 && c.height > 0 && c.right > 0 && c.left < innerWidth && c.bottom > 0 && c.top < innerHeight);
+  const a = drawn || b;
+  const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
   const onscreen = r > l && bt > t;
   const x = (l + r) / 2, y = (t + bt) / 2;
   const top = onscreen ? document.elementFromPoint(x, y) : null;

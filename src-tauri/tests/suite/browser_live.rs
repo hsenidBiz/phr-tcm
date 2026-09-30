@@ -420,6 +420,18 @@ async fn words_that_let_a_click_through_to_their_row_are_clicked_through_it() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "menu row" })).await);
 }
 
+/// 2026-10-01, the real PeoplesHR cause: "Performance Management System"
+/// wraps onto two lines, and the centre of the words' box lands past the
+/// end of the short second line - on the row, not the words. The click
+/// aims at a line the words are really drawn on.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn words_that_wrap_are_clicked_on_a_line_they_are_drawn_on() {
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "text": "Wrapped Menu Entry Words" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#which" }, "equals": "wrapped row" })).await);
+}
+
 /// The outline a watcher sees, and the gap it opens. A page is free to put
 /// a modal up during that gap, and the click must not go through it.
 #[tokio::test]

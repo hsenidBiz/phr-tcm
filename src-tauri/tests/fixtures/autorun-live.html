@@ -122,6 +122,11 @@
        belongs to the row around them. -->
   <div class="menu-row" onclick="say('which', 'menu row')" style="padding:4px"><span style="pointer-events:none">Menu Row Words</span></div>
 
+  <!-- PeoplesHR's "Performance Management System": the words wrap, so the
+       centre of their box sits on a short later line's empty end, where
+       only the row around them is. Nothing here is pointer-events: none. -->
+  <div class="wrap-row" onclick="say('which', 'wrapped row')" style="padding:4px"><span>Wrapped Menu Entry Words<br>X<br>Y</span></div>
+
   <!-- A sub-frame loads too, so a navigation has to tell its own load
        apart from this one. -->
   <iframe id="frame" title="inner frame" srcdoc="<p>inner frame body</p>"></iframe>
