@@ -40,10 +40,12 @@ pub struct TestFile {
 }
 
 /// Windows' reserved device names: no file may be called one, with or
-/// without an extension (`CON`, `con.txt`).
+/// without an extension (`CON`, `con.txt`) - the superscript-digit ports
+/// and the console's own `CONIN$` and `CONOUT$` included.
 const RESERVED: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
-    "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}",
+    "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}", "CONIN$", "CONOUT$",
 ];
 
 /// A test file name: one file name, never a path. Non-empty and at most

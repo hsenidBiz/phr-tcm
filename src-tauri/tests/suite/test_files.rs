@@ -98,6 +98,13 @@ fn every_refused_class_of_name_is_refused() {
         "com9.txt",
         "LPT1",
         "lpt9.csv",
+        "COM\u{b9}",
+        "com\u{b2}.txt",
+        "LPT\u{b3}.pdf",
+        "CONIN$",
+        "conout$.log",
+        "a.txt:b",
+        "\\\\server\\share\\x",
     ] {
         assert!(!valid_test_file_name(bad), "{bad:?} should be refused");
     }
