@@ -25,8 +25,14 @@ use std::collections::HashMap;
 
 /// What `kind` says in every file this module writes.
 pub const KIND: &str = "tcm-api-templates";
-/// The newest format this copy of the app reads.
-pub const VERSION: u64 = 1;
+/// The newest format this copy of the app reads: 1, and 2 - the same shape,
+/// written only when some step uploads test files (`files`). An app from
+/// before files refuses a step with `files` as an unknown field; a version
+/// 2 file lets it say "exported by a newer version" instead. A file with no
+/// uploads is still written as 1, so it imports into those apps.
+pub const VERSION: u64 = 2;
+/// What a file with no uploads in it is written as.
+pub const VERSION_WITHOUT_FILES: u64 = 1;
 /// The largest file an import will read: far more than any real project's
 /// templates, and small enough that a wrong pick is refused before it is
 /// read into memory.
@@ -95,9 +101,10 @@ pub struct TemplatesImportResult {
 
 /// The file for these templates and flows, proof stripped from each.
 pub fn build_doc(templates: Vec<ApiTemplate>, flows: Vec<Flow>, exported_at: &str) -> ShareDoc {
+    let uploads = templates.iter().any(|t| t.steps.iter().any(|s| !s.files.is_empty()));
     ShareDoc {
         kind: KIND,
-        version: VERSION,
+        version: if uploads { VERSION } else { VERSION_WITHOUT_FILES },
         exported_at: exported_at.to_string(),
         templates: templates.into_iter().map(|t| ApiTemplate { proven: None, ..t }).collect(),
         flows: flows.into_iter().map(|f| Flow { saved: None, ..f }).collect(),
