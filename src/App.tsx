@@ -12,6 +12,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { toast } from "./lib/toast";
+import { useActiveEnvironmentName } from "./lib/environments";
 import { Toaster } from "./components/ui/toaster";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
@@ -822,6 +823,8 @@ export default function App() {
     };
   }, [org, project]);
 
+  // The title bar names the active environment once there are two or more.
+  const environmentName = useActiveEnvironmentName();
   // The running version, for the title bar's Beta pill - the same cached
   // query Settings reads, so asking twice costs nothing.
   const appVersion = useQuery({
@@ -1019,6 +1022,7 @@ export default function App() {
           (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
         }
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
+        environment={isCaptureMode() ? null : environmentName}
       />
       {tourOpen && signedIn && (
         <UiTour
