@@ -347,7 +347,9 @@ pub fn claim() -> Option<RunClaim> {
 }
 
 /// Whether a template run holds the slot right now. Only looks: switching
-/// the environment asks this, so a run never changes environment midway.
+/// the environment asks this first for its refusal, then takes the slot
+/// itself (`claim`) for the write, so a run never changes environment
+/// midway.
 pub fn is_running() -> bool {
     RUNNING.load(Ordering::SeqCst)
 }

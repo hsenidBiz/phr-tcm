@@ -1051,6 +1051,7 @@ fn new_run(pbi_id: i32) -> LocalRun {
         cases: vec![],
         mode: "unattended".into(),
         published: None,
+        environment: None,
     }
 }
 

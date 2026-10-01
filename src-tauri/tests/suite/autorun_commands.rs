@@ -78,6 +78,7 @@ fn saving_over_a_published_run_with_an_unpublished_copy_is_refused() {
             web_url: "https://dev.azure.com/org/proj/_workitems/edit/555".to_string(),
             at: "1700000000000".to_string(),
         }),
+        environment: None,
     };
     save_run(dir.path(), &published).unwrap();
 
@@ -109,6 +110,7 @@ fn a_run_file_that_cannot_be_read_is_never_overwritten_by_a_guarded_save() {
         cases: vec![],
         mode: String::new(),
         published: None,
+        environment: None,
     };
     let err = save_run_guarded(dir.path(), &run).expect_err("a corrupt existing file was overwritten");
     assert!(err.contains("could not be read"), "{err}");
@@ -133,6 +135,7 @@ fn save_run_guarded_rejects_an_unsafe_run_id() {
         cases: vec![],
         mode: String::new(),
         published: None,
+        environment: None,
     };
     assert!(save_run_guarded(dir.path(), &run).is_err());
     assert!(

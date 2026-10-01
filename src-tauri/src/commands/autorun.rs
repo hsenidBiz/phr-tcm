@@ -321,10 +321,21 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), String> {
+    save_run_at(&root(&app)?, run)
+}
+
+/// `auto_run_save_run` for a given data root. The first save of a run - a
+/// supervised one, which the screen builds - records the active
+/// environment's name; a run already on disk keeps whatever it has, so an
+/// old run reviewed later is never stamped with today's environment.
+pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), String> {
     if !safe_run_id(&run.id) {
         return Err(format!("run id {:?} is not a safe filename", run.id));
     }
-    store::save_run_guarded(&root(&app)?, &run)
+    if run.environment.is_none() && matches!(store::load_run(root, &run.id), Ok(None)) {
+        run.environment = crate::environments::active(root).ok().map(|e| e.name);
+    }
+    store::save_run_guarded(root, &run)
 }
 
 #[tauri::command]

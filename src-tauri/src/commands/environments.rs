@@ -144,7 +144,12 @@ pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> 
     // through it - the same way Open browser holds it to look for a recording.
     let slot = crate::commands::autorun::supervised().lock().await;
     refuse_switch(slot.is_some())?;
+    // The template slot is TAKEN, not just looked at, for the write: a run
+    // that started between the look in `refuse_switch` and the write would
+    // otherwise sign in to one environment and finish in another.
+    let run_slot = crate::api_templates::runner::claim().ok_or_else(|| SWITCH_TEMPLATE_RUNNING.to_string())?;
     let file = environments::set_active(root, id)?;
+    drop(run_slot);
     drop(slot);
     if let Some(e) = file.environments.iter().find(|e| e.id == file.active) {
         crate::applog::info(format!("Environments: switched to {}", e.name));

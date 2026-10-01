@@ -151,6 +151,10 @@ pub struct Proven {
     // See `Expect::json`'s comment on why the value side is `unknown`.
     #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
     pub outputs: BTreeMap<String, Value>,
+    /// The name of the environment the template was proven in, as it was
+    /// then. `None` for a proof saved before environments existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]

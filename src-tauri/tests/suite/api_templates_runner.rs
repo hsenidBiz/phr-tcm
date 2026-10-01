@@ -783,6 +783,7 @@ fn preflight_needs_replace_and_why_for_an_existing_id() {
         origin: "https://hr.example.internal".into(),
         account: "admin".into(),
         outputs: BTreeMap::new(),
+        environment: None,
     });
     assert_eq!(preflight(root.path(), &request(saved.clone(), Mode::Run), Some(&saved)), Ok(()));
 
@@ -850,6 +851,7 @@ mod through_the_bridge {
             origin: "https://hr.example.internal".into(),
             account: "admin".into(),
             outputs: BTreeMap::from([("cycleId".to_string(), json!(1))]),
+            environment: None,
         });
         t
     }
@@ -896,6 +898,7 @@ mod through_the_bridge {
         let proven = saved.proven.clone().expect("carries the app's proven block");
         assert_eq!(proven.origin, "https://hr.example.internal");
         assert_eq!(proven.account, "admin");
+        assert_eq!(proven.environment.as_deref(), Some("Default"), "proven in the active environment");
         assert_eq!(proven.outputs, BTreeMap::from([("cycleId".to_string(), json!(274))]));
         assert!(!proven.at.is_empty());
         assert_eq!(ApiTemplate { proven: None, ..saved }, template(), "saved as sent, plus proven");

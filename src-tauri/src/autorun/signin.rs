@@ -5,7 +5,7 @@
 //! happens, no text that leaves here contains the password.
 
 use super::accounts::{find_account, Account};
-use super::recipe::{for_account, load_recipe, RecipeStep, SignInRecipe};
+use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe};
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
 use crate::browser::actions::{execute_in, Action, ActionOutcome, Policy};
 use crate::browser::cdp::{CdpError, Driver};
@@ -46,9 +46,10 @@ pub fn redact(text: &str, account: &Account) -> String {
     }
 }
 
-/// The recipe and the account, or the sentence that says what to add.
+/// The recipe as it runs in the active environment, and the account, or
+/// the sentence that says what to add.
 pub fn prepare(root: &Path, org: &str, project: &str, account_key: &str) -> Result<(SignInRecipe, Account), String> {
-    let recipe = load_recipe(root, org, project)?.ok_or_else(|| {
+    let recipe = load_effective_recipe(root, org, project)?.ok_or_else(|| {
         "this project has no sign-in recipe yet - add one in Auto Run, Sign-in recipe".to_string()
     })?;
     let account = find_account(root, account_key)?.ok_or_else(|| {

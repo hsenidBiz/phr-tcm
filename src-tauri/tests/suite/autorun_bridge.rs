@@ -1112,6 +1112,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         }],
         mode: String::new(),
         published: None,
+        environment: None,
     }
 }
 

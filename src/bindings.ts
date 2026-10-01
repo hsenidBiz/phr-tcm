@@ -409,6 +409,11 @@ export const commands = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
@@ -1099,7 +1104,7 @@ export type ApiTemplate_Deserialize = {
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
-	proven?: Proven | null,
+	proven?: Proven_Deserialize | null,
 };
 
 export type ApiTemplate_Serialize = {
@@ -1123,7 +1128,7 @@ export type ApiTemplate_Serialize = {
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
-	proven?: Proven | null,
+	proven?: Proven_Serialize | null,
 };
 
 /**
@@ -1949,6 +1954,11 @@ export type LocalRun_Deserialize = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 export type LocalRun_Serialize = {
@@ -1964,6 +1974,11 @@ export type LocalRun_Serialize = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -2341,11 +2356,30 @@ export type Project = {
 	name: string,
 };
 
-export type Proven = {
+export type Proven = Proven_Serialize | Proven_Deserialize;
+
+export type Proven_Deserialize = {
 	at: string,
 	origin: string,
 	account: string,
 	outputs: { [key in string]: unknown },
+	/**
+	 *  The name of the environment the template was proven in, as it was
+	 *  then. `None` for a proof saved before environments existed.
+	 */
+	environment?: string | null,
+};
+
+export type Proven_Serialize = {
+	at: string,
+	origin: string,
+	account: string,
+	outputs: { [key in string]: unknown },
+	/**
+	 *  The name of the environment the template was proven in, as it was
+	 *  then. `None` for a proof saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 /**
@@ -3231,18 +3265,18 @@ export type TemplatesImportSkip = {
 };
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_Deserialize;
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Deserialize = {
 	origin: string | null,
@@ -3251,10 +3285,10 @@ export type TemplatesOverview_Deserialize = {
 };
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Serialize = {
 	origin: string | null,

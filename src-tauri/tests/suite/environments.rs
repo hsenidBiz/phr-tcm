@@ -318,6 +318,10 @@ async fn switching_is_refused_while_an_api_template_runs() {
 
     assert!(!v2_lib::api_templates::runner::is_running(), "dropping the claim frees the slot");
     assert_eq!(set_active_with(root, &store, &qa).await.unwrap().active, qa);
+    // The switch holds the run slot only while it writes: a template can
+    // start straight after it.
+    assert!(!v2_lib::api_templates::runner::is_running(), "a switch gives the slot back");
+    assert!(v2_lib::api_templates::runner::claim().is_some());
 }
 
 /// A real supervised browser cannot be opened in a test, so the decision is
@@ -467,4 +471,163 @@ fn an_unreadable_environments_file_means_no_accounts_and_no_session() {
     assert!(save_session(root, "hr.sup", &session(1_000)).is_err());
     assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_none());
     assert!(!root.join("accounts").exists() && !root.join("sessions").exists());
+}
+
+// ---- The effective recipe: where sign-in and navigation go ----
+
+fn signin_recipe(start: &str, allowed: &[&str]) -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut r = crate::common::recipe();
+    r.start_url = start.into();
+    r.allowed_origins = allowed.iter().map(|s| s.to_string()).collect();
+    r
+}
+
+#[test]
+fn empty_address_keeps_the_recipe() {
+    use v2_lib::autorun::recipe::effective_recipe;
+    let r = signin_recipe("https://a.example/login", &["https://sso.a.example"]);
+    let e = env("env-0000000a", "Default", "");
+    assert_eq!(effective_recipe(&r, &e), r, "an empty address means the recipe's own");
+    let mut with_sites = env("env-0000000a", "Default", "");
+    with_sites.allowed_origins = vec!["https://sso.b.example".into()];
+    assert_eq!(effective_recipe(&r, &with_sites), r, "allowed sites without an address change nothing");
+}
+
+#[test]
+fn address_replaces_address_and_allowed_sites() {
+    use v2_lib::autorun::recipe::effective_recipe;
+    let r = signin_recipe("https://a.example/login", &["https://sso.a.example"]);
+    let mut e = env("env-0000000b", "QA", "https://b.example/login");
+    e.allowed_origins = vec!["https://sso.b.example".into()];
+    let out = effective_recipe(&r, &e);
+    assert_eq!(out.start_url, "https://b.example/login");
+    assert_eq!(out.allowed_origins, vec!["https://sso.b.example".to_string()]);
+    assert_eq!(out.origins(), vec!["https://b.example".to_string(), "https://sso.b.example".to_string()]);
+    // Everything else is the recipe's.
+    assert_eq!(out.steps, r.steps);
+    assert_eq!(out.after_sign_in, r.after_sign_in);
+    assert_eq!(out.signed_in, r.signed_in);
+    assert_eq!(out.session_minutes, r.session_minutes);
+}
+
+#[test]
+fn prepare_signs_in_at_the_environment_address() {
+    use v2_lib::autorun::accounts::save_accounts;
+    use v2_lib::autorun::recipe::{load_effective_recipe, load_recipe, save_recipe};
+    use v2_lib::autorun::signin::prepare;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, qa) = two_envs(root);
+    let mut e = list(root).into_iter().find(|e| e.id == qa).unwrap();
+    e.start_url = "https://b".into();
+    save_env(root, e, &known()).unwrap();
+    save_recipe(root, "Acme", "Web", &signin_recipe("https://a", &[])).unwrap();
+    save_accounts(root, &[acct("hr.sup", "sup-a")]).unwrap();
+
+    // Default has no address: the recipe's own.
+    assert_eq!(prepare(root, "Acme", "Web", "hr.sup").unwrap().0.start_url, "https://a");
+
+    set_active(root, &qa).unwrap();
+    save_accounts(root, &[acct("hr.sup", "sup-b")]).unwrap();
+    let (r, who) = prepare(root, "Acme", "Web", "hr.sup").unwrap();
+    assert_eq!(r.start_url, "https://b");
+    assert_eq!(who.username, "sup-b");
+    assert_eq!(load_effective_recipe(root, "Acme", "Web").unwrap().unwrap().start_url, "https://b");
+    assert_eq!(load_recipe(root, "Acme", "Web").unwrap().unwrap().start_url, "https://a", "the saved recipe is untouched");
+    assert_eq!(load_effective_recipe(root, "Acme", "Other").unwrap(), None, "no recipe is still no recipe");
+
+    set_active(root, &first).unwrap();
+    assert_eq!(prepare(root, "Acme", "Web", "hr.sup").unwrap().0.start_url, "https://a");
+}
+
+/// The recipe's own address may be read directly only where the recipe is
+/// edited; everything that signs in or navigates goes through
+/// `load_effective_recipe`, or the active environment's address is ignored.
+#[test]
+fn only_the_helper_reads_the_recipe_address() {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![];
+    walk(&src, &mut files);
+    assert!(files.len() > 20, "the scan found the source tree");
+    let allowed = ["autorun/recipe.rs", "commands/autorun.rs", "commands/autorun_record_signin.rs"];
+    let mut bad = vec![];
+    for f in files {
+        let rel = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+        if allowed.contains(&rel.as_str()) {
+            continue;
+        }
+        if std::fs::read_to_string(&f).unwrap().contains("load_recipe(") {
+            bad.push(rel);
+        }
+    }
+    assert!(bad.is_empty(), "these read the raw sign-in recipe - use recipe::load_effective_recipe: {bad:?}");
+}
+
+#[test]
+fn old_runs_and_proofs_still_load() {
+    use serde_json::json;
+    use v2_lib::api_templates::ApiTemplate;
+    use v2_lib::autorun::LocalRun;
+
+    let run: LocalRun = serde_json::from_value(json!({
+        "id": "run-1", "pbi_id": 7, "started_at": "1", "cases": [], "mode": "unattended"
+    }))
+    .expect("a run saved before environments still loads");
+    assert_eq!(run.environment, None);
+    assert!(serde_json::to_value(&run).unwrap().get("environment").is_none());
+    let named = LocalRun { environment: Some("QA".into()), ..run };
+    assert_eq!(serde_json::to_value(&named).unwrap()["environment"], "QA");
+
+    let mut t = crate::common::template_on_stage("pms-rules", "Rules", "rules");
+    t["proven"] = json!({ "at": "2026-09-01 09:00:00", "origin": "https://hr.example.internal", "account": "admin", "outputs": {} });
+    let t: ApiTemplate = serde_json::from_value(t).expect("a proof saved before environments still loads");
+    let proven = t.proven.clone().unwrap();
+    assert_eq!(proven.environment, None);
+    let back = serde_json::to_value(&t).unwrap();
+    assert!(back["proven"].get("environment").is_none(), "{back}");
+    let mut named = t;
+    named.proven.as_mut().unwrap().environment = Some("QA".into());
+    assert_eq!(serde_json::to_value(&named).unwrap()["proven"]["environment"], "QA");
+}
+
+/// A supervised run reaches disk through `auto_run_save_run`: the first save
+/// of a new run is stamped with the active environment, and a run already
+/// on disk - one saved before environments, say - is never re-stamped.
+#[test]
+fn a_new_run_records_the_active_environment() {
+    use v2_lib::autorun::store::{load_run, save_run};
+    use v2_lib::autorun::LocalRun;
+    use v2_lib::commands::autorun::save_run_at;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (_, qa) = two_envs(root);
+    set_active(root, &qa).unwrap();
+    let run = |id: &str| LocalRun {
+        id: id.into(),
+        pbi_id: 7,
+        started_at: "1".into(),
+        cases: vec![],
+        mode: String::new(),
+        published: None,
+        environment: None,
+    };
+
+    save_run_at(root, run("run-new")).unwrap();
+    assert_eq!(load_run(root, "run-new").unwrap().unwrap().environment.as_deref(), Some("QA"));
+
+    save_run(root, &run("run-old")).unwrap();
+    save_run_at(root, run("run-old")).unwrap();
+    assert_eq!(load_run(root, "run-old").unwrap().unwrap().environment, None, "an existing run is not re-stamped");
+
+    assert!(save_run_at(root, run("../x")).is_err(), "the id is still checked");
 }

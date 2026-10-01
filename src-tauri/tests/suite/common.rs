@@ -614,6 +614,7 @@ pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templat
         origin: "https://hr.example.internal".into(),
         account: "admin".into(),
         outputs: Default::default(),
+        environment: None,
     });
     t
 }

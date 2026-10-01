@@ -125,4 +125,8 @@ pub struct LocalRun {
     /// Set once the run has been sent to Azure DevOps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published: Option<PublishedRun>,
+    /// The name of the environment the run was made in, as it was then.
+    /// `None` for a run saved before environments existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }

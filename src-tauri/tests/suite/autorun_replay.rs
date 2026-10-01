@@ -47,7 +47,7 @@ fn quick() -> Timing {
 }
 
 fn new_run(id: &str) -> LocalRun {
-    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None }
+    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None }
 }
 
 fn script(case_id: i32, account: Option<&str>, steps: serde_json::Value) -> CaseScript {

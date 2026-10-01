@@ -432,9 +432,10 @@ fn real_template_browsers(which: crate::browser::launch::Browser) -> crate::comm
     crate::commands::autorun_replay::RealBrowsers::new(which, false)
 }
 
-/// The origin of this project's sign-in recipe, or None without one.
+/// The origin this project signs in at in the active environment - the
+/// environment's address, else the recipe's - or None without a recipe.
 fn recipe_origin(root: &std::path::Path, org: &str, project: &str) -> Option<String> {
-    crate::autorun::recipe::load_recipe(root, org, project)
+    crate::autorun::recipe::load_effective_recipe(root, org, project)
         .ok()
         .flatten()
         .and_then(|r| crate::autorun::recipe::origin_of(&r.start_url))
@@ -892,6 +893,9 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
             origin: recipe_origin(root, org, project).unwrap_or_default(),
             account: req.account.clone(),
             outputs: report.outputs.clone(),
+            // The run held the template slot, so no switch happened since
+            // it signed in: the active environment is the one it ran in.
+            environment: crate::environments::active(root).ok().map(|e| e.name),
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
         match store::save(root, org, project, &t) {

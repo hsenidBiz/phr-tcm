@@ -115,6 +115,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
         }],
         mode: String::new(),
         published: None,
+        environment: None,
     };
     save_run(dir.path(), &run).unwrap();
 
@@ -137,6 +138,7 @@ fn runs_come_back_newest_first() {
                 cases: vec![],
                 mode: String::new(),
                 published: None,
+                environment: None,
             },
         )
         .unwrap();
@@ -159,6 +161,7 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
             cases: vec![],
             mode: String::new(),
             published: None,
+            environment: None,
         },
     )
     .unwrap();
@@ -396,6 +399,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             duration_ms: None,
             account: None,
         }],
+        environment: None,
     };
     save_run(root, &run).unwrap();
 
@@ -599,6 +603,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             duration_ms: None,
             account: None,
         }],
+        environment: None,
     };
     save_run(root, &unpublished).unwrap();
     let published = LocalRun {
@@ -612,6 +617,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             at: "2".into(),
         }),
         cases: vec![],
+        environment: None,
     };
     save_run(root, &published).unwrap();
 
