@@ -68,6 +68,7 @@ if ($IsBeta) { $buildArgs += @("--", "--no-bundle") }
 if ($DryRun) {
     Write-Host "Dry run: $Version (beta: $IsBeta)"
     Write-Host "  npm $($buildArgs -join ' ')"
+    Write-Host "  scripts/pack.ps1 -Version $Version -DeltaFrom $repoUrl (downloads the previous release, packs full + delta)"
     Write-Host "  vpk $($uploadArgs -join ' ') --token *** --outputDir Releases"
     Write-Host "  then scripts/publish-guide.ps1 -Version ${Version} - zip src-tauri/help, write how-to-use.json, gh release upload to phr-tcm"
     return
@@ -134,7 +135,10 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tauri build failed" }
 Pop-Location
 
 # --- Pack ------------------------------------------------------------------
-& (Join-Path $PSScriptRoot "pack.ps1") -Version $Version
+# -DeltaFrom: updates download only what changed since the release
+# installs are on now (see pack.ps1); the upload below publishes the delta
+# with the full package.
+& (Join-Path $PSScriptRoot "pack.ps1") -Version $Version -DeltaFrom $repoUrl
 
 # --- Publish ---------------------------------------------------------------
 # phr-tcm is the feed. The old personal feed is published only on
