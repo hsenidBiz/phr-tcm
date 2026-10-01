@@ -393,6 +393,49 @@ test("closing the recording browser ends the recording and frees the recorder", 
   await waitFor(() => expect(cancels).toBe(1));
 });
 
+/** Emits `closed` the moment `name`'s button is in the page - from the
+ * page-change notice of the very commit that shows it, before React's
+ * passive effects have run. React's scheduler is made to yield after every
+ * task while this waits (its clock jumps on each read), which is what a
+ * busy machine does: the commit lands in one task and the passive effects
+ * in a later one, and the close arrives in between. */
+function closeAsSoonAsShown(name: string): () => void {
+  let t = performance.now();
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 50));
+  const seen = new MutationObserver(() => {
+    if (!screen.queryByRole("button", { name })) return;
+    seen.disconnect();
+    void import("@tauri-apps/api/event").then(({ emit }) =>
+      emit("recording-event", { kind: "closed", index: 0, readable: "", detail: "closed", password: false }),
+    );
+  });
+  seen.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    seen.disconnect();
+    clock.mockRestore();
+  };
+}
+
+test("a close that arrives as the recording screen appears still frees the recorder", async () => {
+  let cancels = 0;
+  mount(
+    recorder(undefined, (cmd) => {
+      if (cmd === "auto_run_record_cancel") cancels += 1;
+    }),
+    { recipe: RECIPE },
+  );
+  const start = await screen.findByRole("button", { name: "Start" });
+  await waitFor(() => expect(start).toBeEnabled());
+  const stop = closeAsSoonAsShown("Finish");
+  try {
+    fireEvent.click(start);
+    expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  } finally {
+    stop();
+  }
+  await waitFor(() => expect(cancels).toBe(1));
+});
+
 test("a recording left open from before can be cancelled when the dialog opens", async () => {
   let open = true;
   let cancels = 0;

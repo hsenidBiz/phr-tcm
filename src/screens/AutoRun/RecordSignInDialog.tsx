@@ -10,7 +10,7 @@
 // holds that the person wrote is the fixed text they give here.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   commands,
   events,
@@ -124,8 +124,12 @@ export default function RecordSignInDialog({
   const who = keys.includes(picked) ? picked : (keys[0] ?? "");
   const noAccounts = accounts.isSuccess && keys.length === 0;
 
+  // Kept in step in a LAYOUT effect: it runs inside the commit that shows
+  // a phase, so an event that arrives straight after (a `closed` the
+  // moment the recording screen appears) reads that phase. A passive
+  // effect can run a task later, and the listener then reads the old one.
   const phaseRef = useRef(phase);
-  useEffect(() => {
+  useLayoutEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 

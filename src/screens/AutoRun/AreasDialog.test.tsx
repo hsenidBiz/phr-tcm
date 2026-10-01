@@ -186,6 +186,54 @@ test("closing the recording browser ends the recording and frees it", async () =
   await waitFor(() => expect(cancels).toBe(1));
 });
 
+/** Emits `closed` the moment `name`'s button is in the page - from the
+ * page-change notice of the very commit that shows it, before React's
+ * passive effects have run. React's scheduler is made to yield after every
+ * task while this waits (its clock jumps on each read), which is what a
+ * busy machine does: the commit lands in one task and the passive effects
+ * in a later one, and the close arrives in between. */
+function closeAsSoonAsShown(name: string): () => void {
+  let t = performance.now();
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 50));
+  const seen = new MutationObserver(() => {
+    if (!screen.queryByRole("button", { name })) return;
+    seen.disconnect();
+    void import("@tauri-apps/api/event").then(({ emit }) =>
+      emit("recording-event", { kind: "closed", index: 0, readable: "", detail: "closed", password: false }),
+    );
+  });
+  seen.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    seen.disconnect();
+    clock.mockRestore();
+  };
+}
+
+test("a close that arrives as the recording screen appears still frees the recorder", async () => {
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_record_start") return null;
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  const record = await screen.findByRole("button", { name: "Record an area…" });
+  await waitFor(() => expect(record).toBeEnabled());
+  fireEvent.click(record);
+  fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Leave" }));
+  const stop = closeAsSoonAsShown("Stop");
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  } finally {
+    stop();
+  }
+  await waitFor(() => expect(cancels).toBe(1));
+});
+
 /// Fix round 1: Start must always be cancellable, even while it is still
 /// signing in - there was previously no way out of the "starting" phase.
 test("Cancel is available while the recording browser is opening, not Stop", async () => {

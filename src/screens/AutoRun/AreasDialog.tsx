@@ -10,7 +10,7 @@
 // machine, beside the project's sign-in recipe.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { commands, events } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import Combobox from "../../components/ui/combobox";
@@ -99,8 +99,12 @@ export default function AreasDialog({
   // a plain closure over `phase` there would see whatever phase was current
   // on mount forever, so a "closed" event arriving during "starting" (where
   // there is no recording to free) would misread it as "recording" too.
+  // Kept in step in a LAYOUT effect: it runs inside the commit that shows
+  // a phase, so an event that arrives straight after (a `closed` the
+  // moment the recording screen appears) reads that phase. A passive
+  // effect can run a task later, and the listener then reads the old one.
   const phaseRef = useRef(phase);
-  useEffect(() => {
+  useLayoutEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 
