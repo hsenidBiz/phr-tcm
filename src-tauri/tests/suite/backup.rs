@@ -270,6 +270,70 @@ fn a_restore_that_fails_after_accounts_json_has_still_dropped_the_sessions() {
     let _ = std::fs::remove_dir_all(&dst);
 }
 
+const OLD_LIST: &str = r#"[{"key":"hr.sup","label":"Supervisor","username":"sup1","password":"pw-Zq9"}]"#;
+
+fn usernames(root: &std::path::Path) -> Vec<String> {
+    v2_lib::autorun::accounts::load_accounts(root).unwrap().into_iter().map(|a| a.username).collect()
+}
+
+/// A backup made before environments carries the one machine-wide
+/// `autorun/accounts.json` and no `autorun/environments.json`. By the time
+/// anyone imports it the app has already made Default (the title bar reads
+/// the active environment at startup), so that list would land in a file
+/// nothing reads. It must become the ACTIVE environment's list instead.
+#[test]
+fn an_old_backups_accounts_land_in_the_active_environment() {
+    let dst = tmpdir("restore-old-accounts");
+    let root = dst.join("autorun");
+    std::fs::create_dir_all(&root).unwrap();
+    let env_file = v2_lib::environments::load_or_init(&root, Some("dev-read")).unwrap();
+    std::fs::create_dir_all(root.join("sessions").join(&env_file.active)).unwrap();
+    std::fs::write(root.join("sessions").join(&env_file.active).join("hr.sup.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![BackupFile { path: "autorun/accounts.json".into(), b64: b64.encode(OLD_LIST) }];
+    restore_files(&dst, &files).unwrap();
+
+    assert_eq!(usernames(&root), ["sup1"], "the restored list is the active environment's");
+    assert_eq!(v2_lib::environments::active_id(&root).unwrap(), env_file.active, "no new environment was made");
+    assert!(!root.join("sessions").exists(), "sessions are dropped as for any accounts restore");
+    assert!(!root.join("accounts.json").exists(), "the frozen machine-wide copy is not left behind");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// The same backup restored before Default exists: Default is made from it.
+#[test]
+fn an_old_backup_on_a_fresh_machine_becomes_defaults_accounts() {
+    let dst = tmpdir("restore-old-accounts-fresh");
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![BackupFile { path: "autorun/accounts.json".into(), b64: b64.encode(OLD_LIST) }];
+    restore_files(&dst, &files).unwrap();
+
+    let root = dst.join("autorun");
+    assert_eq!(v2_lib::environments::active(&root).unwrap().name, "Default");
+    assert_eq!(usernames(&root), ["sup1"]);
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// A backup that carries its own environments keeps them as they were: a
+/// stray machine-wide list in it must not overwrite an environment's.
+#[test]
+fn a_backup_with_environments_keeps_its_own_accounts() {
+    let dst = tmpdir("restore-new-accounts");
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let envs = r#"{"active":"env-0a1b2c3d","environments":[{"id":"env-0a1b2c3d","name":"Default","start_url":"","allowed_origins":[],"db_id":"dev-read","test_environment":false}]}"#;
+    let own = r#"[{"key":"hr.emp","label":"Employee","username":"emp-new","password":"pw-new"}]"#;
+    let files = vec![
+        BackupFile { path: "autorun/accounts.json".into(), b64: b64.encode(OLD_LIST) },
+        BackupFile { path: "autorun/environments.json".into(), b64: b64.encode(envs) },
+        BackupFile { path: "autorun/accounts/env-0a1b2c3d.json".into(), b64: b64.encode(own) },
+    ];
+    restore_files(&dst, &files).unwrap();
+
+    assert_eq!(usernames(&dst.join("autorun")), ["emp-new"]);
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
 #[test]
 fn foreign_json_and_newer_formats_are_refused() {
     let d = tmpdir("foreign");

@@ -79,6 +79,71 @@ fn first_load_creates_default_and_moves_accounts() {
     assert_eq!(active(root).unwrap().name, "Default");
 }
 
+/// Once Default holds the copy, the machine-wide list (passwords) and the
+/// old session files (live cookies) are dead weight and go. The
+/// per-environment session folders are not touched.
+#[test]
+fn the_move_to_default_removes_the_old_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let accounts = r#"[{"key":"hr.sup","label":"Supervisor","username":"sup1","password":"pw-Zq9"}]"#;
+    std::fs::write(root.join("accounts.json"), accounts).unwrap();
+    std::fs::create_dir_all(root.join("sessions").join("env-0000000a")).unwrap();
+    std::fs::write(root.join("sessions").join("hr.sup.json"), "{}").unwrap();
+    std::fs::write(root.join("sessions").join("env-0000000a").join("keep.json"), "{}").unwrap();
+
+    let id = load_or_init(root, Some("qa-read")).unwrap().active;
+
+    let copied = std::fs::read_to_string(root.join("accounts").join(format!("{id}.json"))).unwrap();
+    assert!(copied.contains("sup1"), "{copied}");
+    assert!(!root.join("accounts.json").exists(), "the old machine-wide list is removed");
+    assert!(!root.join("sessions").join("hr.sup.json").exists(), "the old session files are removed");
+    assert!(root.join("sessions").join("env-0000000a").join("keep.json").is_file(), "folders are not touched");
+}
+
+/// Nothing is removed unless the move happened: a copy that cannot be made
+/// leaves the old list where it was, for the next start to try again.
+#[test]
+fn a_move_that_fails_keeps_the_old_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("accounts.json"), "[]").unwrap();
+    std::fs::create_dir_all(root.join("sessions")).unwrap();
+    std::fs::write(root.join("sessions").join("hr.sup.json"), "{}").unwrap();
+    // A FILE where the accounts folder must go: the copy cannot be made.
+    std::fs::write(root.join("accounts"), "not a folder").unwrap();
+
+    assert!(load_or_init(root, None).is_err());
+    assert!(!root.join("environments.json").exists());
+    assert!(root.join("accounts.json").is_file());
+    assert!(root.join("sessions").join("hr.sup.json").is_file());
+}
+
+/// Allowed sites are only used together with an environment's address, so
+/// saving them without one is refused rather than saved and ignored.
+#[test]
+fn allowed_sites_need_an_address() {
+    let mut e = env("env-00000001", "Dev", "");
+    e.allowed_origins = vec!["https://sso.x".into()];
+    let err = validate(&file(vec![e.clone()]), &known()).unwrap_err();
+    assert_eq!(err, "Also allowed needs a website address - leave both empty to use the sign-in recipe's");
+
+    e.start_url = "https://x/login".into();
+    e.allowed_origins = vec!["https://sso.x".into()];
+    assert_eq!(validate(&file(vec![e]), &known()), Ok(()));
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let before = load_or_init(root, Some("dev-read")).unwrap();
+    let mut d = before.environments[0].clone();
+    d.allowed_origins = vec!["https://sso.x".into()];
+    assert!(save_env(root, d.clone(), &known()).is_err());
+    assert_eq!(load_or_init(root, None).unwrap(), before, "nothing was saved");
+    // Blank lines are not sites: they are tidied away before the check.
+    d.allowed_origins = vec!["   ".into()];
+    assert!(save_env(root, d, &known()).is_ok());
+}
+
 #[test]
 fn first_load_without_a_chosen_database_uses_the_first_preset() {
     let dir = tempfile::tempdir().unwrap();
@@ -274,18 +339,18 @@ fn default_password_never_in_the_file() {
     assert!(!list_view(root, &store, None).unwrap().environments[0].has_default_password);
 }
 
-#[test]
-fn commands_add_edit_and_remove_through_the_store() {
+#[tokio::test]
+async fn commands_add_edit_and_remove_through_the_store() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
     list_view(root, &store, None).unwrap();
 
-    let view = save_with(root, &store, input("QA")).unwrap();
+    let view = save_with(root, &store, input("QA")).await.unwrap();
     let qa = view.environments.iter().find(|e| e.name == "QA").unwrap().id.clone();
     assert!(!qa.is_empty());
 
-    let err = save_with(root, &store, EnvInput { db_id: "gone".into(), ..input("Other") }).unwrap_err();
+    let err = save_with(root, &store, EnvInput { db_id: "gone".into(), ..input("Other") }).await.unwrap_err();
     assert!(err.contains("database"), "{err}");
 
     set_default_password_with(root, &store, &qa, "pw").unwrap();
@@ -356,6 +421,108 @@ fn switching_is_refused_while_the_supervised_browser_is_open() {
     assert_eq!(err, SWITCH_SUPERVISED_OPEN);
     assert!(err.contains("supervised browser") && err.contains("close it first"), "{err}");
     assert_eq!(refuse_switch(false), Ok(()));
+}
+
+fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
+    let e = list(root).into_iter().find(|e| e.id == id).unwrap();
+    EnvInput {
+        id: e.id,
+        name: e.name,
+        start_url: start_url.into(),
+        allowed_origins: allowed.iter().map(|s| s.to_string()).collect(),
+        db_id: e.db_id,
+        test_environment: e.test_environment,
+    }
+}
+
+/// Moving the ACTIVE environment's address is a switch in all but name:
+/// the rest of a run would sign in somewhere else. So it is refused while
+/// anything records or runs, with the switch's own reasons.
+#[tokio::test]
+async fn the_active_address_cannot_move_under_a_run() {
+    use v2_lib::commands::environments::ADDRESS_CHANGE_REFUSED;
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, _qa) = two_envs(root);
+
+    let rec = RecorderClaim::claim().expect("nothing is recording");
+    let err = save_with(root, &store, edit(root, &first, "https://moved.example/", &[])).await.unwrap_err();
+    assert!(err.starts_with(ADDRESS_CHANGE_REFUSED) && err.contains("recorded or run"), "{err}");
+    let err = save_with(root, &store, edit(root, &first, "", &[])).await;
+    assert!(err.is_ok(), "the address did not change, so nothing is refused: {err:?}");
+    let mut renamed = edit(root, &first, "", &[]);
+    renamed.name = "Local".into();
+    assert!(save_with(root, &store, renamed).await.is_ok(), "a new name moves nothing");
+    drop(rec);
+
+    let run = v2_lib::api_templates::runner::claim().expect("no template is running");
+    let err = save_with(root, &store, edit(root, &first, "https://moved.example/", &[])).await.unwrap_err();
+    assert!(err.starts_with(ADDRESS_CHANGE_REFUSED) && err.contains("API template"), "{err}");
+    drop(run);
+    assert_eq!(list(root).iter().find(|e| e.id == first).unwrap().start_url, "", "a refused edit changes nothing");
+
+    save_with(root, &store, edit(root, &first, "https://moved.example/", &["https://sso.moved.example"]))
+        .await
+        .unwrap();
+    assert_eq!(list(root).iter().find(|e| e.id == first).unwrap().start_url, "https://moved.example/");
+    assert!(!v2_lib::api_templates::runner::is_running(), "the edit gives the template slot back");
+}
+
+/// Another environment is not in use, so its address may change at any
+/// time - and whichever environment moves, its saved sessions (made at the
+/// old address) go, and only its own.
+#[tokio::test]
+async fn a_moved_address_drops_that_environments_sessions() {
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+    for id in [&first, &qa] {
+        std::fs::create_dir_all(root.join("sessions").join(id)).unwrap();
+        std::fs::write(root.join("sessions").join(id).join("hr.sup.json"), "{}").unwrap();
+    }
+
+    let rec = RecorderClaim::claim().expect("nothing is recording");
+    save_with(root, &store, edit(root, &qa, "http://localhost:5001/", &[])).await.unwrap();
+    drop(rec);
+    assert!(!root.join("sessions").join(&qa).exists(), "the moved environment's sessions go");
+    assert!(root.join("sessions").join(&first).join("hr.sup.json").is_file(), "the other's stay");
+
+    // Allowed sites alone do not move the sessions' address.
+    std::fs::create_dir_all(root.join("sessions").join(&qa)).unwrap();
+    std::fs::write(root.join("sessions").join(&qa).join("hr.sup.json"), "{}").unwrap();
+    save_with(root, &store, edit(root, &qa, "http://localhost:5001/", &["http://localhost:6001"])).await.unwrap();
+    assert!(root.join("sessions").join(&qa).join("hr.sup.json").is_file());
+}
+
+/// `add_proposals_with` reads one environment's list by id and writes it
+/// back by the same id: `save_accounts_for` writes where it is told, not
+/// wherever the active environment happens to be by then.
+#[test]
+fn accounts_are_saved_to_the_environment_named() {
+    use v2_lib::autorun::accounts::{load_accounts, load_accounts_for, save_accounts, save_accounts_for};
+    use v2_lib::autorun::sessions::save_session;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (a, b) = two_envs(root);
+    save_accounts(root, &[acct("hr.sup", "sup-a")]).unwrap();
+    set_active(root, &b).unwrap();
+    save_accounts(root, &[acct("hr.sup", "sup-b")]).unwrap();
+    save_session(root, "hr.sup", &session(1_000)).unwrap();
+
+    // b is active; a's list is written without touching b's.
+    let dropped = save_accounts_for(root, &a, &[acct("hr.sup", "sup-a2")]).unwrap();
+    assert!(dropped.is_empty(), "a had no session to drop: {dropped:?}");
+    assert_eq!(load_accounts_for(root, &a).unwrap(), vec![acct("hr.sup", "sup-a2")]);
+    assert_eq!(load_accounts(root).unwrap(), vec![acct("hr.sup", "sup-b")]);
+    assert!(root.join("sessions").join(&b).join("hr.sup.json").is_file(), "b's session is b's business");
+
+    assert!(save_accounts_for(root, "../x", &[]).is_err(), "the id is checked before it is a path");
 }
 
 #[test]
@@ -815,6 +982,28 @@ mod accounts_for_the_assistant {
         let tail = v2_lib::applog::recent(500);
         assert!(tail.iter().any(|l| l.message.contains("read the 1 account")), "the read is on record: {tail:?}");
         assert!(tail.iter().all(|l| !l.message.contains("pw-Zq9")), "{tail:?}");
+    }
+
+    /// The one route that can return passwords checks the person's switch
+    /// for it itself, as the database routes do, rather than trusting that
+    /// only the MCP proxy (which hides a switched-off tool) ever calls it.
+    #[tokio::test]
+    async fn get_accounts_is_refused_when_switched_off() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
+        mark_test_environment(dir.path());
+
+        let off = BridgeContext { disabled_tools: vec!["get_accounts".into()], ..BridgeContext::default() };
+        let (status, out) = route(&off, None, "GET", "/accounts", "", "1.0.0").await;
+        assert_eq!(status, 409, "{out}");
+        assert!(out.contains("switched off"), "{out}");
+        assert!(!out.contains("pw-Zq9") && !out.contains("sup1"), "{out}");
+
+        // Another tool switched off changes nothing for this one.
+        let other = BridgeContext { disabled_tools: vec!["db_query".into()], ..BridgeContext::default() };
+        let (status, out) = route(&other, None, "GET", "/accounts", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
     }
 
     /// The account routes are offered exactly where Auto Run is.

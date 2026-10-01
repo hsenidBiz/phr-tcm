@@ -104,7 +104,24 @@ pub fn list_view(root: &Path, store: &dyn SecretStore, current_db: Option<&str>)
     Ok(view(store, environments::load_or_init(root, current_db)?))
 }
 
-pub fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> Result<EnvListView, String> {
+/// What every switch refusal starts with; an address change says
+/// `ADDRESS_CHANGE_REFUSED` in its place.
+const SWITCH_REFUSED: &str = "the environment cannot be switched";
+/// Said, with the switch's reason, when the ACTIVE environment's address
+/// or allowed sites would change under a run.
+pub const ADDRESS_CHANGE_REFUSED: &str = "the active environment's website address cannot be changed";
+
+fn sites(list: &[String]) -> Vec<String> {
+    list.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect()
+}
+
+/// Add or edit an environment. Changing where an environment signs in -
+/// its address or allowed sites - is handled like a switch when it is the
+/// ACTIVE one: refused while something records, runs, or holds the
+/// supervised browser, because the rest of a run would sign in somewhere
+/// else. A changed address also drops that environment's saved sessions:
+/// they were made at the old address, and cookies are not port-scoped.
+pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> Result<EnvListView, String> {
     let env = Environment {
         id: env.id,
         name: env.name,
@@ -113,8 +130,48 @@ pub fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> Result<
         db_id: env.db_id,
         test_environment: env.test_environment,
     };
+    let before = if env.id.is_empty() {
+        None
+    } else {
+        environments::load_or_init(root, None)?.environments.into_iter().find(|e| e.id == env.id)
+    };
+    let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
+    let sites_moved = before.as_ref().is_some_and(|b| sites(&b.allowed_origins) != sites(&env.allowed_origins));
+    if !address_moved && !sites_moved {
+        let file = environments::save_env(root, env, &known_db_ids(store))?;
+        crate::applog::info(format!("Environments: saved ({} environment(s))", file.environments.len()));
+        return Ok(view(store, file));
+    }
+    // Held across the check and the write, exactly as a switch holds them
+    // (`set_active_with`) - which also means no switch can make this the
+    // active environment halfway through.
+    let refused = |e: String| e.replacen(SWITCH_REFUSED, ADDRESS_CHANGE_REFUSED, 1);
+    let slot = crate::commands::autorun::supervised().lock().await;
+    let run_slot = if environments::active_id(root)? == env.id {
+        refuse_switch(slot.is_some()).map_err(refused)?;
+        Some(crate::api_templates::runner::claim().ok_or_else(|| refused(SWITCH_TEMPLATE_RUNNING.to_string()))?)
+    } else {
+        None
+    };
+    let id = env.id.clone();
     let file = environments::save_env(root, env, &known_db_ids(store))?;
-    crate::applog::info(format!("Environments: saved ({} environment(s))", file.environments.len()));
+    if address_moved {
+        // `id` matched an entry the file check passed, so it is a
+        // well-formed id and this path stays inside the root.
+        match std::fs::remove_dir_all(crate::autorun::accounts::sessions_dir_for(root, &id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => crate::applog::warn(format!(
+                "Environments: the saved sessions of a moved environment stayed behind: {e}"
+            )),
+            _ => {}
+        }
+    }
+    drop(run_slot);
+    drop(slot);
+    crate::applog::info(format!(
+        "Environments: saved ({} environment(s)), one with a new {}",
+        file.environments.len(),
+        if address_moved { "website address" } else { "list of allowed sites" }
+    ));
     Ok(view(store, file))
 }
 
@@ -226,7 +283,7 @@ pub fn add_proposals_with(
     picks: Vec<AccountInput>,
     replace: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    use crate::autorun::accounts::{load_accounts_for, save_accounts, valid_key, Account};
+    use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
     let env_id = environments::active_id(root)?;
     let mut accounts = load_accounts_for(root, &env_id)?;
     let mut default: Option<Option<String>> = None;
@@ -281,7 +338,9 @@ pub fn add_proposals_with(
             None => accounts.push(a),
         }
     }
-    save_accounts(root, &accounts)?;
+    // Written back by the id it was read by: a switch in between must not
+    // put this environment's list into the next one.
+    save_accounts_for(root, &env_id, &accounts)?;
     crate::applog::info(format!("Environments: added {} proposed account(s)", added.len()));
     // The accounts are saved: a proposal that will not update is logged,
     // not a failure of the add.
@@ -308,8 +367,12 @@ pub fn env_list(
 
 #[tauri::command]
 #[specta::specta]
-pub fn env_save(app: tauri::AppHandle, secrets: State<'_, DbSecrets>, env: EnvInput) -> Result<EnvListView, String> {
-    save_with(&super::autorun::root(&app)?, &*secrets.0, env)
+pub async fn env_save(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    env: EnvInput,
+) -> Result<EnvListView, String> {
+    save_with(&super::autorun::root(&app)?, &*secrets.0, env).await
 }
 
 #[tauri::command]

@@ -296,7 +296,7 @@ pub async fn route(
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
         ("POST", "/accounts-propose") => accounts_propose(body),
-        ("GET", "/accounts") => accounts_read(),
+        ("GET", "/accounts") => accounts_read(ctx),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -1697,11 +1697,24 @@ fn accounts_propose(body: &str) -> (u16, String) {
     )
 }
 
+/// Said when `GET /accounts` arrives while the person has switched the
+/// `get_accounts` tool off.
+pub const GET_ACCOUNTS_OFF: &str =
+    "reading the accounts is switched off - turn on get_accounts on the AI Bridge tab";
+
 /// `GET /accounts`: the active environment's accounts - key, label and
 /// username, and the password ONLY when the environment is marked as a
 /// test environment. The one place a password leaves the app; it is never
 /// logged, and the log line says only how many were read.
-fn accounts_read() -> (u16, String) {
+///
+/// Refused while the person has switched `get_accounts` off on the AI
+/// Bridge tab. The MCP proxy already hides a switched-off tool; this route
+/// checks again itself, as the database routes do (`stage_db`), because it
+/// is the one that can hand out passwords.
+fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
+    if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
+        return (409, GET_ACCOUNTS_OFF.to_string());
+    }
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,

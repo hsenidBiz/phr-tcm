@@ -207,6 +207,10 @@ pub fn read_doc(path: &Path) -> Result<BackupDoc, String> {
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut restored = 0u32;
+    // A backup from before environments: the machine-wide list, and no
+    // environments file to say whose it is. Kept until the loop is done.
+    let mut legacy_accounts: Option<Vec<u8>> = None;
+    let mut has_environments = false;
     for f in files {
         if !safe_relative_path(&f.path) {
             crate::applog::warn(format!("Backup import skipped an unsafe path: {}", f.path));
@@ -219,9 +223,13 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
+        let norm = f.path.replace('\\', "/").to_ascii_lowercase();
+        if norm == "autorun/accounts.json" {
+            legacy_accounts = Some(bytes.clone());
+        }
+        has_environments |= norm == "autorun/environments.json";
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
         restored += 1;
-        let norm = f.path.replace('\\', "/").to_ascii_lowercase();
         // The old single list, or any one environment's list
         // (`autorun/accounts/<env id>.json`).
         let is_accounts_file = norm == "autorun/accounts.json"
@@ -243,5 +251,36 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
             let _ = std::fs::remove_dir_all(data_dir.join("autorun").join("sessions"));
         }
     }
+    if let Some(list) = legacy_accounts {
+        restore_legacy_accounts(&data_dir.join("autorun"), &list, has_environments)?;
+    }
     Ok(restored)
+}
+
+/// The machine-wide `accounts.json` a backup restored. Nothing reads that
+/// file since environments: from a backup made before them (no
+/// `environments.json` in it) the list becomes the ACTIVE environment's -
+/// Default is made from it if there is no environment yet. A backup that
+/// carries its own environments carries their lists too, and the stray
+/// machine-wide one is only a frozen copy. Either way it is not left on
+/// disk: it holds passwords and nothing would ever read it.
+fn restore_legacy_accounts(root: &Path, list: &[u8], has_environments: bool) -> Result<(), String> {
+    if !has_environments {
+        let failed = |e: String| format!("the Auto Run accounts were restored but could not be given to the active environment: {e}");
+        // Makes Default from the restored file when there is no
+        // environments file yet (and then removes it).
+        let id = crate::environments::active_id(root).map_err(failed)?;
+        let to = crate::autorun::accounts::accounts_path_for(root, &id);
+        std::fs::create_dir_all(to.parent().unwrap_or(root)).map_err(|e| failed(e.to_string()))?;
+        let text = String::from_utf8_lossy(list);
+        crate::ai_tools::atomic_write(&to, &text).map_err(failed)?;
+        crate::applog::info("Backup import: the Auto Run accounts went to the active environment");
+    }
+    match std::fs::remove_file(root.join("accounts.json")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            crate::applog::warn(format!("Backup import: the old accounts file stayed behind: {e}"))
+        }
+        _ => {}
+    }
+    Ok(())
 }

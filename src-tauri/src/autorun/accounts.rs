@@ -161,7 +161,19 @@ pub fn account_for_run(root: &Path, key: Option<&str>) -> Result<Option<String>,
 pub fn save_accounts(root: &Path, accounts: &[Account]) -> Result<Vec<String>, String> {
     validate_accounts(accounts)?;
     let env_id = crate::environments::active_id(root)?;
-    let before = load_accounts(root).unwrap_or_default();
+    save_accounts_for(root, &env_id, accounts)
+}
+
+/// `save_accounts` for one environment by id - for a caller that read the
+/// list by that id and must write it back to the same environment, even
+/// if a switch lands in between.
+pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Result<Vec<String>, String> {
+    if !crate::environments::valid_id(env_id) {
+        return Err(format!("\"{env_id}\" is not a usable environment id"));
+    }
+    validate_accounts(accounts)?;
+    let env_id = env_id.to_string();
+    let before = load_accounts_for(root, &env_id).unwrap_or_default();
     let path = accounts_path_for(root, &env_id);
     std::fs::create_dir_all(path.parent().expect("accounts folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(accounts).map_err(|e| e.to_string())?;

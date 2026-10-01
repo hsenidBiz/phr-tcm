@@ -46,6 +46,11 @@ pub struct EnvFile {
 
 const DEFAULT_NAME: &str = "Default";
 
+/// Said for allowed sites saved on an environment with no address: they
+/// would never be used, since an empty address means the recipe's own.
+pub const ALLOWED_NEEDS_ADDRESS: &str =
+    "Also allowed needs a website address - leave both empty to use the sign-in recipe's";
+
 /// Every read-modify-write of the file holds this, so two commands at once
 /// cannot each make a "Default" or lose the other's change.
 static LOCK: Mutex<()> = Mutex::new(());
@@ -70,7 +75,7 @@ pub fn password_target(id: &str) -> String {
 
 /// `env-` and eight lowercase hex digits - the only shape `new_id` makes,
 /// and the only one allowed into a file path.
-fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     id.strip_prefix("env-")
         .is_some_and(|hex| hex.len() == 8 && hex.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)))
 }
@@ -138,6 +143,11 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
             check_start_url(e.start_url.trim()).map_err(|_| {
                 format!("the website address of \"{name}\" must be a full http or https address, or empty")
             })?;
+        } else if e.allowed_origins.iter().any(|o| !o.trim().is_empty()) {
+            // Without an address the recipe's own address and allowed sites
+            // are used (`recipe::effective_recipe`), so these would be saved
+            // and then never read.
+            return Err(ALLOWED_NEEDS_ADDRESS.to_string());
         }
         for o in &e.allowed_origins {
             if !is_bare_origin(o) {
@@ -206,7 +216,36 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
     };
     write(root, &file)?;
     crate::applog::info("Environments: made Default from this machine's settings");
+    // Only now - the copy is written and the file that points at it is
+    // saved - are the old single list and its sessions dead weight. The
+    // list holds passwords and the sessions live cookies, so neither is
+    // left lying about (or carried into every backup).
+    remove_legacy_files(root);
     Ok(file)
+}
+
+/// The machine-wide `accounts.json` and the session FILES directly under
+/// `sessions/` from before environments. The per-environment folders
+/// (`sessions/<env id>/`) are not touched. Best effort: a file that will
+/// not go is logged, and nothing reads it any more.
+pub fn remove_legacy_files(root: &Path) {
+    let warn = |e: std::io::Error| {
+        crate::applog::warn(format!("Environments: an old accounts or session file stayed behind: {e}"))
+    };
+    match std::fs::remove_file(root.join("accounts.json")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => warn(e),
+        _ => {}
+    }
+    let Ok(entries) = std::fs::read_dir(root.join("sessions")) else { return };
+    for entry in entries.flatten() {
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+        let is_json = entry.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("json"));
+        if is_file && is_json {
+            if let Err(e) = std::fs::remove_file(entry.path()) {
+                warn(e);
+            }
+        }
+    }
 }
 
 /// The environments, creating `Default` on first use: an empty address (the
