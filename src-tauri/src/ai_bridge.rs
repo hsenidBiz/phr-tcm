@@ -291,6 +291,7 @@ pub async fn route(
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
+        ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -455,6 +456,16 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
     let origin = recipe_origin(&root, &ctx.org, &ctx.project);
     let mut out = crate::api_templates::guide::text(&keys, origin.as_deref());
     out.push_str(&crate::test_files::guide_section(&project_test_files(&root, ctx)));
+    // The project's quirks - the same list, and the same section, the Auto
+    // Run guide ends with: active notes only, each with its evidence.
+    if !ctx.org.trim().is_empty() && !ctx.project.trim().is_empty() {
+        let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+        let section = crate::autorun::quirks::quirks_section(&quirks);
+        if !section.is_empty() {
+            out.push('\n');
+            out.push_str(&section);
+        }
+    }
     out
 }
 
@@ -1459,26 +1470,81 @@ fn autorun_failures(target: &str) -> (u16, String) {
 
 /// Record something learned about the application, attributed, so the
 /// next script does not rediscover the same surprise.
+///
+/// `from` says which assistant's work it came out of: "autorun" (the
+/// default) or "api", for one building API templates. Both read the same
+/// list - one per project.
 fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::quirks::{record_quirk, Recorded, FROM_API, FROM_AUTORUN};
     let text = match body_field(body, "text", "{ \"text\": \"one line about this application\" }") {
         Ok(serde_json::Value::String(s)) => s,
         Ok(_) => return (400, "\"text\" is one line of text".to_string()),
         Err(refused) => return refused,
     };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let from = match v.get("from") {
+        None | Some(serde_json::Value::Null) => FROM_AUTORUN,
+        Some(serde_json::Value::String(s)) if s == FROM_AUTORUN => FROM_AUTORUN,
+        Some(serde_json::Value::String(s)) if s == FROM_API => FROM_API,
+        Some(_) => return (400, format!("\"from\" is \"{FROM_AUTORUN}\" or \"{FROM_API}\"")),
+    };
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    match crate::autorun::quirks::add_quirk(
+    match record_quirk(
         &root,
         &ctx.org,
         &ctx.project,
         &text,
         "assistant",
+        from,
+        Vec::new(),
         crate::autorun::sessions::now_ms(),
     ) {
-        Ok(true) => (200, "recorded".to_string()),
-        Ok(false) => (200, "already known".to_string()),
+        Ok(Recorded::Added(id)) => (200, format!("recorded as {id}")),
+        Ok(Recorded::AlreadyKnown(id)) => (200, format!("already known, as {id}")),
+        Ok(Recorded::Reactivated(id)) => (200, format!("{id} had been retired - it is back on the list")),
+        Err(why) => (400, why),
+    }
+}
+
+/// Retire one of the assistant's own quirks, with a reason - and, when
+/// `replacement` is given, file the better note in the same call, keeping
+/// the old one's sources. A person's note is refused: it is theirs to
+/// remove, in the app.
+fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::quirks::{retire_in, update_quirks, Recorded};
+    let shape = "{ \"id\": \"q1a2b3c\", \"reason\": \"why it no longer helps\", \"replacement\": \"optional better note\" }";
+    let id = match body_field(body, "id", shape) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(_) => return (400, "\"id\" is a quirk's id, as the guide shows it".to_string()),
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let reason = match v.get("reason") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(_) => return (400, "\"reason\" is one sentence".to_string()),
+    };
+    let replacement = match v.get("replacement") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(_) => return (400, "\"replacement\" is one line of text".to_string()),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let now = crate::autorun::sessions::now_ms();
+    match update_quirks(&root, &ctx.org, &ctx.project, |list| {
+        retire_in(list, &id, reason.as_deref(), replacement.as_deref(), true, now)
+    }) {
+        Ok((None, _)) => (200, format!("retired {}", id.trim())),
+        Ok((Some(Recorded::Added(new)), _)) => (200, format!("retired {}, replaced by {new}", id.trim())),
+        Ok((Some(Recorded::AlreadyKnown(new) | Recorded::Reactivated(new)), _)) => {
+            (200, format!("retired {} - the replacement is already on the list as {new}", id.trim()))
+        }
         Err(why) => (400, why),
     }
 }
@@ -1793,6 +1859,17 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     Ok(SaveRequest { scripts: serde_json::from_value(scripts_value).map_err(bad_scripts)?, edits })
 }
 
+/// The case and steps a repair's quirk is about, with the class of the
+/// failure that led to it (read from the newest run of that case).
+fn repair_source(
+    root: &std::path::Path,
+    old: &crate::autorun::CaseScript,
+    edit: &crate::autorun::edits::Edit,
+) -> crate::autorun::quirks::QuirkSource {
+    let run = crate::autorun::failures::latest_run(root, Some(edit.case_id));
+    crate::autorun::quirks::source_for_repair(run.as_ref(), old, edit.case_id, &edit.steps)
+}
+
 /// Is the script sent word for word the one already on disk?
 ///
 /// Compared the way the declared-edit gate compares steps - by
@@ -1899,6 +1976,7 @@ async fn save_autorun_scripts(
     // Gate 1: what this bundle does to the scripts already on disk.
     let mut prepared: Vec<crate::autorun::CaseScript> = Vec::with_capacity(scripts.len());
     let mut lines: Vec<String> = Vec::with_capacity(scripts.len());
+    let mut repair_sources: Vec<crate::autorun::quirks::QuirkSource> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -1943,6 +2021,11 @@ async fn save_autorun_scripts(
                         script.case_id, e.steps
                     ));
                     script.last_repair = Some(why.to_string());
+                    // Read now, while the script on disk is still the
+                    // one that ran: its targets classify the failure.
+                    if e.quirk.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+                        repair_sources.push(repair_source(&root, &old, e));
+                    }
                 }
                 lines.push(format!(
                     "case {} (repaired, {} of {} used)",
@@ -2035,20 +2118,33 @@ async fn save_autorun_scripts(
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
     // so about, but it is not worth losing a good repair over.
+    // Each quirk keeps the case and steps of its repair, and the class of
+    // the failure that led to it, so later runs can say whether it helped.
     for edit in &edits {
         let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
-        match crate::autorun::quirks::add_quirk(
+        let sources: Vec<crate::autorun::quirks::QuirkSource> =
+            repair_sources.iter().filter(|s| s.case_id == edit.case_id).cloned().collect();
+        match crate::autorun::quirks::record_quirk(
             &root,
             &ctx.org,
             &ctx.project,
             text,
             "assistant",
+            crate::autorun::quirks::FROM_AUTORUN,
+            sources,
             crate::autorun::sessions::now_ms(),
         ) {
-            Ok(true) => report.push(format!("quirk recorded: {}", text.trim())),
-            Ok(false) => report.push(format!("quirk already known: {}", text.trim())),
+            Ok(crate::autorun::quirks::Recorded::Added(id)) => {
+                report.push(format!("quirk recorded as {id}: {}", text.trim()))
+            }
+            Ok(crate::autorun::quirks::Recorded::AlreadyKnown(id)) => {
+                report.push(format!("quirk already known, as {id}: {}", text.trim()))
+            }
+            Ok(crate::autorun::quirks::Recorded::Reactivated(id)) => {
+                report.push(format!("quirk {id} had been retired - it is back on the list: {}", text.trim()))
+            }
             Err(why) => report.push(format!("quirk not recorded: {why}")),
         }
     }

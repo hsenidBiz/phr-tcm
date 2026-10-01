@@ -630,15 +630,23 @@ async fn a_quirk_travels_with_the_edit() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert!(
-        out.contains("quirk recorded: the toast is rendered into a portal at the end of the body"),
+        out.contains(&format!(
+            "quirk recorded as {}: the toast is rendered into a portal at the end of the body",
+            quirks[0].id
+        )),
         "{out}"
     );
-
-    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert_eq!(quirks.len(), 1);
     assert_eq!(quirks[0].text, "the toast is rendered into a portal at the end of the body");
     assert_eq!(quirks[0].by, "assistant");
+    // It remembers the repair it came with, so later runs can say whether
+    // it helped. No run of case 7 is on this machine: no class to keep.
+    assert_eq!(
+        quirks[0].sources,
+        vec![v2_lib::autorun::quirks::QuirkSource { case_id: 7, steps: vec![2], class: None }]
+    );
 
     // The same quirk a second time is not written twice, and the report
     // says so rather than pretending something new was learned.
@@ -655,7 +663,7 @@ async fn a_quirk_travels_with_the_edit() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &repeat, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("quirk already known:"), "{out}");
+    assert!(out.contains("quirk already known, as "), "{out}");
     assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), 1);
 }
 
@@ -1164,7 +1172,7 @@ async fn failures_are_read_from_the_latest_run() {
 }
 
 /// A quirk can be recorded on its own, not only alongside a repair - and
-/// one already on the list is not written twice.
+/// one already on the list is not written twice. The answer names its id.
 #[tokio::test]
 async fn a_quirk_can_be_recorded_on_its_own() {
     let dir = TempDir::new();
@@ -1174,20 +1182,26 @@ async fn a_quirk_can_be_recorded_on_its_own() {
     let body = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "recorded");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(out, format!("recorded as {}", quirks[0].id));
 
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "already known");
+    assert_eq!(out, format!("already known, as {}", quirks[0].id));
 
     let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert_eq!(quirks.len(), 1);
     assert_eq!(quirks[0].by, "assistant");
+    assert_eq!(quirks[0].from, "autorun");
 
     let empty = serde_json::json!({ "text": "   " }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &empty, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(!out.is_empty());
+
+    let bad_from = serde_json::json!({ "text": "x", "from": "elsewhere" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &bad_from, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
 }
 
 /// The guide's constant only says a quirks section exists - the route is
@@ -1206,16 +1220,112 @@ async fn the_route_appends_the_projects_quirks() {
     let saved = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &saved, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
+    let id = load_quirks(dir.path(), "acme", "Web").unwrap()[0].id.clone();
 
     let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert_eq!(status, 200);
     assert!(body.starts_with(&autorun_guide()), "the guide's own text must survive unchanged");
+    assert!(body.contains("## Known quirks of this application\n\n"), "{body}");
     assert!(
-        body.contains(
-            "## Known quirks of this application\n\n- the grid paginates at 25 rows (recorded by the assistant)"
-        ),
+        body.contains(&format!("- [{id}] (assistant) the grid paginates at 25 rows\n")),
         "the recorded quirk never reached the guide: {body}"
     );
+}
+
+/// The retire route: an assistant's own note goes, with its reason, and
+/// leaves both guides; a replacement takes its place and its sources; a
+/// person's note is refused in so many words.
+#[tokio::test]
+async fn the_assistant_retires_its_own_quirk_and_never_a_persons() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, QuirkSource, PERSON_NOTE};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut mine = Quirk::new("the grid needs a second click", "assistant", "autorun", 1);
+    mine.sources = vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }];
+    let theirs = Quirk::new("the search box debounces 400ms", "person", "autorun", 2);
+    save_quirks(dir.path(), "acme", "Web", &[mine, theirs]).unwrap();
+    let list = load_quirks(dir.path(), "acme", "Web").unwrap();
+    let (mine_id, theirs_id) = (list[0].id.clone(), list[1].id.clone());
+
+    let refused = serde_json::json!({ "id": theirs_id, "reason": "no longer true" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &refused, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, PERSON_NOTE));
+
+    let no_reason = serde_json::json!({ "id": mine_id }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &no_reason, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+
+    let body = serde_json::json!({
+        "id": mine_id,
+        "reason": "it was the spinner, not the grid",
+        "replacement": "a spinner covers the grid while it loads",
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let list = load_quirks(dir.path(), "acme", "Web").unwrap();
+    let new = list.iter().find(|q| q.text == "a spinner covers the grid while it loads").unwrap();
+    assert_eq!(out, format!("retired {mine_id}, replaced by {}", new.id));
+    assert_eq!(new.sources, vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }]);
+    let old = list.iter().find(|q| q.id == mine_id).unwrap();
+    assert_eq!(old.status, "retired");
+    assert_eq!(old.retired_reason.as_deref(), Some("it was the spinner, not the grid"));
+
+    // Out of both guides; the replacement and the person's note stay.
+    let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    let (_, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    for guide in [&autorun, &api] {
+        assert!(!guide.contains("the grid needs a second click"), "{guide}");
+        assert!(guide.contains("a spinner covers the grid while it loads"), "{guide}");
+        assert!(guide.contains("the search box debounces 400ms"), "{guide}");
+    }
+}
+
+/// One list per project, read by both assistants: the API templates
+/// guide ends with the same section as the Auto Run guide, and a note
+/// filed from API template work says so.
+#[tokio::test]
+async fn the_api_template_guide_ends_with_the_same_quirks_section() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let (_, before) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert!(!before.contains("## Known quirks of this application\n\n"), "{before}");
+
+    let body = serde_json::json!({ "text": "the leave handler wants a CSRF header", "from": "api" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks[0].from, "api");
+
+    let (status, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    let line = format!("- [{}] (assistant, API) the leave handler wants a CSRF header\n", quirks[0].id);
+    assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
+    let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
+    assert!(api.contains("retire_autorun_quirk") && api.contains("\"from\": \"api\""), "the guide teaches both: {api}");
+}
+
+/// A full list refuses one more through the bridge, naming the tool and
+/// the candidates.
+#[tokio::test]
+async fn a_full_list_refuses_through_the_bridge_with_candidates() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({ "text": "one more" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("retire_autorun_quirk"), "{out}");
+    assert!(out.contains("\"note 0\"") && out.contains("\"note 1\"") && out.contains("\"note 2\""), "{out}");
+    assert!(!out.contains("\"note 3\""), "{out}");
 }
 
 // ----------------------------------------------------------- the dev gate
@@ -1257,6 +1367,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-try",
         "/autorun-failures",
         "/autorun-quirk",
+        "/autorun-quirk-retire",
     ];
     for path in autorun {
         let (status, body) =

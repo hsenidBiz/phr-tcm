@@ -360,10 +360,20 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; a line already on the list is not written twice. A quirk can also travel with a repair, as an edit's `quirk`.",
+            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one that was retired comes back rather than being copied. A quirk can also travel with a repair, as an edit's `quirk` - then later runs count whether it helped. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
+                "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
             }), &["text"]),
+        },
+        {
+            "name": "retire_autorun_quirk",
+            "description": "Retire one of the assistant's own quirks that no longer helps - one never confirmed by a run, or more often unhelpful than helpful, is the usual candidate. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows (e.g. q1a2b3c) and one sentence of why. With `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
+                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
+                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
+            }), &["id", "reason"]),
         },
         {
             "name": "get_api_template_guide",
@@ -738,6 +748,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &target, "")
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
+        "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),
         "list_api_templates" => call("GET", "/api-templates", ""),
         // The bridge reads its fields out of the body (a template or

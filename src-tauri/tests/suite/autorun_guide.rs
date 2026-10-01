@@ -207,6 +207,8 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
         "try_autorun_action",
         "get_autorun_failures",
         "record_autorun_quirk",
+        "retire_autorun_quirk",
+        "Patterns across cases",
         "unchecked",
         "edits",
         "STOP",

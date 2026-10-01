@@ -361,6 +361,9 @@ pub async fn run_cases<B: Browsers>(
     let total = cases.len() as u32;
     let run_id = run.id.clone();
     let mut save_error: Option<String> = None;
+    // Where this call's cases start, so the evidence below counts only
+    // what THIS run did, even into a run record that already held some.
+    let first = run.cases.len();
 
     for (i, case) in cases.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -425,6 +428,13 @@ pub async fn run_cases<B: Browsers>(
         }
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
+
+    // What the run says about the project's quirks: a note filed with a
+    // repair is confirmed by its steps passing, or doubted by them failing
+    // the same way again. Bookkeeping on text an assistant reads - it never
+    // changes a script, and a quirks file it cannot write never fails the
+    // run (it is logged).
+    super::quirks::record_run_evidence(root, organization, project, &run.cases[first..], super::sessions::now_ms());
 
     // Every case ran by now: only the save failed, and the words say so.
     save_error.map_or(Ok(()), |e| Err(format!("the run finished but could not be saved: {e}")))

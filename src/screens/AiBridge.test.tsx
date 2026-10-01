@@ -684,6 +684,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "get_autorun_page",
     "probe_autorun_locator",
     "record_autorun_quirk",
+    "retire_autorun_quirk",
     "save_autorun_script",
     "try_autorun_action",
   ]);

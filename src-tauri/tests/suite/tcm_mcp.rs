@@ -78,8 +78,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the thirteen dev-only
-    // tools (Auto Run's seven, then the six API template ones) are listed
+    // debug assertions on), so with nothing disabled the fourteen dev-only
+    // tools (Auto Run's eight, then the six API template ones) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -100,6 +100,7 @@ fn tools_list_names_every_tool() {
             "try_autorun_action",
             "get_autorun_failures",
             "record_autorun_quirk",
+            "retire_autorun_quirk",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
@@ -419,10 +420,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 30 in this development build: nothing is disabled by an unreachable
-    // bridge, including the thirteen dev-only tools, which default to ON here
+    // 31 in this development build: nothing is disabled by an unreachable
+    // bridge, including the fourteen dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 30, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 31, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -586,14 +587,14 @@ fn core_tools_survive_a_disabled_list_and_autorun_tools_are_switchable_in_a_dev_
 /// disappear from the list and a call gets the ORDINARY "switched off"
 /// sentence - not "not available", which would claim there is no switch
 /// when there plainly is one right here. They move as one row in the app,
-/// so the list the bridge reports names all seven together.
+/// so the list the bridge reports names all eight together.
 #[test]
 fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordinary_way() {
     let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -871,4 +872,46 @@ fn a_failed_api_template_run_is_a_tool_error_with_the_report() {
     assert_eq!(v["result"]["isError"], true);
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("Evaluation rules") && text.contains("274"), "{text}");
+}
+
+/// The retire tool: listed with a schema that asks for the id and a
+/// reason (a replacement is optional), and a call forwards its arguments
+/// whole to the bridge's retire route. `record_autorun_quirk` says which
+/// assistant filed a note with an optional `from`.
+#[test]
+fn the_quirk_tools_carry_the_schemas_an_assistant_needs() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let retire = tools.iter().find(|t| t["name"] == "retire_autorun_quirk").expect("the retire tool is listed");
+    let schema = &retire["inputSchema"];
+    assert_eq!(schema["type"], "object");
+    for prop in ["id", "reason", "replacement"] {
+        assert_eq!(schema["properties"][prop]["type"], "string", "{prop}: {schema}");
+    }
+    let mut required: Vec<&str> = schema["required"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    required.sort_unstable();
+    assert_eq!(required, vec!["id", "reason"]);
+    assert!(retire["description"].as_str().unwrap().contains("person"), "says a person's note is refused");
+
+    let record = tools.iter().find(|t| t["name"] == "record_autorun_quirk").unwrap();
+    assert_eq!(record["inputSchema"]["properties"]["from"]["enum"], serde_json::json!(["autorun", "api"]));
+    assert_eq!(record["inputSchema"]["required"], serde_json::json!(["text"]));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "retired q1a2b3c".to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"retire_autorun_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["content"][0]["text"], "retired q1a2b3c");
+    let recorded = calls.borrow();
+    let last = recorded.last().unwrap();
+    assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", "/autorun-quirk-retire"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&last.2).unwrap(),
+        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped" })
+    );
 }

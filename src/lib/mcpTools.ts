@@ -67,6 +67,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "One line about how this application behaves, kept for the next script.",
   },
   {
+    name: "retire_autorun_quirk",
+    label: "Retire a quirk",
+    summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
+  },
+  {
     name: "get_api_template_guide",
     label: "API template guide",
     summary: "The template format, the authoring workflow, and this project's account keys and address.",
@@ -138,6 +143,7 @@ export const DEV_ONLY_TOOLS = [
   "try_autorun_action",
   "get_autorun_failures",
   "record_autorun_quirk",
+  "retire_autorun_quirk",
   "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
@@ -207,6 +213,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "try_autorun_action",
     "get_autorun_failures",
     "record_autorun_quirk",
+    "retire_autorun_quirk",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it

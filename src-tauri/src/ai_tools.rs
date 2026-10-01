@@ -137,6 +137,7 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "try_autorun_action",
     "get_autorun_failures",
     "record_autorun_quirk",
+    "retire_autorun_quirk",
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",

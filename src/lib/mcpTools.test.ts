@@ -167,7 +167,7 @@ test("only the switchable tools are left, as eight rows in a development build",
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk",
+    "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress",
     "db_lookup+db_query",
     "get_tags",
@@ -208,7 +208,7 @@ test("the two database tools are one switchable row in either build kind", async
 
 /// With DEV stubbed true, the Auto Run group is offered as one row and its
 /// switch moves every tool in it together, the same as any other pair.
-test("with DEV stubbed true, the Auto Run scripts row carries all seven tools", async () => {
+test("with DEV stubbed true, the Auto Run scripts row carries all eight tools", async () => {
   vi.stubEnv("DEV", true);
   vi.resetModules();
   const mod = await import("./mcpTools");
@@ -223,6 +223,7 @@ test("with DEV stubbed true, the Auto Run scripts row carries all seven tools", 
     "try_autorun_action",
     "get_autorun_failures",
     "record_autorun_quirk",
+    "retire_autorun_quirk",
   ]);
 
   const off = mod.toggleRow([], row!.names);
