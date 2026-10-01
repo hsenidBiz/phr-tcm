@@ -38,6 +38,13 @@ pub struct ModulePath {
     pub arrived: String,
     /// When it was recorded, UTC, `YYYY-MM-DDTHH:MM:SSZ`.
     pub recorded: String,
+    /// The path part of the page the recording's first click was made on.
+    /// A trip that starts right after a sign-in which left the browser
+    /// there clicks straight on, instead of going home through a reload.
+    /// Empty for a path recorded before this was kept: it goes home as it
+    /// always did.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub start: String,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -386,11 +393,55 @@ pub async fn go_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Acti
     }
 }
 
+/// What happened just before a trip to a module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TripFrom {
+    /// A sign-in has just finished: the browser sits where it left it, with
+    /// after_sign_in done.
+    SignIn,
+    /// Anything else - a browser already in use, whose page may be a module
+    /// screen however its address reads.
+    Elsewhere,
+}
+
+/// Is the browser on the page the path's recording began on? Only asked
+/// right after a sign-in, and only of a path that knows that page.
+async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
+    if route.path.start.is_empty() {
+        return false;
+    }
+    match page::eval_value(d, "location.href").await {
+        Ok(v) => {
+            let href = v.as_str().unwrap_or("");
+            origin_of(href).is_some()
+                && origin_of(href) == origin_of(&route.home.start_url)
+                && path_of(href) == route.path.start
+        }
+        Err(_) => false,
+    }
+}
+
 /// Home, then each recorded click with the runner's own click (so each
 /// must find exactly one visible element), then wait up to `nav_ms` for
 /// the address path to equal `arrived`. Ok carries the path it reached.
-pub async fn go_to_module<D: Driver>(d: &mut D, route: &Route, timing: &Timing) -> Result<String, PathFailure> {
-    let home = go_home(d, &route.home, timing).await;
+///
+/// Right after a sign-in that left the browser on the page the recording
+/// began on, there is no going home: that would reload the application -
+/// through its login page, for a recipe that starts there - only to land on
+/// the same page and run after_sign_in a second time (PeoplesHR,
+/// 2026-10-01). Anywhere else it goes home, since an address that reads
+/// like home can still be showing a module screen.
+pub async fn go_to_module<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+) -> Result<String, PathFailure> {
+    let home = if from == TripFrom::SignIn && on_the_starting_page(d, route).await {
+        ActionOutcome::passed("already where the path begins")
+    } else {
+        go_home(d, &route.home, timing).await
+    };
     if !home.ok {
         return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
     }
@@ -563,5 +614,5 @@ pub async fn check_path<D: Driver>(
         ));
         return Err(if signed.harness { SIGN_IN_BROWSER_SILENT } else { SIGN_IN_FAILED }.to_string());
     }
-    go_to_module(d, &Route::new(recipe, path.clone()), timing).await.map_err(|f| f.for_dialog())
+    go_to_module(d, &Route::new(recipe, path.clone()), TripFrom::SignIn, timing).await.map_err(|f| f.for_dialog())
 }

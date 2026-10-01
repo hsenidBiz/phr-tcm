@@ -131,7 +131,10 @@ pub async fn run_step_routed<D: Driver>(
                         }
                         None => as_action_outcome(&signed),
                         Some(rt) => {
-                            let went = nav::reached(&rt.path.module, nav::go_to_module(d, rt, timing).await);
+                            let went = nav::reached(
+                                &rt.path.module,
+                                nav::go_to_module(d, rt, nav::TripFrom::SignIn, timing).await,
+                            );
                             if !went.ok {
                                 blocked = Some(AFTER_UNREACHED);
                             }

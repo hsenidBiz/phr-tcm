@@ -201,7 +201,10 @@ pub async fn run_case_as<D: Driver>(
             stopped = true;
         } else {
             on_step(MODULE_STEP);
-            let mut out = nav::reached(&r.path.module, nav::go_to_module(d, r, timing).await);
+            // The case's own sign-in just above, when it had one; otherwise
+            // the browser comes as it was left.
+            let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
+            let mut out = nav::reached(&r.path.module, nav::go_to_module(d, r, from, timing).await);
             if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
             }

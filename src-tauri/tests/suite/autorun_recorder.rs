@@ -490,6 +490,7 @@ fn about() -> RecordingFor {
         module: "Leave".into(),
         account: "admin".into(),
         which: Browser::Edge,
+        start: "/hr/home/index".into(),
     }
 }
 
@@ -677,4 +678,80 @@ fn a_click_reported_without_counts_reads_as_before() {
     assert_eq!(got.hints.count, 0);
     assert!(got.hints.scopes.is_empty());
     assert_eq!(narrow(exact_text("Leave"), &got.hints), Ok(exact_text("Leave")));
+}
+
+/// PeoplesHR's shape: the recipe starts on its login page, a signed-in
+/// browser lands on /hr/home/index, and after_sign_in opens the menu.
+fn login_start_recipe() -> v2_lib::autorun::recipe::SignInRecipe {
+    serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/hr/security/login",
+        "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+        "after_sign_in": [ { "kind": "when_visible", "selector": { "css": "#toggle:not(.active)" }, "within_ms": 100,
+            "then": [ { "kind": "click", "selector": { "css": "#toggle" } } ] } ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap()
+}
+
+fn leave_from(start: Option<&str>) -> ModulePath {
+    let mut p = json!({
+        "module": "Leave",
+        "clicks": [ { "role": "link", "name": "Leave", "exact": true } ],
+        "arrived": "/hr/leave",
+        "recorded": "2026-10-01T10:00:00Z"
+    });
+    if let Some(s) = start {
+        p["start"] = json!(s);
+    }
+    serde_json::from_value(p).unwrap()
+}
+
+/// 2026-10-01: right after signing in, the browser already sat where the
+/// recording began, with after_sign_in done - yet going home reloaded the
+/// application through its login page, and after_sign_in ran a second time.
+/// A path that knows its starting page clicks straight on from there.
+#[tokio::test]
+async fn right_after_signing_in_on_the_page_the_recording_began_the_path_clicks_without_a_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let path = leave_from(Some("/hr/home/index"));
+    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &path, &common::quick()).await;
+    assert_eq!(ok, Ok("/hr/leave".to_string()));
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/security/login", "click #go", "click #toggle", "click Leave"].iter().map(|s| s.to_string()).collect::<Vec<_>>()
+    );
+}
+
+/// A path recorded before paths knew their starting page goes home exactly
+/// as it always has.
+#[tokio::test]
+async fn a_path_without_a_starting_page_still_goes_home_after_signing_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &leave_from(None), &common::quick()).await;
+    assert_eq!(ok, Ok("/hr/leave".to_string()));
+    let log = app.log.lock().unwrap();
+    assert_eq!(log.iter().filter(|l| *l == "navigate /hr/security/login").count(), 2, "{log:?}");
+}
+
+/// The page a recording begins on is what a saved path keeps as its start:
+/// here home, after the sign-in landed on /hr/welcome.
+#[tokio::test]
+async fn getting_ready_to_record_says_which_page_the_recording_begins_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _app) = common::menu_app(&[], "/hr/welcome", 0);
+    let start = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick()).await;
+    assert_eq!(start, Ok("/hr/home/index".to_string()));
+}
+
+/// A path that knows where it starts keeps it through a save and a load;
+/// one that does not writes nothing for it.
+#[test]
+fn a_paths_starting_page_survives_the_file_and_is_left_out_when_unknown() {
+    let with = leave_from(Some("/hr/home/index"));
+    let text = serde_json::to_string(&with).unwrap();
+    assert!(text.contains("\"start\":\"/hr/home/index\""), "{text}");
+    assert_eq!(serde_json::from_str::<ModulePath>(&text).unwrap(), with);
+    assert!(!serde_json::to_string(&leave_from(None)).unwrap().contains("start"));
 }

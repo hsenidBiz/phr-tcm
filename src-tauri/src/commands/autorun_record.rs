@@ -129,6 +129,9 @@ pub struct RecordingFor {
     pub module: String,
     pub account: String,
     pub which: Browser,
+    /// The path part of the page the recording began on, kept with the
+    /// saved path (`ModulePath::start`).
+    pub start: String,
 }
 
 /// The listening task: it owns the recording browser, and gives the claim
@@ -214,16 +217,19 @@ fn now_iso() -> String {
     crate::commands::queue::iso_utc((crate::autorun::sessions::now_ms() / 1000) as i64)
 }
 
-/// Sign in, go home, and start listening. The sign-in's own words can name
-/// the application's address, so the person gets the same fixed sentences
-/// the check gives and the words go to the log.
+/// Sign in, go home, and start listening. Ok is the path part of the page
+/// the recording begins on (empty if the page would not say), kept with
+/// the saved path so a run that signs in onto that page need not go home
+/// again. The sign-in's own words can name the application's address, so
+/// the person gets the same fixed sentences the check gives and the words
+/// go to the log.
 pub async fn prepare_to_record<D: Driver>(
     d: &mut D,
     root: &Path,
     recipe: &SignInRecipe,
     who: &Account,
     timing: &Timing,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let signed = signin::sign_in(d, root, recipe, who, timing).await;
     if !signed.ok {
         crate::applog::warn(format!(
@@ -239,10 +245,15 @@ pub async fn prepare_to_record<D: Driver>(
         // says it was the home page.
         return Err(format!("the recording could not start: {}", home.detail));
     }
+    let start = match crate::browser::page::eval_value(d, "location.href").await {
+        Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
+        Err(_) => String::new(),
+    };
     recorder::arm(d).await.map_err(|e| {
         crate::applog::warn(format!("module recording: the listener could not be added: {e}"));
         WOULD_NOT_LISTEN.to_string()
-    })
+    })?;
+    Ok(start)
 }
 
 /// The recording itself, once its browser is listening: every click the
@@ -363,9 +374,9 @@ pub async fn auto_run_record_start(
     let (recipe, who) = signin::prepare(&root, &organization, &project, &account)?;
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
-    prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default()).await?;
+    let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default()).await?;
 
-    let about = RecordingFor { organization, project, module, account, which };
+    let about = RecordingFor { organization, project, module, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
         tokio::spawn(async move {
             let out = listen(&mut cdp, claim, &stop, &cancel, &mut |ev| {
@@ -402,13 +413,16 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
         }
     };
     rec.stop.store(true, Ordering::SeqCst);
-    let Recording { task, about: RecordingFor { organization, project, module, account, which }, .. } = rec;
+    let Recording { task, about: RecordingFor { organization, project, module, account, which, start }, .. } = rec;
     let (captured, _claim) = task.await.map_err(|e| {
         crate::applog::warn(format!("module recording: the recorder stopped unexpectedly: {e}"));
         RECORDER_FELL_OVER.to_string()
     })?;
     let path = match recorder::finish(&module, captured, &now_iso()) {
-        Ok(p) => p,
+        Ok(mut p) => {
+            p.start = start;
+            p
+        }
         Err(failure) => return Ok(ModuleRecordResult { saved: false, module, failure }),
     };
     let root = super::autorun::root(&app)?;

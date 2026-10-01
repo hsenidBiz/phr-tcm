@@ -297,7 +297,7 @@ fn leave_path() -> ModulePath {
 async fn going_home_by_address_runs_after_sign_in_again_before_the_first_click() {
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let route = v2_lib::autorun::nav::Route::new(&login_home_recipe("/hr/security/login"), leave_path());
-    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, &common::quick()).await;
+    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, v2_lib::autorun::nav::TripFrom::Elsewhere, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(
         *app.log.lock().unwrap(),
@@ -324,7 +324,7 @@ async fn already_home_does_not_run_after_sign_in_again() {
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     *app.path.lock().unwrap() = "/hr/home/index".to_string();
     let route = v2_lib::autorun::nav::Route::new(&login_home_recipe("/hr/home/index"), leave_path());
-    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, &common::quick()).await;
+    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, v2_lib::autorun::nav::TripFrom::Elsewhere, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(*app.log.lock().unwrap(), vec!["click Leave".to_string()]);
 }

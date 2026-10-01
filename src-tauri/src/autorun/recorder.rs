@@ -513,6 +513,9 @@ pub fn finish(module: &str, captured: Captured, recorded: &str) -> Result<Module
                 clicks: captured.clicks,
                 arrived: nav::path_of(&href),
                 recorded: recorded.to_string(),
+                // Known to the command that prepared the recording, which
+                // fills it in.
+                start: String::new(),
             })
         }
     }
