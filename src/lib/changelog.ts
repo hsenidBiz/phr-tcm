@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.2",
+    date: "2026-10-01",
+    items: [
+      "Small reliability fixes.",
+    ],
+  },
+  {
     version: "2.0.9-beta.1",
     date: "2026-10-01",
     items: [
