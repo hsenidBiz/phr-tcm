@@ -78,8 +78,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the sixteen dev-only
-    // tools (Auto Run's eight, then the API templates row's eight) are listed
+    // debug assertions on), so with nothing disabled the eighteen dev-only
+    // tools (Auto Run's ten, then the API templates row's eight) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -101,6 +101,8 @@ fn tools_list_names_every_tool() {
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
+            "propose_accounts",
+            "get_accounts",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
@@ -422,10 +424,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 33 in this development build: nothing is disabled by an unreachable
-    // bridge, including the sixteen dev-only tools, which default to ON here
+    // 35 in this development build: nothing is disabled by an unreachable
+    // bridge, including the eighteen dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 33, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 35, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -973,4 +975,75 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         assert_eq!(cases["items"]["required"], serde_json::json!(["case_id", "steps"]), "{name}");
         assert_eq!(t["inputSchema"]["required"], serde_json::json!(["text"]), "{name}");
     }
+}
+
+/// The two account tools belong to the Auto Run row: listed while that row
+/// is on and Auto Run is offered, gone when the row is switched off, and
+/// "not available" where Auto Run is not offered at all.
+#[test]
+fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_offered() {
+    const ACCOUNT_TOOLS: [&str; 2] = ["propose_accounts", "get_accounts"];
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    for name in ACCOUNT_TOOLS {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+        assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
+    }
+
+    let row_off = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((
+                200,
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","propose_accounts","get_accounts"]}"#.into(),
+            ));
+        }
+        Ok((200, "{}".into()))
+    };
+    let names = listed_names(&row_off);
+    for name in ACCOUNT_TOOLS {
+        assert!(!names.iter().any(|n| n == name), "{name} listed with the row off: {names:?}");
+    }
+
+    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
+    assert!(!offered);
+    for name in ACCOUNT_TOOLS {
+        assert!(off.iter().any(|n| n == name), "{name} not disabled in a locked release app: {off:?}");
+        assert!(v2_lib::mcp::refusal_text(name, false).contains("not available"), "{name}");
+    }
+}
+
+/// `propose_accounts` forwards its arguments whole; `get_accounts` is a
+/// plain read. Neither takes a password.
+#[test]
+fn the_account_tools_reach_their_routes() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let propose = tools.iter().find(|t| t["name"] == "propose_accounts").unwrap();
+    assert_eq!(propose["inputSchema"]["required"], serde_json::json!(["accounts"]));
+    let item = &propose["inputSchema"]["properties"]["accounts"]["items"];
+    assert!(item["properties"].get("password").is_none(), "{item}");
+    assert_eq!(item["required"], serde_json::json!(["key", "label", "username"]));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let args = serde_json::json!({ "accounts": [{ "key": "hr.sup", "label": "Supervisor", "username": "sup1" }] });
+    for (name, args, method, path) in [
+        ("propose_accounts", args.clone(), "POST", "/accounts-propose"),
+        ("get_accounts", serde_json::json!({}), "GET", "/accounts"),
+    ] {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": args },
+        });
+        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_ne!(v["result"]["isError"], serde_json::json!(true), "{name}: {resp}");
+        let (m, p, _) = calls.borrow().last().unwrap().clone();
+        assert_eq!((m.as_str(), p.as_str()), (method, path), "{name}");
+    }
+    let (_, _, body) = calls.borrow().iter().find(|c| c.1 == "/accounts-propose").unwrap().clone();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args);
 }

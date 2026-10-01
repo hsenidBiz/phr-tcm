@@ -72,6 +72,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
   },
   {
+    name: "propose_accounts",
+    label: "Propose test logins",
+    summary: "Suggest logins for the active environment - never passwords - for you to add as accounts.",
+  },
+  {
+    name: "get_accounts",
+    label: "Read the accounts",
+    summary: "The active environment's account keys and usernames - with passwords only in a test environment.",
+  },
+  {
     name: "get_api_template_guide",
     label: "API template guide",
     summary: "The template format, the authoring workflow, and this project's account keys and address.",
@@ -154,6 +164,8 @@ export const DEV_ONLY_TOOLS = [
   "get_autorun_failures",
   "record_autorun_quirk",
   "retire_autorun_quirk",
+  "propose_accounts",
+  "get_accounts",
   "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
@@ -217,6 +229,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // action, read what a run did, save the result and record what you
   // learned. Half of them switched on is half a job, so they move
   // together. Offered only where Auto Run is; see autoRunToolsOffered.
+  // The accounts a script runs as belong to the same job: proposing
+  // logins for the environment, and reading the keys a script names.
   [
     "get_autorun_guide",
     "save_autorun_script",
@@ -226,6 +240,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",
+    "propose_accounts",
+    "get_accounts",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
@@ -266,7 +282,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   get_autorun_guide: {
     label: "Auto Run scripts",
     summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts.",
+      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts, and propose and read the environment's test logins.",
   },
   get_api_template_guide: {
     label: "API templates",

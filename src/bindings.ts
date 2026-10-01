@@ -333,6 +333,15 @@ export const commands = {
 	envSetActive: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_active", { id })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
+	/**  The assistant's proposed accounts for the active environment. */
+	envProposals: () => typedError<ProposedAccount[], string>(__TAURI_INVOKE("env_proposals")),
+	/**  Dismiss the active environment's whole proposal. */
+	envDismissProposals: () => typedError<null, string>(__TAURI_INVOKE("env_dismiss_proposals")),
+	/**
+	 *  Add the picked proposals; returns the keys that are already accounts and
+	 *  need the person's confirmation (resend them in `replace`).
+	 */
+	envAddProposals: (picks: AccountInput[], replace: string[]) => typedError<string[], string>(__TAURI_INVOKE("env_add_proposals", { picks, replace })),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -969,6 +978,17 @@ export type Account = {
 	/**  What a script writes: `"account": "hr.supervisor"`. */
 	key: string,
 	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+};
+
+/**
+ *  One proposed account a person picked to add. `password` is what they
+ *  typed; empty means "use the environment's default password".
+ */
+export type AccountInput = {
+	key: string,
 	label: string,
 	username: string,
 	password: string,
@@ -2354,6 +2374,18 @@ export type PrWorkItem = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  An account the assistant proposed for an environment: a login it found
+ *  (in a seed script, a spec, the database). Never a password - a person
+ *  picks which to add and gives each one its password in the app.
+ */
+export type ProposedAccount = {
+	key: string,
+	label: string,
+	username: string,
+	role?: string | null,
 };
 
 export type Proven = Proven_Serialize | Proven_Deserialize;

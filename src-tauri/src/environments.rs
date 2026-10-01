@@ -292,6 +292,84 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
     Ok(file)
 }
 
+/// An account the assistant proposed for an environment: a login it found
+/// (in a seed script, a spec, the database). Never a password - a person
+/// picks which to add and gives each one its password in the app.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ProposedAccount {
+    pub key: String,
+    pub label: String,
+    pub username: String,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+/// The most accounts one proposal may carry.
+pub const MAX_PROPOSALS: usize = 100;
+
+/// A proposal as it may be kept: at most `MAX_PROPOSALS`, each key a usable
+/// account key and used once, each with a username.
+pub fn validate_proposals(list: &[ProposedAccount]) -> Result<(), String> {
+    if list.len() > MAX_PROPOSALS {
+        return Err(format!(
+            "at most {MAX_PROPOSALS} accounts can be proposed at once - this proposal has {}",
+            list.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for p in list {
+        if !crate::autorun::accounts::valid_key(&p.key) {
+            return Err(format!(
+                "\"{}\" is not a usable account key - use lowercase letters, digits, dot, underscore or hyphen",
+                p.key
+            ));
+        }
+        if !seen.insert(p.key.as_str()) {
+            return Err(format!("the account key \"{}\" appears more than once", p.key));
+        }
+        if p.username.trim().is_empty() {
+            return Err(format!("the account \"{}\" has no username", p.key));
+        }
+    }
+    Ok(())
+}
+
+/// One environment's proposed accounts; none when nothing was proposed.
+pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<ProposedAccount>, String> {
+    if !valid_id(env_id) {
+        return Err(format!("\"{env_id}\" is not a usable environment id"));
+    }
+    match std::fs::read_to_string(proposals_path_for(root, env_id)) {
+        Ok(s) => {
+            let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
+            serde_json::from_str(s).map_err(|e| format!("the proposed accounts are not readable: {e}"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(format!("the proposed accounts could not be read: {e}")),
+    }
+}
+
+/// Replace one environment's proposal with `list`, validated first. An
+/// empty list removes the file.
+pub fn save_proposals(root: &Path, env_id: &str, list: &[ProposedAccount]) -> Result<(), String> {
+    if !valid_id(env_id) {
+        return Err(format!("\"{env_id}\" is not a usable environment id"));
+    }
+    validate_proposals(list)?;
+    let path = proposals_path_for(root, env_id);
+    if list.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(format!("the proposed accounts could not be removed: {e}"))
+            }
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(path.parent().unwrap_or(root)).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
+    crate::ai_tools::atomic_write(&path, &json)
+}
+
 /// Make `id` the active environment. Whether a switch is allowed right now
 /// (nothing recording or running) is the command's question, not this one.
 pub fn set_active(root: &Path, id: &str) -> Result<EnvFile, String> {

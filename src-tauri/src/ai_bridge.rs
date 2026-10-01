@@ -292,6 +292,11 @@ pub async fn route(
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
+        // The active environment's accounts: the assistant proposes logins
+        // (never passwords) for a person to add, and reads the ones there -
+        // passwords included only in an environment marked as a test one.
+        ("POST", "/accounts-propose") => accounts_propose(body),
+        ("GET", "/accounts") => accounts_read(),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -403,14 +408,19 @@ pub fn autorun_route_guard(offered: bool) -> Option<(u16, String)> {
 }
 
 /// The same guard, applied by PATH rather than by arm. `route` calls this
-/// once, before its match, so every `/autorun-` route - and every
+/// once, before its match, so every `/autorun-` route - every
 /// `/api-template` one, which rides on the same signed-in browser and is
-/// offered exactly where Auto Run is - is covered by the shape of its
+/// offered exactly where Auto Run is, and `/accounts` and every
+/// `/accounts-` one, the Auto Run accounts - is covered by the shape of its
 /// name: a route added later cannot be left ungated by forgetting to
 /// repeat the check. `offered` is explicit for the same reason
 /// `autorun_route_guard`'s is: both branches stay testable.
 pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
-    if path.starts_with("/autorun-") || path.starts_with("/api-template") {
+    if path.starts_with("/autorun-")
+        || path.starts_with("/api-template")
+        || path == "/accounts"
+        || path.starts_with("/accounts-")
+    {
         autorun_route_guard(offered)
     } else {
         None
@@ -742,10 +752,11 @@ fn one_short_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect()
 }
 
-/// What a prove and a run share once the call is read: every check
-/// together; for a template on a flow, the gate - the stages before its own,
-/// asked of the database - before anything else is taken; the one-at-a-time
-/// slot, the run, then the bookkeeping - a proven template saved with its
+/// What a prove and a run share once the call is read: the one-at-a-time
+/// slot, taken first so no environment switch can come between the checks
+/// and the run; every check together; for a template on a flow, the gate -
+/// the stages before its own, asked of the database - before the browser
+/// opens; the run, then the bookkeeping - a proven template saved with its
 /// evidence (on a flow, only once its own stage checks done), the run
 /// appended to the template's history, and the tab told. 200 with the
 /// report when it passed, 502 with the report when it did not.
@@ -768,6 +779,13 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
     use crate::api_templates::runner::{claim, preflight, run_template, stage_flow, Mode};
     use crate::api_templates::store::{self, RunRecord};
     use crate::api_templates::{ApiTemplate, Proven};
+    // The slot first, before the template, its flow or the database is
+    // looked at: holding it is what refuses an environment switch, so none
+    // can land between those checks and the run. Every return below drops
+    // it, as the run's end does.
+    let Some(_claim) = claim() else {
+        return (409, API_TEMPLATE_BUSY.to_string());
+    };
     if let Err(problems) = preflight(root, &req, existing) {
         return (400, problems.join("\n"));
     }
@@ -805,9 +823,6 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
         }
     }
 
-    let Some(_claim) = claim() else {
-        return (409, API_TEMPLATE_BUSY.to_string());
-    };
     let mut browsers = open(which);
     let report = run_template(&mut browsers, root, &req, timing).await;
     drop(browsers);
@@ -1587,6 +1602,127 @@ fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
         }
         Err(why) => (400, why),
     }
+}
+
+// ------------------------------------------------- the environment's accounts
+
+/// `POST /accounts-propose`: the assistant's proposed logins for the active
+/// environment, REPLACING whatever it proposed before. Never a password -
+/// a field the shape does not have is refused, `password` included - and
+/// nothing reaches the accounts until a person adds it in the app.
+fn accounts_propose(body: &str) -> (u16, String) {
+    use crate::environments::{active, save_proposals, ProposedAccount};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Proposal {
+        key: String,
+        #[serde(default)]
+        label: String,
+        username: String,
+        #[serde(default)]
+        role: Option<String>,
+    }
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\" }] }";
+    let raw = match body_field(body, "accounts", shape) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let raw = json_arg(Some(&raw)).unwrap_or(raw);
+    let list: Vec<Proposal> = match serde_json::from_value(raw) {
+        Ok(l) => l,
+        Err(e) => {
+            return (400, format!("\"accounts\" is a list of {{ key, label, username, role? }} - never a password: {e}"))
+        }
+    };
+    if list.is_empty() {
+        return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
+    }
+    let proposals: Vec<ProposedAccount> = list
+        .into_iter()
+        .map(|p| {
+            let key = p.key.trim().to_string();
+            let label = match p.label.trim() {
+                "" => key.clone(),
+                l => l.to_string(),
+            };
+            let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            ProposedAccount { key, label, username: p.username.trim().to_string(), role }
+        })
+        .collect();
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let env = match active(&root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    if let Err(why) = save_proposals(&root, &env.id, &proposals) {
+        return (400, why);
+    }
+    crate::applog::info(format!(
+        "Environments: the assistant proposed {} account(s) for {}",
+        proposals.len(),
+        env.name
+    ));
+    (
+        200,
+        format!(
+            "proposed {} account(s) for the environment {} - a person picks which to add, and gives each its password, in the app. Another call replaces this proposal.",
+            proposals.len(),
+            env.name
+        ),
+    )
+}
+
+/// `GET /accounts`: the active environment's accounts - key, label and
+/// username, and the password ONLY when the environment is marked as a
+/// test environment. The one place a password leaves the app; it is never
+/// logged, and the log line says only how many were read.
+fn accounts_read() -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let env = match crate::environments::active(&root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    // Read by the id just read, so the accounts and the test-environment
+    // mark are the same environment's even if a switch lands in between.
+    let accounts = match crate::autorun::accounts::load_accounts_for(&root, &env.id) {
+        Ok(a) => a,
+        Err(e) => return (500, e),
+    };
+    let shown = env.test_environment;
+    let list: Vec<serde_json::Value> = accounts
+        .iter()
+        .map(|a| {
+            let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
+            if shown {
+                one["password"] = serde_json::Value::String(a.password.clone());
+            }
+            one
+        })
+        .collect();
+    let mut out = serde_json::json!({
+        "environment": env.name,
+        "test_environment": shown,
+        "accounts": list,
+    });
+    if !shown {
+        out["note"] = serde_json::Value::String(format!(
+            "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",
+            env.name
+        ));
+    }
+    crate::applog::info(format!(
+        "AI bridge: the assistant read the {} account(s) of {}{}",
+        accounts.len(),
+        env.name,
+        if shown { ", passwords included" } else { "" }
+    ));
+    (200, out.to_string())
 }
 
 // ------------------------------------------------------- the company database

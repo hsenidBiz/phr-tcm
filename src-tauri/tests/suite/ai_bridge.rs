@@ -2935,8 +2935,8 @@ mod api_template_routes {
         assert!(out.contains("list_api_templates"), "{out}");
     }
 
-    /// Another run holding the slot is a 409 with the sentence - after
-    /// every check has passed, and without touching the other run.
+    /// Another run holding the slot is a 409 with the sentence, without
+    /// touching the other run.
     #[tokio::test]
     async fn a_second_run_while_one_is_going_is_refused() {
         let _root = crate::serial::autorun();
@@ -2948,6 +2948,30 @@ mod api_template_routes {
         assert_eq!(status, 409, "{out}");
         assert_eq!(out, "another API template is running - wait for it to finish");
         drop(held);
+    }
+
+    /// The slot is taken BEFORE the template, its flow or the database is
+    /// looked at, so an environment switch cannot land between those checks
+    /// and the run: with the slot held, even a draft that would fail its
+    /// checks gets the busy sentence - and the slot is free again after a
+    /// refusal that took it.
+    #[tokio::test]
+    async fn the_slot_is_taken_before_the_template_is_checked() {
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _dir = root_with_recipe_and_account();
+        let mut bad = draft();
+        bad["outputs"] = json!(["neverCaptured"]);
+        let body = json!({ "template": bad, "account": "admin", "values": { "cycleName": "FY27" } }).to_string();
+
+        let held = v2_lib::api_templates::runner::claim().expect("the slot was free");
+        let (status, out) = route(&on(), None, "POST", "/api-template-prove", &body, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (409, "another API template is running - wait for it to finish"));
+        drop(held);
+
+        let (status, out) = route(&on(), None, "POST", "/api-template-prove", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert!(v2_lib::api_templates::runner::claim().is_some(), "a refusal gives the slot back");
     }
 
     /// The context's `Debug` shows the switch like the database one.

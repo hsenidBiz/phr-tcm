@@ -395,6 +395,32 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["id", "reason"]),
         },
         {
+            "name": "propose_accounts",
+            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role? }; NEVER a password: the person picks which to add and gives each its password in the app. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
+            "inputSchema": schema(serde_json::json!({
+                "accounts": {
+                    "type": "array",
+                    "description": "The accounts to propose, at most 100.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": { "type": "string", "description": "What a script names the account by, e.g. hr.supervisor." },
+                            "label": { "type": "string", "description": "What a person reads, e.g. HR supervisor." },
+                            "username": { "type": "string", "description": "The login name." },
+                            "role": { "type": "string", "description": "Optional: the role or permission set the login has." },
+                        },
+                        "required": ["key", "label", "username"],
+                        "additionalProperties": false,
+                    },
+                },
+            }), &["accounts"]),
+        },
+        {
+            "name": "get_accounts",
+            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -785,6 +811,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
+        "get_accounts" => call("GET", "/accounts", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),
         "list_api_templates" => call("GET", "/api-templates", ""),
         // The bridge reads its fields out of the body (a template or

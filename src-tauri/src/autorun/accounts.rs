@@ -114,7 +114,17 @@ pub fn sessions_dir_for(root: &Path, env_id: &str) -> PathBuf {
 }
 
 pub fn load_accounts(root: &Path) -> Result<Vec<Account>, String> {
-    match std::fs::read_to_string(accounts_path(root)?) {
+    load_accounts_at(&accounts_path(root)?)
+}
+
+/// One environment's accounts, by id - for a caller that has already read
+/// the active environment and must not read it a second time.
+pub fn load_accounts_for(root: &Path, env_id: &str) -> Result<Vec<Account>, String> {
+    load_accounts_at(&accounts_path_for(root, env_id))
+}
+
+fn load_accounts_at(path: &Path) -> Result<Vec<Account>, String> {
+    match std::fs::read_to_string(path) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
             serde_json::from_str(s).map_err(|e| format!("the accounts file is not readable: {e}"))

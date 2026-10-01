@@ -631,3 +631,241 @@ fn a_new_run_records_the_active_environment() {
 
     assert!(save_run_at(root, run("../x")).is_err(), "the id is still checked");
 }
+
+// ---- Proposed accounts, and what the assistant may read ----
+
+mod accounts_for_the_assistant {
+    use super::{acct, known, list};
+    use serde_json::{json, Value};
+    use std::path::Path;
+    use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::autorun::accounts::{load_accounts, save_accounts, Account};
+    use v2_lib::commands::environments::{
+        add_proposals_with, dismiss_proposals_with, proposals_with, set_default_password_with, AccountInput,
+    };
+    use v2_lib::db::credentials::MemoryStore;
+    use v2_lib::environments::{
+        active_id, load_or_init, load_proposals, proposals_path_for, save_env, save_proposals, ProposedAccount,
+    };
+
+    /// A root with Default made, set as the process-wide root the bridge
+    /// reads. The caller holds `serial::autorun()`.
+    fn bridge_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        load_or_init(dir.path(), Some("dev-read")).unwrap();
+        v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+        dir
+    }
+
+    async fn call(method: &str, path: &str, body: &str) -> (u16, String) {
+        route(&BridgeContext::default(), None, method, path, body, "1.0.0").await
+    }
+
+    fn proposal(key: &str, user: &str) -> Value {
+        json!({ "key": key, "label": format!("{key} label"), "username": user, "role": "Supervisor" })
+    }
+
+    fn mark_test_environment(root: &Path) {
+        let mut e = list(root).into_iter().next().unwrap();
+        e.test_environment = true;
+        save_env(root, e, &known()).unwrap();
+    }
+
+    fn pick(key: &str, user: &str, password: &str) -> AccountInput {
+        AccountInput { key: key.into(), label: key.into(), username: user.into(), password: password.into() }
+    }
+
+    fn seed_proposals(root: &Path, keys: &[&str]) {
+        let list: Vec<ProposedAccount> = keys
+            .iter()
+            .map(|k| ProposedAccount { key: k.to_string(), label: k.to_string(), username: format!("{k}-user"), role: None })
+            .collect();
+        save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
+    }
+
+    #[tokio::test]
+    async fn proposals_replace_and_validate() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        let env_id = active_id(root).unwrap();
+
+        // A key that could not be an account key is refused, and nothing is kept.
+        let (status, out) =
+            call("POST", "/accounts-propose", &json!({ "accounts": [proposal("Bad Key", "u1")] }).to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("Bad Key"), "{out}");
+        assert!(!proposals_path_for(root, &env_id).exists());
+
+        // A username is required.
+        let (status, out) =
+            call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.sup", "  ")] }).to_string()).await;
+        assert_eq!(status, 400, "{out}");
+
+        // A password is never accepted in a proposal.
+        let mut with_pw = proposal("hr.sup", "sup1");
+        with_pw["password"] = json!("pw-Zq9");
+        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": [with_pw] }).to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(!proposals_path_for(root, &env_id).exists());
+
+        // 101 is one too many; 100 is fine.
+        let many: Vec<Value> = (0..101).map(|i| proposal(&format!("u{i}"), &format!("user{i}"))).collect();
+        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": many }).to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("100"), "{out}");
+        let hundred: Vec<Value> = (0..100).map(|i| proposal(&format!("u{i}"), &format!("user{i}"))).collect();
+        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": hundred }).to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(load_proposals(root, &env_id).unwrap().len(), 100);
+
+        // Each call REPLACES the last.
+        let (status, out) = call(
+            "POST",
+            "/accounts-propose",
+            &json!({ "accounts": [proposal("hr.sup", "sup1"), proposal("hr.emp", "emp1")] }).to_string(),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        let (status, out) =
+            call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.admin", "adm1")] }).to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        let kept = proposals_with(root).unwrap();
+        assert_eq!(
+            kept,
+            vec![ProposedAccount {
+                key: "hr.admin".into(),
+                label: "hr.admin label".into(),
+                username: "adm1".into(),
+                role: Some("Supervisor".into()),
+            }]
+        );
+        assert!(proposals_path_for(root, &env_id).is_file(), "stored under the environment's id");
+
+        dismiss_proposals_with(root).unwrap();
+        assert!(proposals_with(root).unwrap().is_empty());
+        assert!(!proposals_path_for(root, &env_id).exists());
+    }
+
+    #[tokio::test]
+    async fn get_accounts_hides_passwords_outside_test_environments() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
+
+        let (status, out) = call("GET", "/accounts", "").await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!out.contains("pw-Zq9"), "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["environment"], "Default");
+        assert_eq!(v["test_environment"], false);
+        assert_eq!(v["accounts"][0]["key"], "hr.sup");
+        assert_eq!(v["accounts"][0]["label"], "hr.sup");
+        assert_eq!(v["accounts"][0]["username"], "sup1");
+        assert!(v["accounts"][0].get("password").is_none(), "{out}");
+        assert!(v["note"].as_str().unwrap().contains("not marked as a test environment"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn get_accounts_shows_them_in_a_test_environment() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
+        mark_test_environment(dir.path());
+
+        let (status, out) = call("GET", "/accounts", "").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["test_environment"], true);
+        assert_eq!(v["accounts"][0]["password"], "pw-Zq9");
+        assert!(v.get("note").is_none(), "{out}");
+    }
+
+    #[tokio::test]
+    async fn get_accounts_is_not_logged() {
+        let _root = crate::serial::autorun();
+        let _log = crate::serial::log_tail();
+        let dir = bridge_root();
+        save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
+        mark_test_environment(dir.path());
+
+        let (status, out) = call("GET", "/accounts", "").await;
+        assert_eq!(status, 200, "{out}");
+        assert!(out.contains("pw-Zq9"), "the password was returned: {out}");
+        let tail = v2_lib::applog::recent(500);
+        assert!(tail.iter().any(|l| l.message.contains("read the 1 account")), "the read is on record: {tail:?}");
+        assert!(tail.iter().all(|l| !l.message.contains("pw-Zq9")), "{tail:?}");
+    }
+
+    /// The account routes are offered exactly where Auto Run is.
+    #[test]
+    fn the_account_routes_are_gated_like_auto_run() {
+        use v2_lib::ai_bridge::{autorun_guard_for, smells_like_a_write};
+        for path in ["/accounts", "/accounts-propose"] {
+            let (status, body) = autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
+            assert_eq!((status, body.as_str()), (404, "not available in this build"), "{path}");
+            assert!(autorun_guard_for(path, true).is_none(), "{path}");
+            assert!(!smells_like_a_write("POST", path) && !smells_like_a_write("GET", path), "{path}");
+        }
+    }
+
+    fn keys(accounts: &[Account]) -> Vec<&str> {
+        accounts.iter().map(|a| a.key.as_str()).collect()
+    }
+
+    #[test]
+    fn adding_an_existing_key_needs_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        save_accounts(root, &[acct("hr.sup", "sup-old")]).unwrap();
+        seed_proposals(root, &["hr.sup", "hr.emp", "hr.admin"]);
+        let store = MemoryStore::default();
+
+        let picks = vec![pick("hr.sup", "sup-new", "pw-new"), pick("hr.emp", "emp1", "pw-emp")];
+        let confirm = add_proposals_with(root, &store, picks.clone(), vec![]).unwrap();
+        assert_eq!(confirm, vec!["hr.sup".to_string()]);
+        let now = load_accounts(root).unwrap();
+        assert_eq!(keys(&now), ["hr.sup", "hr.emp"]);
+        assert_eq!(now[0], acct("hr.sup", "sup-old"), "not overwritten without confirmation");
+        assert_eq!(now[1].password, "pw-emp");
+        // What was added leaves the proposals; the rest stays to be decided.
+        let left: Vec<String> = proposals_with(root).unwrap().into_iter().map(|p| p.key).collect();
+        assert_eq!(left, ["hr.sup", "hr.admin"]);
+
+        // Confirmed, it replaces in place.
+        let confirm = add_proposals_with(root, &store, vec![picks[0].clone()], vec!["hr.sup".into()]).unwrap();
+        assert!(confirm.is_empty(), "{confirm:?}");
+        let now = load_accounts(root).unwrap();
+        assert_eq!(keys(&now), ["hr.sup", "hr.emp"]);
+        assert_eq!((now[0].username.as_str(), now[0].password.as_str()), ("sup-new", "pw-new"));
+        let left: Vec<String> = proposals_with(root).unwrap().into_iter().map(|p| p.key).collect();
+        assert_eq!(left, ["hr.admin"]);
+    }
+
+    #[test]
+    fn empty_password_uses_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        let store = MemoryStore::default();
+        let both = || vec![pick("hr.ok", "ok1", "typed"), pick("hr.sup", "sup1", "")];
+
+        // No default yet: refused for that key, and nothing is written.
+        let err = add_proposals_with(root, &store, both(), vec![]).unwrap_err();
+        assert!(err.contains("hr.sup") && err.contains("no default password set - type one"), "{err}");
+        assert!(load_accounts(root).unwrap().is_empty());
+
+        set_default_password_with(root, &store, &active_id(root).unwrap(), "Default-Pw1").unwrap();
+        let confirm = add_proposals_with(root, &store, both(), vec![]).unwrap();
+        assert!(confirm.is_empty());
+        let now = load_accounts(root).unwrap();
+        assert_eq!(now.iter().find(|a| a.key == "hr.sup").unwrap().password, "Default-Pw1");
+        assert_eq!(now.iter().find(|a| a.key == "hr.ok").unwrap().password, "typed", "a typed one wins");
+
+        // A pick that is not a usable account is refused as a whole.
+        assert!(add_proposals_with(root, &store, vec![pick("Bad Key", "u", "p")], vec![]).is_err());
+        assert!(add_proposals_with(root, &store, vec![pick("hr.x", " ", "p")], vec![]).is_err());
+        assert_eq!(load_accounts(root).unwrap().len(), 2);
+    }
+}
