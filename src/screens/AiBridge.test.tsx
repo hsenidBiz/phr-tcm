@@ -1117,6 +1117,23 @@ test("changing the database card saves it into the active environment", async ()
   expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read");
 });
 
+test("a refused save puts the database card back where it was", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks((cmd) => {
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_save") throw "\"Default\" uses a database that is not set up - pick one";
+    return undefined;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("Default"));
+  fireEvent.click(screen.getByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
+
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read"));
+  expect(await screen.findByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
+});
+
 test("Manage environments opens the environments dialog", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   envMocks();

@@ -227,6 +227,26 @@ fn password_target_is_keyed_by_id() {
 }
 
 #[test]
+fn an_unknown_current_db_is_never_written_into_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let view = list_view(root, &store, Some("not-a-database")).unwrap();
+    assert_eq!(view.environments.len(), 1);
+    assert_eq!(view.environments[0].db_id, v2_lib::db_defaults::DB_PRESETS[0].id);
+    let on_disk = std::fs::read_to_string(root.join("environments.json")).unwrap();
+    assert!(!on_disk.contains("not-a-database"), "{on_disk}");
+}
+
+#[test]
+fn a_known_current_db_seeds_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::default();
+    let view = list_view(dir.path(), &store, Some("qa-read")).unwrap();
+    assert_eq!(view.environments[0].db_id, "qa-read");
+}
+
+#[test]
 fn default_password_never_in_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

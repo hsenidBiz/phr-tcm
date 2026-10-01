@@ -126,9 +126,15 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       const res = await commands.envSave(inputFor(form));
       if (res.status === "error") throw new Error(res.error);
       take(res.data);
-      // The card shows the active environment's database: editing the
-      // active one moves it too.
-      if (form.id && form.id === res.data.active) saveSelectedDb(form.db_id);
+      // The card shows the active environment's database, so changing the
+      // active one's database moves it too - but only to a database that
+      // exists. Any other edit (a rename, say) leaves the card alone, and
+      // an environment whose database is gone never writes that id there.
+      const before = list.find((e) => e.id === form.id)?.db_id;
+      const known = databases.data?.some((d) => d.id === form.db_id) ?? false;
+      if (form.id && form.id === res.data.active && form.db_id !== before && known) {
+        saveSelectedDb(form.db_id);
+      }
       setForm(null);
       setPassword("");
     });
@@ -145,9 +151,11 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
   const setDefaultPassword = () =>
     run(async () => {
       if (!form?.id) return;
-      const res = await commands.envSetDefaultPassword(form.id, password);
-      // Out of state either way: a refused password is retyped, not kept.
+      // Out of state before the call, so neither a refusal nor a rejected
+      // call leaves it in the field: a password is retyped, never kept.
+      const typed = password;
       setPassword("");
+      const res = await commands.envSetDefaultPassword(form.id, typed);
       if (res.status === "error") throw new Error(res.error);
       await qc.invalidateQueries({ queryKey: envKeys.list });
     });

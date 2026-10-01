@@ -95,7 +95,10 @@ export async function loadEnvironments(): Promise<EnvListView> {
       } catch {
         logUi("environments: could not bring Default in line with the database card");
       }
-    } else {
+    } else if (known !== null) {
+      // Only a comparison that could actually be made counts: with the
+      // database list unreadable the card's choice was not checked, and
+      // the next launch has to look again.
       markReconciled();
     }
   }

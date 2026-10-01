@@ -94,7 +94,13 @@ fn must_exist(root: &Path, id: &str) -> Result<(), String> {
     }
 }
 
+/// `current_db` is the database the Company database card has chosen, and
+/// it only seeds a NEW Default: a choice that names no database this build
+/// knows is dropped (Default then takes the first shipped one), so an id
+/// that names nothing is never written into an environment.
 pub fn list_view(root: &Path, store: &dyn SecretStore, current_db: Option<&str>) -> Result<EnvListView, String> {
+    let known = known_db_ids(store);
+    let current_db = current_db.map(str::trim).filter(|d| known.iter().any(|k| k == d));
     Ok(view(store, environments::load_or_init(root, current_db)?))
 }
 

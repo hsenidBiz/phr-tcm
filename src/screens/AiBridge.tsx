@@ -278,16 +278,23 @@ export default function AiBridge() {
 
   // One setting, not two: the database is the active environment's, so a
   // new choice is saved into it too.
+  // If the environment refuses the save, the card goes back to what it
+  // showed: it must not name a database the active environment does not.
   const chooseDb = (id: string) => {
+    const previous = dbId;
     saveSelectedDb(id);
     if (!activeEnv || !id || activeEnv.db_id === id) return;
+    const rollBack = (why: string) => {
+      saveSelectedDb(previous);
+      toast.error(why);
+    };
     commands
       .envSave({ ...toInput(activeEnv), db_id: id })
       .then((res) => {
-        if (res.status === "error") toast.error(res.error);
+        if (res.status === "error") rollBack(res.error);
         else qc.setQueryData(envKeys.list, res.data);
       })
-      .catch((e: unknown) => toast.error(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => rollBack(e instanceof Error ? e.message : String(e)));
   };
   // Every saved login goes with the local settings, and permission to
   // write with them: leaving it standing would hand the next database a

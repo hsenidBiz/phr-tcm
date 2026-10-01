@@ -166,6 +166,62 @@ test("a refused default password is not kept in the field either", async () => {
   expect((screen.getByLabelText("Default password") as HTMLInputElement).value).toBe("");
 });
 
+test("a rejected default-password call leaves nothing in the field either", async () => {
+  mount({
+    env_set_default_password: () => {
+      throw new Error("the call never arrived");
+    },
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit QA" }));
+  fireEvent.change(await screen.findByLabelText("Default password"), { target: { value: "lost-pass" } });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByText("the call never arrived")).toBeInTheDocument();
+  expect((screen.getByLabelText("Default password") as HTMLInputElement).value).toBe("");
+  expect(document.body.innerHTML).not.toContain("lost-pass");
+});
+
+test("renaming the active environment whose database is gone never writes that id to the card", async () => {
+  const gone = { ...DEFAULT, db_id: "removed-login" };
+  mount(
+    {
+      env_save: (a) => ({ active: DEFAULT.id, environments: [{ ...gone, ...(a.env as object) }, QA] }),
+    },
+    [gone, QA],
+  );
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit Default" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Default renamed" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument());
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
+});
+
+test("a rename of the active environment leaves a chosen database on the card alone", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "qa-read");
+  mount({
+    env_save: (a) => ({ active: DEFAULT.id, environments: [{ ...DEFAULT, ...(a.env as object) }, QA] }),
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit Default" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Dev" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument());
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read");
+});
+
+test("moving the active environment to another existing database moves the card", async () => {
+  mount({
+    env_save: (a) => ({ active: DEFAULT.id, environments: [{ ...DEFAULT, ...(a.env as object) }, QA] }),
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit Default" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
+});
+
 test("a new environment says to save it before a default password", async () => {
   mount();
   await screen.findByText("QA");
