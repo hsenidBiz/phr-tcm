@@ -627,6 +627,85 @@ async fn a_button_that_cannot_be_clicked_still_stops_intercepting() {
     assert!(d.deadline_was_cleared());
 }
 
+/// `page_where(false)` - a button, not a file input - whose browser refuses
+/// whatever `refuse` picks out, and whose click opens a chooser described
+/// by `chooser`.
+fn chooser_page(
+    refuse: impl Fn(&str, &Value) -> bool + Send + 'static,
+    chooser: Value,
+) -> ScriptedDriver {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if refuse(method, params) {
+            return Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "refused".into() });
+        }
+        if params["functionDeclaration"] == FILE_INPUT_JS {
+            return Ok(json!({ "result": { "value": { "file": false, "disabled": false } } }));
+        }
+        page.answer(method, params)
+    });
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".to_string(),
+        Event { method: "Page.fileChooserOpened".into(), params: chooser },
+    ));
+    d
+}
+
+fn opened() -> Value {
+    json!({ "frameId": "F", "mode": "selectSingle", "backendNodeId": 77 })
+}
+
+#[tokio::test]
+async fn interception_is_switched_off_when_switching_it_on_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "cv.pdf", b"hello");
+    let mut d = chooser_page(
+        |m, p| m == "Page.setInterceptFileChooserDialog" && p["enabled"] == json!(true),
+        opened(),
+    );
+    let out = upload_in(&mut d, &target("#attach"), &path, "\"cv.pdf\" (5 bytes)", &quick()).await;
+    assert!(!out.ok);
+    assert!(d.calls_to("Input.dispatchMouseEvent").is_empty(), "nothing was clicked");
+    assert_eq!(interceptions(&d), vec![json!({ "enabled": true }), json!({ "enabled": false })]);
+}
+
+#[tokio::test]
+async fn interception_is_switched_off_when_the_chooser_will_not_take_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "cv.pdf", b"hello");
+    let mut d = chooser_page(|m, _| m == "DOM.setFileInputFiles", opened());
+    let out = upload_in(&mut d, &target("#attach"), &path, "\"cv.pdf\" (5 bytes)", &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("refused"), "{}", out.detail);
+    assert_eq!(interceptions(&d), vec![json!({ "enabled": true }), json!({ "enabled": false })]);
+}
+
+#[tokio::test]
+async fn a_chooser_tied_to_no_input_fails_and_interception_is_switched_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "cv.pdf", b"hello");
+    let mut d = chooser_page(|_, _| false, json!({ "frameId": "F", "mode": "selectSingle" }));
+    let out = upload_in(&mut d, &target("#attach"), &path, "\"cv.pdf\" (5 bytes)", &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("did not tie to a file input"), "{}", out.detail);
+    assert!(d.calls_to("DOM.setFileInputFiles").is_empty());
+    assert_eq!(interceptions(&d), vec![json!({ "enabled": true }), json!({ "enabled": false })]);
+}
+
+#[tokio::test]
+async fn interception_that_will_not_switch_off_is_said_in_the_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "cv.pdf", b"hello");
+    let mut d = chooser_page(
+        |m, p| m == "Page.setInterceptFileChooserDialog" && p["enabled"] == json!(false),
+        opened(),
+    );
+    let out = upload_in(&mut d, &target("#attach"), &path, "\"cv.pdf\" (5 bytes)", &quick()).await;
+    assert!(out.ok, "the file still went in: {}", out.detail);
+    assert!(out.detail.starts_with("uploaded \"cv.pdf\" (5 bytes) to #attach"), "{}", out.detail);
+    assert!(out.detail.ends_with(v2_lib::browser::actions::CHOOSER_STILL_HELD), "{}", out.detail);
+}
+
 #[tokio::test]
 async fn nothing_to_upload_to_fails_without_touching_the_chooser() {
     let dir = tempfile::tempdir().unwrap();

@@ -570,10 +570,15 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
     };
     let done = || ActionOutcome::passed(format!("uploaded {shown} to {}", selector.describe()));
     if kind["file"].as_bool() != Some(true) {
-        return match through_chooser(d, selector, path, timing).await {
+        let (result, switched_off) = through_chooser(d, selector, path, timing).await;
+        let mut out = match result {
             Ok(()) => done(),
             Err(out) => out,
         };
+        if !switched_off {
+            out.detail.push_str(CHOOSER_STILL_HELD);
+        }
+        return out;
     }
     if kind["disabled"].as_bool() == Some(true) {
         return ActionOutcome::failed(format!("{} is disabled", selector.describe()));
@@ -588,25 +593,36 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
     }
 }
 
+/// Added to an upload's outcome when the browser would not stop
+/// intercepting file choosers afterwards.
+pub const CHOOSER_STILL_HELD: &str =
+    " (the browser did not confirm it stopped holding back file choosers - if a file chooser does not open, close the browser and open it again)";
+
 /// Clicks `selector` with the file chooser intercepted, and gives the
 /// chooser's input the file. Interception is switched off again whatever
 /// happened in between - a page left intercepting would swallow the
-/// person's own next chooser.
+/// person's own next chooser. The second value is whether switching it off
+/// worked; a failure is logged.
 async fn through_chooser<D: Driver>(
     d: &mut D,
     selector: &Target,
     path: &str,
     timing: &Timing,
-) -> Result<(), ActionOutcome> {
-    if let Err(e) = d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": true })).await {
-        // Switched off anyway: a browser that refused may still have
+) -> (Result<(), ActionOutcome>, bool) {
+    let out = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": true })).await {
+        // Switched off below anyway: a browser that refused may still have
         // switched it on.
-        let _ = d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await;
-        return Err(failed_by(e));
-    }
-    let out = choose(d, selector, path, timing).await;
-    let _ = d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await;
-    out
+        Err(e) => Err(failed_by(e)),
+        Ok(_) => choose(d, selector, path, timing).await,
+    };
+    let switched_off = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await {
+        Ok(_) => true,
+        Err(e) => {
+            crate::applog::warn(format!("upload: file chooser interception could not be switched off: {e}"));
+            false
+        }
+    };
+    (out, switched_off)
 }
 
 async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Timing) -> Result<(), ActionOutcome> {
