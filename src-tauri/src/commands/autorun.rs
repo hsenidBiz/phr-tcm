@@ -409,17 +409,95 @@ pub fn auto_run_load_quirks(
     crate::autorun::quirks::load_quirks(&root(&app)?, &organization, &project)
 }
 
+// The Known quirks list's own changes, one per button. Each is saved the
+// moment it is made and answers with the whole list as saved, so the
+// dialog never shows a list the file does not hold.
+
+/// A note the person types in, added as theirs. Past the active cap it is
+/// refused with the notes worth retiring.
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_save_quirks(
+pub fn auto_run_add_quirk(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    quirks: Vec<crate::autorun::quirks::Quirk>,
-) -> Result<(), String> {
-    crate::autorun::quirks::save_quirks(&root(&app)?, &organization, &project, &quirks)?;
-    crate::applog::info("Auto-run project quirks saved");
-    Ok(())
+    text: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    use crate::autorun::quirks::{record_in, update_quirks, FROM_AUTORUN};
+    let now = crate::autorun::sessions::now_ms();
+    let (_, list) = update_quirks(&root(&app)?, &organization, &project, |l| {
+        record_in(l, &text, "person", FROM_AUTORUN, Vec::new(), now)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was added");
+    Ok(list)
+}
+
+/// A note's text, changed - whoever wrote it.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_edit_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+    text: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::edit_in(l, &id, &text)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was edited");
+    Ok(list)
+}
+
+/// Retired by the person - any note, theirs or an assistant's, with an
+/// optional reason. It stays in the file and can be restored.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_retire_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+    reason: Option<String>,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let now = crate::autorun::sessions::now_ms();
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::retire_in(l, &id, reason.as_deref(), None, false, now)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was retired");
+    Ok(list)
+}
+
+/// A retired note, back on the active list - refused while that is full.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_restore_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::restore_in(l, &id)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was restored");
+    Ok(list)
+}
+
+/// A note removed from the file altogether.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_delete_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::delete_in(l, &id)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was deleted");
+    Ok(list)
 }
 
 /// The project's module paths and its address switch, as the Module paths

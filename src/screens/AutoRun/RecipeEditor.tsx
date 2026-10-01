@@ -5,12 +5,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type Quirk, type SignInRecipe_Deserialize } from "../../bindings";
+import { commands, type SignInRecipe_Deserialize } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import QuirksList from "./QuirksList";
 
 const PLACEHOLDER = `{
   "start_url": "https://hr.example.internal/",
@@ -30,41 +31,6 @@ const PLACEHOLDER = `{
   "session_minutes": 480
 }`;
 
-/** Case- and whitespace-insensitive, matching the Rust side's own `normalized()`. */
-function normalized(s: string): string {
-  return s.split(/\s+/).join(" ").toLowerCase();
-}
-
-/**
- * The quirks box's current lines, matched back against what was loaded so
- * an unchanged line keeps its original author and timestamp. A line that
- * matches nothing on the loaded list is new, written by the person editing
- * this dialog right now. A line that repeats one already emitted (same
- * text, any case or spacing) collapses to its first occurrence - the box
- * is a set of facts, not a log of how many times each was typed.
- */
-function linesToQuirks(text: string, loaded: Quirk[]): Quirk[] {
-  const pool = [...loaded];
-  const now = String(Date.now());
-  const seen = new Set<string>();
-  const out: Quirk[] = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line === "") continue;
-    const key = normalized(line);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const i = pool.findIndex((q) => q.text === line);
-    if (i >= 0) {
-      out.push(pool[i]);
-      pool.splice(i, 1);
-    } else {
-      out.push({ text: line, by: "person", at: now });
-    }
-  }
-  return out;
-}
-
 export default function RecipeEditor({ org, project, onClose }: { org: string; project: string; onClose: () => void }) {
   const qc = useQueryClient();
   const existing = useQuery({
@@ -78,30 +44,19 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
     retry: false,
   });
   const [text, setText] = useState<string | null>(null);
-  const [quirksText, setQuirksText] = useState<string | null>(null);
   const [recipeProblem, setRecipeProblem] = useState("");
-  const [quirksProblem, setQuirksProblem] = useState("");
+  /** A note typed into the quirks list and not saved yet - a recipe save
+   * leaves the dialog open rather than throw it away. */
+  const [quirksPending, setQuirksPending] = useState(false);
   const loadedRecipe = existing.data ? JSON.stringify(existing.data, null, 2) : "";
-  const loadedQuirks = (existingQuirks.data ?? []).map((q) => q.text).join("\n");
   const value = text ?? loadedRecipe;
-  const quirksValue = quirksText ?? loadedQuirks;
   const recipeBlocked = existing.isLoading || existing.isError;
-  const quirksBlocked = existingQuirks.isLoading || existingQuirks.isError;
   const recipeEmpty = value.trim() === "";
-  const quirksEmpty = quirksValue.trim() === "";
-  // Clearing every line out of a box that used to have quirks in it is a
-  // real save (an empty list), not nothing to do.
-  const quirksWereLoaded = (existingQuirks.data ?? []).length > 0;
-  /** Typed into and not saved yet - what decides whether a save in the
-   * OTHER section may close the dialog. */
-  const recipeDirty = text !== null && text.trim() !== loadedRecipe.trim();
-  const quirksDirty = quirksText !== null && quirksText !== loadedQuirks;
 
-  // Two saves, one per section. Each writes only its own file: a recipe
-  // the app refuses never costs the quirks typed below it, and saving a
-  // quirk never re-sends a recipe nobody touched. A save closes the dialog
-  // only when the other section has nothing unsaved in it - otherwise the
-  // dialog stays open so that edit is not thrown away.
+  // The recipe has its own Save and writes only its own file; each change
+  // to the quirks list below is saved the moment it is made, by its own
+  // command. Saving the recipe closes the dialog unless a note is still
+  // being typed below.
   const saveRecipe = useMutation({
     mutationFn: async (v: { recipe: SignInRecipe_Deserialize; close: boolean }) => {
       await unwrapStr(commands.autoRunSaveRecipe(org, project, v.recipe));
@@ -121,25 +76,6 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
     onError: (e) => setRecipeProblem(e instanceof Error ? e.message : String(e)),
   });
 
-  const saveQuirks = useMutation({
-    mutationFn: async (_v: { close: boolean }) => {
-      await unwrapStr(
-        commands.autoRunSaveQuirks(org, project, linesToQuirks(quirksValue, existingQuirks.data ?? [])),
-      );
-    },
-    onSuccess: async (_data, v) => {
-      toast.success("Quirks saved.");
-      if (v.close) {
-        qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
-        onClose();
-        return;
-      }
-      await qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
-      setQuirksText(null);
-    },
-    onError: (e) => setQuirksProblem(e instanceof Error ? e.message : String(e)),
-  });
-
   const submitRecipe = () => {
     setRecipeProblem("");
     // A cast, not a runtime validation: the Rust side is the one place
@@ -152,12 +88,7 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
       setRecipeProblem(`That is not valid JSON: ${(e as Error).message}`);
       return;
     }
-    saveRecipe.mutate({ recipe: parsed, close: !quirksDirty });
-  };
-
-  const submitQuirks = () => {
-    setQuirksProblem("");
-    saveQuirks.mutate({ close: !recipeDirty });
+    saveRecipe.mutate({ recipe: parsed, close: !quirksPending });
   };
 
   return (
@@ -191,24 +122,16 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
         <div>
           <h3 className="text-sm font-semibold text-text">Known quirks</h3>
           <p className="mt-1 text-xs text-muted">
-            One per line: something learned about this application that the next script - written by a
-            person or an assistant - should not have to rediscover.
+            Things learned about this application that the next script or API template - written by a
+            person or an assistant - should not have to rediscover. A note an assistant filed with a repair
+            shows what the runs since have said about it. Retire a note that no longer helps; it can be
+            restored. Each change is saved as you make it.
           </p>
         </div>
         {existingQuirks.isError && <p className="text-xs text-danger">{existingQuirks.error.message}</p>}
-        <Textarea aria-label="Known quirks" className="min-h-[8rem] font-mono text-xs"
-          value={quirksValue} onChange={(e) => setQuirksText(e.target.value)} />
-        {quirksProblem && <p className="text-xs text-danger">{quirksProblem}</p>}
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            disabled={quirksBlocked || saveQuirks.isPending || (quirksEmpty && !quirksWereLoaded)}
-            onClick={submitQuirks}
-          >
-            <IconConfirm aria-hidden />
-            {saveQuirks.isPending ? "Saving" : "Save quirks"}
-          </Button>
-        </div>
+        {existingQuirks.isSuccess && (
+          <QuirksList org={org} project={project} quirks={existingQuirks.data} onPendingChange={setQuirksPending} />
+        )}
       </section>
 
       <div className="flex justify-end border-t border-border pt-3">

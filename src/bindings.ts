@@ -445,8 +445,23 @@ export const commands = {
 	session_minutes: number,
 } | null, string>(__TAURI_INVOKE("auto_run_load_recipe", { organization, project })),
 	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
-	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
-	autoRunSaveQuirks: (organization: string, project: string, quirks: Quirk[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_quirks", { organization, project, quirks })),
+	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
+	/**
+	 *  A note the person types in, added as theirs. Past the active cap it is
+	 *  refused with the notes worth retiring.
+	 */
+	autoRunAddQuirk: (organization: string, project: string, text: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_add_quirk", { organization, project, text })),
+	/**  A note's text, changed - whoever wrote it. */
+	autoRunEditQuirk: (organization: string, project: string, id: string, text: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_edit_quirk", { organization, project, id, text })),
+	/**
+	 *  Retired by the person - any note, theirs or an assistant's, with an
+	 *  optional reason. It stays in the file and can be restored.
+	 */
+	autoRunRetireQuirk: (organization: string, project: string, id: string, reason: string | null) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_retire_quirk", { organization, project, id, reason })),
+	/**  A retired note, back on the active list - refused while that is full. */
+	autoRunRestoreQuirk: (organization: string, project: string, id: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_restore_quirk", { organization, project, id })),
+	/**  A note removed from the file altogether. */
+	autoRunDeleteQuirk: (organization: string, project: string, id: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_delete_quirk", { organization, project, id })),
 	/**
 	 *  The project's module paths and its address switch, as the Module paths
 	 *  dialog shows them. A project with no file reads as no paths, switch on.
@@ -2365,12 +2380,104 @@ export type PullRequest = {
 	web_url: string,
 };
 
-export type Quirk = {
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk = Quirk_Serialize | Quirk_Deserialize;
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource = QuirkSource_Serialize | QuirkSource_Deserialize;
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource_Deserialize = {
+	case_id: number,
+	steps: number[],
+	/**
+	 *  The error class (`patterns::ErrorClass::key`) of the failure that
+	 *  led to the repair, when the run that showed it is on this machine.
+	 *  A later failure of the same class is evidence the note did not
+	 *  help; with no class known, any failure is.
+	 */
+	class?: string | null,
+};
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource_Serialize = {
+	case_id: number,
+	steps: number[],
+	/**
+	 *  The error class (`patterns::ErrorClass::key`) of the failure that
+	 *  led to the repair, when the run that showed it is on this machine.
+	 *  A later failure of the same class is evidence the note did not
+	 *  help; with no class known, any failure is.
+	 */
+	class?: string | null,
+};
+
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk_Deserialize = {
+	/**
+	 *  Short and stable: what the retire tool and the app's own buttons
+	 *  name a quirk by.
+	 */
+	id?: string,
 	text: string,
 	/**  "person" or "assistant" */
 	by: string,
 	/**  Epoch milliseconds as a string. */
 	at: string,
+	sources?: QuirkSource_Deserialize[],
+	/**  Source steps that passed in a run since the note was filed. */
+	confirmed?: number,
+	/**  Epoch milliseconds as a string, of the latest of those runs. */
+	last_confirmed?: string | null,
+	/**  Source steps that failed the same way again. */
+	doubted?: number,
+	/**  "active" or "retired". */
+	status?: string,
+	retired_reason?: string | null,
+	/**  Epoch milliseconds as a string. */
+	retired_at?: string | null,
+	/**  Which assistant's work it came from: "autorun" or "api". */
+	from?: string,
+};
+
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk_Serialize = {
+	/**
+	 *  Short and stable: what the retire tool and the app's own buttons
+	 *  name a quirk by.
+	 */
+	id: string,
+	text: string,
+	/**  "person" or "assistant" */
+	by: string,
+	/**  Epoch milliseconds as a string. */
+	at: string,
+	sources: QuirkSource_Serialize[],
+	/**  Source steps that passed in a run since the note was filed. */
+	confirmed: number,
+	/**  Epoch milliseconds as a string, of the latest of those runs. */
+	last_confirmed: string | null,
+	/**  Source steps that failed the same way again. */
+	doubted: number,
+	/**  "active" or "retired". */
+	status: string,
+	retired_reason: string | null,
+	/**  Epoch milliseconds as a string. */
+	retired_at: string | null,
+	/**  Which assistant's work it came from: "autorun" or "api". */
+	from: string,
 };
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
