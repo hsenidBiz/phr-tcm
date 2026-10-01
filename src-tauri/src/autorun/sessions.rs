@@ -1,4 +1,5 @@
-//! Session files: `sessions/<account key>.json`. They hold live cookies,
+//! Session files: `sessions/<env id>/<account key>.json`, one folder per
+//! environment. They hold live cookies,
 //! so they are left out of backups (`backup::EXCLUDED`) and are dropped
 //! when the login behind them changes (`accounts::save_accounts`).
 
@@ -17,7 +18,7 @@ pub fn save_session(root: &Path, key: &str, s: &SavedSession) -> Result<(), Stri
     if !valid_key(key) {
         return Err(format!("\"{key}\" is not a usable account key"));
     }
-    let path = session_path(root, key);
+    let path = session_path(root, key)?;
     std::fs::create_dir_all(path.parent().expect("sessions folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string(s).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
@@ -36,7 +37,7 @@ pub fn load_fresh_session(root: &Path, key: &str, max_age_minutes: u32, now_ms: 
     if !valid_key(key) {
         return None;
     }
-    let text = std::fs::read_to_string(session_path(root, key)).ok()?;
+    let text = std::fs::read_to_string(session_path(root, key).ok()?).ok()?;
     let s: SavedSession = serde_json::from_str(&text).ok()?;
     let age = now_ms.checked_sub(s.saved_at_ms)?;
     (age <= u64::from(max_age_minutes) * 60_000).then_some(s)
@@ -44,6 +45,8 @@ pub fn load_fresh_session(root: &Path, key: &str, max_age_minutes: u32, now_ms: 
 
 pub fn forget_session(root: &Path, key: &str) {
     if valid_key(key) {
-        let _ = std::fs::remove_file(session_path(root, key));
+        if let Ok(p) = session_path(root, key) {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }

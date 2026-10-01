@@ -36,7 +36,7 @@ impl std::fmt::Debug for Account {
 
 /// 1 to 64 characters, starting with a lowercase letter or digit, then
 /// lowercase letters, digits, dot, underscore or hyphen. Narrow on purpose:
-/// the key is also a file name (`sessions/<key>.json`).
+/// the key is also a file name (`sessions/<env id>/<key>.json`).
 pub fn valid_key(key: &str) -> bool {
     let mut chars = key.chars();
     let Some(first) = chars.next() else { return false };
@@ -85,12 +85,21 @@ pub fn validate_accounts(accounts: &[Account]) -> Result<(), String> {
     Ok(())
 }
 
-fn accounts_path(root: &Path) -> PathBuf {
-    root.join("accounts.json")
+/// The ACTIVE environment's accounts file. An error means the environments
+/// file could not be read, and nothing should guess a path then.
+fn accounts_path(root: &Path) -> Result<PathBuf, String> {
+    Ok(accounts_path_for(root, &crate::environments::active_id(root)?))
 }
 
-pub fn session_path(root: &Path, key: &str) -> PathBuf {
-    root.join("sessions").join(format!("{key}.json"))
+/// One saved sign-in session of the ACTIVE environment:
+/// `sessions/<env id>/<key>.json`. Keyed by environment id, never by
+/// address, so two environments on one address never share a session.
+pub fn session_path(root: &Path, key: &str) -> Result<PathBuf, String> {
+    Ok(session_path_for(root, &crate::environments::active_id(root)?, key))
+}
+
+pub fn session_path_for(root: &Path, env_id: &str, key: &str) -> PathBuf {
+    sessions_dir_for(root, env_id).join(format!("{key}.json"))
 }
 
 /// One environment's accounts file: `accounts/<env id>.json`. The id is
@@ -105,7 +114,7 @@ pub fn sessions_dir_for(root: &Path, env_id: &str) -> PathBuf {
 }
 
 pub fn load_accounts(root: &Path) -> Result<Vec<Account>, String> {
-    match std::fs::read_to_string(accounts_path(root)) {
+    match std::fs::read_to_string(accounts_path(root)?) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
             serde_json::from_str(s).map_err(|e| format!("the accounts file is not readable: {e}"))
@@ -141,10 +150,11 @@ pub fn account_for_run(root: &Path, key: Option<&str>) -> Result<Option<String>,
 /// saved session was dropped because the login behind it changed or went.
 pub fn save_accounts(root: &Path, accounts: &[Account]) -> Result<Vec<String>, String> {
     validate_accounts(accounts)?;
+    let env_id = crate::environments::active_id(root)?;
     let before = load_accounts(root).unwrap_or_default();
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let path = accounts_path_for(root, &env_id);
+    std::fs::create_dir_all(path.parent().expect("accounts folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(accounts).map_err(|e| e.to_string())?;
-    let path = accounts_path(root);
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     if let Err(e) = std::fs::rename(&tmp, &path) {
@@ -164,7 +174,7 @@ pub fn save_accounts(root: &Path, accounts: &[Account]) -> Result<Vec<String>, S
             .iter()
             .any(|a| a.key == old.key && a.username == old.username && a.password == old.password);
         if !same_login {
-            let p = session_path(root, &old.key);
+            let p = session_path_for(root, &env_id, &old.key);
             if p.exists() {
                 let _ = std::fs::remove_file(&p);
                 dropped.push(old.key.clone());

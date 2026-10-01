@@ -352,3 +352,119 @@ fn an_unreadable_file_is_never_replaced() {
     assert!(load_or_init(root, None).is_err());
     assert_eq!(std::fs::read_to_string(root.join("environments.json")).unwrap(), "{ not json");
 }
+
+fn acct(key: &str, user: &str) -> v2_lib::autorun::accounts::Account {
+    v2_lib::autorun::accounts::Account {
+        key: key.into(),
+        label: key.into(),
+        username: user.into(),
+        password: "pw-Zq9".into(),
+    }
+}
+
+fn session(at: u64) -> v2_lib::browser::session::SavedSession {
+    v2_lib::browser::session::SavedSession { saved_at_ms: at, cookies: vec![], local_storage: vec![] }
+}
+
+#[test]
+fn accounts_follow_the_active_environment() {
+    use v2_lib::autorun::accounts::{load_accounts, save_accounts};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (a, b) = two_envs(root);
+
+    save_accounts(root, &[acct("hr.sup", "sup-a")]).unwrap();
+    set_active(root, &b).unwrap();
+    assert!(load_accounts(root).unwrap().is_empty());
+
+    save_accounts(root, &[acct("hr.emp", "emp-b")]).unwrap();
+    assert_eq!(load_accounts(root).unwrap(), vec![acct("hr.emp", "emp-b")]);
+
+    set_active(root, &a).unwrap();
+    assert_eq!(load_accounts(root).unwrap(), vec![acct("hr.sup", "sup-a")]);
+    assert!(root.join("accounts").join(format!("{a}.json")).is_file());
+    assert!(root.join("accounts").join(format!("{b}.json")).is_file());
+}
+
+/// Two environments on one address must never trade a signed-in session.
+#[test]
+fn same_address_different_sessions() {
+    use v2_lib::autorun::sessions::{forget_session, load_fresh_session, save_session};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (a, b) = two_envs(root);
+    for id in [&a, &b] {
+        let mut e = list(root).into_iter().find(|e| &e.id == id).unwrap();
+        e.start_url = "https://hr.example.com".into();
+        save_env(root, e, &known()).unwrap();
+    }
+
+    save_session(root, "hr.sup", &session(1_000)).unwrap();
+    assert!(root.join("sessions").join(&a).join("hr.sup.json").is_file());
+
+    set_active(root, &b).unwrap();
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_none());
+
+    set_active(root, &a).unwrap();
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_some());
+
+    // Forgetting in B leaves A's session alone.
+    set_active(root, &b).unwrap();
+    forget_session(root, "hr.sup");
+    set_active(root, &a).unwrap();
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_some());
+}
+
+fn list(root: &Path) -> Vec<Environment> {
+    load_or_init(root, None).unwrap().environments
+}
+
+#[test]
+fn legacy_session_files_are_not_read() {
+    use v2_lib::autorun::sessions::load_fresh_session;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    load_or_init(root, None).unwrap();
+    std::fs::create_dir_all(root.join("sessions")).unwrap();
+    std::fs::write(
+        root.join("sessions").join("hr.sup.json"),
+        serde_json::to_string(&session(1_000)).unwrap(),
+    )
+    .unwrap();
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_none());
+}
+
+/// Changing an account's login drops its session in THIS environment only.
+#[test]
+fn a_changed_login_drops_the_session_of_the_active_environment_only() {
+    use v2_lib::autorun::accounts::save_accounts;
+    use v2_lib::autorun::sessions::{load_fresh_session, save_session};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (a, b) = two_envs(root);
+    save_accounts(root, &[acct("hr.sup", "sup-a")]).unwrap();
+    save_session(root, "hr.sup", &session(1_000)).unwrap();
+    set_active(root, &b).unwrap();
+    save_accounts(root, &[acct("hr.sup", "sup-b")]).unwrap();
+    save_session(root, "hr.sup", &session(1_000)).unwrap();
+
+    let dropped = save_accounts(root, &[acct("hr.sup", "sup-b2")]).unwrap();
+    assert_eq!(dropped, vec!["hr.sup".to_string()]);
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_none());
+    set_active(root, &a).unwrap();
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_some());
+}
+
+#[test]
+fn an_unreadable_environments_file_means_no_accounts_and_no_session() {
+    use v2_lib::autorun::accounts::{load_accounts, save_accounts};
+    use v2_lib::autorun::sessions::{load_fresh_session, save_session};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("environments.json"), "{ not json").unwrap();
+    assert!(load_accounts(root).is_err());
+    assert!(save_accounts(root, &[acct("hr.sup", "u")]).is_err());
+    assert!(save_session(root, "hr.sup", &session(1_000)).is_err());
+    assert!(load_fresh_session(root, "hr.sup", 480, 2_000).is_none());
+    assert!(!root.join("accounts").exists() && !root.join("sessions").exists());
+}

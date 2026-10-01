@@ -869,7 +869,7 @@ async fn the_recipe_signs_in_through_the_real_form_and_saves_the_session() {
     // the token with its quotes intact.
     assert_eq!(who(&mut live).await, "kim / tok \"q\" kim");
     assert_eq!(app.logins.load(Ordering::SeqCst), 1);
-    let saved = std::fs::read_to_string(v2_lib::autorun::accounts::session_path(root.path(), "kim")).unwrap();
+    let saved = std::fs::read_to_string(v2_lib::autorun::accounts::session_path(root.path(), "kim").unwrap()).unwrap();
     assert!(saved.contains("sid"), "the HttpOnly cookie was not captured");
     // The password reaches the page and nowhere else.
     for s in &out.steps {
@@ -958,7 +958,7 @@ async fn a_wrong_password_says_which_account_to_check() {
     assert!(!out.ok);
     assert!(out.detail.contains("\"kim\""), "{}", out.detail);
     assert!(!out.detail.contains("nope-nope"));
-    assert!(!v2_lib::autorun::accounts::session_path(root.path(), "kim").exists(), "a failed sign-in saved a session");
+    assert!(!v2_lib::autorun::accounts::session_path(root.path(), "kim").unwrap().exists(), "a failed sign-in saved a session");
 }
 
 #[tokio::test]
