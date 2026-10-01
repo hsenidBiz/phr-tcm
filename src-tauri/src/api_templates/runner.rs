@@ -35,7 +35,7 @@ use crate::autorun::sessions::forget_session;
 use crate::autorun::signin::{prepare, sign_in, SignInOutcome};
 use crate::browser::actions::{execute_in, Action, Policy};
 use crate::browser::cdp::{CdpError, Driver};
-use crate::browser::page::{call_value, document, eval_value, Handle};
+use crate::browser::page::{call_value, call_value_within, document, eval_value, Handle};
 use crate::browser::timing::Timing;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -47,11 +47,33 @@ use std::time::{Duration, Instant};
 /// How long one step may take - `FETCH_FN` aborts its own request at the
 /// same point, and every DevTools call of the step is bounded by it too.
 pub const STEP_LIMIT: Duration = Duration::from_secs(30);
+/// The same for a step that uploads test files: 25 MB on a slow link takes
+/// far longer than 30 s, and a step Rust gave up on while the page's
+/// request was still going could still save - and a re-run save twice.
+pub const UPLOAD_STEP_LIMIT: Duration = Duration::from_secs(120);
+/// How much longer than the page's own abort the DevTools call waits, so
+/// a request that runs out of time is reported by the page that sent it
+/// (and is over), never by Rust while the page is still sending it.
+pub const FETCH_GRACE: Duration = Duration::from_secs(5);
+
+/// How long `step` may take: `UPLOAD_STEP_LIMIT` when it sends files,
+/// `STEP_LIMIT` otherwise.
+pub fn step_limit(step: &Step) -> Duration {
+    if step.files.is_empty() {
+        STEP_LIMIT
+    } else {
+        UPLOAD_STEP_LIMIT
+    }
+}
+
+/// The sentence for a step that ran out of `limit`.
+fn step_too_long(limit: Duration) -> String {
+    format!("the step took longer than {} seconds", limit.as_secs())
+}
 /// How long a whole run may take once its browser is open.
 pub const RUN_LIMIT: Duration = Duration::from_secs(180);
 
 const RUN_TOO_LONG: &str = "the run took longer than 3 minutes";
-const STEP_TOO_LONG: &str = "the step took longer than 30 seconds";
 /// Names for the parts of a run that are not a template step, as a
 /// `StepReport` and `RunReport::failed` show them.
 const SIGN_IN: &str = "Sign in";
@@ -65,12 +87,13 @@ pub const TOKEN_FN: &str = r#"function () { const i = this.querySelector('input[
 /// Sends one built request (`exec::BuiltRequest`, serialized) from the page
 /// itself, so the browser attaches the session cookies; `token` goes only
 /// into the `RequestVerificationToken` header and is never returned. The
-/// request is aborted after 30 s, and at most 64 KB of the body is read
+/// request is aborted after `limitMs` (the step's `step_limit`; 30 s when
+/// not given), and at most 64 KB of the body is read
 /// back. A request that did not complete comes back as `{ error }` rather
 /// than a throw, so the runner can tell a timeout from anything else. A
 /// form's files (`exec::FormFile`) are appended after its text fields, each
 /// a `Blob` of its own bytes, type and name.
-pub const FETCH_FN: &str = r#"async function (req, token) {
+pub const FETCH_FN: &str = r#"async function (req, token, limitMs) {
   const headers = { "RequestVerificationToken": token, "Accept": "application/json" };
   let body;
   if (req.body && req.body.kind === "json") {
@@ -84,7 +107,7 @@ pub const FETCH_FN: &str = r#"async function (req, token) {
     }
   }
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
+  const timer = setTimeout(() => ctrl.abort(), limitMs || 30000);
   try {
     const r = await fetch(req.url, { method: req.method, credentials: "same-origin", headers, body, signal: ctrl.signal });
     const text = (await r.text()).slice(0, 65536);
@@ -248,7 +271,9 @@ fn file_problems(root: &Path, req: &RunRequest) -> Vec<String> {
     let mut problems = Vec::new();
     for step in &req.template.steps {
         for name in step.files.values() {
-            if !seen.insert(name.as_str()) {
+            // A name that is not a test file name is `check`'s problem,
+            // already reported; this one is only about the file itself.
+            if !seen.insert(name.as_str()) || !crate::test_files::valid_test_file_name(name) {
                 continue;
             }
             let who = format!("the step \"{}\"", step.name);
@@ -607,7 +632,7 @@ async fn drive<D: Driver>(
         let handler = step.query.get("handler").map(|h| exec::substitute_str(h, &vars));
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
-        d.set_deadline(Some(Instant::now() + STEP_LIMIT));
+        d.set_deadline(Some(Instant::now() + step_limit(step)));
         let mut result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
         d.set_deadline(None);
         // Refused before any handler read it: nothing was saved, so it is
@@ -632,7 +657,7 @@ async fn drive<D: Driver>(
             let Some((fresh_doc, fresh_token)) = self::token(d, &ctx, progress).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
-            d.set_deadline(Some(Instant::now() + STEP_LIMIT));
+            d.set_deadline(Some(Instant::now() + step_limit(step)));
             result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, attempt).await;
             d.set_deadline(None);
         }
@@ -743,7 +768,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
 fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
     applog::warn(format!("api template {}: step {}: {e}", ctx.id(), step.name));
     match e {
-        CdpError::Timeout { .. } => STEP_TOO_LONG.to_string(),
+        CdpError::Timeout { .. } => step_too_long(step_limit(step)),
         _ => "the browser did not answer while sending this step - see Settings, Logs".to_string(),
     }
 }
@@ -804,7 +829,13 @@ async fn run_step<D: Driver>(
         .await
         .map(|all| all.iter().map(|c| c["name"].clone()).collect::<Vec<_>>());
     let started = Instant::now();
-    let answer = call_value(d, doc, FETCH_FN, &[wire, Value::String(token.to_string())]).await;
+    // The page aborts its own request at the step's limit; the DevTools
+    // call waits a little longer, so it is the page that says so.
+    let limit = step_limit(step);
+    let limit_ms = Value::from(limit.as_millis() as u64);
+    let answer =
+        call_value_within(d, doc, FETCH_FN, &[wire, Value::String(token.to_string()), limit_ms], limit + FETCH_GRACE)
+            .await;
     let duration_ms = started.elapsed().as_millis() as u64;
 
     let sent = Sent {
@@ -828,7 +859,7 @@ async fn run_step<D: Driver>(
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
-            return Err((None, STEP_TOO_LONG.to_string()).into());
+            return Err((None, step_too_long(limit)).into());
         }
         applog::warn(format!(
             "api template {}: step {}: the request did not complete: {}",

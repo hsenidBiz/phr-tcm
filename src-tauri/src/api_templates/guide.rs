@@ -290,7 +290,7 @@ created, which step failed with its handler, and the start of the
 response. A failed prove saves nothing; fix the draft and prove again,
 remembering that whatever it created is still there.
 
-Limits: 30 seconds per step, 3 minutes per run, the first 64 KB of each
+Limits: 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
 response.
 "#;
 

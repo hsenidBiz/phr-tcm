@@ -360,6 +360,18 @@ pub trait Driver {
         method: &str,
         params: serde_json::Value,
     ) -> impl Future<Output = Result<serde_json::Value, CdpError>>;
+    /// `call` with its own limit in place of `CALL_TIMEOUT` and any
+    /// deadline - for the one call known to take longer than any other (an
+    /// API template step that uploads a file). A driver with no limits of
+    /// its own (a test's fake) just makes the call.
+    fn call_within(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        _limit: Duration,
+    ) -> impl Future<Output = Result<serde_json::Value, CdpError>> {
+        self.call(method, params)
+    }
     fn wait_event(
         &mut self,
         method: &str,
@@ -379,6 +391,14 @@ impl<T: Transport> Driver for Cdp<T> {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CdpError> {
         Cdp::call(self, method, params).await
+    }
+    async fn call_within(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        limit: Duration,
+    ) -> Result<serde_json::Value, CdpError> {
+        Cdp::call_within(self, method, params, limit).await
     }
     async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
         Cdp::wait_event(self, method, limit).await

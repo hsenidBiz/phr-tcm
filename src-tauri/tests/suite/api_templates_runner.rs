@@ -344,8 +344,9 @@ async fn the_token_goes_in_the_header_and_nowhere_else() {
     let fetched = r.fetched();
     assert_eq!(fetched.len(), 2);
     for args in &fetched {
-        assert_eq!(args.len(), 2, "{args:?}");
+        assert_eq!(args.len(), 3, "{args:?}");
         assert_eq!(args[1], json!(TOKEN));
+        assert_eq!(args[2], json!(30_000), "the page aborts at the step's own limit");
         assert!(!args[0].to_string().contains(TOKEN), "the token rode in the request itself: {}", args[0]);
     }
 
@@ -1952,6 +1953,10 @@ mod test_files {
         );
         assert_eq!(fetched[1][0]["body"], json!({ "kind": "form", "fields": { "CycleId": "274" } }));
         assert!(FETCH_FN.contains("new Blob([Uint8Array.from(atob(f.base64)"), "{FETCH_FN}");
+        // The step that sends a file has the longer limit, in the page too.
+        assert_eq!(fetched[0][2], json!(120_000));
+        assert_eq!(fetched[1][2], json!(30_000));
+        assert!(FETCH_FN.contains("setTimeout(() => ctrl.abort(), limitMs || 30000)"), "{FETCH_FN}");
 
         assert_eq!(report.steps[0].detail, format!("status 200, sent \"appraisal.pdf\" ({} bytes), captured cycleId", PDF.len()));
         let text = serde_json::to_string(&report).unwrap();
@@ -1987,6 +1992,28 @@ mod test_files {
         for rec in activity_records(activity.path(), "api") {
             assert!(!rec.to_string().contains(&b64), "{rec}");
         }
+    }
+
+    #[test]
+    fn a_step_that_sends_files_gets_the_longer_limit() {
+        use v2_lib::api_templates::runner::{step_limit, FETCH_GRACE, STEP_LIMIT, UPLOAD_STEP_LIMIT};
+        let t = uploading();
+        assert_eq!(step_limit(&t.steps[0]), UPLOAD_STEP_LIMIT);
+        assert_eq!(step_limit(&t.steps[1]), STEP_LIMIT);
+        assert_eq!(UPLOAD_STEP_LIMIT, Duration::from_secs(120));
+        assert!(FETCH_GRACE > Duration::ZERO, "Rust waits past the page's own abort");
+    }
+
+    #[test]
+    fn an_invalid_file_name_is_reported_once() {
+        let root = tempfile::tempdir().unwrap();
+        save_recipe(root.path(), ORG, PROJECT, &recipe()).unwrap();
+        save_accounts(root.path(), &[account()]).unwrap();
+        let mut t = uploading();
+        t.steps[0].files = BTreeMap::from([("Document".to_string(), "..\\x.pdf".to_string())]);
+        let problems = preflight(root.path(), &request(t, prove()), None).unwrap_err();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("file field 'Document'"), "{problems:?}");
     }
 
     #[test]
