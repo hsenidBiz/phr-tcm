@@ -217,8 +217,8 @@ export default function TestFilesDialog({
         </div>
       )}
 
-      {problems.map((p) => (
-        <p key={p} className="text-xs text-danger">
+      {problems.map((p, i) => (
+        <p key={`${i}-${p}`} className="text-xs text-danger">
           {p}
         </p>
       ))}
