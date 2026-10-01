@@ -8,7 +8,7 @@ import { Button } from "../../components/ui/button";
 import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
-import { IconCollapseAll, IconExpandAll, IconExport, IconImport } from "../../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconTestFiles } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
@@ -16,6 +16,7 @@ import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
 import FlowMap from "./FlowMap";
+import TestFilesDialog from "../AutoRun/TestFilesDialog";
 import ImportTemplates from "./ImportTemplates";
 import RemoveFlow from "./RemoveFlow";
 import RemoveTemplate from "./RemoveTemplate";
@@ -127,6 +128,8 @@ export default function ApiTemplates({
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
   // The file picked to import, while its warning and result are up.
   const [importPath, setImportPath] = useState<string | null>(null);
+  // The project's Test files - what a template's form step can upload.
+  const [testFilesOpen, setTestFilesOpen] = useState(false);
   // Rows opened by their own toggle or from a flow map. A set, so opening
   // one from a map does not fold the others a person had open.
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
@@ -286,6 +289,15 @@ export default function ApiTemplates({
           API templates {writesOn ? "on" : "off"}
         </button>
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            title="The documents templates and scripts upload, kept on this machine"
+            onClick={() => setTestFilesOpen(true)}
+          >
+            <IconTestFiles aria-hidden />
+            Test files
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -473,6 +485,10 @@ export default function ApiTemplates({
           onClose={() => setRemoving(null)}
           onRemoved={() => void qc.invalidateQueries({ queryKey: [KEY] })}
         />
+      )}
+
+      {testFilesOpen && (
+        <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />
       )}
 
       {importPath && (

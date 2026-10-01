@@ -893,6 +893,18 @@ export const commands = {
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
 	apiTemplatesImport: (organization: string, project: string, path: string) => typedError<TemplatesImportResult, string>(__TAURI_INVOKE("api_templates_import", { organization, project, path })),
+	testFilesList: (organization: string, project: string) => typedError<TestFile[], string>(__TAURI_INVOKE("test_files_list", { organization, project })),
+	/**
+	 *  Copies the file the person picked at `path` into Test files. `replace`
+	 *  is sent only after the person said yes to replacing a file of that name.
+	 */
+	testFilesAdd: (organization: string, project: string, path: string, replace: boolean) => typedError<TestFile, string>(__TAURI_INVOKE("test_files_add", { organization, project, path, replace })),
+	testFilesRemove: (organization: string, project: string, name: string) => typedError<null, string>(__TAURI_INVOKE("test_files_remove", { organization, project, name })),
+	/**
+	 *  Opens the folder in the file explorer - from Rust, like every other
+	 *  folder the app opens (see `misc::open_app_log_dir`).
+	 */
+	testFilesOpenFolder: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("test_files_open_folder", { organization, project })),
 };
 
 /** Events */
@@ -953,19 +965,35 @@ export type ActionOutcome_Serialize = {
 	screenshot?: string | null,
 };
 
-export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; url?: never; value?: never } | 
+export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; url?: never; value?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never };
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | 
+/**
+ *  Put a file from the project's Test files into the page: into the
+ *  file input `selector` names, or through the file chooser that
+ *  clicking it opens. `file` is a test file's NAME, never a path. The
+ *  runner finds the file (it knows the project) and hands this driver
+ *  its path - see `upload_in`.
+ */
+({ kind: "upload"; selector: Target_Deserialize; file: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never };
 
-export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; url?: never; value?: never } | 
+export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; url?: never; value?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never };
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | 
+/**
+ *  Put a file from the project's Test files into the page: into the
+ *  file input `selector` names, or through the file chooser that
+ *  clicking it opens. `file` is a test file's NAME, never a path. The
+ *  runner finds the file (it knows the project) and hands this driver
+ *  its path - see `upload_in`.
+ */
+({ kind: "upload"; selector: Target_Serialize; file: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -980,15 +1008,44 @@ export type Antiforgery = {
 
 export type ApiTemplate = ApiTemplate_Serialize | ApiTemplate_Deserialize;
 
-export type ApiTemplateStep = {
+export type ApiTemplateStep = ApiTemplateStep_Serialize | ApiTemplateStep_Deserialize;
+
+export type ApiTemplateStep_Deserialize = {
 	name: string,
 	method: Method,
 	path: string,
 	query?: { [key in string]: string },
 	json?: unknown | null,
 	form?: { [key in string]: string } | null,
+	/**
+	 *  Files the step sends with its `form`: a form field name to the NAME
+	 *  of a file in the project's Test files (`crate::test_files`) - one
+	 *  file per field, a name and never a path, no placeholders. Left out
+	 *  when empty, so a template written before files existed reads and
+	 *  writes back exactly as it was.
+	 */
+	files?: { [key in string]: string },
 	expect?: Expect,
 	capture?: { [key in string]: string },
+};
+
+export type ApiTemplateStep_Serialize = {
+	name: string,
+	method: Method,
+	path: string,
+	query: { [key in string]: string },
+	json: unknown | null,
+	form: { [key in string]: string } | null,
+	/**
+	 *  Files the step sends with its `form`: a form field name to the NAME
+	 *  of a file in the project's Test files (`crate::test_files`) - one
+	 *  file per field, a name and never a path, no placeholders. Left out
+	 *  when empty, so a template written before files existed reads and
+	 *  writes back exactly as it was.
+	 */
+	files?: { [key in string]: string },
+	expect: Expect,
+	capture: { [key in string]: string },
 };
 
 export type ApiTemplate_Deserialize = {
@@ -1000,7 +1057,7 @@ export type ApiTemplate_Deserialize = {
 	sources: string[],
 	antiforgery: Antiforgery,
 	params: Param_Deserialize[],
-	steps: ApiTemplateStep[],
+	steps: ApiTemplateStep_Deserialize[],
 	outputs: string[],
 	/**
 	 *  The flow stage this template performs, if it belongs to a flow.
@@ -1024,7 +1081,7 @@ export type ApiTemplate_Serialize = {
 	sources: string[],
 	antiforgery: Antiforgery,
 	params: Param_Serialize[],
-	steps: ApiTemplateStep[],
+	steps: ApiTemplateStep_Serialize[],
 	outputs: string[],
 	/**
 	 *  The flow stage this template performs, if it belongs to a flow.
@@ -3252,6 +3309,21 @@ export type TestCase_Serialize = {
 	 *  a transform. `comment` stays the developer's.
 	 */
 	findings?: CaseFinding_Serialize[],
+};
+
+/**  One file in a project's Test files. */
+export type TestFile = {
+	name: string,
+	/**
+	 *  Bytes. A `u32` (specta refuses a 64-bit number across IPC); a file
+	 *  over 4 GB - never one this app accepted - reads as `u32::MAX`.
+	 */
+	size: number,
+	/**
+	 *  Epoch milliseconds as a string, like a run's `started_at`; empty when
+	 *  the file system would not say.
+	 */
+	modified: string,
 };
 
 export type TestPlan = {

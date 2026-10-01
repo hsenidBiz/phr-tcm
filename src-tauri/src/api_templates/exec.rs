@@ -7,6 +7,7 @@
 //! everything here just transforms values so it stays easy to test.
 
 use super::{is_safe_relative_path, Expect, Method, Step};
+use base64::Engine;
 use crate::ado::endpoints::percent_encode_segment;
 use regex::Regex;
 use serde::Serialize;
@@ -200,13 +201,51 @@ pub fn substitute(v: &Value, vars: &BTreeMap<String, Value>) -> Value {
 
 /// A step's request body, ready to serialize for the JS `fetch` the
 /// runner (Task 5) drives: `kind` picks the shape, `Json` carries the
-/// substituted JSON value, `Form` carries substituted-as-text fields.
+/// substituted JSON value, `Form` carries substituted-as-text fields and
+/// the step's files (`Step::files`), appended after the text fields.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Body {
     None,
     Json { value: Value },
-    Form { fields: BTreeMap<String, String> },
+    Form {
+        fields: BTreeMap<String, String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        files: Vec<FormFile>,
+    },
+}
+
+/// One file a form step sends: the form field, the test file's name, its
+/// content type (`test_files::content_type`), its size, and its bytes as
+/// base64 - the one thing that goes to the page, which turns them back
+/// into a `Blob`. The bytes are never written anywhere else: `describe` is
+/// how a record or a sentence names a file, and `Debug` leaves them out.
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormFile {
+    pub field: String,
+    pub name: String,
+    pub content_type: String,
+    pub size: u64,
+    pub base64: String,
+}
+
+impl FormFile {
+    /// How a record or a sentence shows this file: `<file report.pdf, 1234 bytes>`.
+    pub fn describe(&self) -> String {
+        format!("<file {}, {} bytes>", self.name, self.size)
+    }
+}
+
+impl std::fmt::Debug for FormFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormFile")
+            .field("field", &self.field)
+            .field("name", &self.name)
+            .field("content_type", &self.content_type)
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A step with every placeholder resolved: ready to hand to `fetch` as-is.
@@ -265,8 +304,15 @@ fn substitute_path(path: &str, step_name: &str, vars: &BTreeMap<String, Value>) 
 /// slip through), the query string (substituted then percent-encoded,
 /// pairs in the step's `query` map order - see `Step::query`, a
 /// `BTreeMap` - joined with `&`), and the body (`json` substituted with
-/// types kept, `form` substituted to text, or neither).
-pub fn build_request(step: &Step, vars: &BTreeMap<String, Value>) -> Result<BuiltRequest, String> {
+/// types kept, `form` substituted to text with the step's `files`, or
+/// neither). `files` holds the bytes of each test file the step names, by
+/// name - read by the runner, so this stays pure; a name it does not hold
+/// is refused with `test_files::missing`'s sentence.
+pub fn build_request(
+    step: &Step,
+    vars: &BTreeMap<String, Value>,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<BuiltRequest, String> {
     let path = substitute_path(&step.path, &step.name, vars)?;
     if !is_safe_relative_path(&path) {
         return Err(format!(
@@ -288,7 +334,20 @@ pub fn build_request(step: &Step, vars: &BTreeMap<String, Value>) -> Result<Buil
     } else if let Some(form) = &step.form {
         let fields =
             form.iter().map(|(k, v)| (substitute_str(k, vars), substitute_str(v, vars))).collect();
-        Body::Form { fields }
+        let mut attached = Vec::with_capacity(step.files.len());
+        for (field, name) in &step.files {
+            let Some(bytes) = files.get(name) else {
+                return Err(crate::test_files::missing(name, &format!("the step \"{}\"", step.name)));
+            };
+            attached.push(FormFile {
+                field: field.clone(),
+                name: name.clone(),
+                content_type: crate::test_files::content_type(name).to_string(),
+                size: bytes.len() as u64,
+                base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            });
+        }
+        Body::Form { fields, files: attached }
     } else {
         Body::None
     };

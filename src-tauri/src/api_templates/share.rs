@@ -25,8 +25,14 @@ use std::collections::HashMap;
 
 /// What `kind` says in every file this module writes.
 pub const KIND: &str = "tcm-api-templates";
-/// The newest format this copy of the app reads.
-pub const VERSION: u64 = 1;
+/// The newest format this copy of the app reads: 1, and 2 - the same shape,
+/// written only when some step uploads test files (`files`). An app from
+/// before files refuses a step with `files` as an unknown field; a version
+/// 2 file lets it say "exported by a newer version" instead. A file with no
+/// uploads is still written as 1, so it imports into those apps.
+pub const VERSION: u64 = 2;
+/// What a file with no uploads in it is written as.
+pub const VERSION_WITHOUT_FILES: u64 = 1;
 /// The largest file an import will read: far more than any real project's
 /// templates, and small enough that a wrong pick is refused before it is
 /// read into memory.
@@ -95,9 +101,10 @@ pub struct TemplatesImportResult {
 
 /// The file for these templates and flows, proof stripped from each.
 pub fn build_doc(templates: Vec<ApiTemplate>, flows: Vec<Flow>, exported_at: &str) -> ShareDoc {
+    let uploads = templates.iter().any(|t| t.steps.iter().any(|s| !s.files.is_empty()));
     ShareDoc {
         kind: KIND,
-        version: VERSION,
+        version: if uploads { VERSION } else { VERSION_WITHOUT_FILES },
         exported_at: exported_at.to_string(),
         templates: templates.into_iter().map(|t| ApiTemplate { proven: None, ..t }).collect(),
         flows: flows.into_iter().map(|f| Flow { saved: None, ..f }).collect(),
@@ -295,6 +302,34 @@ pub fn stage_note(t: &ApiTemplate, flow: FlowFound) -> Option<String> {
             (!problems.is_empty()).then(|| problems.join("; "))
         }
     }
+}
+
+/// Why an imported template cannot run as it is on this machine: it
+/// uploads test files that are not in this project's Test files here. A
+/// file travels in the export by its name only - never its bytes - so the
+/// person adds their own copy. `have` is the names in this machine's Test
+/// files; a name is matched ignoring case, as Windows' file names are.
+/// `None` when every file it uploads is here, or it uploads none.
+pub fn missing_files_note(t: &ApiTemplate, have: &[String]) -> Option<String> {
+    let mut missing: Vec<&str> = Vec::new();
+    for step in &t.steps {
+        for name in step.files.values() {
+            let here = have.iter().any(|h| h.eq_ignore_ascii_case(name));
+            if !here && !missing.iter().any(|m| m.eq_ignore_ascii_case(name)) {
+                missing.push(name);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = missing.iter().map(|n| format!("\"{n}\"")).collect();
+    let (it, them) = if missing.len() == 1 { ("a test file", "it") } else { ("test files", "them") };
+    Some(format!(
+        "it uploads {it} this machine does not have: {} - add {them} to {} before running it",
+        names.join(", "),
+        crate::test_files::WHERE
+    ))
 }
 
 /// The note for a template saved here, not in the file, that a flow the

@@ -61,6 +61,12 @@ pub enum Action {
     /// Change who is signed in. Carried out by the runner (it needs the
     /// tester's accounts and the project's recipe), not by this driver.
     SignIn { account: String },
+    /// Put a file from the project's Test files into the page: into the
+    /// file input `selector` names, or through the file chooser that
+    /// clicking it opens. `file` is a test file's NAME, never a path. The
+    /// runner finds the file (it knows the project) and hands this driver
+    /// its path - see `upload_in`.
+    Upload { selector: Target, file: String },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -236,6 +242,10 @@ impl Action {
                 Err(format!("sign_in names \"{account}\", which is not a usable account key"))
             }
             Action::SignIn { .. } => Ok(()),
+            Action::Upload { file, .. } if !crate::test_files::valid_test_file_name(file) => {
+                Err(format!("upload: {}", crate::test_files::bad_name(file)))
+            }
+            Action::Upload { selector, .. } => selector.validate(),
         }
     }
 
@@ -498,6 +508,207 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         // executor (it alone has the tester's accounts and the project's
         // recipe). Reaching here means a caller forgot to.
         Action::SignIn { .. } => ActionOutcome::failed("sign_in is carried out by the runner"),
+        // The same for `upload`: only the runner knows the project, and so
+        // where its Test files are. It calls `upload_in` with the path.
+        Action::Upload { .. } => ActionOutcome::failed("upload is carried out by the runner"),
+    }
+}
+
+/// `this` is the element. Is it a file input, and may it be used?
+pub const FILE_INPUT_JS: &str = r#"function() {
+  return {
+    file: this instanceof HTMLInputElement && this.type === 'file',
+    disabled: !!this.disabled || !!this.closest('fieldset[disabled]'),
+  };
+}"#;
+
+/// What `upload` says when a click opened no file chooser.
+pub fn no_chooser(target: &str) -> String {
+    format!(
+        "clicking {target} did not open a file chooser - point upload at the page's file input or the button that opens it"
+    )
+}
+
+/// Puts the file at `file` into the page through `selector`, and says so
+/// with `shown` (the file's name and size, as the person reads them):
+/// `uploaded "cv.pdf" (12.0 KB) to <target>`.
+///
+/// The ONE element the selector names is found first, by the same rules a
+/// click or a fill finds theirs (the only match, waited for up to
+/// `action_ms`). A file input gets the file directly
+/// (`DOM.setFileInputFiles`, which raises the input's own `input` and
+/// `change` events). Anything else - the button a page draws over its
+/// hidden input - is clicked the way `click` clicks, with the browser told
+/// to hand the file chooser to this driver rather than show it
+/// (`Page.setInterceptFileChooserDialog`); the chooser's input then gets
+/// the file. That interception is switched off again on every way out.
+///
+/// The caller has already checked the file exists and is within the cap,
+/// before anything here touches the page. The dialogs a page raised are
+/// reported the way `execute_in` reports them.
+pub async fn upload_in<D: Driver>(
+    d: &mut D,
+    selector: &Target,
+    file: &std::path::Path,
+    shown: &str,
+    timing: &Timing,
+) -> ActionOutcome {
+    let path = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()).to_string_lossy().into_owned();
+    let mut out = upload(d, selector, &path, shown, timing).await;
+    append_dialogs(d, &mut out);
+    out
+}
+
+async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str, timing: &Timing) -> ActionOutcome {
+    let handle = match find_one(d, selector, timing).await {
+        Ok(h) => h,
+        Err(out) => return out,
+    };
+    let kind = match page::call_value(d, &handle, FILE_INPUT_JS, &[]).await {
+        Ok(v) => v,
+        Err(e) => return failed_by(e),
+    };
+    let done = || ActionOutcome::passed(format!("uploaded {shown} to {}", selector.describe()));
+    if kind["file"].as_bool() != Some(true) {
+        let (result, switched_off) = through_chooser(d, selector, path, timing).await;
+        let mut out = match result {
+            Ok(()) => done(),
+            Err(out) => out,
+        };
+        if !switched_off {
+            out.detail.push_str(CHOOSER_STILL_HELD);
+        }
+        return out;
+    }
+    if kind["disabled"].as_bool() == Some(true) {
+        return ActionOutcome::failed(format!("{} is disabled", selector.describe()));
+    }
+    let backend = match page::backend_id(d, &handle).await {
+        Ok(id) => id,
+        Err(e) => return failed_by(e),
+    };
+    match d.call("DOM.setFileInputFiles", json!({ "files": [path], "backendNodeId": backend })).await {
+        Ok(_) => done(),
+        Err(e) => failed_by(e),
+    }
+}
+
+/// Added to an upload's outcome when the browser would not stop
+/// intercepting file choosers afterwards.
+pub const CHOOSER_STILL_HELD: &str =
+    " (the browser did not confirm it stopped holding back file choosers - if a file chooser does not open, close the browser and open it again)";
+
+/// Clicks `selector` with the file chooser intercepted, and gives the
+/// chooser's input the file. Interception is switched off again whatever
+/// happened in between - a page left intercepting would swallow the
+/// person's own next chooser. The second value is whether switching it off
+/// worked; a failure is logged.
+async fn through_chooser<D: Driver>(
+    d: &mut D,
+    selector: &Target,
+    path: &str,
+    timing: &Timing,
+) -> (Result<(), ActionOutcome>, bool) {
+    let out = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": true })).await {
+        // Switched off below anyway: a browser that refused may still have
+        // switched it on.
+        Err(e) => Err(failed_by(e)),
+        Ok(_) => choose(d, selector, path, timing).await,
+    };
+    let switched_off = match d.call("Page.setInterceptFileChooserDialog", json!({ "enabled": false })).await {
+        Ok(_) => true,
+        Err(e) => {
+            crate::applog::warn(format!("upload: file chooser interception could not be switched off: {e}"));
+            false
+        }
+    };
+    (out, switched_off)
+}
+
+async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Timing) -> Result<(), ActionOutcome> {
+    let ready = input::wait_ready(d, selector, false, timing).await.map_err(blocked)?;
+    point_and_pause(d, &ready, timing).await.map_err(failed_by)?;
+    // A chooser event left over from an earlier upload must not stand in
+    // for the one this click opens.
+    d.forget_events();
+    input::click(d, &ready).await.map_err(blocked)?;
+    let ev = match d.wait_event("Page.fileChooserOpened", Duration::from_millis(timing.action_ms)).await {
+        Ok(ev) => ev,
+        Err(CdpError::Timeout { .. }) => return Err(ActionOutcome::failed(no_chooser(&selector.describe()))),
+        Err(e) => return Err(failed_by(e)),
+    };
+    let Some(backend) = ev.params["backendNodeId"].as_i64() else {
+        return Err(ActionOutcome::failed(format!(
+            "clicking {} opened a file chooser the browser did not tie to a file input - point upload at the page's file input",
+            selector.describe()
+        )));
+    };
+    d.call("DOM.setFileInputFiles", json!({ "files": [path], "backendNodeId": backend }))
+        .await
+        .map_err(failed_by)?;
+    Ok(())
+}
+
+/// The one element `target` names, waited for up to `action_ms` the way
+/// `wait_ready` waits for its element - but not for it to be usable, since
+/// a file input is set rather than clicked. Several matches are refused
+/// as a click refuses them (a legacy string selector takes the first). The
+/// deadline is cleared on every way out.
+async fn find_one<D: Driver>(d: &mut D, target: &Target, timing: &Timing) -> Result<page::Handle, ActionOutcome> {
+    let deadline = Instant::now() + Duration::from_millis(timing.action_ms);
+    d.set_deadline(Some(deadline));
+    let out = keep_finding(d, target, timing, deadline).await;
+    d.set_deadline(None);
+    out
+}
+
+async fn keep_finding<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    timing: &Timing,
+    deadline: Instant,
+) -> Result<page::Handle, ActionOutcome> {
+    let mut looked = false;
+    let mut last = input::STILL_LOOKING.to_string();
+    loop {
+        page::release(d).await;
+        match resolve(d, target).await {
+            Ok(found) if found.len() == 1 || (!found.is_empty() && target.is_legacy()) => {
+                return Ok(found.into_iter().next().expect("checked non-empty"));
+            }
+            Ok(found) => {
+                looked = true;
+                last = if found.is_empty() {
+                    "not found".to_string()
+                } else {
+                    format!("matched {} elements - narrow it, or add nth", found.len())
+                };
+            }
+            Err(e) if e.is_transient() => {
+                looked = true;
+                last = e.to_string();
+            }
+            Err(CdpError::Timeout { .. }) => {}
+            Err(e) => return Err(harness(e)),
+        }
+        if Instant::now() >= deadline {
+            return Err(if looked {
+                ActionOutcome::failed(format!("waited {}ms: {} {last}", timing.action_ms, target.describe()))
+            } else {
+                harness_timeout(timing.action_ms, &target.describe())
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+    }
+}
+
+/// A dialog raised BETWEEN two actions is reported with the NEXT one: the
+/// client only reads frames off the socket while a call is in flight, so
+/// nothing is noticed until something asks again.
+fn append_dialogs<D: Driver>(d: &mut D, out: &mut ActionOutcome) {
+    let dialogs = d.take_dialogs();
+    if !dialogs.is_empty() {
+        out.detail.push_str(&format!(" (the page showed {} and it was accepted)", dialogs.join("; ")));
     }
 }
 
@@ -520,15 +731,6 @@ pub async fn execute_in<D: Driver>(
         return ActionOutcome::failed(format!("this action cannot run: {why}"));
     }
     let mut out = run(d, action, timing, policy).await;
-    // A dialog raised BETWEEN two actions is reported with the NEXT one:
-    // the client only reads frames off the socket while a call is in
-    // flight, so nothing is noticed until something asks again.
-    let dialogs = d.take_dialogs();
-    if !dialogs.is_empty() {
-        out.detail.push_str(&format!(
-            " (the page showed {} and it was accepted)",
-            dialogs.join("; ")
-        ));
-    }
+    append_dialogs(d, &mut out);
     out
 }

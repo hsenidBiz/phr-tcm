@@ -453,7 +453,19 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
         .map(|a| a.key)
         .collect();
     let origin = recipe_origin(&root, &ctx.org, &ctx.project);
-    crate::api_templates::guide::text(&keys, origin.as_deref())
+    let mut out = crate::api_templates::guide::text(&keys, origin.as_deref());
+    out.push_str(&crate::test_files::guide_section(&project_test_files(&root, ctx)));
+    out
+}
+
+/// This project's Test files - names and sizes, for an assistant to pick
+/// from. One that cannot be read is logged by `test_files::list` and reads
+/// as none.
+fn project_test_files(root: &std::path::Path, ctx: &BridgeContext) -> Vec<crate::test_files::TestFile> {
+    if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
+        return Vec::new();
+    }
+    crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_default()
 }
 
 /// Every saved template for this project, as a summary: what it is, what
@@ -529,7 +541,12 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
             })
         })
         .collect();
-    (200, serde_json::json!({ "templates": rows, "flows": flow_rows }).to_string())
+    // Names and sizes only: what a template's `files` may name.
+    let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
+        .into_iter()
+        .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
+        .collect();
+    (200, serde_json::json!({ "templates": rows, "flows": flow_rows, "test_files": test_files }).to_string())
 }
 
 /// Every saved template for this project, for naming the ones on a stage.
@@ -1196,8 +1213,13 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
     };
     let nav = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+    let files = project_test_files(&root, ctx);
     let mut out = base;
-    for section in [crate::autorun::nav::guide_section(&nav), crate::autorun::quirks::quirks_section(&quirks)] {
+    for section in [
+        crate::autorun::nav::guide_section(&nav),
+        crate::autorun::quirks::quirks_section(&quirks),
+        crate::test_files::guide_section(&files),
+    ] {
         if !section.is_empty() {
             out.push('\n');
             out.push_str(&section);
@@ -1292,7 +1314,8 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ExpectText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
-        | Action::ExpectAttribute { selector, .. } => selector.describe(),
+        | Action::ExpectAttribute { selector, .. }
+        | Action::Upload { selector, .. } => selector.describe(),
     };
     let target = if what.is_empty() { String::new() } else { format!(" {what}") };
     format!(

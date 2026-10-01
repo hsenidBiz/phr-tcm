@@ -30,6 +30,7 @@ import {
   IconRecord,
   IconRun,
   IconSiteAddress,
+  IconTestFiles,
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -45,6 +46,7 @@ import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
+import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 
 // How many imported case ids the success toast spells out before it falls
 // back to a count - the same shape as the assigned-work notification
@@ -114,6 +116,7 @@ export default function AutoRun({
   const [recordOpen, setRecordOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
+  const [testFilesOpen, setTestFilesOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -144,6 +147,10 @@ export default function AutoRun({
    * keyed on the answer rather than on the data, so the row can never sit
    * on "Loading…" after the query has already settled. */
   const accountCount = accounts.isSuccess ? (accounts.data?.length ?? 0) : null;
+  // The documents this project's scripts upload. Shares its key with the
+  // dialog, so adding or removing one there updates the row.
+  const testFiles = useTestFiles(org, project);
+  const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
   const moduleCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
@@ -506,6 +513,35 @@ export default function AutoRun({
               Edit
             </Button>
           </SetupRow>
+
+          <SetupRow
+            label="Test files"
+            state={
+              !setupReady ? (
+                <span className="text-muted">{needsProject}</span>
+              ) : testFiles.isError ? (
+                <span className="text-danger">The test files could not be read</span>
+              ) : testFiles.isPending || testFileCount == null ? (
+                <span className="text-muted">Loading…</span>
+              ) : testFileCount === 0 ? (
+                <span className="text-muted">None yet</span>
+              ) : (
+                plural(testFileCount, "file")
+              )
+            }
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label="Manage test files"
+              disabled={!setupReady}
+              title={needsProject}
+              onClick={() => setTestFilesOpen(true)}
+            >
+              <IconTestFiles aria-hidden />
+              Manage
+            </Button>
+          </SetupRow>
         </div>
       </section>
 
@@ -668,6 +704,9 @@ export default function AutoRun({
       )}
       {recordOpen && (
         <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />
+      )}
+      {testFilesOpen && (
+        <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />
       )}
       {siteOpen && (
         <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />

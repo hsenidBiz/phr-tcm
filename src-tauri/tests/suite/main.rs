@@ -105,6 +105,7 @@ mod steps_xml;
 mod submit_mapping;
 mod suite_manage;
 mod tcm_mcp;
+mod test_files;
 mod test_map;
 mod throttle_backoff;
 mod throttle_default;

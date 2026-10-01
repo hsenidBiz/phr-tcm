@@ -72,18 +72,33 @@ pub async fn call_value<D: Driver>(
     function: &str,
     values: &[Value],
 ) -> Result<Value, CdpError> {
-    let r = d
-        .call(
-            "Runtime.callFunctionOn",
-            json!({
-                "objectId": on,
-                "functionDeclaration": function,
-                "arguments": arguments(values),
-                "returnByValue": true,
-                "awaitPromise": true,
-            }),
-        )
-        .await?;
+    let r = d.call("Runtime.callFunctionOn", call_params(on, function, values)).await?;
+    value_of(r)
+}
+
+/// `call_value` with its own time limit (`Driver::call_within`).
+pub async fn call_value_within<D: Driver>(
+    d: &mut D,
+    on: &Handle,
+    function: &str,
+    values: &[Value],
+    limit: std::time::Duration,
+) -> Result<Value, CdpError> {
+    let r = d.call_within("Runtime.callFunctionOn", call_params(on, function, values), limit).await?;
+    value_of(r)
+}
+
+fn call_params(on: &Handle, function: &str, values: &[Value]) -> Value {
+    json!({
+        "objectId": on,
+        "functionDeclaration": function,
+        "arguments": arguments(values),
+        "returnByValue": true,
+        "awaitPromise": true,
+    })
+}
+
+fn value_of(r: Value) -> Result<Value, CdpError> {
     if let Some(e) = thrown("Runtime.callFunctionOn", &r) {
         return Err(e);
     }

@@ -629,6 +629,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
+        Action::Upload { selector: "s".into(), file: "f.pdf".into() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 

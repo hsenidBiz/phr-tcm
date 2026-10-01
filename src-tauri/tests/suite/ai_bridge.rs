@@ -2789,7 +2789,32 @@ mod api_template_routes {
 
         let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
         assert_eq!(status, 200, "{list}");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!({ "templates": [], "flows": [] }));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!({ "templates": [], "flows": [], "test_files": [] }));
+    }
+
+    /// What a template's `files` may name: the project's Test files, names
+    /// and sizes only - in the list and at the end of both guides.
+    #[tokio::test]
+    async fn the_list_and_the_guides_name_the_projects_test_files() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let files = v2_lib::test_files::folder(dir.path(), &c.org, &c.project);
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("appraisal.pdf"), b"%PDF-1.7 secret contents").unwrap();
+
+        let (status, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        assert_eq!(status, 200, "{list}");
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v["test_files"], json!([{ "name": "appraisal.pdf", "size": 24 }]), "{v}");
+
+        let (_, guide) = route(&c, None, "GET", "/api-template-guide", "", "1.0.0").await;
+        assert!(guide.contains("## Test files") && guide.contains("`appraisal.pdf` (24 bytes)"), "{guide}");
+        let (_, autorun) = route(&c, None, "GET", "/autorun-guide", "", "1.0.0").await;
+        assert!(autorun.contains("`appraisal.pdf` (24 bytes)"), "{autorun}");
+        for text in [&list, &guide, &autorun] {
+            assert!(!text.contains("secret contents") && !text.contains(&files.display().to_string()));
+        }
     }
 
     /// The list is one row per saved template, with the newest run - or

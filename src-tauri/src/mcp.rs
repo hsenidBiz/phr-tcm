@@ -372,7 +372,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - and the project's flows, each with its stages and the templates on them. Check here before building a template - the one you need may already exist.",
+            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - and the project's flows, each with its stages and the templates on them - and its Test files (names and sizes), the only files a step's `files` may name. Check here before building a template - the one you need may already exist.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {

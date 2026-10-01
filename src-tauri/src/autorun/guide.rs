@@ -28,6 +28,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_count",
     "expect_attribute",
     "sign_in",
+    "upload",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -76,8 +77,25 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page, right now?
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
+- `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 
 There is nothing else. An action of any other kind is rejected.
+
+`upload` sends a file from this project's Test files - the person's own
+folder of documents for tests, on their machine - by its NAME, never a
+path. Use only a name listed under "Test files" at the end of this guide
+(no such section means the project has none yet); if the case needs a
+file that is not there, ask the person to add it to
+Test files (Auto Run or API Templates) - never invent a name. Point the
+selector at the page's file input, or at the button or link that opens
+the file chooser: the input gets the file directly, and a button is
+clicked with the chooser answered for you (a button that opens no chooser
+fails and says so). A file input is often hidden behind that button, and
+a locator matches only what a person can see - so either point at the
+button, or reach the input with `"visible": false`, e.g.
+`{ "css": "input[type=file]", "visible": false }`. One file per action,
+at most 25 MB. A step with a missing file fails before it touches the
+page. `upload` cannot appear in a sign-in recipe.
 
 `click` and `fill` wait up to 15 seconds for their element to be usable:
 the only match, visible, inside the visible part of the page, not

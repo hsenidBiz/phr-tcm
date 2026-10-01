@@ -414,6 +414,36 @@ function mockSetUp() {
 
 const row = (name: string) => screen.getByRole("group", { name });
 
+test("the Setup card's Test files row counts the project's files, and Manage opens them", async () => {
+  const listed: unknown[] = [];
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd, args) => {
+    if (cmd !== "test_files_list") return null;
+    listed.push(args);
+    return [
+      { name: "appraisal.pdf", size: 1536, modified: "1" },
+      { name: "cv.txt", size: 5, modified: "1" },
+    ];
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  expect(await within(row("Test files")).findByText("2 files")).toBeInTheDocument();
+  expect(listed[0]).toEqual(expect.objectContaining({ organization: "acme", project: "proj" }));
+  fireEvent.click(within(row("Test files")).getByRole("button", { name: "Manage test files" }));
+  const dialog = await screen.findByRole("dialog", { name: "Test files" });
+  expect(await within(dialog).findByText("appraisal.pdf")).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Test files" })).not.toBeInTheDocument());
+});
+
+test("the Test files row reads None yet for a project with none", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  expect(await within(row("Test files")).findByText("None yet")).toBeInTheDocument();
+  expect(within(row("Test files")).getByRole("button", { name: "Manage test files" })).toBeEnabled();
+});
+
 test("the Setup card shows each row's state for a project with nothing set up", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();

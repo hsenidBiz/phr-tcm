@@ -274,7 +274,7 @@ fn a_file_that_is_not_an_export_this_app_reads_is_refused_whole() {
     );
     assert_eq!(refused("nokind.json", &format!(r#"{{"version":1,"templates":{one}}}"#)), share::WRONG_KIND);
     assert_eq!(
-        refused("newer.json", &format!(r#"{{"kind":"tcm-api-templates","version":2,"templates":{one}}}"#)),
+        refused("newer.json", &format!(r#"{{"kind":"tcm-api-templates","version":3,"templates":{one}}}"#)),
         share::NEWER
     );
     assert_eq!(refused("text.json", "not json at all"), share::NOT_JSON);

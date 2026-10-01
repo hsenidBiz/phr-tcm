@@ -316,6 +316,7 @@ fn plain_step(path: &str) -> Step {
         query: BTreeMap::new(),
         json: None,
         form: None,
+        files: BTreeMap::new(),
         expect: Expect::default(),
         capture: BTreeMap::new(),
     }
@@ -346,7 +347,7 @@ fn query_values_are_substituted_and_encoded() {
     step.query.insert("handler".to_string(), "Step".to_string());
     step.query.insert("stepKey".to_string(), "{{k}}".to_string());
     let vars = btree(&[("k", json!("a b&c"))]);
-    let req = build_request(&step, &vars).unwrap();
+    let req = build_request(&step, &vars, &BTreeMap::new()).unwrap();
     assert_eq!(req.url, "/hr/pmsv10/performancecycle?handler=Step&stepKey=a%20b%26c");
 }
 
@@ -457,7 +458,7 @@ fn scrub_takes_every_anti_forgery_token_out() {
 fn a_path_placeholder_value_is_percent_encoded_as_one_segment() {
     let step = plain_step("/hr/pmsv10/step/{{seg}}");
     let vars = btree(&[("seg", json!("no slash"))]);
-    let req = build_request(&step, &vars).unwrap();
+    let req = build_request(&step, &vars, &BTreeMap::new()).unwrap();
     assert_eq!(req.url, "/hr/pmsv10/step/no%20slash");
 }
 
@@ -469,7 +470,7 @@ fn a_path_placeholder_cannot_smuggle_a_slash_past_encoding() {
     // encoded slash reach the origin as a real path separator.
     let step = plain_step("/hr/{{seg}}");
     let vars = btree(&[("seg", json!("../admin"))]);
-    let err = build_request(&step, &vars).unwrap_err();
+    let err = build_request(&step, &vars, &BTreeMap::new()).unwrap_err();
     assert!(err.contains("Step"), "{err}");
 }
 
@@ -477,7 +478,7 @@ fn a_path_placeholder_cannot_smuggle_a_slash_past_encoding() {
 fn a_path_placeholder_value_of_exactly_dotdot_is_refused() {
     let step = plain_step("/hr/{{seg}}/x");
     let vars = btree(&[("seg", json!(".."))]);
-    let err = build_request(&step, &vars).unwrap_err();
+    let err = build_request(&step, &vars, &BTreeMap::new()).unwrap_err();
     assert!(err.contains("Step") && err.contains(".."), "{err}");
 }
 
@@ -485,7 +486,7 @@ fn a_path_placeholder_value_of_exactly_dotdot_is_refused() {
 fn a_path_placeholder_value_of_exactly_dot_is_refused() {
     let step = plain_step("/hr/{{seg}}/x");
     let vars = btree(&[("seg", json!("."))]);
-    let err = build_request(&step, &vars).unwrap_err();
+    let err = build_request(&step, &vars, &BTreeMap::new()).unwrap_err();
     assert!(err.contains("Step"), "{err}");
 }
 
@@ -494,7 +495,7 @@ fn a_json_body_is_substituted_and_typed() {
     let mut step = plain_step("/hr/pmsv10/thing");
     step.json = Some(json!({"cycleId": "{{cycleId}}", "note": "for {{cycleId}}"}));
     let vars = btree(&[("cycleId", json!(273))]);
-    let req = build_request(&step, &vars).unwrap();
+    let req = build_request(&step, &vars, &BTreeMap::new()).unwrap();
     match req.body {
         Body::Json { value } => assert_eq!(value, json!({"cycleId": 273, "note": "for 273"})),
         other => panic!("expected a json body, got {other:?}"),
@@ -508,9 +509,9 @@ fn a_form_body_is_substituted_as_text() {
     form.insert("CycleId".to_string(), "{{cycleId}}".to_string());
     step.form = Some(form);
     let vars = btree(&[("cycleId", json!(273))]);
-    let req = build_request(&step, &vars).unwrap();
+    let req = build_request(&step, &vars, &BTreeMap::new()).unwrap();
     match req.body {
-        Body::Form { fields } => assert_eq!(fields.get("CycleId"), Some(&"273".to_string())),
+        Body::Form { fields, .. } => assert_eq!(fields.get("CycleId"), Some(&"273".to_string())),
         other => panic!("expected a form body, got {other:?}"),
     }
 }
@@ -518,7 +519,7 @@ fn a_form_body_is_substituted_as_text() {
 #[test]
 fn a_step_with_no_body_builds_body_none() {
     let step = plain_step("/hr/pmsv10/thing");
-    let req = build_request(&step, &BTreeMap::new()).unwrap();
+    let req = build_request(&step, &BTreeMap::new(), &BTreeMap::new()).unwrap();
     assert!(matches!(req.body, Body::None));
 }
 
