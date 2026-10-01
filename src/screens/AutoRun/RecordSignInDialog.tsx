@@ -30,6 +30,7 @@ import {
   IconPickOnPage,
   IconRecord,
 } from "../../lib/actionIcons";
+import { effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { chosenBrowser } from "./ModulePathsDialog";
@@ -105,6 +106,10 @@ export default function RecordSignInDialog({
     queryFn: () => unwrapStr(commands.autoRunListAccounts()),
     retry: false,
   });
+  // The address a run would go to now: the active environment's when it
+  // has one, else the recipe's. Recording there is what makes the saved
+  // recipe sign in to the site the person is actually testing.
+  const envs = useEnvironments();
   const [start, setStart] = useState<string | null>(null);
   const [picked, setPicked] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "before" });
@@ -114,7 +119,7 @@ export default function RecordSignInDialog({
    * on: that call's answer is then read as a cancel, whatever it says. */
   const cancelAsked = useRef(false);
 
-  const startValue = start ?? recipe.data?.start_url ?? "";
+  const startValue = start ?? effectiveSite(envs.data, recipe.data).start_url;
   const keys = (accounts.data ?? []).map((a) => a.key);
   const who = keys.includes(picked) ? picked : (keys[0] ?? "");
   const noAccounts = accounts.isSuccess && keys.length === 0;
@@ -297,7 +302,9 @@ export default function RecordSignInDialog({
     onClose();
   };
 
-  const canStart = startValue.trim() !== "" && who !== "";
+  // Not while the environments are still loading: the box would be showing
+  // the recipe's address for a moment, and Start must not record against it.
+  const canStart = startValue.trim() !== "" && who !== "" && !envs.isLoading;
 
   /** The account the check signs in as: chosen before recording, and
    * changeable in the review, so a check that failed for the account's

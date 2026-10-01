@@ -153,3 +153,22 @@ export function activeDbMissing(view: EnvListView | undefined, databaseIds: stri
   const env = view.environments.find((e) => e.id === view.active);
   return Boolean(env) && !databaseIds.includes(env!.db_id);
 }
+
+/** The active environment, once the list is known. */
+export function activeEnvironment(view: EnvListView | undefined): EnvView | undefined {
+  return view?.environments.find((e) => e.id === view.active);
+}
+
+/** The site a run goes to: the active environment's address when it has
+ * one, else the sign-in recipe's. Same rule as Rust's `effective_recipe`:
+ * an environment with an address brings its own allowed sites too, and the
+ * recipe's belong to another site. Empty when neither names a site. */
+export function effectiveSite(
+  view: EnvListView | undefined,
+  recipe: { start_url: string; allowed_origins?: string[] } | null | undefined,
+): { start_url: string; allowed_origins: string[] } {
+  const env = activeEnvironment(view);
+  const own = env?.start_url.trim() ?? "";
+  if (env && own) return { start_url: own, allowed_origins: env.allowed_origins };
+  return { start_url: recipe?.start_url ?? "", allowed_origins: recipe?.allowed_origins ?? [] };
+}

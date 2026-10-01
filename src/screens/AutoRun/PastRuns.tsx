@@ -104,6 +104,10 @@ export default function PastRuns({
                 <div className="flex items-center gap-2 text-xs text-muted">
                   <span>{when(run.started_at)}</span>
                   <Badge>{unattended ? "unattended" : "supervised"}</Badge>
+                  {/* Absent on a run saved before environments existed. */}
+                  {run.environment && (
+                    <Badge title="The environment this run was made in">{run.environment}</Badge>
+                  )}
                 </div>
                 {/* Reviewing only makes sense for an unattended run - a
                     supervised one was decided by the person watching it in

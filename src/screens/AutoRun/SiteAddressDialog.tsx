@@ -1,25 +1,21 @@
-// The site a project's runs go to, edited on its own - without opening
-// the whole sign-in recipe as JSON to change one address.
+// The site the active environment's runs go to, edited on its own -
+// without opening the whole sign-in recipe as JSON to change one address.
 //
-// There is no separate "site address" on disk: it is the recipe's
-// `start_url` and `allowed_origins`. So a save reads the saved recipe back
-// fresh, changes just those two fields and writes the whole recipe through
-// the same command the recipe editor uses (`auto_run_save_recipe`), which
-// runs `SignInRecipe::validate` - a bad address is refused there, in the
-// app's own words, and nothing is written. Every other field goes back
-// as it was read: the Rust suite's
-// `a_recipe_parses_with_defaults_and_round_trips` serializes a recipe with
-// every optional field set (after_sign_in, allowed_origins,
-// session_minutes) and checks it deserializes to the same recipe and
-// matches the JSON it came from.
+// The address belongs to the ACTIVE environment (its start address and
+// allowed sites), saved with `env_save`; the sign-in recipe file is never
+// written from here. An environment with no address of its own uses the
+// recipe's, which the empty box says in words and shows as its
+// placeholder. Rust validates the address on save and refuses a bad one in
+// the app's own words, and nothing is written.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { commands, type SignInRecipe_Deserialize } from "../../bindings";
+import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input, Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { activeEnvironment, envKeys, loadEnvironments, toInput, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 
@@ -51,67 +47,66 @@ export default function SiteAddressDialog({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const recipeKey = ["autorun-recipe", org, project];
-  // The same query the recipe editor and the Setup card use, so the boxes
-  // open already filled when the screen has it.
-  const existing = useQuery({
-    queryKey: recipeKey,
+  // The recipe is read only for the address an empty box falls back to.
+  const recipe = useQuery({
+    queryKey: ["autorun-recipe", org, project],
     queryFn: async () => (await unwrapStr(commands.autoRunLoadRecipe(org, project))) ?? null,
     retry: false,
   });
+  const envs = useEnvironments();
+  const env = activeEnvironment(envs.data);
   const [start, setStart] = useState<string | null>(null);
   const [also, setAlso] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
-  const startValue = start ?? existing.data?.start_url ?? "";
-  const alsoValue = also ?? (existing.data?.allowed_origins ?? []).join("\n");
+  const startValue = start ?? env?.start_url ?? "";
+  const alsoValue = also ?? (env?.allowed_origins ?? []).join("\n");
 
   const save = useMutation({
     mutationFn: async () => {
       // Read back fresh rather than trusting what this dialog opened with,
-      // so the fields it does not touch are the ones on disk right now.
-      const current = await unwrapStr(commands.autoRunLoadRecipe(org, project));
-      if (!current) {
-        throw new Error("this project has no sign-in recipe yet - set one up in Sign-in first");
-      }
-      // Serialize and Deserialize are the same JSON for a recipe (the Rust
-      // round-trip test proves it); the generated types only differ in
-      // how optional fields are spelled, hence the cast.
-      const next = {
-        ...current,
+      // so the fields it does not touch are the ones saved right now.
+      const current = activeEnvironment(await loadEnvironments());
+      if (!current) throw new Error("there is no active environment to save the address to");
+      const res = await commands.envSave({
+        ...toInput(current),
         start_url: startValue.trim(),
         allowed_origins: lines(alsoValue),
-      } as unknown as SignInRecipe_Deserialize;
-      await unwrapStr(commands.autoRunSaveRecipe(org, project, next));
+      });
+      if (res.status === "error") throw new Error(res.error);
+      return res.data;
     },
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: recipeKey });
+    onSuccess: (view) => {
+      qc.setQueryData(envKeys.list, view);
       toast.success("Site address saved.");
       onClose();
     },
     onError: (e) => setProblem(e instanceof Error ? e.message : String(e)),
   });
 
-  const noRecipe = existing.isSuccess && existing.data == null;
-  const blocked = existing.isLoading || existing.isError || noRecipe;
+  const blocked = envs.isLoading || envs.isError || !env;
+  const recipeAddress = recipe.data?.start_url ?? "";
 
   return (
     <Modal onClose={onClose} className="flex w-full max-w-lg flex-col gap-3 p-5">
       <h2 className="text-sm font-semibold text-text">Site address</h2>
-      {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
-      {noRecipe && (
+      {envs.isError && <p className="text-xs text-danger">{envs.error.message}</p>}
+      {env && (
         <p className="text-xs text-muted">
-          This project has no sign-in recipe yet - set one up in Sign-in first.
+          For the <span className="font-medium text-text">{env.name}</span> environment.
         </p>
       )}
       <label className="space-y-1">
         <span className="text-xs font-medium text-muted">Start address</span>
         <Input
           aria-label="Start address"
-          placeholder="https://hr.example.internal/"
+          placeholder={recipeAddress || "https://hr.example.internal/"}
           value={startValue}
           disabled={blocked}
           onChange={(e) => setStart(e.target.value)}
         />
+        {startValue.trim() === "" && !blocked && (
+          <span className="block text-xs text-faint">Using the sign-in recipe's address</span>
+        )}
       </label>
       <label className="space-y-1">
         <span className="text-xs font-medium text-muted">Also allowed</span>
@@ -144,7 +139,7 @@ export default function SiteAddressDialog({
         </Button>
         <Button
           size="sm"
-          disabled={blocked || save.isPending || startValue.trim() === ""}
+          disabled={blocked || save.isPending}
           onClick={() => {
             setProblem("");
             save.mutate();

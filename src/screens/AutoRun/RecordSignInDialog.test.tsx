@@ -39,12 +39,13 @@ const DRAFT: SignInDraftView = {
 
 type Handler = (cmd: string, args: Record<string, unknown>) => unknown;
 
-function mount(handler: Handler, opts: { accounts?: unknown[]; recipe?: unknown } = {}) {
+function mount(handler: Handler, opts: { accounts?: unknown[]; recipe?: unknown; env?: unknown } = {}) {
   const onClose = vi.fn();
   mockIPC(
     (cmd, args) => {
       if (cmd === "auto_run_list_accounts") return opts.accounts ?? ACCOUNTS;
       if (cmd === "auto_run_load_recipe") return opts.recipe ?? null;
+      if (cmd === "env_list" && opts.env !== undefined) return opts.env;
       const out = handler(String(cmd), (args ?? {}) as Record<string, unknown>);
       return out === undefined ? null : out;
     },
@@ -134,6 +135,25 @@ test("the address comes from the saved recipe, and with no accounts Start stays 
   await waitFor(() => expect(address).toHaveValue("https://hr.example.internal/login"));
   expect(await screen.findByText(/Add an account in Accounts first/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+});
+
+const ENV_LIST = (start_url: string) => ({
+  active: "qa",
+  environments: [
+    { id: "qa", name: "QA", start_url, allowed_origins: [], db_id: "db", test_environment: false, has_default_password: false },
+  ],
+});
+
+test("the address is the active environment's when it has one, and the recipe's when it has none", async () => {
+  mount(() => undefined, { recipe: RECIPE, env: ENV_LIST("https://qa.example.internal/") });
+  const address = await screen.findByRole("textbox", { name: "Start address" });
+  await waitFor(() => expect(address).toHaveValue("https://qa.example.internal/"));
+});
+
+test("an environment with no address of its own leaves the recipe's address in the box", async () => {
+  mount(() => undefined, { recipe: RECIPE, env: ENV_LIST("") });
+  const address = await screen.findByRole("textbox", { name: "Start address" });
+  await waitFor(() => expect(address).toHaveValue("https://hr.example.internal/login"));
 });
 
 test("the recording lists steps as they arrive, says which field is the password, and shows notes", async () => {

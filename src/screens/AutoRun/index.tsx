@@ -18,6 +18,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
+import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
@@ -131,6 +132,7 @@ export default function AutoRun({
     enabled: setupReady,
     retry: false,
   });
+  const envs = useEnvironments();
   const accounts = useQuery({
     queryKey: ["autorun-accounts"],
     queryFn: async () => (await unwrapStr(commands.autoRunListAccounts())) ?? null,
@@ -340,7 +342,11 @@ export default function AutoRun({
 
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
   const saved = recipe.data;
-  const extraSites = saved ? saved.allowed_origins.length : 0;
+  // Where a run goes now: the active environment's address when it has one,
+  // else the recipe's - the header and the Setup row both say this.
+  const site = effectiveSite(envs.data, saved);
+  const activeEnv = activeEnvironment(envs.data);
+  const extraSites = saved ? site.allowed_origins.length : 0;
 
   return (
     <div className="max-w-3xl space-y-4">
@@ -352,9 +358,10 @@ export default function AutoRun({
         </span>
         {recipe.isSuccess && (
           <span>
-            Runs against{" "}
+            {activeEnv ? "Environment" : "Runs against"}{" "}
             <span className="font-medium text-text">
-              {saved ? siteHost(saved.start_url) : "no site set yet"}
+              {activeEnv && `${activeEnv.name} - `}
+              {site.start_url ? siteHost(site.start_url) : "no site set yet"}
             </span>
           </span>
         )}
@@ -376,7 +383,7 @@ export default function AutoRun({
                 <span className="text-danger">The saved recipe could not be read</span>
               ) : saved ? (
                 <>
-                  <span className="id-mono break-all">{saved.start_url}</span>
+                  <span className="id-mono break-all">{site.start_url}</span>
                   {extraSites > 0 && (
                     <span className="ml-2 text-xs text-faint">
                       +{plural(extraSites, "allowed site")}

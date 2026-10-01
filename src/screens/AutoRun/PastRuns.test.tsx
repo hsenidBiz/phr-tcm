@@ -66,3 +66,13 @@ test("a supervised run of another PBI keeps its rows exactly as today", async ()
   expect(screen.queryByText(/for PBI #/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
 });
+
+test("a run names the environment it was made in, when it has one", async () => {
+  renderPastRuns([runOf({ environment: "QA" }), runOf({ id: "run-2", started_at: "1786000100000" })], 42);
+
+  const badge = await screen.findByText("QA");
+  expect(badge).toHaveAttribute("title", "The environment this run was made in");
+  // The older run, saved before environments existed, shows nothing extra.
+  expect(screen.getAllByText("unattended")).toHaveLength(2);
+  expect(screen.getAllByText("QA")).toHaveLength(1);
+});

@@ -13,7 +13,11 @@ import AutoRun from "./index";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
+/** What auto_run_load_recipe answers; a test that needs a recipe sets it. */
+let savedRecipe: unknown = null;
+
 afterEach(() => {
+  savedRecipe = null;
   clearMocks();
   localStorage.clear();
   vi.restoreAllMocks();
@@ -57,7 +61,7 @@ function mockList(
     }
     if (cmd === "auto_run_list_runs") return runs;
     if (cmd === "auto_run_list_accounts") return [];
-    if (cmd === "auto_run_load_recipe") return null;
+    if (cmd === "auto_run_load_recipe") return savedRecipe;
     if (onCommand) return onCommand(cmd, args);
     return null;
   });
@@ -383,8 +387,10 @@ const RECIPE = {
 /** A project that is fully set up: a recipe, two accounts, one module
  * path. `saves` records every recipe written, and the mock hands back the
  * last one written - the way the file on disk would. */
-function mockSetUp() {
+function mockSetUp(env?: ReturnType<typeof envList>) {
   const saves: { recipe: typeof RECIPE }[] = [];
+  const envSaves: { env: Record<string, unknown> }[] = [];
+  let envView = env;
   let recipe: unknown = RECIPE;
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -400,6 +406,13 @@ function mockSetUp() {
     if (cmd === "auto_run_load_nav") {
       return { direct_urls: true, modules: [{ module: "Leave", clicks: [], arrived: "", recorded: "" }] };
     }
+    if (cmd === "env_list") return envView ?? null;
+    if (cmd === "env_save") {
+      const a = args as { env: Record<string, unknown> };
+      envSaves.push(a);
+      envView = { active: envView!.active, environments: [{ ...envView!.environments[0], ...a.env }] } as never;
+      return envView;
+    }
     if (cmd === "auto_run_load_recipe") return recipe;
     if (cmd === "auto_run_save_recipe") {
       const a = args as { recipe: typeof RECIPE };
@@ -409,10 +422,45 @@ function mockSetUp() {
     }
     return null;
   });
-  return saves;
+  return Object.assign(saves, { envSaves });
 }
 
 const row = (name: string) => screen.getByRole("group", { name });
+
+function envList(start_url: string, allowed_origins: string[] = []) {
+  return {
+    active: "qa",
+    environments: [
+      { id: "qa", name: "QA", start_url, allowed_origins, db_id: "db", test_environment: false, has_default_password: false },
+    ],
+  };
+}
+
+test("the header names the active environment and the host of its address", async () => {
+  savedRecipe = RECIPE;
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "env_list" ? envList("https://qa.example.com/start", ["https://sso.qa.example.com"]) : undefined,
+  );
+  renderScreen();
+  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
+  expect(screen.getByText("QA - qa.example.com").parentElement).toHaveTextContent("Environment QA - qa.example.com");
+  // The Setup card says the same address, not the recipe's.
+  const site = row("Site address");
+  expect(await within(site).findByText("https://qa.example.com/start")).toBeInTheDocument();
+  expect(within(site).queryByText("https://hr.example.internal/login")).not.toBeInTheDocument();
+  expect(within(site).getByText(/\+1 allowed site/)).toBeInTheDocument();
+});
+
+test("an environment with no address of its own shows the recipe's host", async () => {
+  savedRecipe = RECIPE;
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "env_list" ? envList("") : undefined,
+  );
+  renderScreen();
+  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
+  expect(within(row("Site address")).getByText("https://hr.example.internal/login")).toBeInTheDocument();
+});
+
 
 test("the Setup card's Test files row counts the project's files, and Manage opens them", async () => {
   const listed: unknown[] = [];
@@ -491,31 +539,37 @@ test("the Setup card and the header line read a project that is set up", async (
   expect(screen.getByText("1 module path")).toBeInTheDocument();
 });
 
-test("saving a new site address updates the Setup row and the header, keeping the rest of the recipe", async () => {
-  const saves = mockSetUp();
+test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the header", async () => {
+  const saves = mockSetUp(envList(""));
   renderScreen();
   await screen.findByText("Alpha check");
+  // No address of its own yet: the header shows the recipe's host.
+  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit site address" }));
   expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
   const start = screen.getByRole("textbox", { name: "Start address" }) as HTMLInputElement;
-  await waitFor(() => expect(start.value).toBe("https://hr.example.internal/login"));
+  expect(await screen.findByText("Using the sign-in recipe's address")).toBeInTheDocument();
   fireEvent.change(start, { target: { value: "https://people.example.org/" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Also allowed" }), {
     target: { value: "https://sso.example.org\n\n  https://cdn.example.org  " },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-  await waitFor(() => expect(saves).toHaveLength(1));
-  expect(saves[0].recipe).toEqual({
-    ...RECIPE,
-    start_url: "https://people.example.org/",
-    allowed_origins: ["https://sso.example.org", "https://cdn.example.org"],
-  });
+  await waitFor(() => expect(saves.envSaves).toHaveLength(1));
+  expect(saves.envSaves[0].env).toEqual(
+    expect.objectContaining({
+      id: "qa",
+      start_url: "https://people.example.org/",
+      allowed_origins: ["https://sso.example.org", "https://cdn.example.org"],
+    }),
+  );
+  // The recipe file is untouched.
+  expect(saves).toHaveLength(0);
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Site address" })).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText("people.example.org")).toBeInTheDocument();
+  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("https://people.example.org/")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("+2 allowed sites")).toBeInTheDocument();
 });
