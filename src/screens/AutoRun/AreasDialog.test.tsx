@@ -4,7 +4,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
 import AreasDialog from "./AreasDialog";
@@ -604,4 +604,19 @@ test("Re-record, Try and Remove act on that area, not on its module", async () =
     { cmd: "auto_run_remove_module_path", organization: "acme", project: "Web", area: "Manage Cycle" },
     { cmd: "auto_run_record_start", organization: "acme", project: "Web", module: "PMS", area: "Cycle Setup", account: "hr.admin", browserName: "edge" },
   ]);
+});
+
+test("Record an area stays disabled until the areas have loaded, and when they could not be read", async () => {
+  // Loading: the nav answer never arrives.
+  mount((cmd) => (cmd === "auto_run_load_nav" ? new Promise(() => {}) : undefined));
+  const record = await screen.findByRole("button", { name: "Record an area…" });
+  await screen.findByRole("combobox", { name: "Record and try as" });
+  expect(record).toBeDisabled();
+  cleanup();
+  // Failed: reading the areas errors.
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") throw new Error("the areas file is not readable: x");
+  });
+  expect(await screen.findByText(/the areas file is not readable/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Record an area…" })).toBeDisabled();
 });

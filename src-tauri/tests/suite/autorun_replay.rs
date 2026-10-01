@@ -926,7 +926,7 @@ async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens(
     let err = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap_err();
-    assert!(err.contains("module paths file is not readable"), "{err}");
+    assert!(err.contains("areas file is not readable"), "{err}");
     assert_eq!(browsers.opened, 0);
     assert!(run.cases.is_empty());
 }

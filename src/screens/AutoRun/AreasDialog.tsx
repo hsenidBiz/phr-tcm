@@ -490,8 +490,14 @@ export default function AreasDialog({
             <Button
               size="sm"
               variant="outline"
-              disabled={!who || busy}
-              title={!who ? "Add an account first" : undefined}
+              disabled={!who || busy || !nav.isSuccess}
+              title={
+                !who
+                  ? "Add an account first"
+                  : !nav.isSuccess
+                    ? "Wait until the recorded areas have been read"
+                    : undefined
+              }
               onClick={() => setPhase({ kind: "choose", module: "", area: null, problem: "" })}
             >
               <IconRecord aria-hidden />

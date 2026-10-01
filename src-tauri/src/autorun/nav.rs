@@ -127,7 +127,7 @@ const NO_PATH_START: &str = "No menu path recorded for module \"";
 const UNRECORDED_AREA_START: &str = "the area \"";
 
 pub fn no_path(module: &str) -> String {
-    format!("{NO_PATH_START}{}\" - record one in Auto Run, Module paths.", module.trim())
+    format!("{NO_PATH_START}{}\" - record one in Auto Run, Areas.", module.trim())
 }
 
 /// Why a case whose script names an area the project has not recorded is
@@ -150,7 +150,7 @@ pub fn load_nav(root: &Path, org: &str, project: &str) -> Result<NavFile, String
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
             let nav: NavFile =
-                serde_json::from_str(s).map_err(|e| format!("the module paths file is not readable: {e}"))?;
+                serde_json::from_str(s).map_err(|e| format!("the areas file is not readable: {e}"))?;
             Ok(as_areas(nav, org, project, &nav_path(root, org, project)))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(NavFile::default()),
@@ -428,7 +428,7 @@ impl PathFailure {
         }
     }
 
-    /// The Module paths dialog's shorter form (design §4).
+    /// The Areas dialog's shorter form (design §4).
     pub fn for_dialog(&self) -> String {
         match &self.at {
             Where::Home => self.reason.clone(),

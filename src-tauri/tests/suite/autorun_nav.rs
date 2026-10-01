@@ -42,7 +42,7 @@ fn the_blocked_sentences_are_the_designs_own_words() {
     assert_eq!(NO_ACCOUNT, "Choose an account when starting the run, or set Runs as on the script.");
     assert_eq!(
         no_path(" Payroll "),
-        "No menu path recorded for module \"Payroll\" - record one in Auto Run, Module paths."
+        "No menu path recorded for module \"Payroll\" - record one in Auto Run, Areas."
     );
 }
 
@@ -75,7 +75,7 @@ fn an_unreadable_file_says_so() {
     std::fs::create_dir_all(dir.path().join("projects")).unwrap();
     std::fs::write(nav_path(dir.path(), "Acme", "Web"), "{ not json").unwrap();
     let err = load_nav(dir.path(), "Acme", "Web").unwrap_err();
-    assert!(err.starts_with("the module paths file is not readable"), "{err}");
+    assert!(err.starts_with("the areas file is not readable"), "{err}");
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn no_area_routes_by_module_as_today() {
         // PMS has two areas, but none named PMS.
         assert_eq!(
             route_for(&nav, blank, Some(" PMS "), Some("hr.admin")),
-            Err("No menu path recorded for module \"PMS\" - record one in Auto Run, Module paths.".to_string())
+            Err("No menu path recorded for module \"PMS\" - record one in Auto Run, Areas.".to_string())
         );
         assert_eq!(
             route_for(&nav, blank, Some("leave"), None),
