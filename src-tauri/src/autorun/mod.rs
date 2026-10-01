@@ -12,6 +12,7 @@ pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod nav;
+pub mod patterns;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;

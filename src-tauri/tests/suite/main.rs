@@ -46,6 +46,7 @@ mod autorun_failures;
 mod autorun_floor;
 mod autorun_guide;
 mod autorun_nav;
+mod autorun_patterns;
 mod autorun_publish;
 mod autorun_quirks;
 mod autorun_recipe;
