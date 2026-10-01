@@ -39,6 +39,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         case_id,
         title: format!("case {case_id}"),
         account: None,
+        area: None,
         steps: vec![StepScript { step_number, actions: vec![action], unchecked: None }],
         repairs: 0,
         last_repair: None,

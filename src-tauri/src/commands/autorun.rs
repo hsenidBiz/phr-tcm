@@ -256,9 +256,10 @@ pub fn save_script_from_editor(
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
-    // The project's address rule, the same one the import and the
-    // assistant's save apply.
-    crate::autorun::nav::refuse_addresses(root, organization, project, std::slice::from_ref(&script))?;
+    // The project's rules - no address while that is switched off, only
+    // recorded areas - the same ones the import and the assistant's save
+    // apply.
+    crate::autorun::nav::check_project_rules(root, organization, project, std::slice::from_ref(&script))?;
     // Through the same helper the bundle paths use, as a bundle of one:
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be
@@ -311,7 +312,7 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
     if scripts.is_empty() {
         return Err("that file has no scripts in it".to_string());
     }
-    crate::autorun::nav::refuse_addresses(root, organization, project, &scripts)?;
+    crate::autorun::nav::check_project_rules(root, organization, project, &scripts)?;
     store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));

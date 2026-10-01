@@ -361,6 +361,13 @@ export const commands = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Serialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -1449,6 +1456,13 @@ export type CaseScript_Deserialize = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Deserialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -1477,6 +1491,13 @@ export type CaseScript_Serialize = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Serialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -2103,11 +2124,12 @@ export type ModuleTryResult = {
 };
 
 /**
- *  A recorded module as the Module paths dialog shows it. Every click is
- *  already in words (`link "Leave"`), so the webview never keeps a second
- *  copy of how a locator reads.
+ *  A recorded area as the Areas dialog shows it. Every click is already in
+ *  words (`link "Leave"`), so the webview never keeps a second copy of how
+ *  a locator reads.
  */
 export type ModuleView = {
+	area: string,
 	module: string,
 	clicks: string[],
 	arrived: string,

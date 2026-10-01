@@ -723,6 +723,71 @@ async fn a_module_with_no_recorded_path_is_blocked_and_named() {
     assert_eq!(run.cases[0].reason, no_path("Payroll"));
 }
 
+/// A project with Leave's path plus a second area under Leave, "Leave
+/// home", that stops after the first click.
+fn two_leave_areas(root: &Path) {
+    menu_project(root);
+    let mut nav = leave_nav();
+    nav.modules.push(
+        serde_json::from_value(serde_json::json!({
+            "area": "Leave home",
+            "module": "Leave",
+            "clicks": [{ "role": "link", "name": "Leave", "exact": true }],
+            "arrived": "/hr/leave",
+            "recorded": "2026-10-01T10:00:00Z"
+        }))
+        .unwrap(),
+    );
+    save_nav(root, "Acme", "Web", &nav).unwrap();
+}
+
+fn in_area(area: &str) -> CaseScript {
+    let mut sc = one_check(Some("admin"));
+    sc.area = Some(area.to_string());
+    sc
+}
+
+/// Spec §9: the script's `area` decides where the case starts - here a
+/// case whose Module has no area of its own name at all.
+#[tokio::test]
+async fn a_scripts_area_takes_the_case_there_whatever_its_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_leave_areas(root);
+    store::save_script(root, &in_area("leave home")).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Leave", "check yes"]
+    );
+    let rec = &run.cases[0];
+    assert_eq!(rec.steps[1].outcomes[0].detail, "Go to Leave home");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+}
+
+#[tokio::test]
+async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_leave_areas(root);
+    store::save_script(root, &in_area("Leave balance")).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 0);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, "the area \"Leave balance\" is not recorded - record it in Auto Run, Areas");
+}
+
 #[tokio::test]
 async fn with_paths_a_case_no_account_applies_to_is_blocked() {
     let dir = tempfile::tempdir().unwrap();

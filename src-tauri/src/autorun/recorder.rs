@@ -509,6 +509,8 @@ pub fn finish(module: &str, captured: Captured, recorded: &str) -> Result<Module
                 return Err(NO_CLICKS.to_string());
             }
             Ok(ModulePath {
+                // Named after its module until recording asks for a name.
+                area: String::new(),
                 module: module.trim().to_string(),
                 clicks: captured.clicks,
                 arrived: nav::path_of(&href),

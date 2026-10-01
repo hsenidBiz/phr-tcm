@@ -45,6 +45,7 @@ fn script() -> CaseScript {
         case_id: 201,
         title: "Valid login".to_string(),
         account: None,
+        area: None,
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![
@@ -176,6 +177,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         case_id,
         title: title.to_string(),
         account: None,
+        area: None,
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![Action::CheckText { value: "ok".to_string() }],
@@ -229,7 +231,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, steps: vec![], repairs: 0, last_repair: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -245,6 +247,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         case_id: 70,
         title: "Duplicate step".to_string(),
         account: None,
+        area: None,
         steps: vec![
             StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string() }], unchecked: None },
             StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string() }], unchecked: None },
@@ -271,6 +274,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         case_id: 60,
         title: "Manual step included".to_string(),
         account: None,
+        area: None,
         steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
         repairs: 0,
         last_repair: None,

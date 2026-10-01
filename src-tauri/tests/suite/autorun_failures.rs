@@ -225,6 +225,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         case_id: 7,
         title: "Leave request".to_string(),
         account: Some("hr.admin".to_string()),
+        area: None,
         steps: vec![
             StepScript { step_number: 2, actions: vec![save_button()], unchecked: None },
             StepScript {
@@ -320,6 +321,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         case_id: 1,
         title: "A case".to_string(),
         account: None,
+        area: None,
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![Action::Fill { selector: "#password".into(), value: "correct horse battery staple".to_string() }],
@@ -412,6 +414,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         case_id: 1,
         title: "A case".to_string(),
         account: None,
+        area: None,
         steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
         repairs: 0,
         last_repair: None,

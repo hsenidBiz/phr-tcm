@@ -52,6 +52,12 @@ pub struct CaseScript {
     /// list, never a login. Absent means the script signs nobody in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// The recorded area the run takes this case to before step 1, by name
+    /// (`nav::find_area`). Absent or blank means the area named like the
+    /// case's Module. A name the project has not recorded is refused when
+    /// the script is saved, and refuses the case at run time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
     pub steps: Vec<StepScript>,
     /// How many times an assistant has repaired this script since a person
     /// last saved it from the editor. Absent when 0.

@@ -204,7 +204,7 @@ pub async fn run_case_as<D: Driver>(
             // The case's own sign-in just above, when it had one; otherwise
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
-            let mut out = nav::reached(&r.path.module, nav::go_to_module(d, r, from, timing).await);
+            let mut out = nav::reached(r.path.name(), nav::go_to_module(d, r, from, timing).await);
             if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
             }
@@ -382,7 +382,7 @@ pub async fn run_cases<B: Browsers>(
             Ok(Some(script)) => {
                 count = script.steps.len() as u32;
                 let account = script.account.as_deref().or(run_account);
-                match nav::route_for(&nav_file, case.module.as_deref(), account) {
+                match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {
                         // A path but no recipe: the sign-in fails first and

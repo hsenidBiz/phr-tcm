@@ -511,6 +511,7 @@ fn script_with(action: Value) -> CaseScript {
         case_id: 501,
         title: "Attach a form".into(),
         account: None,
+        area: None,
         steps: vec![StepScript { step_number: 1, actions: vec![serde_json::from_value(action).unwrap()], unchecked: None }],
         repairs: 0,
         last_repair: None,

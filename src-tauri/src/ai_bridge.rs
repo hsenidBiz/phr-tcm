@@ -2164,10 +2164,11 @@ async fn save_autorun_scripts(
         Ok(r) => r,
     };
 
-    // Gate 0: a project whose runs start on the module screen refuses a
-    // script that opens pages by address - before anything is read from
-    // disk or Azure DevOps.
-    if let Err(why) = crate::autorun::nav::refuse_addresses(&root, &ctx.org, &ctx.project, &scripts) {
+    // Gate 0: the project's own rules, before anything is read from disk
+    // or Azure DevOps - a project whose runs start on the module screen
+    // refuses a script that opens pages by address, and every project
+    // refuses an `area` it has not recorded.
+    if let Err(why) = crate::autorun::nav::check_project_rules(&root, &ctx.org, &ctx.project, &scripts) {
         return (400, why);
     }
 

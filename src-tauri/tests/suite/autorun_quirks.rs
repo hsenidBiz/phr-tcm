@@ -419,6 +419,7 @@ fn script_for(case_id: i32) -> CaseScript {
         case_id,
         title: "a case".into(),
         account: None,
+        area: None,
         steps: vec![
             StepScript { step_number: 2, actions: vec![save_button()], unchecked: None },
             StepScript { step_number: 3, actions: vec![save_button()], unchecked: None },
