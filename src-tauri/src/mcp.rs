@@ -327,16 +327,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (optional: the recorded area the run takes the case to before step 1, by its name from get_autorun_guide; leave it out for the area named like the case's Module), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, steps }",
+                    "description": "One entry per test case: { case_id, title, account?, area?, steps }",
                     "items": { "type": "object" },
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, quirk? }",
+                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk? }",
                     "items": { "type": "object" },
                 },
             }), &["scripts"]),

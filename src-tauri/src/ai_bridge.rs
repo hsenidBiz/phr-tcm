@@ -2050,7 +2050,7 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
         None => vec![],
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
             format!(
-                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, quirk (optional) }}."
+                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional) }}."
             )
         })?,
     };
@@ -2072,14 +2072,16 @@ fn repair_source(
 ///
 /// Compared the way the declared-edit gate compares steps - by
 /// `step_signature`, so JSON formatting does not count as a change -
-/// plus the two fields outside the steps a save can carry, `title` and
-/// `account`. Positional rather than keyed by step number, so a bundle
+/// plus the three fields outside the steps a save can carry, `title`,
+/// `account` and `area` (a blank area is no area; case does not tell two
+/// area names apart). Positional rather than keyed by step number, so a bundle
 /// that merely REORDERS the same steps counts as a change and goes
 /// through the gate rather than around it. `repairs` is deliberately
 /// not compared: it is never the sender's to set.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
     old.title == sent.title
         && old.account == sent.account
+        && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
         && old.steps.iter().zip(&sent.steps).all(|(a, b)| {
             a.step_number == b.step_number

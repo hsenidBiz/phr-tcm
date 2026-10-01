@@ -72,6 +72,14 @@ pub struct CaseScript {
     pub last_repair: Option<String>,
 }
 
+impl CaseScript {
+    /// The area this script names, trimmed; `None` when it names none or a
+    /// blank one - both mean the area named like the case's Module.
+    pub fn area_name(&self) -> Option<&str> {
+        self.area.as_deref().map(str::trim).filter(|a| !a.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct StepRecord {
     pub step_number: i32,

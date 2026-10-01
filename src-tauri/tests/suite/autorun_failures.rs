@@ -493,3 +493,48 @@ fn a_failed_check_that_quotes_the_unreached_sentence_is_not_a_setup_problem() {
     let case = CaseRecord { proposed: "Failed".to_string(), reason: reason.to_string(), ..empty_case() };
     assert_eq!(stop_reason(&case), None);
 }
+
+/// Review of Task 8: an assistant repairing a script sees the area it
+/// starts in, under the account - and a script with no area says nothing.
+#[test]
+fn describe_failures_names_the_scripts_area_when_it_has_one() {
+    let case = CaseRecord {
+        verdict: "Failed".to_string(),
+        proposed: "Failed".to_string(),
+        reason: "step 1: button \"Save\" not found".to_string(),
+        account: Some("hr.admin".to_string()),
+        steps: vec![StepRecord {
+            step_number: 1,
+            outcomes: vec![ActionOutcome::failed("button \"Save\" not found")],
+            screenshot: None,
+        }],
+        ..empty_case()
+    };
+    let run = LocalRun {
+        id: "run-1700000000000".to_string(),
+        pbi_id: 555,
+        started_at: "1700000000000".to_string(),
+        cases: vec![case],
+        mode: String::new(),
+        published: None,
+        environment: None,
+    };
+    let mut script = CaseScript {
+        case_id: 1,
+        title: "A case".to_string(),
+        account: Some("hr.admin".to_string()),
+        area: Some("Manage Cycle".to_string()),
+        steps: vec![StepScript { step_number: 1, actions: vec![save_button()], unchecked: None }],
+        repairs: 0,
+        last_repair: None,
+    };
+    let text = describe_failures(&run, std::slice::from_ref(&script));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1..4], ["account: hr.admin", "area: Manage Cycle", "repairs so far: 0 of 3"], "{text}");
+
+    for none in [None, Some("  ".to_string())] {
+        script.area = none;
+        let text = describe_failures(&run, std::slice::from_ref(&script));
+        assert!(!text.contains("area:"), "{text}");
+    }
+}

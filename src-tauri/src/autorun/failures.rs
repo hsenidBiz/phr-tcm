@@ -195,6 +195,9 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -
     if let Some(account) = &case.account {
         lines.push(format!("account: {account}"));
     }
+    if let Some(area) = script.and_then(CaseScript::area_name) {
+        lines.push(format!("area: {area}"));
+    }
     if let Some(s) = script {
         lines.push(format!("repairs so far: {} of {MAX_REPAIRS}", s.repairs));
     }

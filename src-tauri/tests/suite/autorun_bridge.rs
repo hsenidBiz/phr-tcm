@@ -1521,3 +1521,101 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
     assert_eq!(status, 200, "{out}");
     assert!(out.starts_with(&format!("{id} had been retired (\"the locale changed\")")), "{out}");
 }
+
+// ------------------------------------------------------- a script's area
+
+/// Case 7 with an area, or without one.
+fn case_7_in(area: Option<&str>, selector: &str) -> serde_json::Value {
+    let mut sc = case_7(selector, "Saved");
+    if let Some(a) = area {
+        sc[0]["area"] = serde_json::json!(a);
+    }
+    sc
+}
+
+/// Two recorded areas under one module, for the bridge's project.
+fn record_two_areas(root: &std::path::Path) {
+    let nav: v2_lib::autorun::nav::NavFile = serde_json::from_value(serde_json::json!({
+        "modules": [
+            { "area": "Cycle Setup", "module": "PMS", "clicks": [{ "role": "link", "name": "Setup" }], "arrived": "/pms/setup", "recorded": "2026-10-01T10:00:00Z" },
+            { "area": "Manage Cycle", "module": "PMS", "clicks": [{ "role": "link", "name": "Manage" }], "arrived": "/pms/manage", "recorded": "2026-10-01T10:00:00Z" }
+        ]
+    }))
+    .unwrap();
+    v2_lib::autorun::nav::save_nav(root, "acme", "Web", &nav).unwrap();
+}
+
+/// Review of Task 8, finding 1: where a case starts is part of the script.
+/// A re-send that only moves it to another area is a change - refused
+/// undeclared, counted against the repair cap once declared - never
+/// "(unchanged)".
+#[tokio::test]
+async fn a_resend_that_only_changes_the_area_is_a_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7_in(Some("Cycle Setup"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let moved = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &moved, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the area changed from \"Cycle Setup\" to \"Manage Cycle\" but was not declared"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Cycle Setup"));
+    assert_eq!(on_disk.repairs, 0);
+
+    let declared = serde_json::json!({
+        "scripts": case_7_in(Some("Manage Cycle"), "#toast"),
+        "edits": [{ "case_id": 7, "steps": [], "area": true, "why": "the case is about managing a cycle, not setting one up" }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Manage Cycle"));
+    assert_eq!(on_disk.repairs, 1);
+}
+
+/// A repair to a step that leaves `area` out does not erase the area the
+/// saved script has: declaring the step is not declaring the area, so the
+/// save is refused and the area stays on disk.
+#[tokio::test]
+async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let forgot = serde_json::json!({
+        "scripts": case_7_in(None, ".toast"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &forgot, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the area changed from \"Manage Cycle\" to the case's Module but was not declared"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Manage Cycle"));
+    assert_eq!(on_disk.repairs, 0);
+
+    // Sending the area back with the same repair is the repair alone.
+    let kept = serde_json::json!({
+        "scripts": case_7_in(Some("Manage Cycle"), ".toast"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &kept, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
+}

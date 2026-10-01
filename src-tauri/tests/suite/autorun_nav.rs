@@ -384,6 +384,7 @@ fn an_old_paths_file_reads_as_areas_named_after_modules() {
 #[test]
 fn old_modules_differing_only_in_case_keep_the_first() {
     let _tail = crate::serial::log_tail();
+    let _warned = crate::serial::nav_warnings();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("projects")).unwrap();
     let old = json!({ "modules": [
@@ -612,4 +613,28 @@ fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
     let both = guide_section(&NavFile { direct_urls: false, ..pms_and_leave() });
     assert!(both.contains("## This project's runs start on the module screen"));
     assert!(both.contains("- Manage Cycle - PMS - /pms/cycle/manage"));
+}
+
+/// Review of Task 8, minor: the paths file is read on every run, check and
+/// save, so the case-only duplicate it drops is logged once per file per
+/// process - not once per read.
+#[test]
+fn a_dropped_duplicate_area_is_logged_once_per_file() {
+    let _tail = crate::serial::log_tail();
+    let _warned = crate::serial::nav_warnings();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "modules": [
+        { "module": "Payroll", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll", "recorded": "2026-09-24T10:00:00Z" },
+        { "module": "PAYROLL", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll/2", "recorded": "2026-09-25T10:00:00Z" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Logged once"), old.to_string()).unwrap();
+    for _ in 0..3 {
+        assert_eq!(load_nav(dir.path(), "Acme", "Logged once").unwrap().modules.len(), 1);
+    }
+    let count = v2_lib::applog::recent(400)
+        .into_iter()
+        .filter(|l| l.message.contains("Acme / Logged once") && l.message.contains("\"PAYROLL\""))
+        .count();
+    assert_eq!(count, 1);
 }

@@ -151,7 +151,7 @@ pub fn load_nav(root: &Path, org: &str, project: &str) -> Result<NavFile, String
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
             let nav: NavFile =
                 serde_json::from_str(s).map_err(|e| format!("the module paths file is not readable: {e}"))?;
-            Ok(as_areas(nav, org, project))
+            Ok(as_areas(nav, org, project, &nav_path(root, org, project)))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(NavFile::default()),
         Err(e) => Err(e.to_string()),
@@ -163,21 +163,36 @@ pub fn load_nav(root: &Path, org: &str, project: &str) -> Result<NavFile, String
 /// only in case the first is kept and the other logged and left out - an
 /// old file could hold "Leave" and "LEAVE" as two modules, and two areas
 /// one name apart only in case would make a script's `area` ambiguous.
-fn as_areas(mut nav: NavFile, org: &str, project: &str) -> NavFile {
+/// The file is read on every run, check and save, so what was left out is
+/// logged once per file per process, not once per read.
+fn as_areas(mut nav: NavFile, org: &str, project: &str, file: &Path) -> NavFile {
     let mut kept: Vec<ModulePath> = Vec::with_capacity(nav.modules.len());
+    let mut dropped: Vec<String> = Vec::new();
     for mut m in std::mem::take(&mut nav.modules) {
         m.area = m.name().to_string();
         let key = module_key(&m.area);
         match kept.iter().find(|k| !key.is_empty() && module_key(&k.area) == key) {
-            Some(first) => crate::applog::warn(format!(
+            Some(first) => dropped.push(format!(
                 "Auto Run areas for {org} / {project}: \"{}\" differs from \"{}\" only in case - kept the first, left this one out",
                 m.area, first.area
             )),
             None => kept.push(m),
         }
     }
+    if !dropped.is_empty() && first_warning_for(file) {
+        for line in dropped {
+            crate::applog::warn(line);
+        }
+    }
     nav.modules = kept;
     nav
+}
+
+/// True the first time it is asked about this file in this process.
+fn first_warning_for(file: &Path) -> bool {
+    static WARNED: std::sync::Mutex<Option<HashSet<PathBuf>>> = std::sync::Mutex::new(None);
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    warned.get_or_insert_with(HashSet::new).insert(file.to_path_buf())
 }
 
 pub fn validate(nav: &NavFile) -> Result<(), String> {
@@ -647,7 +662,7 @@ pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), S
 /// case's Module" and always passes. Names the first case it finds.
 pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> {
     for sc in scripts {
-        let Some(area) = sc.area.as_deref().map(str::trim).filter(|a| !a.is_empty()) else {
+        let Some(area) = sc.area_name() else {
             continue;
         };
         if find_area(nav, area).is_none() {

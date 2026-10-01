@@ -1047,3 +1047,23 @@ fn the_account_tools_reach_their_routes() {
     let (_, _, body) = calls.borrow().iter().find(|c| c.1 == "/accounts-propose").unwrap().clone();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args);
 }
+
+/// Review of Task 8: an assistant learns a script may name its `area` -
+/// and that changing it is declared - from the save tool itself.
+#[test]
+fn the_save_tool_documents_a_scripts_area() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.10.3", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "save_autorun_script")
+        .expect("the save tool is listed in a development build")
+        .clone();
+    let description = tool["description"].as_str().unwrap();
+    assert!(description.contains("area (optional:"), "{description}");
+    let props = &tool["inputSchema"]["properties"];
+    assert!(props["scripts"]["description"].as_str().unwrap().contains("area?"), "{props}");
+    assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
+}

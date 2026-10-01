@@ -50,6 +50,14 @@ pub fn log_tail() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
+/// The paths files whose case-only duplicate areas were already logged
+/// this process (`autorun::nav`'s warned set). Taken by a test that counts
+/// those log lines.
+pub fn nav_warnings() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
 /// The report revision counters (`note_server::revision`): a bump between
 /// reading one and rendering a page from it makes the page one ahead.
 pub fn report_revisions() -> MutexGuard<'static, ()> {
