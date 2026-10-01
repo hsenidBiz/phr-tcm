@@ -2784,6 +2784,7 @@ mod api_template_routes {
         assert!(guide.contains("prove_api_template"), "{guide}");
         assert!(guide.contains("admin"), "names the account key: {guide}");
         assert!(guide.contains("https://hr.example.internal"), "names the recipe's origin: {guide}");
+        assert!(guide.contains("`proven: false`"), "says what an unproven template means: {guide}");
         assert!(!guide.contains(crate::common::PASSWORD), "never a password");
 
         let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
@@ -2817,6 +2818,21 @@ mod api_template_routes {
         assert_eq!(row["last_run"], serde_json::Value::Null);
         assert_eq!(row["stage"], serde_json::Value::Null, "a template on no flow: {row}");
         assert!(row.get("steps").is_none(), "the list is a summary: {row}");
+        // Saved without proof - as an import saves one - it says so, and
+        // what to do about it.
+        assert_eq!(row["proven"], false, "{row}");
+        assert_eq!(row["unproven"], v2_lib::api_templates::share::UNPROVEN_FOR_ASSISTANT, "{row}");
+        assert!(row["unproven"].as_str().unwrap().contains("prove it here"), "{row}");
+        let proven = v2_lib::api_templates::ApiTemplate {
+            proven: Some(serde_json::from_value(json!({ "at": "2026-09-28 09:00:00", "origin": "https://hr.example.internal",
+                                                          "account": "admin", "outputs": {} })).unwrap()),
+            ..t.clone()
+        };
+        save(dir.path(), &c.org, &c.project, &proven).unwrap();
+        let (_, list) = route(&c, None, "GET", "/api-templates", "", "1.0.0").await;
+        let v: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(v["templates"][0]["proven"], true, "{v}");
+        assert_eq!(v["templates"][0]["unproven"], serde_json::Value::Null, "{v}");
 
         let at = |s: &str, mode: &str| RunRecord {
             at: s.into(),

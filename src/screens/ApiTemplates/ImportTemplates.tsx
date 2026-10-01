@@ -43,7 +43,7 @@ function Result({ result }: { result: TemplatesImportResult }) {
       <ResultList title="Added" lines={result.added} />
       <ResultList title="Replaced" lines={result.replaced} />
       <ResultList
-        title="Imported, but cannot run yet"
+        title="Cannot run yet"
         tone="text-xs font-semibold text-warning"
         lines={result.notes.map((n) => `${n.title}: ${n.note}`)}
       />

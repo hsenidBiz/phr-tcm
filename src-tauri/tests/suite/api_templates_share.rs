@@ -190,6 +190,8 @@ fn a_same_id_import_replaces_the_saved_one_unproven_and_keeps_its_run_history() 
     let saved = store::load(root.path(), ORG, TO, &template().id).unwrap().unwrap();
     assert_eq!(saved.title, "Create a draft cycle, revised");
     assert_eq!(saved.proven, None, "a replaced template is unproven");
+    let on_disk = std::fs::read_to_string(store::templates_dir(root.path(), ORG, TO).join("pms-create-draft-cycle.json")).unwrap();
+    assert!(!on_disk.contains("\"proven\""), "the proof proven here is gone from the file: {on_disk}");
     let saved_flow = flow_store::load(root.path(), ORG, TO, &flow().id).unwrap().unwrap();
     assert_eq!(saved_flow.title, "Cycle wizard, revised");
     assert_eq!(saved_flow.saved, None);
@@ -327,4 +329,124 @@ fn export_and_import_are_refused_where_auto_run_is_not_offered() {
     assert_eq!(import_at(false, root.path(), ORG, TO, &path).unwrap_err(), "not available in this build");
     assert!(store::list(root.path(), ORG, TO).unwrap().is_empty());
     assert!(flow_store::list(root.path(), ORG, TO).unwrap().is_empty());
+}
+
+/// Every file under `dir`, as paths relative to it with `/` separators.
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(d) = pending.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                pending.push(p);
+            } else {
+                out.push(p.strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn hostile_ids_and_step_paths_are_skipped_and_nothing_lands_outside_the_project_folders() {
+    let outer = tempfile::tempdir().unwrap();
+    let root = outer.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let with_id = |id: &str| {
+        let mut t = template_json();
+        t["id"] = json!(id);
+        t
+    };
+    let with_path = |id: &str, path: &str| {
+        let mut t = with_id(id);
+        t["steps"][0]["path"] = json!(path);
+        t
+    };
+    let mut flow_escape = flow_json();
+    flow_escape["id"] = json!("../evil-flow");
+    let path = share_file(
+        dir.path(),
+        vec![
+            with_id("../evil"),
+            with_id("a\\b"),
+            with_id("a/b"),
+            with_path("protocol-relative", "//evil.example/x"),
+            with_path("encoded-dotdot", "/a/%2e%2e/b"),
+            template_json(),
+        ],
+        vec![flow_escape, flow_json()],
+    );
+
+    let result = import_at(true, root.as_path(), ORG, TO, &path).unwrap();
+    let skipped: Vec<&str> = result.skipped.iter().map(|s| s.id.as_str()).collect();
+    for id in ["../evil", "a\\b", "a/b", "protocol-relative", "encoded-dotdot", "../evil-flow"] {
+        assert!(skipped.contains(&id), "{id} must be skipped: {:?}", result.skipped);
+    }
+    let reason = |id: &str| result.skipped.iter().find(|s| s.id == id).unwrap().reason.clone();
+    assert!(reason("protocol-relative").contains("safe relative path"), "{}", reason("protocol-relative"));
+    assert!(reason("encoded-dotdot").contains("safe relative path"), "{}", reason("encoded-dotdot"));
+    assert_eq!(result.added, vec!["Performance cycle wizard (flow)", "Create a draft performance cycle"]);
+
+    // Only the root went into the outer folder, and inside it only the two
+    // files the valid entries make, in the project's own folders.
+    let outer_names: Vec<String> =
+        std::fs::read_dir(outer.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(outer_names, vec!["root"]);
+    let templates = store::templates_dir(&root, ORG, TO);
+    let flows = flow_store::flows_dir(&root, ORG, TO);
+    let rel = |p: &Path, f: &str| p.join(f).strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+    let mut want = vec![rel(&flows, "pms-performance-cycle.json"), rel(&templates, "pms-create-draft-cycle.json")];
+    want.sort();
+    assert_eq!(files_under(&root), want);
+}
+
+#[test]
+fn a_flow_saved_here_that_does_not_read_gets_its_own_note() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let flows = flow_store::flows_dir(root.path(), ORG, TO);
+    std::fs::create_dir_all(&flows).unwrap();
+    std::fs::write(flows.join("pms-performance-cycle.json"), "{").unwrap();
+    let path = share_file(dir.path(), vec![template_json()], vec![]);
+
+    let result = import_at(true, root.path(), ORG, TO, &path).unwrap();
+    assert_eq!(result.added, vec!["Create a draft performance cycle"]);
+    assert_eq!(result.notes.len(), 1, "{:?}", result.notes);
+    assert!(result.notes[0].note.contains("could not be read"), "{}", result.notes[0].note);
+    assert!(!result.notes[0].note.contains("not in the file"), "{}", result.notes[0].note);
+}
+
+#[test]
+fn replacing_a_flow_names_the_saved_templates_it_no_longer_fits() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    flow_store::save(root.path(), ORG, TO, &flow()).unwrap();
+    // Saved here, not in the file: performs the "publish" stage.
+    let mut publish = template_json();
+    publish["id"] = json!("pms-publish-cycle");
+    publish["title"] = json!("Publish a cycle");
+    publish["params"] = json!([{ "name": "cycleId", "type": "number", "required": true }]);
+    publish["steps"] = json!([{ "name": "Publish", "method": "POST", "path": "/hr/pmsv10/publish",
+                                "form": { "CycleId": "{{cycleId}}" } }]);
+    publish["outputs"] = json!([]);
+    publish["stage"] = json!({ "flow": "pms-performance-cycle", "id": "publish" });
+    let publish: ApiTemplate = serde_json::from_value(publish).unwrap();
+    store::save(root.path(), ORG, TO, &publish).unwrap();
+
+    // The incoming flow has no "publish" stage.
+    let mut incoming = flow_json();
+    incoming["stages"] = json!([flow_json()["stages"][0].clone()]);
+    let path = share_file(dir.path(), vec![], vec![incoming]);
+
+    let result = import_at(true, root.path(), ORG, TO, &path).unwrap();
+    assert_eq!(result.replaced, vec!["Performance cycle wizard (flow)"]);
+    assert_eq!(result.notes.len(), 1, "{:?}", result.notes);
+    let note = &result.notes[0];
+    assert_eq!((note.id.as_str(), note.title.as_str()), ("pms-publish-cycle", "Publish a cycle"));
+    assert!(note.note.contains("replaced its flow pms-performance-cycle"), "{}", note.note);
+    assert!(note.note.contains("publish"), "{}", note.note);
 }

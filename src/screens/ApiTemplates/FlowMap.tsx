@@ -4,7 +4,8 @@ import { Button } from "../../components/ui/button";
 import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { GEOMETRY, edgePath, layoutFlow, type Placed } from "../../lib/flowLayout";
-import { EffectBadge, dayMonth, stampDate } from "./TemplateRow";
+import { Badge } from "../../components/ui/badge";
+import { EffectBadge, UNPROVEN_HINT, dayMonth, stampDate } from "./TemplateRow";
 
 /** The arrow's head at `to`'s left-middle; edges arrive horizontally. */
 function arrowHead(to: Placed): string {
@@ -186,6 +187,11 @@ export default function FlowMap({
                           onClick={() => onOpenTemplate(t.id)}
                         >
                           <span className="min-w-0 flex-1 truncate">{t.title}</span>
+                          {!t.proven && (
+                            <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
+                              Unproven
+                            </Badge>
+                          )}
                           <EffectBadge effect={t.effect} />
                         </button>
                       </li>
@@ -201,7 +207,7 @@ export default function FlowMap({
       <ol aria-label={`Stages of ${flow.title}`} className="sr-only">
         {flow.stages.map((s) => {
           const requires = (s.requires ?? []).map((r) => titleOf.get(r) ?? r);
-          const performers = (byStage.get(s.id) ?? []).map((t) => t.title);
+          const performers = (byStage.get(s.id) ?? []).map((t) => (t.proven ? t.title : `${t.title} (unproven)`));
           return (
             <li key={s.id}>
               {`${s.title}. Requires: ${requires.length > 0 ? requires.join(", ") : "nothing"}. ${

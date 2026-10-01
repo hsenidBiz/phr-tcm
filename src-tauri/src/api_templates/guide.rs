@@ -112,6 +112,10 @@ with every problem listed together:
 - `antiforgery.page`: a page that renders a form. It is opened once per run
   and its `__RequestVerificationToken` is sent with every step.
 - `proven` is written by the app from the proving run. Never send one.
+- A template `list_api_templates` shows with `proven: false` was imported
+  from another machine and has never been proven on this site. Prove it here
+  (`prove_api_template` with `replace: true` and a `why`) before relying on
+  it; its `last_run` may be from the version it replaced.
 
 ## Placeholders
 

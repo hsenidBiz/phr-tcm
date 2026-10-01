@@ -11,9 +11,11 @@
 //! Proof never travels: a template goes without `proven` and a flow without
 //! `saved`, since both carry what a real record held on the sender's site
 //! (the account, captured outputs, a sample subject). Run history
-//! (`<id>.runs.json`) is never read at all. No org, project, origin or
-//! account is written either - the file says what the operations are, not
-//! where they were proven.
+//! (`<id>.runs.json`) is never written to the file: the export reads the
+//! saved templates through `store::list`, which loads each one's history
+//! beside it, and drops it. No org, project, origin or account is written
+//! either - the file says what the operations are, not where they were
+//! proven.
 
 use super::flow::{check_flow, check_stage_ref, Flow};
 use super::{check, valid_id, ApiTemplate};
@@ -37,6 +39,11 @@ pub const NEWER: &str = "that file was exported by a newer version of the app - 
 pub const DAMAGED: &str = "that API templates export is damaged: it has no list of templates and flows";
 pub const NOTHING_IN_IT: &str = "that file has no templates or flows in it";
 pub const NOTHING_TO_EXPORT: &str = "there are no templates or flows to export in this project";
+
+/// What `list_api_templates` says beside a template with no `proven` - one
+/// that arrived through an import. Runs of it are allowed; this is how the
+/// assistant knows it has not been proven here.
+pub const UNPROVEN_FOR_ASSISTANT: &str = "imported from another machine and not proven on this site - prove it here (prove_api_template with replace: true and a why) before relying on it; its last_run may be from the version it replaced";
 
 /// The file as it is written.
 #[derive(Debug, Serialize)]
@@ -64,8 +71,9 @@ pub struct TemplatesImportSkip {
     pub reason: String,
 }
 
-/// One template that was imported but cannot run as it is - its flow is
-/// not saved here, or that flow does not have its stage.
+/// One template that cannot run as it is after the import: one imported
+/// whose flow is not saved here (or does not fit it), or one already saved
+/// here whose flow the import replaced with one that no longer fits it.
 #[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct TemplatesImportNote {
     pub id: String,
@@ -257,23 +265,42 @@ pub fn plan_import(doc: &ReadDoc) -> ImportPlan {
     ImportPlan { flows, templates, skipped }
 }
 
+/// The flow a template's `stage` names, as the import found it once its
+/// own flows were written.
+pub enum FlowFound<'a> {
+    Saved(&'a Flow),
+    /// Neither in the file nor saved here.
+    Missing,
+    /// A saved file of that id that no longer reads.
+    Unreadable,
+}
+
 /// Why an imported template on a flow cannot run as it is, given the flow
-/// its `stage` names as it stands once the import's flows are written
-/// (`None`: neither in the file nor saved here). Empty when it can - or
-/// when it is on no flow. It is imported either way: the run's own check
-/// refuses it until the flow is there.
-pub fn stage_note(t: &ApiTemplate, flow: Option<&Flow>) -> Option<String> {
+/// its `stage` names. `None` when it can - or when it is on no flow. It is
+/// imported either way: the run's own check refuses it until the flow is
+/// there.
+pub fn stage_note(t: &ApiTemplate, flow: FlowFound) -> Option<String> {
     let r = t.stage.as_ref()?;
     match flow {
-        None => Some(format!(
+        FlowFound::Missing => Some(format!(
             "its flow {} is not in the file or saved here, so it cannot run until that flow is saved",
             r.flow
         )),
-        Some(f) => {
+        FlowFound::Unreadable => Some(format!(
+            "its flow {} is saved here but could not be read, so it cannot run until that flow is saved again - see Settings, Logs",
+            r.flow
+        )),
+        FlowFound::Saved(f) => {
             let problems = check_stage_ref(t, Some(f));
             (!problems.is_empty()).then(|| problems.join("; "))
         }
     }
+}
+
+/// The note for a template saved here, not in the file, that a flow the
+/// import replaced no longer fits.
+pub fn replaced_flow_note(flow_id: &str, why: &str) -> String {
+    format!("the import replaced its flow {flow_id}: {why}")
 }
 
 /// How a flow is listed in `added` / `replaced`.

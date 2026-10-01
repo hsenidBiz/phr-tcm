@@ -457,7 +457,9 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
 }
 
 /// Every saved template for this project, as a summary: what it is, what
-/// it takes and gives back, the flow stage it performs, and its newest run
+/// it takes and gives back, the flow stage it performs, whether it is
+/// proven on this site (an imported one is not - `unproven` says what to
+/// do about it), and its newest run
 /// (null before its first - the prove that saved it is history, not a
 /// run). Beside them, every saved flow with its stages and the templates
 /// on each - a flow file that no longer parses is left out (and logged by
@@ -519,6 +521,10 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
                 "params": t.params,
                 "outputs": t.outputs,
                 "stage": t.stage,
+                // An imported template arrives unproven (api_templates::share):
+                // runs of it are allowed, so the assistant is told plainly.
+                "proven": t.proven.is_some(),
+                "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
                 "last_run": s.runs.into_iter().find(|r| r.mode == store::MODE_RUN),
             })
         })

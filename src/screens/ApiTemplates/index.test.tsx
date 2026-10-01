@@ -923,7 +923,7 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   expect(within(replaced).getByText("Create a draft performance cycle")).toBeInTheDocument();
   const skipped = within(dialog).getByRole("region", { name: "Skipped" });
   expect(skipped).toHaveTextContent("Bad Id: this template's id is not valid");
-  const notes = within(dialog).getByRole("region", { name: "Imported, but cannot run yet" });
+  const notes = within(dialog).getByRole("region", { name: "Cannot run yet" });
   expect(notes).toHaveTextContent("Remove a goal: its flow goals is not in the file");
 
   // The tab reads its lists again.
@@ -947,4 +947,54 @@ test("an import the file refuses says why and closes", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("that file is not an API templates export"));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+test("an imported template is marked Unproven and never claims a proof or this version's history", async () => {
+  // Replaced by an import: no proof, but the runs of the version it replaced.
+  const oldRuns = [{ at: "2026-09-28 11:30:00", mode: "run", account: "hr.admin", ok: true, outputs: {} }];
+  mockOverview({
+    origin: OVERVIEW.origin,
+    templates: [
+      { template: template({ proven: null }), runs: oldRuns },
+      { template: template({ id: "goals-remove-goal", title: "Remove a goal", proven: null }), runs: [] },
+      OVERVIEW.templates[1],
+    ],
+  });
+  renderScreen();
+
+  const replaced = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  const pill = within(replaced).getByText("Unproven");
+  expect(pill).toHaveAttribute("title", expect.stringContaining("Prove it here before relying on it"));
+  fireEvent.click(within(replaced).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  let details = within(replaced).getByTestId("template-details");
+  expect(within(details).getByTestId("template-proof")).toHaveTextContent("not proven on this site");
+  expect(details).toHaveTextContent("These lines may be from the version an import replaced, not this one.");
+
+  // Imported fresh: no history, and nothing said about a proof.
+  const fresh = screen.getByRole("listitem", { name: "Remove a goal" });
+  expect(within(fresh).getByText("Unproven")).toBeInTheDocument();
+  fireEvent.click(within(fresh).getByRole("button", { name: "Show details of Remove a goal" }));
+  details = within(fresh).getByTestId("template-details");
+  expect(details).toHaveTextContent("Not run yet.");
+  expect(details).not.toHaveTextContent("since it was proven");
+
+  // A proven one has no pill.
+  const proven = screen.getByRole("listitem", { name: "Publish a performance cycle" });
+  expect(within(proven).queryByText("Unproven")).not.toBeInTheDocument();
+});
+
+test("the flow map marks an unproven template on its stage, in the drawing and in words", async () => {
+  const [rules, reviewer] = FLOW_OVERVIEW.templates;
+  mockOverview({
+    ...FLOW_OVERVIEW,
+    templates: [{ ...rules, template: { ...rules.template, proven: null } }, reviewer],
+  });
+  renderScreen();
+  await showFlows();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const stage = within(flow).getByRole("group", { name: "Evaluation rules" });
+  expect(within(stage).getByText("Unproven")).toHaveAttribute("title", expect.stringContaining("not proven on this site"));
+  const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
+  expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unproven).");
 });

@@ -2971,8 +2971,9 @@ export type TemplatesExportResult = {
 };
 
 /**
- *  One template that was imported but cannot run as it is - its flow is
- *  not saved here, or that flow does not have its stage.
+ *  One template that cannot run as it is after the import: one imported
+ *  whose flow is not saved here (or does not fit it), or one already saved
+ *  here whose flow the import replaced with one that no longer fits it.
  */
 export type TemplatesImportNote = {
 	id: string,
