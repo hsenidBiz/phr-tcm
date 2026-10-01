@@ -3,7 +3,8 @@
 //! The download itself needs a Velopack install to exercise, so what is
 //! pinned here is the arithmetic the user actually reads: "X of Y".
 
-use v2_lib::updater::{bytes_at, REPO_URL, RELEASES_URL};
+use v2_lib::updater::{bytes_at, ProgressPlan, REPO_URL, RELEASES_URL};
+use velopack::{UpdateInfo, VelopackAsset};
 
 /// Both urls point at the SAME repo, and it is the company one. They
 /// drifted apart once already - the feed was read from one place and this
@@ -387,4 +388,79 @@ fn no_update_manager_allows_a_downgrade() {
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/updater/mod.rs")).unwrap();
     assert!(!src.contains("AllowVersionDowngrade: true"), "downgrades stay off");
     assert!(src.contains("UpdateManager::new_boxed(src, None, None)"), "managers use Velopack's default options");
+}
+
+fn asset(version: &str, size: u64) -> VelopackAsset {
+    VelopackAsset { Version: version.into(), Size: size, ..VelopackAsset::default() }
+}
+
+fn full_update(size: u64) -> UpdateInfo {
+    UpdateInfo { TargetFullRelease: asset("2.0.9", size), ..UpdateInfo::default() }
+}
+
+fn delta_update(full: u64, deltas: &[u64]) -> UpdateInfo {
+    UpdateInfo {
+        TargetFullRelease: asset("2.0.9", full),
+        BaseRelease: Some(asset("2.0.8", full)),
+        DeltasToTarget: deltas.iter().map(|&d| asset("2.0.9", d)).collect(),
+        IsDowngrade: false,
+    }
+}
+
+/// No delta on offer: the whole package is what downloads, byte by byte.
+#[test]
+fn a_full_update_is_sized_by_the_full_package() {
+    let mut plan = ProgressPlan::for_update(&full_update(14_900_000));
+    assert_eq!(plan.total(), 14_900_000);
+    let p = plan.at(50);
+    assert_eq!((p.downloaded, p.total), (bytes_at(50, 14_900_000), 14_900_000));
+}
+
+/// The 2.0.8-beta.4 report: Velopack downloaded the 4.1 MB delta, and the
+/// bar said 14.9 MB. With a base release and a delta, the delta IS the
+/// download - and Velopack's delta route only says 0 before, 70 once the
+/// deltas are down, 100 once they are applied.
+#[test]
+fn a_delta_update_is_sized_by_its_deltas() {
+    let mut plan = ProgressPlan::for_update(&delta_update(14_900_000, &[4_100_000]));
+    assert_eq!(plan.total(), 4_100_000);
+    assert_eq!(plan.at(0).downloaded, 0);
+    let downloaded = plan.at(70);
+    assert_eq!((downloaded.downloaded, downloaded.total), (4_100_000, 4_100_000));
+    let applied = plan.at(100);
+    assert_eq!((applied.downloaded, applied.total), (4_100_000, 4_100_000));
+}
+
+/// Several deltas in a row are summed, and each one finished moves the
+/// figure by its share of the 0-70 the delta route reports.
+#[test]
+fn several_deltas_add_up() {
+    let mut plan = ProgressPlan::for_update(&delta_update(14_900_000, &[3_000_000, 1_000_000]));
+    assert_eq!(plan.total(), 4_000_000);
+    // One of two deltas down: Velopack sends floor(1 / 2 * 70) = 35.
+    assert_eq!(plan.at(35).downloaded, 2_000_000);
+    assert_eq!(plan.at(70).downloaded, 4_000_000);
+}
+
+/// Velopack takes the delta route only with a base release to patch.
+#[test]
+fn deltas_without_a_base_release_download_in_full() {
+    let mut info = delta_update(14_900_000, &[4_100_000]);
+    info.BaseRelease = None;
+    assert_eq!(ProgressPlan::for_update(&info).total(), 14_900_000);
+}
+
+/// A delta that will not apply makes Velopack fall back to the full
+/// package, whose progress comes in steps of 5 the delta route never
+/// sends - from then on the figure is the full package's.
+#[test]
+fn a_fallback_to_the_full_package_switches_the_total() {
+    let mut plan = ProgressPlan::for_update(&delta_update(14_900_000, &[4_100_000]));
+    assert_eq!(plan.at(70).total, 4_100_000);
+    let fell_back = plan.at(5);
+    assert_eq!((fell_back.downloaded, fell_back.total), (bytes_at(5, 14_900_000), 14_900_000));
+    assert_eq!(plan.total(), 14_900_000);
+    // A later 70 is the full download's 70, not the deltas' again.
+    assert_eq!(plan.at(70).downloaded, bytes_at(70, 14_900_000));
+    assert_eq!(plan.at(100).downloaded, 14_900_000);
 }
