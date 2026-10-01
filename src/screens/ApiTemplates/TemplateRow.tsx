@@ -313,7 +313,7 @@ export default function TemplateRow({
 
           {!t.proven && (
             <section className="space-y-1">
-              <h3 className="font-semibold text-muted">Proven</h3>
+              <h3 className="font-semibold text-muted">Not proven</h3>
               <p data-testid="template-proof" className="text-warning">
                 {UNPROVEN_HINT}
               </p>
