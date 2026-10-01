@@ -447,6 +447,11 @@ export const commands = {
 	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
 	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
 	/**
+	 *  What a supervised run just saved says about the project's quirks: the
+	 *  run pane calls this once, after its save; the review screen never does.
+	 */
+	autoRunCountEvidence: (organization: string, project: string, runId: string) => typedError<boolean, string>(__TAURI_INVOKE("auto_run_count_evidence", { organization, project, runId })),
+	/**
 	 *  A note the person types in, added as theirs. Past the active cap it is
 	 *  refused with the notes worth retiring.
 	 */
@@ -2433,17 +2438,28 @@ export type Quirk_Deserialize = {
 	/**  Epoch milliseconds as a string. */
 	at: string,
 	sources?: QuirkSource_Deserialize[],
-	/**  Source steps that passed in a run since the note was filed. */
+	/**
+	 *  Runs since the note was filed in which its source steps passed
+	 *  (at most one per source case per run).
+	 */
 	confirmed?: number,
 	/**  Epoch milliseconds as a string, of the latest of those runs. */
 	last_confirmed?: string | null,
-	/**  Source steps that failed the same way again. */
+	/**
+	 *  Runs in which a source step failed the same way again (at most
+	 *  one per source case per run).
+	 */
 	doubted?: number,
 	/**  "active" or "retired". */
 	status?: string,
 	retired_reason?: string | null,
 	/**  Epoch milliseconds as a string. */
 	retired_at?: string | null,
+	/**
+	 *  Who retired it: "person" or "assistant". An assistant never brings
+	 *  back a note a person retired.
+	 */
+	retired_by?: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from?: string,
 };
@@ -2465,17 +2481,28 @@ export type Quirk_Serialize = {
 	/**  Epoch milliseconds as a string. */
 	at: string,
 	sources: QuirkSource_Serialize[],
-	/**  Source steps that passed in a run since the note was filed. */
+	/**
+	 *  Runs since the note was filed in which its source steps passed
+	 *  (at most one per source case per run).
+	 */
 	confirmed: number,
 	/**  Epoch milliseconds as a string, of the latest of those runs. */
 	last_confirmed: string | null,
-	/**  Source steps that failed the same way again. */
+	/**
+	 *  Runs in which a source step failed the same way again (at most
+	 *  one per source case per run).
+	 */
 	doubted: number,
 	/**  "active" or "retired". */
 	status: string,
 	retired_reason: string | null,
 	/**  Epoch milliseconds as a string. */
 	retired_at: string | null,
+	/**
+	 *  Who retired it: "person" or "assistant". An assistant never brings
+	 *  back a note a person retired.
+	 */
+	retired_by: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from: string,
 };

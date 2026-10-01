@@ -559,6 +559,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_open_browser",
     "auto_run_step",
     "auto_run_save_run",
+    "auto_run_count_evidence", // local: counts the saved run into the project's quirks file, never ADO
     "auto_run_close_browser",
     "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
     "auto_run_replay", // local: drives the browser itself, writes nothing to ADO

@@ -86,7 +86,7 @@ export default function QuirksList({
   };
 
   const add = () => {
-    if (draft.trim() === "") return;
+    if (busy || draft.trim() === "") return;
     void change(() => commands.autoRunAddQuirk(org, project, draft), () => setDraft(""));
   };
 
@@ -104,6 +104,10 @@ export default function QuirksList({
   const row = (q: Quirk) => {
     const open = mode?.id === q.id ? mode : null;
     const isRetired = q.status === "retired";
+    // While one row is open (an edit, a reason, a delete to confirm) or a
+    // change is on its way, the other rows' buttons wait: opening another
+    // row would throw away what was typed in this one.
+    const locked = busy || (mode !== null && mode.id !== q.id);
     const facts = [author(q), day(q.at)].filter(Boolean);
     return (
       <li key={q.id} aria-label={q.text} className="space-y-1.5 rounded-md border border-border bg-surface px-3 py-2">
@@ -164,7 +168,7 @@ export default function QuirksList({
           ) : (
             <>
               {!isRetired && (
-                <Button size="sm" variant="ghost" onClick={() => setMode({ id: q.id, kind: "edit", text: q.text })}>
+                <Button size="sm" variant="ghost" disabled={locked} onClick={() => setMode({ id: q.id, kind: "edit", text: q.text })}>
                   <IconEdit aria-hidden />
                   Edit
                 </Button>
@@ -173,19 +177,19 @@ export default function QuirksList({
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => void change(() => commands.autoRunRestoreQuirk(org, project, q.id), () => {})}
                 >
                   <IconRestore aria-hidden />
                   Restore
                 </Button>
               ) : (
-                <Button size="sm" variant="ghost" onClick={() => setMode({ id: q.id, kind: "retire", text: "" })}>
+                <Button size="sm" variant="ghost" disabled={locked} onClick={() => setMode({ id: q.id, kind: "retire", text: "" })}>
                   <IconRetire aria-hidden />
                   Retire
                 </Button>
               )}
-              <Button size="sm" variant="ghost" onClick={() => setMode({ id: q.id, kind: "delete", text: "" })}>
+              <Button size="sm" variant="ghost" disabled={locked} onClick={() => setMode({ id: q.id, kind: "delete", text: "" })}>
                 <IconRemove aria-hidden />
                 Delete
               </Button>

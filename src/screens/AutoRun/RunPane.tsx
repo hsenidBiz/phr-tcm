@@ -327,6 +327,11 @@ export default function RunPane({
         ? "Result saved on this machine."
         : `${all.length} results saved on this machine.`,
     );
+    // What this run says about the project's quirks, counted once, here,
+    // now that it is on disk - never from the review screen, whose saves
+    // re-write a run already counted. Bookkeeping only: a failure to count
+    // is logged on the Rust side and never stands in the way of the save.
+    await commands.autoRunCountEvidence(org, project, id).catch(() => null);
     await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
     return true;
   };

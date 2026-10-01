@@ -37,6 +37,7 @@ function quirk(id: string, text: string, extra: Partial<Quirk_Serialize> = {}): 
     status: "active",
     retired_reason: null,
     retired_at: null,
+    retired_by: null,
     from: "autorun",
     ...extra,
   };
@@ -266,4 +267,24 @@ test("the recipe and the quirks are two peer sections, each with its own heading
   const quirks = screen.getByRole("heading", { name: "Known quirks", level: 3 });
   expect(recipe.closest("section")).toContainElement(screen.getByRole("button", { name: "Save recipe" }));
   expect(quirks.closest("section")).toContainElement(await screen.findByRole("button", { name: "Add note" }));
+});
+
+test("while one note is open, the other notes wait, and Enter adds a note once", async () => {
+  const { calls } = mount(RECIPE, () => null, [quirk("q1", "dates render as dd/mm"), quirk("q2", "the grid paginates")]);
+  const first = await screen.findByRole("listitem", { name: "dates render as dd/mm" });
+  const second = screen.getByRole("listitem", { name: "the grid paginates" });
+  fireEvent.click(within(first).getByRole("button", { name: "Edit" }));
+  fireEvent.change(within(first).getByLabelText("Note text"), { target: { value: "dates render as dd/mm/yyyy" } });
+  for (const name of ["Edit", "Retire", "Delete"]) {
+    expect(within(second).getByRole("button", { name })).toBeDisabled();
+  }
+  fireEvent.click(within(first).getByRole("button", { name: "Cancel" }));
+  expect(within(second).getByRole("button", { name: "Edit" })).toBeEnabled();
+
+  const input = screen.getByLabelText("Add a note");
+  fireEvent.change(input, { target: { value: "the toast fades after 3s" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await screen.findByRole("listitem", { name: "the toast fades after 3s" });
+  expect(calls.filter((c) => c.cmd === "auto_run_add_quirk")).toHaveLength(1);
 });

@@ -409,6 +409,25 @@ pub fn auto_run_load_quirks(
     crate::autorun::quirks::load_quirks(&root(&app)?, &organization, &project)
 }
 
+/// What a supervised run just saved says about the project's quirks: the
+/// run pane calls this once, after its save; the review screen never does.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_count_evidence(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: String,
+) -> Result<bool, String> {
+    crate::autorun::quirks::count_saved_run(
+        &root(&app)?,
+        &organization,
+        &project,
+        &run_id,
+        crate::autorun::sessions::now_ms(),
+    )
+}
+
 // The Known quirks list's own changes, one per button. Each is saved the
 // moment it is made and answers with the whole list as saved, so the
 // dialog never shows a list the file does not hold.

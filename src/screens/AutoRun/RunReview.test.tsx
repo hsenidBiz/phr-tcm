@@ -169,7 +169,11 @@ test("accept every proposal fills only the unset ones that have a proposal", asy
 
 test("saving writes the verdicts and notes and leaves the proposal alone", async () => {
   let saved: Record<string, unknown> | null = null;
+  const counted: unknown[] = [];
   mockIPC((cmd, args) => {
+    // A review re-writes a run already counted toward the quirks when the
+    // run pane saved it: it must never be counted again.
+    if (cmd === "auto_run_count_evidence") counted.push(args);
     if (cmd === "auto_run_load_run") return RUN;
     if (cmd === "auto_run_save_run") {
       saved = args as Record<string, unknown>;
@@ -192,6 +196,7 @@ test("saving writes the verdicts and notes and leaves the proposal alone", async
   fireEvent.click(screen.getByRole("button", { name: "Save review" }));
 
   await waitFor(() => expect(saved).not.toBeNull());
+  expect(counted).toEqual([]);
   const run = (saved as unknown as { run: typeof RUN }).run;
   expect(run.cases[0].verdict).toBe("Failed");
   expect(run.cases[0].note).toBe("wrong button label");

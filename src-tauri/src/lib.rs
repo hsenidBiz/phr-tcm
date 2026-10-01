@@ -187,6 +187,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_load_recipe,
             autorun::auto_run_save_recipe,
             autorun::auto_run_load_quirks,
+            autorun::auto_run_count_evidence,
             autorun::auto_run_add_quirk,
             autorun::auto_run_edit_quirk,
             autorun::auto_run_retire_quirk,

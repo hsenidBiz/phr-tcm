@@ -26,7 +26,12 @@ function mockSession(opts: { saveFails?: boolean } = {}) {
   const saved: Saved[] = [];
   const launched: string[] = [];
   const closes: number[] = [];
+  const counted: unknown[] = [];
   mockIPC((cmd, args) => {
+    if (cmd === "auto_run_count_evidence") {
+      counted.push(args);
+      return true;
+    }
     if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
     if (cmd === "auto_run_open_browser") {
       launched.push((args as { browserName: string }).browserName);
@@ -44,7 +49,7 @@ function mockSession(opts: { saveFails?: boolean } = {}) {
     }
     return null;
   });
-  return { saved, launched, closes };
+  return { saved, launched, closes, counted };
 }
 
 function renderPane(cases: { id: number; title: string }[], onClose = vi.fn()) {
@@ -180,6 +185,7 @@ test("a failed write keeps the pane open instead of closing over lost verdicts",
   await waitFor(() => expect(screen.getByText("case 2 of 2")).toBeInTheDocument());
   expect(onClose).not.toHaveBeenCalled();
   expect(s.saved).toHaveLength(0);
+  expect(s.counted, "nothing on disk, nothing counted").toEqual([]);
 });
 
 test("Close keeps a verdict marked on the case in front of you", async () => {
@@ -459,4 +465,18 @@ test("the verdict group is named once, by its visible label", async () => {
   const labelId = group.getAttribute("aria-labelledby");
   expect(labelId).toBeTruthy();
   expect(document.getElementById(labelId!)).toHaveTextContent("Your verdict");
+});
+
+/// The quirks' evidence is counted from a supervised run exactly once,
+/// right after the run is on disk (a failed save counts nothing - see the
+/// failed-write test above).
+test("a saved run is counted toward the project's quirks once", async () => {
+  const s = mockSession();
+  const onClose = renderPane([{ id: 1, title: "Valid login" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(s.saved).toHaveLength(1);
+  expect(s.counted).toEqual([{ organization: "acme", project: "Web", runId: "run-1" }]);
 });
