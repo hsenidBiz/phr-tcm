@@ -6,7 +6,7 @@ use crate::common;
 use serde_json::json;
 use v2_lib::autorun::nav::{
     check_areas, check_no_addresses, find_area, find_path, go_home, guide_section, is_setup_problem, load_nav, module_key,
-    nav_path, no_address, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view,
+    nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view,
     ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
@@ -138,6 +138,34 @@ fn removing_a_path_and_turning_the_switch_change_only_their_own_part() {
     assert_eq!(nav.modules.iter().map(|m| m.module.as_str()).collect::<Vec<_>>(), vec!["Payroll"]);
     let again = remove_path(dir.path(), "Acme", "Web", "Leave").unwrap();
     assert_eq!(again, nav, "removing what is not there changes nothing");
+}
+
+#[test]
+fn a_script_with_no_area_goes_to_its_modules_only_area_whatever_its_name() {
+    let nav = with(vec![area("Manage Cycle", "Performance", "/hr/home/index"), area("Payslips", "Payroll", "/hr/pay")]);
+    let to = route_for(&nav, None, Some(" performance "), Some("hr.admin")).unwrap().unwrap();
+    assert_eq!(to.name(), "Manage Cycle");
+    assert_eq!(find_path(&nav, "Payroll").map(|p| p.name()), Some("Payslips"));
+}
+
+#[test]
+fn the_area_named_like_the_module_wins_over_its_other_areas() {
+    let nav = with(vec![area("Manage Cycle", "Performance", "/hr/a"), area("Performance", "Performance", "/hr/b")]);
+    assert_eq!(route_for(&nav, None, Some("Performance"), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()), Some("/hr/b"));
+}
+
+#[test]
+fn several_areas_and_none_named_like_the_module_lists_them_instead_of_guessing() {
+    let nav = with(vec![area("Manage Cycle", "Performance", "/hr/a"), area("My Assessments", "Performance", "/hr/b")]);
+    let why = route_for(&nav, None, Some("Performance"), Some("hr.admin")).unwrap_err();
+    assert_eq!(why, no_default_area("Performance", &["Manage Cycle", "My Assessments"]));
+    assert_eq!(
+        why,
+        "No menu path recorded for module \"Performance\" by its own name - its areas are \"Manage Cycle\", \"My Assessments\": \
+         set the script's area to one of them, or record an area named \"Performance\" in Auto Run, Areas."
+    );
+    assert!(is_setup_problem(&why), "a run's summary counts it with the other setup problems");
+    assert!(find_path(&nav, "Performance").is_none());
 }
 
 #[test]
@@ -479,10 +507,16 @@ fn no_area_routes_by_module_as_today() {
             route_for(&nav, blank, None, Some("hr.admin")),
             Err("This case has no Module - set one in Azure DevOps, or record a path for it.".to_string())
         );
-        // PMS has two areas, but none named PMS.
+        // PMS has two areas, but none named PMS: they are named, not guessed.
         assert_eq!(
             route_for(&nav, blank, Some(" PMS "), Some("hr.admin")),
-            Err("No menu path recorded for module \"PMS\" - record one in Auto Run, Areas.".to_string())
+            Err("No menu path recorded for module \"PMS\" by its own name - its areas are \"Cycle Setup\", \"Manage Cycle\": \
+                 set the script's area to one of them, or record an area named \"PMS\" in Auto Run, Areas."
+                .to_string())
+        );
+        assert_eq!(
+            route_for(&nav, blank, Some("Payroll"), Some("hr.admin")),
+            Err("No menu path recorded for module \"Payroll\" - record one in Auto Run, Areas.".to_string())
         );
         assert_eq!(
             route_for(&nav, blank, Some("leave"), None),
@@ -605,7 +639,7 @@ fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
     ] {
         assert!(text.contains(line), "missing {line:?}: {text}");
     }
-    for must in ["`area`", "is not its module's default area", "named like the case's Module"] {
+    for must in ["`area`", "is not its module's default area", "named like the case's Module", "the module's only area"] {
         assert!(text.contains(must), "missing {must:?}: {text}");
     }
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");

@@ -363,8 +363,9 @@ export const commands = {
 	account?: string | null,
 	/**
 	 *  The recorded area the run takes this case to before step 1, by name
-	 *  (`nav::find_area`). Absent or blank means the area named like the
-	 *  case's Module. A name the project has not recorded is refused when
+	 *  (`nav::find_area`). Absent or blank means the module's default area
+	 *  (`nav::find_path`): the one named like the case's Module, or its
+	 *  only area when none is. A name the project has not recorded is refused when
 	 *  the script is saved, and refuses the case at run time.
 	 */
 	area?: string | null,
@@ -1462,8 +1463,9 @@ export type CaseScript_Deserialize = {
 	account?: string | null,
 	/**
 	 *  The recorded area the run takes this case to before step 1, by name
-	 *  (`nav::find_area`). Absent or blank means the area named like the
-	 *  case's Module. A name the project has not recorded is refused when
+	 *  (`nav::find_area`). Absent or blank means the module's default area
+	 *  (`nav::find_path`): the one named like the case's Module, or its
+	 *  only area when none is. A name the project has not recorded is refused when
 	 *  the script is saved, and refuses the case at run time.
 	 */
 	area?: string | null,
@@ -1497,8 +1499,9 @@ export type CaseScript_Serialize = {
 	account?: string | null,
 	/**
 	 *  The recorded area the run takes this case to before step 1, by name
-	 *  (`nav::find_area`). Absent or blank means the area named like the
-	 *  case's Module. A name the project has not recorded is refused when
+	 *  (`nav::find_area`). Absent or blank means the module's default area
+	 *  (`nav::find_path`): the one named like the case's Module, or its
+	 *  only area when none is. A name the project has not recorded is refused when
 	 *  the script is saved, and refuses the case at run time.
 	 */
 	area?: string | null,

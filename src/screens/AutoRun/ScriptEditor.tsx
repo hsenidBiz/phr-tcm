@@ -131,7 +131,7 @@ export default function ScriptEditor({
       title,
       steps: parsed,
       account: account === "" ? null : account,
-      // Left out when blank: the area named like the case's Module.
+      // Left out when blank: the module's default area.
       ...(area === "" ? {} : { area }),
     });
     if (r.status === "error") {

@@ -39,7 +39,8 @@ pub struct ModulePath {
     #[serde(default)]
     pub area: String,
     /// The test-case Module the area belongs to, for grouping. An area
-    /// named like a case's Module is where a script with no `area` goes.
+    /// named like a case's Module - or a module's only area, when none is -
+    /// is where a script with no `area` goes.
     pub module: String,
     /// In order, the locators a run clicks: the same `Target` every script
     /// click uses.
@@ -128,6 +129,18 @@ const UNRECORDED_AREA_START: &str = "the area \"";
 
 pub fn no_path(module: &str) -> String {
     format!("{NO_PATH_START}{}\" - record one in Auto Run, Areas.", module.trim())
+}
+
+/// Why a case with no `area` is not run when its module has several areas
+/// and none is named like it: there is no telling which one it means.
+pub fn no_default_area(module: &str, areas: &[&str]) -> String {
+    let names = areas.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
+    format!(
+        "{NO_PATH_START}{}\" by its own name - its areas are {names}: set the script's area to one of them, \
+         or record an area named \"{}\" in Auto Run, Areas.",
+        module.trim(),
+        module.trim()
+    )
 }
 
 /// Why a case whose script names an area the project has not recorded is
@@ -247,9 +260,25 @@ pub fn find_area<'a>(nav: &'a NavFile, area: &str) -> Option<&'a ModulePath> {
     nav.modules.iter().find(|m| module_key(m.name()) == key)
 }
 
-/// The area named like `module`: where a case with no `area` goes.
+/// Where a case with no `area` goes: the area named like `module`, or -
+/// when nothing is named like it - the module's only area. Recording one
+/// area under a module and naming it for its screen ("Manage Cycle" under
+/// Performance) is the obvious first thing to do, and every script that
+/// names no area should still find it (2026-10-01).
 pub fn find_path<'a>(nav: &'a NavFile, module: &str) -> Option<&'a ModulePath> {
-    find_area(nav, module)
+    find_area(nav, module).or_else(|| match areas_of(nav, module).as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    })
+}
+
+/// Every area recorded under `module`, in the file's order.
+fn areas_of<'a>(nav: &'a NavFile, module: &str) -> Vec<&'a ModulePath> {
+    let key = module_key(module);
+    if key.is_empty() {
+        return vec![];
+    }
+    nav.modules.iter().filter(|m| module_key(&m.module) == key).collect()
 }
 
 /// Whether `area` may be recorded under `module`: refused when another
@@ -309,7 +338,8 @@ pub fn set_direct_urls(root: &Path, org: &str, project: &str, allowed: bool) -> 
 /// not recorded refuses the case - even in a project with no areas at all.
 /// With no `area` (or a blank one) it is exactly as before areas existed:
 /// `Ok(None)` when the project has no paths, and the case runs as it always
-/// has; otherwise the area named like the case's `module`, checked in the
+/// has; otherwise the area named like the case's `module`, or its only
+/// area when none is (`find_path`), checked in the
 /// design's order - the Module, then a path for it. Either way an
 /// `account` must apply (the script's own, else the run's).
 pub fn route_for<'a>(
@@ -329,7 +359,10 @@ pub fn route_for<'a>(
         if module.is_empty() {
             return Err(NO_MODULE.to_string());
         }
-        find_path(nav, module).ok_or_else(|| no_path(module))?
+        find_path(nav, module).ok_or_else(|| match areas_of(nav, module).as_slice() {
+            [] => no_path(module),
+            several => no_default_area(module, &several.iter().map(|m| m.name()).collect::<Vec<_>>()),
+        })?
     };
     if account.map_or(true, |a| a.trim().is_empty()) {
         return Err(NO_ACCOUNT.to_string());
@@ -733,8 +766,8 @@ fn areas_section(nav: &NavFile) -> String {
         out.push_str(&format!("- {} - {} - {}\n", m.name(), m.module.trim(), m.arrived));
     }
     out.push_str(
-        "\n- A script with no `area` goes to the area named like the case's Module.\n\
-         - Set `area` on the script, to one of the names above, whenever the case's screen is not its module's default area (the area named like its Module).\n\
+        "\n- A script with no `area` goes to its module's default area: the area named like the case's Module, or, when none is, the module's only area.\n\
+         - Set `area` on the script, to one of the names above, whenever the case's screen is not its module's default area.\n\
          - A script that names an area not listed here is refused when it is saved.\n",
     );
     out

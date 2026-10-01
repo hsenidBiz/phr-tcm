@@ -53,8 +53,9 @@ pub struct CaseScript {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     /// The recorded area the run takes this case to before step 1, by name
-    /// (`nav::find_area`). Absent or blank means the area named like the
-    /// case's Module. A name the project has not recorded is refused when
+    /// (`nav::find_area`). Absent or blank means the module's default area
+    /// (`nav::find_path`): the one named like the case's Module, or its
+    /// only area when none is. A name the project has not recorded is refused when
     /// the script is saved, and refuses the case at run time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area: Option<String>,
@@ -74,7 +75,7 @@ pub struct CaseScript {
 
 impl CaseScript {
     /// The area this script names, trimmed; `None` when it names none or a
-    /// blank one - both mean the area named like the case's Module.
+    /// blank one - both mean the module's default area (`nav::find_path`).
     pub fn area_name(&self) -> Option<&str> {
         self.area.as_deref().map(str::trim).filter(|a| !a.is_empty())
     }

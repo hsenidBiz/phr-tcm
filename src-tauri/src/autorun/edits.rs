@@ -23,8 +23,8 @@ pub struct Edit {
     /// to know. Recorded as a project quirk.
     #[serde(default)]
     pub quirk: Option<String>,
-    /// The repair moves the case to another area (or back to the area
-    /// named like its Module, by leaving `area` out). Where a case starts
+    /// The repair moves the case to another area (or back to its module's
+    /// default area, by leaving `area` out). Where a case starts
     /// is part of the script, so this is declared like a changed step.
     #[serde(default)]
     pub area: bool,
