@@ -256,9 +256,10 @@ pub fn save_script_from_editor(
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
-    // The project's address rule, the same one the import and the
-    // assistant's save apply.
-    crate::autorun::nav::refuse_addresses(root, organization, project, std::slice::from_ref(&script))?;
+    // The project's rules - no address while that is switched off, only
+    // recorded areas - the same ones the import and the assistant's save
+    // apply.
+    crate::autorun::nav::check_project_rules(root, organization, project, std::slice::from_ref(&script))?;
     // Through the same helper the bundle paths use, as a bundle of one:
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be
@@ -311,7 +312,7 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
     if scripts.is_empty() {
         return Err("that file has no scripts in it".to_string());
     }
-    crate::autorun::nav::refuse_addresses(root, organization, project, &scripts)?;
+    crate::autorun::nav::check_project_rules(root, organization, project, &scripts)?;
     store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
@@ -321,10 +322,21 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), String> {
+    save_run_at(&root(&app)?, run)
+}
+
+/// `auto_run_save_run` for a given data root. The first save of a run - a
+/// supervised one, which the screen builds - records the active
+/// environment's name; a run already on disk keeps whatever it has, so an
+/// old run reviewed later is never stamped with today's environment.
+pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), String> {
     if !safe_run_id(&run.id) {
         return Err(format!("run id {:?} is not a safe filename", run.id));
     }
-    store::save_run_guarded(&root(&app)?, &run)
+    if run.environment.is_none() && matches!(store::load_run(root, &run.id), Ok(None)) {
+        run.environment = crate::environments::active(root).ok().map(|e| e.name);
+    }
+    store::save_run_guarded(root, &run)
 }
 
 #[tauri::command]
@@ -409,21 +421,118 @@ pub fn auto_run_load_quirks(
     crate::autorun::quirks::load_quirks(&root(&app)?, &organization, &project)
 }
 
+/// What a supervised run just saved says about the project's quirks: the
+/// run pane calls this once, after its save; the review screen never does.
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_save_quirks(
+pub fn auto_run_count_evidence(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    quirks: Vec<crate::autorun::quirks::Quirk>,
-) -> Result<(), String> {
-    crate::autorun::quirks::save_quirks(&root(&app)?, &organization, &project, &quirks)?;
-    crate::applog::info("Auto-run project quirks saved");
-    Ok(())
+    run_id: String,
+) -> Result<bool, String> {
+    crate::autorun::quirks::count_saved_run(
+        &root(&app)?,
+        &organization,
+        &project,
+        &run_id,
+        crate::autorun::sessions::now_ms(),
+    )
 }
 
-/// The project's module paths and its address switch, as the Module paths
-/// dialog shows them. A project with no file reads as no paths, switch on.
+// The Known quirks list's own changes, one per button. Each is saved the
+// moment it is made and answers with the whole list as saved, so the
+// dialog never shows a list the file does not hold.
+
+/// A note the person types in, added as theirs. Past the active cap it is
+/// refused with the notes worth retiring.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_add_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    text: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    use crate::autorun::quirks::{record_in, update_quirks, FROM_AUTORUN};
+    let now = crate::autorun::sessions::now_ms();
+    let (_, list) = update_quirks(&root(&app)?, &organization, &project, |l| {
+        record_in(l, &text, "person", FROM_AUTORUN, Vec::new(), now)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was added");
+    Ok(list)
+}
+
+/// A note's text, changed - whoever wrote it.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_edit_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+    text: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::edit_in(l, &id, &text)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was edited");
+    Ok(list)
+}
+
+/// Retired by the person - any note, theirs or an assistant's, with an
+/// optional reason. It stays in the file and can be restored.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_retire_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+    reason: Option<String>,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let now = crate::autorun::sessions::now_ms();
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::retire_in(l, &id, reason.as_deref(), None, false, now)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was retired");
+    Ok(list)
+}
+
+/// A retired note, back on the active list - refused while that is full.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_restore_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::restore_in(l, &id)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was restored");
+    Ok(list)
+}
+
+/// A note removed from the file altogether.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_delete_quirk(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    let (_, list) = crate::autorun::quirks::update_quirks(&root(&app)?, &organization, &project, |l| {
+        crate::autorun::quirks::delete_in(l, &id)
+    })?;
+    crate::applog::info("Auto Run: a project quirk was deleted");
+    Ok(list)
+}
+
+/// The project's areas and its address switch, as the Areas dialog shows
+/// them. A project with no file reads as no areas, switch on.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_load_nav(
@@ -452,17 +561,18 @@ pub fn auto_run_set_direct_urls(
     Ok(crate::autorun::nav::view(&nav))
 }
 
-/// Forget one module's path. The dialog asks first.
+/// Forget one area, by name. The module's other areas stay. The dialog
+/// asks first.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_remove_module_path(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    module: String,
+    area: String,
 ) -> Result<crate::autorun::nav::NavView, String> {
-    let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &module)?;
-    crate::applog::info("Auto-run module path removed");
+    let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &area)?;
+    crate::applog::info("Auto-run area removed");
     Ok(crate::autorun::nav::view(&nav))
 }
 

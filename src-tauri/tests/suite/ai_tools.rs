@@ -597,12 +597,17 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "try_autorun_action",
             "get_autorun_failures",
             "record_autorun_quirk",
+            "retire_autorun_quirk",
+            "propose_accounts",
+            "get_accounts",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
             "save_api_flow",
-            "get_api_flow_progress"
+            "get_api_flow_progress",
+            "record_app_quirk",
+            "retire_app_quirk"
         ]
     );
     assert_eq!(

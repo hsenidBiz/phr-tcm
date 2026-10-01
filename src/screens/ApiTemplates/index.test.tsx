@@ -118,12 +118,12 @@ function mockOverview(overview: unknown, extra: Handler = () => undefined) {
 
 function renderScreen(onOpenAiBridge = vi.fn(), project = "proj") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const { unmount } = render(
     <QueryClientProvider client={qc}>
       <ApiTemplates org="acme" project={project} onOpenAiBridge={onOpenAiBridge} />
     </QueryClientProvider>,
   );
-  return { onOpenAiBridge };
+  return { onOpenAiBridge, unmount };
 }
 
 /** Over to the Flows view, where the maps are, once the overview is in. */
@@ -292,6 +292,35 @@ test("expanding a row shows params, steps, sources, evidence and runs, read-only
 
   fireEvent.click(within(row).getByRole("button", { name: "Hide details of Create a draft performance cycle" }));
   expect(within(row).queryByTestId("template-details")).not.toBeInTheDocument();
+});
+
+test("the proof line names the environment it was proven in, and the host when it names none", async () => {
+  const proven = (environment?: string) => ({
+    ...OVERVIEW,
+    templates: [
+      {
+        template: template({
+          proven: { ...template().proven, ...(environment ? { environment } : {}) },
+        }),
+        runs: [],
+      },
+    ],
+  });
+  mockOverview(proven("QA"));
+  const first = renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  const proof = within(row).getByTestId("template-proof");
+  expect(proof).toHaveTextContent("as hr.admin on QA");
+  expect(proof).not.toHaveTextContent("hrmmainphdev01.phrsandbox.dev");
+  first.unmount();
+
+  // A proof saved before environments existed keeps saying where it was.
+  mockOverview(proven());
+  renderScreen();
+  const old = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(old).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  expect(within(old).getByTestId("template-proof")).toHaveTextContent("against hrmmainphdev01.phrsandbox.dev");
 });
 
 test("Remove asks first, names the template and its effect, then removes it", async () => {

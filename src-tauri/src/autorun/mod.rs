@@ -12,6 +12,7 @@ pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod nav;
+pub mod patterns;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;
@@ -51,6 +52,12 @@ pub struct CaseScript {
     /// list, never a login. Absent means the script signs nobody in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// The recorded area the run takes this case to before step 1, by name
+    /// (`nav::find_area`). Absent or blank means the area named like the
+    /// case's Module. A name the project has not recorded is refused when
+    /// the script is saved, and refuses the case at run time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
     pub steps: Vec<StepScript>,
     /// How many times an assistant has repaired this script since a person
     /// last saved it from the editor. Absent when 0.
@@ -63,6 +70,14 @@ pub struct CaseScript {
     /// from the app always starts from a clean slate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_repair: Option<String>,
+}
+
+impl CaseScript {
+    /// The area this script names, trimmed; `None` when it names none or a
+    /// blank one - both mean the area named like the case's Module.
+    pub fn area_name(&self) -> Option<&str> {
+        self.area.as_deref().map(str::trim).filter(|a| !a.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -124,4 +139,8 @@ pub struct LocalRun {
     /// Set once the run has been sent to Azure DevOps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published: Option<PublishedRun>,
+    /// The name of the environment the run was made in, as it was then.
+    /// `None` for a run saved before environments existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }

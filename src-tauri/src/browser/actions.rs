@@ -96,10 +96,34 @@ impl ActionOutcome {
     }
 }
 
+// The words an action's own failures are reported in, beside the ones
+// `input` and `expect` name for theirs - read back by `autorun::patterns`.
+
+/// Every harness failure starts with this: the browser, not the page.
+pub const BROWSER_SILENT: &str = "the browser did not answer";
+/// An action refused before it reached the page (followed by why).
+pub const CANNOT_RUN: &str = "this action cannot run: ";
+/// `wait_for` ran out: `waited Nms and never saw <target>`.
+pub const NEVER_SAW: &str = "ms and never saw ";
+/// A navigation the page did not finish in time.
+pub const DID_NOT_FINISH_LOADING: &str = " did not finish loading within ";
+/// A navigation the browser refused outright.
+pub const WOULD_NOT_LOAD: &str = " would not load: ";
+/// A navigation outside the recipe's allowed origins.
+pub const ALLOWED_ORIGINS: &str = "this project's allowed origins";
+/// `check_text` on a page without the words.
+pub const PAGE_LACKS: &str = "page does NOT contain ";
+/// `check_url` - followed by the address actually showing.
+pub const URL_IS: &str = "url is ";
+/// What an upload's click opened instead of a file chooser.
+pub const FILE_CHOOSER: &str = "file chooser";
+/// Appended when a page raised dialogs during the action.
+pub const DIALOG_NOTE: &str = " (the page showed ";
+
 /// A harness failure, said plainly: the app under test did nothing wrong,
 /// the browser connection did.
 pub(crate) fn harness(e: CdpError) -> ActionOutcome {
-    let mut out = ActionOutcome::failed(format!("the browser did not answer: {e}"));
+    let mut out = ActionOutcome::failed(format!("{BROWSER_SILENT}: {e}"));
     out.harness = true;
     out
 }
@@ -119,7 +143,7 @@ pub(crate) fn blocked(b: Blocked) -> ActionOutcome {
     match b {
         Blocked::Page(why) => ActionOutcome::failed(why),
         Blocked::Harness(why) => {
-            let mut out = ActionOutcome::failed(format!("the browser did not answer: {why}"));
+            let mut out = ActionOutcome::failed(format!("{BROWSER_SILENT}: {why}"));
             out.harness = true;
             out
         }
@@ -135,7 +159,7 @@ pub(crate) fn blocked(b: Blocked) -> ActionOutcome {
 pub(crate) fn failed_by(e: CdpError) -> ActionOutcome {
     match e {
         CdpError::Protocol { message, .. } => {
-            ActionOutcome::failed(format!("the page refused: {message}"))
+            ActionOutcome::failed(format!("{}{message}", input::PAGE_REFUSED))
         }
         other => harness(other),
     }
@@ -329,9 +353,9 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Pol
         // worse than not naming one.
         let detail = match crate::autorun::recipe::origin_of(&url) {
             Some(origin) => format!(
-                "{origin} is not one of this project's allowed origins - add it to the sign-in recipe if the test really goes there"
+                "{origin} is not one of {ALLOWED_ORIGINS} - add it to the sign-in recipe if the test really goes there"
             ),
-            None => "this address is not one that can be checked against this project's allowed origins - it does not read as a usable http, https or file address".to_string(),
+            None => format!("this address is not one that can be checked against {ALLOWED_ORIGINS} - it does not read as a usable http, https or file address"),
         };
         return ActionOutcome::failed(detail);
     }
@@ -344,7 +368,7 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Pol
         Err(e) => return failed_by(e),
     };
     if let Some(err) = reply["errorText"].as_str() {
-        return ActionOutcome::failed(format!("{url} would not load: {err}"));
+        return ActionOutcome::failed(format!("{url}{WOULD_NOT_LOAD}{err}"));
     }
     // No loaderId means the same document (a #fragment): nothing loads.
     let Some(loader_id) = reply["loaderId"].as_str().map(str::to_string) else {
@@ -353,7 +377,7 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Pol
     let frame_id = reply["frameId"].as_str().map(str::to_string);
     let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
     let timed_out = || {
-        ActionOutcome::failed(format!("{url} did not finish loading within {}ms", timing.nav_ms))
+        ActionOutcome::failed(format!("{url}{DID_NOT_FINISH_LOADING}{}ms", timing.nav_ms))
     };
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -398,7 +422,7 @@ async fn keep_waiting<D: Driver>(
     deadline: Instant,
 ) -> ActionOutcome {
     let gave_up = || {
-        ActionOutcome::failed(format!("waited {timeout_ms}ms and never saw {}", target.describe()))
+        ActionOutcome::failed(format!("waited {timeout_ms}{NEVER_SAW}{}", target.describe()))
     };
     // Whether any call has actually come back - a page that is merely slow
     // to show the element is not the same failure as a browser that has
@@ -470,14 +494,14 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Ok(v) if v.as_bool().unwrap_or(false) => {
                     ActionOutcome::passed(format!("page contains {value}"))
                 }
-                Ok(_) => ActionOutcome::failed(format!("page does NOT contain {value}")),
+                Ok(_) => ActionOutcome::failed(format!("{PAGE_LACKS}{value}")),
                 Err(e) => failed_by(e),
             }
         }
         Action::CheckUrl { contains } => match page::eval_value(d, "location.href").await {
             Ok(v) => {
                 let href = v.as_str().unwrap_or("");
-                let detail = format!("url is {href}");
+                let detail = format!("{URL_IS}{href}");
                 if href.contains(contains.as_str()) {
                     ActionOutcome::passed(detail)
                 } else {
@@ -525,7 +549,7 @@ pub const FILE_INPUT_JS: &str = r#"function() {
 /// What `upload` says when a click opened no file chooser.
 pub fn no_chooser(target: &str) -> String {
     format!(
-        "clicking {target} did not open a file chooser - point upload at the page's file input or the button that opens it"
+        "clicking {target} did not open a {FILE_CHOOSER} - point upload at the page's file input or the button that opens it"
     )
 }
 
@@ -581,7 +605,7 @@ async fn upload<D: Driver>(d: &mut D, selector: &Target, path: &str, shown: &str
         return out;
     }
     if kind["disabled"].as_bool() == Some(true) {
-        return ActionOutcome::failed(format!("{} is disabled", selector.describe()));
+        return ActionOutcome::failed(format!("{} {}", selector.describe(), input::DISABLED));
     }
     let backend = match page::backend_id(d, &handle).await {
         Ok(id) => id,
@@ -639,7 +663,7 @@ async fn choose<D: Driver>(d: &mut D, selector: &Target, path: &str, timing: &Ti
     };
     let Some(backend) = ev.params["backendNodeId"].as_i64() else {
         return Err(ActionOutcome::failed(format!(
-            "clicking {} opened a file chooser the browser did not tie to a file input - point upload at the page's file input",
+            "clicking {} opened a {FILE_CHOOSER} the browser did not tie to a file input - point upload at the page's file input",
             selector.describe()
         )));
     };
@@ -679,9 +703,9 @@ async fn keep_finding<D: Driver>(
             Ok(found) => {
                 looked = true;
                 last = if found.is_empty() {
-                    "not found".to_string()
+                    input::NOT_FOUND.to_string()
                 } else {
-                    format!("matched {} elements - narrow it, or add nth", found.len())
+                    input::matched_many(found.len())
                 };
             }
             Err(e) if e.is_transient() => {
@@ -708,7 +732,7 @@ async fn keep_finding<D: Driver>(
 fn append_dialogs<D: Driver>(d: &mut D, out: &mut ActionOutcome) {
     let dialogs = d.take_dialogs();
     if !dialogs.is_empty() {
-        out.detail.push_str(&format!(" (the page showed {} and it was accepted)", dialogs.join("; ")));
+        out.detail.push_str(&format!("{DIALOG_NOTE}{} and it was accepted)", dialogs.join("; ")));
     }
 }
 
@@ -728,7 +752,7 @@ pub async fn execute_in<D: Driver>(
     policy: &Policy,
 ) -> ActionOutcome {
     if let Err(why) = action.validate() {
-        return ActionOutcome::failed(format!("this action cannot run: {why}"));
+        return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
     }
     let mut out = run(d, action, timing, policy).await;
     append_dialogs(d, &mut out);

@@ -630,15 +630,23 @@ async fn a_quirk_travels_with_the_edit() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert!(
-        out.contains("quirk recorded: the toast is rendered into a portal at the end of the body"),
+        out.contains(&format!(
+            "quirk recorded as {}: the toast is rendered into a portal at the end of the body",
+            quirks[0].id
+        )),
         "{out}"
     );
-
-    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert_eq!(quirks.len(), 1);
     assert_eq!(quirks[0].text, "the toast is rendered into a portal at the end of the body");
     assert_eq!(quirks[0].by, "assistant");
+    // It remembers the repair it came with, so later runs can say whether
+    // it helped. No run of case 7 is on this machine: no class to keep.
+    assert_eq!(
+        quirks[0].sources,
+        vec![v2_lib::autorun::quirks::QuirkSource { case_id: 7, steps: vec![2], class: None }]
+    );
 
     // The same quirk a second time is not written twice, and the report
     // says so rather than pretending something new was learned.
@@ -655,7 +663,7 @@ async fn a_quirk_travels_with_the_edit() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &repeat, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("quirk already known:"), "{out}");
+    assert!(out.contains("quirk already known, as "), "{out}");
     assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), 1);
 }
 
@@ -1104,6 +1112,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         }],
         mode: String::new(),
         published: None,
+        environment: None,
     }
 }
 
@@ -1164,7 +1173,7 @@ async fn failures_are_read_from_the_latest_run() {
 }
 
 /// A quirk can be recorded on its own, not only alongside a repair - and
-/// one already on the list is not written twice.
+/// one already on the list is not written twice. The answer names its id.
 #[tokio::test]
 async fn a_quirk_can_be_recorded_on_its_own() {
     let dir = TempDir::new();
@@ -1174,20 +1183,26 @@ async fn a_quirk_can_be_recorded_on_its_own() {
     let body = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "recorded");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(out, format!("recorded as {}", quirks[0].id));
 
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "already known");
+    assert_eq!(out, format!("already known, as {}", quirks[0].id));
 
     let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
     assert_eq!(quirks.len(), 1);
     assert_eq!(quirks[0].by, "assistant");
+    assert_eq!(quirks[0].from, "autorun");
 
     let empty = serde_json::json!({ "text": "   " }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &empty, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(!out.is_empty());
+
+    let bad_from = serde_json::json!({ "text": "x", "from": "elsewhere" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &bad_from, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
 }
 
 /// The guide's constant only says a quirks section exists - the route is
@@ -1201,21 +1216,173 @@ async fn the_route_appends_the_projects_quirks() {
 
     let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert_eq!(status, 200);
-    assert_eq!(body, autorun_guide(), "an empty quirks list must add nothing");
+    // Nothing recorded adds no quirks - only the active environment, which is
+    // the app's and not the project's.
+    assert!(body.starts_with(&autorun_guide()), "{body}");
+    assert!(!body.contains("## Known quirks of this application\n\n"), "an empty quirks list must add nothing: {body}");
 
     let saved = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &saved, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
+    let id = load_quirks(dir.path(), "acme", "Web").unwrap()[0].id.clone();
 
     let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert_eq!(status, 200);
     assert!(body.starts_with(&autorun_guide()), "the guide's own text must survive unchanged");
+    assert!(body.contains("## Known quirks of this application\n\n"), "{body}");
     assert!(
-        body.contains(
-            "## Known quirks of this application\n\n- the grid paginates at 25 rows (recorded by the assistant)"
-        ),
+        body.contains(&format!("- [{id}] (assistant) the grid paginates at 25 rows\n")),
         "the recorded quirk never reached the guide: {body}"
     );
+}
+
+/// The retire route: an assistant's own note goes, with its reason, and
+/// leaves both guides; a replacement takes its place and its sources; a
+/// person's note is refused in so many words.
+#[tokio::test]
+async fn the_assistant_retires_its_own_quirk_and_never_a_persons() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, QuirkSource, PERSON_NOTE};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut mine = Quirk::new("the grid needs a second click", "assistant", "autorun", 1);
+    mine.sources = vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }];
+    let theirs = Quirk::new("the search box debounces 400ms", "person", "autorun", 2);
+    save_quirks(dir.path(), "acme", "Web", &[mine, theirs]).unwrap();
+    let list = load_quirks(dir.path(), "acme", "Web").unwrap();
+    let (mine_id, theirs_id) = (list[0].id.clone(), list[1].id.clone());
+
+    let refused = serde_json::json!({ "id": theirs_id, "reason": "no longer true" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &refused, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, PERSON_NOTE));
+
+    let no_reason = serde_json::json!({ "id": mine_id }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &no_reason, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+
+    let body = serde_json::json!({
+        "id": mine_id,
+        "reason": "it was the spinner, not the grid",
+        "replacement": "a spinner covers the grid while it loads",
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk-retire", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let list = load_quirks(dir.path(), "acme", "Web").unwrap();
+    let new = list.iter().find(|q| q.text == "a spinner covers the grid while it loads").unwrap();
+    assert_eq!(out, format!("retired {mine_id}, replaced by {}", new.id));
+    assert_eq!(new.sources, vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }]);
+    let old = list.iter().find(|q| q.id == mine_id).unwrap();
+    assert_eq!(old.status, "retired");
+    assert_eq!(old.retired_reason.as_deref(), Some("it was the spinner, not the grid"));
+
+    // Out of both guides; the replacement and the person's note stay.
+    let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    let (_, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    for guide in [&autorun, &api] {
+        assert!(!guide.contains("the grid needs a second click"), "{guide}");
+        assert!(guide.contains("a spinner covers the grid while it loads"), "{guide}");
+        assert!(guide.contains("the search box debounces 400ms"), "{guide}");
+    }
+}
+
+/// One list per project, read by both assistants: the API templates
+/// guide ends with the same section as the Auto Run guide, and a note
+/// filed from API template work says so.
+#[tokio::test]
+async fn the_api_template_guide_ends_with_the_same_quirks_section() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let (_, before) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert!(!before.contains("## Known quirks of this application\n\n"), "{before}");
+
+    let body = serde_json::json!({ "text": "the leave handler wants a CSRF header", "from": "api" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks[0].from, "api");
+
+    let (status, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    let line = format!("- [{}] (assistant, API) the leave handler wants a CSRF header\n", quirks[0].id);
+    assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
+    let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
+    assert!(api.contains("`record_app_quirk") && api.contains("`retire_app_quirk"), "the guide names its own tools: {api}");
+}
+
+/// Names the active environment `name` (a test environment or not) in the
+/// store at `dir`.
+fn name_the_active_environment(dir: &std::path::Path, name: &str, test_environment: bool) {
+    let mut env = v2_lib::environments::active(dir).unwrap();
+    env.name = name.into();
+    env.test_environment = test_environment;
+    let known = vec![env.db_id.clone()];
+    v2_lib::environments::save_env(dir, env, &known).unwrap();
+}
+
+/// The Auto Run guide explains environments, and the route names the
+/// active one - with no project open too, since an environment is the
+/// app's, not a project's.
+#[tokio::test]
+async fn the_autorun_guide_explains_environments_and_names_the_active_one() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    name_the_active_environment(dir.path(), "Local QA", false);
+
+    for context in [ctx(), BridgeContext::default()] {
+        let (status, body) = route(&context, None, "GET", "/autorun-guide", "", "1.0.0").await;
+        assert_eq!(status, 200);
+        assert!(body.contains("## Environments"), "{body}");
+        assert!(body.contains("Local QA"), "the active environment's name: {body}");
+        assert!(body.contains("get_accounts") && body.contains("propose_accounts"), "{body}");
+        assert!(body.contains("never invent a password"), "{body}");
+        assert!(body.contains("read-only") && body.contains("never write"), "{body}");
+        assert!(body.contains("not marked as a test environment"), "{body}");
+    }
+
+    name_the_active_environment(dir.path(), "Staging", true);
+    let (_, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(body.contains("Staging") && !body.contains("Local QA"), "{body}");
+    assert!(!body.contains("not marked as a test environment"), "{body}");
+    assert!(body.contains("marked as a test environment"), "{body}");
+}
+
+/// The API templates guide says templates run against the active
+/// environment, by name.
+#[tokio::test]
+async fn the_api_template_guide_says_templates_run_against_the_active_environment() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    name_the_active_environment(dir.path(), "Local QA", false);
+
+    let (status, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert!(api.contains("## Environments"), "{api}");
+    assert!(api.contains("run against the active environment, \"Local QA\""), "{api}");
+}
+
+/// A full list refuses one more through the bridge, naming the tool and
+/// the candidates.
+#[tokio::test]
+async fn a_full_list_refuses_through_the_bridge_with_candidates() {
+    use v2_lib::autorun::quirks::{save_quirks, Quirk, MAX_QUIRKS};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let list: Vec<Quirk> =
+        (0..MAX_QUIRKS).map(|i| Quirk::new(&format!("note {i}"), "assistant", "autorun", 100 + i as u64)).collect();
+    save_quirks(dir.path(), "acme", "Web", &list).unwrap();
+    let body = serde_json::json!({ "text": "one more" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("retire_autorun_quirk"), "{out}");
+    assert!(out.contains("\"note 0\"") && out.contains("\"note 1\"") && out.contains("\"note 2\""), "{out}");
+    assert!(!out.contains("\"note 3\""), "{out}");
 }
 
 // ----------------------------------------------------------- the dev gate
@@ -1257,6 +1424,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-try",
         "/autorun-failures",
         "/autorun-quirk",
+        "/autorun-quirk-retire",
     ];
     for path in autorun {
         let (status, body) =
@@ -1295,4 +1463,159 @@ async fn the_guide_says_a_run_starts_on_the_module_screen_only_while_addresses_a
     assert_eq!(status, 200);
     assert!(off.contains("## This project's runs start on the module screen"), "{off}");
     assert!(!off.contains('\u{2014}'));
+}
+
+/// `cases` ties a quirk recorded on its own to steps that failed in their
+/// case's newest run - a step that did not fail there is refused and
+/// nothing is written - and a line a person retired is not brought back by
+/// the assistant.
+#[tokio::test]
+async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
+    use v2_lib::autorun::quirks::{save_quirks, update_quirks, retire_in, QuirkSource};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1700000000000", "pbi_id": 1, "started_at": "1700000000000", "cases": [], "mode": "unattended"
+    }))
+    .unwrap();
+    let mut case: CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "case 7", "verdict": "", "note": "", "steps": [], "proposed": "Failed"
+    }))
+    .unwrap();
+    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    case.steps.push(StepRecord {
+        step_number: 2,
+        outcomes: vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")],
+        screenshot: None,
+    });
+    run.cases.push(case);
+    save_run(dir.path(), &run).unwrap();
+
+    let wrong = serde_json::json!({ "text": "the save button loads late", "cases": [{ "case_id": 7, "steps": [1] }] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &wrong, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("case 7 step 1 did not fail"), "{out}");
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
+
+    let right = serde_json::json!({ "text": "the save button loads late", "cases": [{ "case_id": 7, "steps": [2] }] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &right, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks[0].sources, vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }]);
+
+    // The person retires it in the app; the assistant cannot bring it back.
+    let id = quirks[0].id.clone();
+    update_quirks(dir.path(), "acme", "Web", |l| retire_in(l, &id, Some("it was the network"), None, false, 5)).unwrap();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &right, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "a person retired this note (it was the network) - ask them to restore it"));
+
+    // One the assistant retired itself comes back, with its old reason.
+    save_quirks(dir.path(), "acme", "Web", &[]).unwrap();
+    let body = serde_json::json!({ "text": "dates render as dd/mm" }).to_string();
+    route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    let id = load_quirks(dir.path(), "acme", "Web").unwrap()[0].id.clone();
+    let retire = serde_json::json!({ "id": id, "reason": "the locale changed" }).to_string();
+    route(&ctx(), None, "POST", "/autorun-quirk-retire", &retire, "1.0.0").await;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with(&format!("{id} had been retired (\"the locale changed\")")), "{out}");
+}
+
+// ------------------------------------------------------- a script's area
+
+/// Case 7 with an area, or without one.
+fn case_7_in(area: Option<&str>, selector: &str) -> serde_json::Value {
+    let mut sc = case_7(selector, "Saved");
+    if let Some(a) = area {
+        sc[0]["area"] = serde_json::json!(a);
+    }
+    sc
+}
+
+/// Two recorded areas under one module, for the bridge's project.
+fn record_two_areas(root: &std::path::Path) {
+    let nav: v2_lib::autorun::nav::NavFile = serde_json::from_value(serde_json::json!({
+        "modules": [
+            { "area": "Cycle Setup", "module": "PMS", "clicks": [{ "role": "link", "name": "Setup" }], "arrived": "/pms/setup", "recorded": "2026-10-01T10:00:00Z" },
+            { "area": "Manage Cycle", "module": "PMS", "clicks": [{ "role": "link", "name": "Manage" }], "arrived": "/pms/manage", "recorded": "2026-10-01T10:00:00Z" }
+        ]
+    }))
+    .unwrap();
+    v2_lib::autorun::nav::save_nav(root, "acme", "Web", &nav).unwrap();
+}
+
+/// Review of Task 8, finding 1: where a case starts is part of the script.
+/// A re-send that only moves it to another area is a change - refused
+/// undeclared, counted against the repair cap once declared - never
+/// "(unchanged)".
+#[tokio::test]
+async fn a_resend_that_only_changes_the_area_is_a_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7_in(Some("Cycle Setup"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let moved = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &moved, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the area changed from \"Cycle Setup\" to \"Manage Cycle\" but was not declared"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Cycle Setup"));
+    assert_eq!(on_disk.repairs, 0);
+
+    let declared = serde_json::json!({
+        "scripts": case_7_in(Some("Manage Cycle"), "#toast"),
+        "edits": [{ "case_id": 7, "steps": [], "area": true, "why": "the case is about managing a cycle, not setting one up" }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Manage Cycle"));
+    assert_eq!(on_disk.repairs, 1);
+}
+
+/// A repair to a step that leaves `area` out does not erase the area the
+/// saved script has: declaring the step is not declaring the area, so the
+/// save is refused and the area stays on disk.
+#[tokio::test]
+async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let forgot = serde_json::json!({
+        "scripts": case_7_in(None, ".toast"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &forgot, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("the area changed from \"Manage Cycle\" to the case's Module but was not declared"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.area.as_deref(), Some("Manage Cycle"));
+    assert_eq!(on_disk.repairs, 0);
+
+    // Sending the area back with the same repair is the repair alone.
+    let kept = serde_json::json!({
+        "scripts": case_7_in(Some("Manage Cycle"), ".toast"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &kept, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
 }

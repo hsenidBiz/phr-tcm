@@ -83,7 +83,7 @@ fn a_changed_or_removed_account_loses_its_saved_session() {
     let dir = tempfile::tempdir().unwrap();
     save_accounts(dir.path(), &[account("admin", "kim", "p1"), account("emp", "lee", "p2"), account("sup", "ann", "p3")]).unwrap();
     for key in ["admin", "emp", "sup"] {
-        let p = session_path(dir.path(), key);
+        let p = session_path(dir.path(), key).unwrap();
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "{}").unwrap();
     }
@@ -93,9 +93,9 @@ fn a_changed_or_removed_account_loses_its_saved_session() {
     let mut dropped = save_accounts(dir.path(), &[admin, account("emp", "lee", "NEW")]).unwrap();
     dropped.sort();
     assert_eq!(dropped, vec!["emp".to_string(), "sup".to_string()]);
-    assert!(session_path(dir.path(), "admin").is_file());
-    assert!(!session_path(dir.path(), "emp").exists());
-    assert!(!session_path(dir.path(), "sup").exists());
+    assert!(session_path(dir.path(), "admin").unwrap().is_file());
+    assert!(!session_path(dir.path(), "emp").unwrap().exists());
+    assert!(!session_path(dir.path(), "sup").unwrap().exists());
 }
 
 /// `before` (the accounts list `save_accounts` compares against) comes
@@ -107,15 +107,15 @@ fn save_accounts_never_deletes_through_an_unvalidated_key_read_from_disk() {
     let base = tempfile::tempdir().unwrap();
     let dir = base.path().join("data");
     std::fs::create_dir_all(&dir).unwrap();
-    let bad_key = "../../x";
+    let bad_key = "../../../x";
     std::fs::write(
         dir.join("accounts.json"),
         serde_json::to_string(&[account(bad_key, "kim", "p1")]).unwrap(),
     )
     .unwrap();
-    // session_path(dir, "../../x") = dir/sessions/../../x.json = base/x.json:
+    // session_path(dir, "../../../x") = dir/sessions/<env id>/../../../x.json = base/x.json:
     // outside `dir` entirely, which is exactly what the guard must refuse to touch.
-    let escape_target = session_path(&dir, bad_key);
+    let escape_target = session_path(&dir, bad_key).unwrap();
     std::fs::write(&escape_target, "{}").unwrap();
     assert!(escape_target.exists());
 

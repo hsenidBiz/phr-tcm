@@ -36,7 +36,23 @@ pub const READ_TEXT_JS: &str = r#"function() {
 pub const READ_ATTR_JS: &str = r#"function(name) { return this.getAttribute(name); }"#;
 
 /// The honest answer when the element IS in the page and cannot be seen.
-const HIDDEN: &str = "is there but cannot be seen";
+/// This and the constants below are the words an expectation fails in,
+/// read back by `autorun::patterns` - see `input`'s own list.
+pub const HIDDEN: &str = "is there but cannot be seen";
+/// Nothing on the page matches the target.
+pub const NOT_ON_PAGE: &str = "is not on the page";
+/// `expect_hidden` still sees one of them.
+pub const STILL_VISIBLE: &str = "is still visible";
+/// `expect_text`: followed by the wanted text and what was seen.
+pub const EXPECTED_TEXT: &str = "expected text ";
+/// `expect_contains_text`: followed by the wanted text and what was seen.
+pub const EXPECTED_TO_CONTAIN: &str = "expected it to contain ";
+/// `expect_count`: `expected N, counted M`.
+pub const COUNTED: &str = ", counted ";
+/// `expect_attribute` on an element without it: `has no NAME attribute`.
+pub const HAS_NO: &str = "has no ";
+/// The tail of [`HAS_NO`]'s sentence.
+pub const ATTRIBUTE_TAIL: &str = " attribute";
 
 fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -48,9 +64,9 @@ async fn visible<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
 
 fn only(handles: &[Handle]) -> Result<&Handle, String> {
     match handles {
-        [] => Err("is not on the page".to_string()),
+        [] => Err(NOT_ON_PAGE.to_string()),
         [one] => Ok(one),
-        many => Err(format!("matched {} elements - narrow it, or add nth", many.len())),
+        many => Err(super::input::matched_many(many.len())),
     }
 }
 
@@ -94,7 +110,7 @@ async fn look<D: Driver>(
                 }
             }
             if seen {
-                Err("is still visible".to_string())
+                Err(STILL_VISIBLE.to_string())
             } else {
                 Ok(format!("{what} is hidden"))
             }
@@ -103,7 +119,7 @@ async fn look<D: Driver>(
             if handles.len() as u32 == *n {
                 Ok(format!("counted {n}: {what}"))
             } else {
-                Err(format!("expected {n}, counted {}", handles.len()))
+                Err(format!("expected {n}{COUNTED}{}", handles.len()))
             }
         }
         Check::Text(want) => match only(&handles) {
@@ -114,7 +130,7 @@ async fn look<D: Driver>(
                 if got == want {
                     Ok(format!("{what} says {want:?}"))
                 } else {
-                    Err(format!("expected text {want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TEXT}{want:?} but saw {got:?}"))
                 }
             }
         },
@@ -126,7 +142,7 @@ async fn look<D: Driver>(
                 if got.contains(&want) {
                     Ok(format!("{what} contains {want:?}"))
                 } else {
-                    Err(format!("expected it to contain {want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {got:?}"))
                 }
             }
         },
@@ -135,7 +151,7 @@ async fn look<D: Driver>(
             Ok(h) => {
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
-                    None => Err(format!("has no {name} attribute")),
+                    None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
                     Some(v) if v == *equals => Ok(format!("{what} has {name}={equals:?}")),
                     Some(v) => Err(format!("expected {name}={equals:?} but saw {v:?}")),
                 }

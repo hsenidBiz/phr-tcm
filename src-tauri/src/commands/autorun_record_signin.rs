@@ -312,6 +312,27 @@ pub async fn auto_run_record_sign_in_save(
     })
 }
 
+/// The recipe to write once the check has signed in. The recipe belongs to
+/// the whole project, but a recording made while the active environment has
+/// an address of its own was made AT that address: writing it into the
+/// recipe would send every environment without an address of its own there.
+/// So in that case the project's existing address and allowed sites stay as
+/// they are and only what was recorded is saved. With no address on the
+/// environment, or no recipe yet, the recorded address is saved.
+fn for_saving(root: &Path, organization: &str, project: &str, recorded: SignInRecipe) -> Result<SignInRecipe, String> {
+    if crate::environments::active(root)?.start_url.trim().is_empty() {
+        return Ok(recorded);
+    }
+    Ok(match load_recipe(root, organization, project)? {
+        Some(existing) => SignInRecipe {
+            start_url: existing.start_url,
+            allowed_origins: existing.allowed_origins,
+            ..recorded
+        },
+        None => recorded,
+    })
+}
+
 /// The save, with the check's browser from `open`: a background browser
 /// for the command, a fake page in the tests. `open` gives the page and a
 /// guard that closes it when dropped. It is called only once every refusal
@@ -347,7 +368,7 @@ where
         crate::applog::info(format!("Auto-run recorded sign-in not saved: {}", redact(&why, &who)));
         return Err(why);
     }
-    save_recipe(root, organization, project, &recipe)?;
+    save_recipe(root, organization, project, &for_saving(root, organization, project, recipe.clone())?)?;
     forget_draft();
     crate::applog::info(format!("Auto-run sign-in recipe recorded and saved ({} steps)", recipe.steps.len()));
     Ok(())

@@ -124,6 +124,24 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": props, "required": required })
 }
 
+/// The `cases` a quirk can be tied to when it is recorded on its own: the
+/// cases and steps it explains, each step one that failed in its case's
+/// newest run. Shared by both record tools.
+fn quirk_cases() -> serde_json::Value {
+    serde_json::json!({
+        "type": "array",
+        "description": "Optional: the cases and steps this quirk explains - each step must have failed in its case's newest run on this machine. Later runs of those steps count whether the quirk helped.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "case_id": { "type": "number" },
+                "steps": { "type": "array", "items": { "type": "number" } },
+            },
+            "required": ["case_id", "steps"],
+        },
+    })
+}
+
 /// What the app says about its tools right now: the disabled set as it is
 /// applied, and whether the Auto Run tools are offered at all. Asked fresh
 /// on every `tools/list` and `tools/call`, so a toggle takes effect without
@@ -309,16 +327,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (optional: the recorded area the run takes the case to before step 1, by its name from get_autorun_guide; leave it out for the area named like the case's Module), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, steps }",
+                    "description": "One entry per test case: { case_id, title, account?, area?, steps }",
                     "items": { "type": "object" },
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, quirk? }",
+                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk? }",
                     "items": { "type": "object" },
                 },
             }), &["scripts"]),
@@ -360,10 +378,47 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; a line already on the list is not written twice. A quirk can also travel with a repair, as an edit's `quirk`.",
+            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
+                "cases": quirk_cases(),
+                "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
             }), &["text"]),
+        },
+        {
+            "name": "retire_autorun_quirk",
+            "description": "Retire one of the assistant's own quirks that no longer helps - one never confirmed by a run, or more often unhelpful than helpful, is the usual candidate. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows (e.g. q1a2b3c) and one sentence of why. With `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
+                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
+                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
+            }), &["id", "reason"]),
+        },
+        {
+            "name": "propose_accounts",
+            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role? }; NEVER a password: the person picks which to add and gives each its password in the app. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
+            "inputSchema": schema(serde_json::json!({
+                "accounts": {
+                    "type": "array",
+                    "description": "The accounts to propose, at most 100.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": { "type": "string", "description": "What a script names the account by, e.g. hr.supervisor." },
+                            "label": { "type": "string", "description": "What a person reads, e.g. HR supervisor." },
+                            "username": { "type": "string", "description": "The login name." },
+                            "role": { "type": "string", "description": "Optional: the role or permission set the login has." },
+                        },
+                        "required": ["key", "label", "username"],
+                        "additionalProperties": false,
+                    },
+                },
+            }), &["accounts"]),
+        },
+        {
+            "name": "get_accounts",
+            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "get_api_template_guide",
@@ -414,6 +469,23 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "flow": { "type": "string", "description": "The flow's id, from list_api_templates." },
                 "subject": { "description": "The record's identifier - the flow's subject, e.g. the cycle id.", "type": ["string", "number"] },
             }), &["flow", "subject"]),
+        },
+        {
+            "name": "record_app_quirk",
+            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
+            "inputSchema": schema(serde_json::json!({
+                "text": { "type": "string", "description": "One line, at most 300 characters." },
+                "cases": quirk_cases(),
+            }), &["text"]),
+        },
+        {
+            "name": "retire_app_quirk",
+            "description": "Retire one of the assistant's own quirks that no longer helps. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows and one sentence of why; with `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
+                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
+                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
+            }), &["id", "reason"]),
         },
         {
             "name": "db_lookup",
@@ -738,6 +810,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &target, "")
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
+        "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
+        "get_accounts" => call("GET", "/accounts", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),
         "list_api_templates" => call("GET", "/api-templates", ""),
         // The bridge reads its fields out of the body (a template or
@@ -747,6 +822,14 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "run_api_template" => call("POST", "/api-template-run", &args.to_string()),
         "save_api_flow" => call("POST", "/api-template-flow-save", &args.to_string()),
         "get_api_flow_progress" => call("POST", "/api-template-flow-progress", &args.to_string()),
+        // The API templates row's own names for the quirk tools: the same
+        // routes, with `from` set here rather than trusted to the caller.
+        "record_app_quirk" | "retire_app_quirk" => {
+            let mut body = if args.is_object() { args.clone() } else { serde_json::json!({}) };
+            body["from"] = serde_json::json!("api");
+            let path = if name == "record_app_quirk" { "/autorun-quirk" } else { "/autorun-quirk-retire" };
+            call("POST", path, &body.to_string())
+        }
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

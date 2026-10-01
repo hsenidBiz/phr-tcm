@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Database, FolderOpen } from "lucide-react";
+import { Database, FolderOpen, Globe } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
 import { commands, type AppSettings, type AutoApproveOutcome } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { DbCredentialsModal } from "../components/DbCredentialsModal";
+import EnvironmentsDialog, { RECIPE_ADDRESS } from "../components/EnvironmentsDialog";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { cn } from "../lib/cn";
@@ -20,6 +21,14 @@ import {
   subscribeDbSettings,
 } from "../lib/dbServer";
 import { loadApiWrites, saveApiWrites } from "../lib/apiTemplates";
+import {
+  activeDbMissing,
+  envKeys,
+  forgetEnvironmentData,
+  switchEnvironment,
+  toInput,
+  useEnvironments,
+} from "../lib/environments";
 import { loadRiskTiered, saveRiskTiered } from "../lib/riskTieredGuide";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
@@ -159,6 +168,31 @@ export default function AiBridge() {
   });
   const selectedDb = databases.data?.find((d) => d.id === dbId) ?? null;
   const [managing, setManaging] = useState(false);
+  // The environments: which one is active, its address, and the database
+  // it uses - the card above Company database mirrors the active one.
+  const envs = useEnvironments();
+  const activeEnv = envs.data?.environments.find((e) => e.id === envs.data?.active) ?? null;
+  const dbGone = activeDbMissing(
+    envs.data,
+    databases.data?.map((d) => d.id),
+  );
+  const [managingEnvs, setManagingEnvs] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const chooseEnv = async (id: string) => {
+    if (id === envs.data?.active) return;
+    setSwitching(true);
+    try {
+      const { view } = await switchEnvironment(id);
+      qc.setQueryData(envKeys.list, view);
+      // Nothing read for the environment before may be shown - or saved
+      // back by the Accounts dialog - in this one.
+      void forgetEnvironmentData(qc);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSwitching(false);
+    }
+  };
   // Whether the assistant may create, update and delete. Half the
   // permission: the Rust side also requires the database's own user to be
   // the dev login, and refuses the write when either is missing.
@@ -252,7 +286,26 @@ export default function AiBridge() {
     }
   }, [tools.data, tools.dataUpdatedAt, target, global]);
 
-  const chooseDb = (id: string) => saveSelectedDb(id);
+  // One setting, not two: the database is the active environment's, so a
+  // new choice is saved into it too.
+  // If the environment refuses the save, the card goes back to what it
+  // showed: it must not name a database the active environment does not.
+  const chooseDb = (id: string) => {
+    const previous = dbId;
+    saveSelectedDb(id);
+    if (!activeEnv || !id || activeEnv.db_id === id) return;
+    const rollBack = (why: string) => {
+      saveSelectedDb(previous);
+      toast.error(why);
+    };
+    commands
+      .envSave({ ...toInput(activeEnv), db_id: id })
+      .then((res) => {
+        if (res.status === "error") rollBack(res.error);
+        else qc.setQueryData(envKeys.list, res.data);
+      })
+      .catch((e: unknown) => rollBack(e instanceof Error ? e.message : String(e)));
+  };
   // Every saved login goes with the local settings, and permission to
   // write with them: leaving it standing would hand the next database a
   // decision nobody made about it.
@@ -601,6 +654,46 @@ export default function AiBridge() {
           as grid columns 2 and 3 - and space-y's child margins would
           leak through contents into the outer grid, where gap does not. */}
       <div className="grid gap-6 2xl:contents">
+      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+        <div className="flex items-center gap-2">
+          <Globe size={14} className="shrink-0 text-muted" />
+          <h2 className="text-sm font-semibold text-text">Environment</h2>
+        </div>
+        <p className="text-xs text-muted">
+          Which website and database the app&apos;s tools work against. Each environment keeps its
+          own accounts and saved sign-ins; switching moves the database below with it.
+        </p>
+        <div className="space-y-2">
+          <label className="block text-xs text-muted">
+            Environment
+            <Combobox
+              ariaLabel="Environment"
+              className="mt-1 w-full"
+              placeholder="Pick an environment…"
+              value={envs.data?.active ?? ""}
+              items={(envs.data?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))}
+              loading={envs.isPending || switching}
+              onChange={chooseEnv}
+            />
+          </label>
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-xs text-muted">
+              {activeEnv && (activeEnv.start_url || RECIPE_ADDRESS)}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => setManagingEnvs(true)}>
+              <IconEdit aria-hidden />
+              Edit environments
+            </Button>
+          </div>
+          {dbGone && (
+            <p role="status" className="text-xs text-warning">
+              the database this environment uses is not set up any more - pick one
+            </p>
+          )}
+          {managingEnvs && <EnvironmentsDialog onClose={() => setManagingEnvs(false)} />}
+        </div>
+      </section>
+
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />

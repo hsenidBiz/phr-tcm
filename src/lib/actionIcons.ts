@@ -66,6 +66,10 @@ export {
   ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
   Trash2 as IconRemove,
+  // Taking a note out of use while keeping it to bring back (Auto Run's
+  // Known quirks) - an archive box, since nothing is deleted.
+  Archive as IconRetire,
+  ArchiveRestore as IconRestore,
   EyeOff as IconStopWatching,
   Square as IconStop,
   Unplug as IconUnregister,

@@ -1,20 +1,24 @@
 import { Minus, Square, X } from "lucide-react";
 import { useCallback } from "react";
 import BetaPill from "./BetaPill";
+import EnvironmentPill from "./EnvironmentPill";
 import FlaskLogo from "./FlaskLogo";
 
 /** v1-style custom title bar: drag region, flask mark, dynamic title,
  * min/max/close. Rendered on frameless windows (main + runner). `beta`
  * puts the Beta pill after the title, so a beta build says so on every
- * screen. */
+ * screen. `environment` is the active environment's name, passed only when
+ * there is more than one. */
 export default function TitleBar({
   title,
   compact = false,
   beta = false,
+  environment = null,
 }: {
   title: string;
   compact?: boolean;
   beta?: boolean;
+  environment?: string | null;
 }) {
   const win = useCallback(async () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -30,6 +34,7 @@ export default function TitleBar({
         <FlaskLogo size={15} />
         <span className="text-xs font-semibold text-text">{title}</span>
         {beta && <BetaPill />}
+        {environment && <EnvironmentPill name={environment} />}
       </span>
       <div className="ml-auto flex h-full">
         <button

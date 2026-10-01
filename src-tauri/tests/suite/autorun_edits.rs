@@ -12,7 +12,7 @@ fn script(json: serde_json::Value) -> CaseScript {
 }
 
 fn edit(steps: &[i32], why: &str) -> Edit {
-    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None }
+    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, area: false }
 }
 
 #[test]
@@ -354,4 +354,74 @@ fn a_script_with_nothing_changed_needs_no_declaration() {
         ]
     }));
     assert_eq!(check_edits(&sc, &sc, None), Ok(()));
+}
+
+fn in_area(area: Option<&str>) -> CaseScript {
+    let mut sc = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [ { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] } ]
+    }));
+    sc.area = area.map(str::to_string);
+    sc
+}
+
+fn area_edit(steps: &[i32], why: &str) -> Edit {
+    Edit { area: true, ..edit(steps, why) }
+}
+
+fn undeclared_area(from: &str, to: &str) -> String {
+    format!(
+        "case 1: the area changed from {from} to {to} but was not declared - add \"area\": true to the case's \"edits\" entry, or leave the area as it was"
+    )
+}
+
+/// Where a case starts is part of what it does: a repair that moves it to
+/// another area has to say so in its declaration, as a changed step does.
+/// A declaration for the case that does not say so is not enough.
+#[test]
+fn an_area_change_needs_its_own_declaration() {
+    let module = "the case's Module";
+    assert_eq!(
+        check_edits(&in_area(None), &in_area(Some("Manage Cycle")), None),
+        Err(undeclared_area(module, "\"Manage Cycle\""))
+    );
+    assert_eq!(
+        check_edits(&in_area(Some("Cycle Setup")), &in_area(Some("Manage Cycle")), Some(&edit(&[], "moved"))),
+        Err(undeclared_area("\"Cycle Setup\"", "\"Manage Cycle\""))
+    );
+    assert_eq!(
+        check_edits(&in_area(Some("Cycle Setup")), &in_area(Some("Manage Cycle")), Some(&area_edit(&[], "moved"))),
+        Ok(())
+    );
+}
+
+/// Review of Task 8: a repair that leaves `area` out while the saved
+/// script has one is a change to the area, like leaving out `account` is a
+/// change to the account - never a silent erase. Declaring only the steps
+/// it changed does not cover it.
+#[test]
+fn leaving_out_a_saved_area_is_a_change_not_a_silent_erase() {
+    let mut changed_step = in_area(None);
+    changed_step.steps[0].actions = vec![serde_json::from_value(json!({ "kind": "click", "selector": "#b" })).unwrap()];
+    assert_eq!(
+        check_edits(&in_area(Some("Manage Cycle")), &changed_step, Some(&edit(&[1], "the button moved"))),
+        Err(undeclared_area("\"Manage Cycle\"", "the case's Module"))
+    );
+    assert_eq!(
+        check_edits(&in_area(Some("Manage Cycle")), &changed_step, Some(&area_edit(&[1], "the button moved; the Module's own area is right"))),
+        Ok(())
+    );
+}
+
+/// A blank area is no area, and the same name in another case is the same
+/// area: neither is a change. An area declared but not changed is refused,
+/// as a step declared but not changed is.
+#[test]
+fn a_blank_area_or_one_in_another_case_is_no_change() {
+    assert_eq!(check_edits(&in_area(None), &in_area(Some("  ")), None), Ok(()));
+    assert_eq!(check_edits(&in_area(Some("Manage Cycle")), &in_area(Some(" manage cycle ")), None), Ok(()));
+    assert_eq!(
+        check_edits(&in_area(Some("Manage Cycle")), &in_area(Some("Manage Cycle")), Some(&area_edit(&[], "nothing"))),
+        Err("the area was declared but not changed".to_string())
+    );
 }

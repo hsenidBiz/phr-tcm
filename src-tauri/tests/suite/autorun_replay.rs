@@ -47,7 +47,7 @@ fn quick() -> Timing {
 }
 
 fn new_run(id: &str) -> LocalRun {
-    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None }
+    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None }
 }
 
 fn script(case_id: i32, account: Option<&str>, steps: serde_json::Value) -> CaseScript {
@@ -723,6 +723,71 @@ async fn a_module_with_no_recorded_path_is_blocked_and_named() {
     assert_eq!(run.cases[0].reason, no_path("Payroll"));
 }
 
+/// A project with Leave's path plus a second area under Leave, "Leave
+/// home", that stops after the first click.
+fn two_leave_areas(root: &Path) {
+    menu_project(root);
+    let mut nav = leave_nav();
+    nav.modules.push(
+        serde_json::from_value(serde_json::json!({
+            "area": "Leave home",
+            "module": "Leave",
+            "clicks": [{ "role": "link", "name": "Leave", "exact": true }],
+            "arrived": "/hr/leave",
+            "recorded": "2026-10-01T10:00:00Z"
+        }))
+        .unwrap(),
+    );
+    save_nav(root, "Acme", "Web", &nav).unwrap();
+}
+
+fn in_area(area: &str) -> CaseScript {
+    let mut sc = one_check(Some("admin"));
+    sc.area = Some(area.to_string());
+    sc
+}
+
+/// Spec §9: the script's `area` decides where the case starts - here a
+/// case whose Module has no area of its own name at all.
+#[tokio::test]
+async fn a_scripts_area_takes_the_case_there_whatever_its_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_leave_areas(root);
+    store::save_script(root, &in_area("leave home")).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Leave", "check yes"]
+    );
+    let rec = &run.cases[0];
+    assert_eq!(rec.steps[1].outcomes[0].detail, "Go to Leave home");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+}
+
+#[tokio::test]
+async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_leave_areas(root);
+    store::save_script(root, &in_area("Leave balance")).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 0);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, "the area \"Leave balance\" is not recorded - record it in Auto Run, Areas");
+}
+
 #[tokio::test]
 async fn with_paths_a_case_no_account_applies_to_is_blocked() {
     let dir = tempfile::tempdir().unwrap();
@@ -861,7 +926,7 @@ async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens(
     let err = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap_err();
-    assert!(err.contains("module paths file is not readable"), "{err}");
+    assert!(err.contains("areas file is not readable"), "{err}");
     assert_eq!(browsers.opened, 0);
     assert!(run.cases.is_empty());
 }
@@ -1103,4 +1168,46 @@ async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_nav
         .unwrap();
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, no_address(1));
+}
+
+/// After an unattended run, the project's quirks count what THIS call ran
+/// - a case record already in the run (a resumed run) is not counted again.
+#[tokio::test]
+async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
+    use v2_lib::autorun::quirks::{load_quirks, save_quirks, Quirk, QuirkSource};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut about_1 = Quirk::new("case one's page settles late", "assistant", "autorun", 1);
+    about_1.sources = vec![QuirkSource { case_id: 1, steps: vec![1], class: None }];
+    let mut about_2 = Quirk::new("case two's grid paginates", "assistant", "autorun", 2);
+    about_2.sources = vec![QuirkSource { case_id: 2, steps: vec![1], class: None }];
+    save_quirks(root, "Acme", "Web", &[about_1, about_2]).unwrap();
+
+    // The run already holds case 2 from an earlier call, step 1 passed.
+    let mut run = new_run("run-q");
+    let mut earlier: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
+    }))
+    .unwrap();
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    run.cases.push(earlier);
+
+    let mut browsers = FakeBrowsers {
+        queue: [Some(common::FakePage::default().driver())].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let cancel = AtomicBool::new(false);
+    let cases = vec![(1, "case 1".to_string())];
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(run.cases.last().unwrap().proposed, "Passed");
+
+    let quirks = load_quirks(root, "Acme", "Web").unwrap();
+    let one = quirks.iter().find(|q| q.text.starts_with("case one")).unwrap();
+    let two = quirks.iter().find(|q| q.text.starts_with("case two")).unwrap();
+    assert_eq!((one.confirmed, one.doubted), (1, 0), "the case this call ran confirms its note");
+    assert!(one.last_confirmed.is_some());
+    assert_eq!((two.confirmed, two.doubted), (0, 0), "the earlier record is not counted again");
 }

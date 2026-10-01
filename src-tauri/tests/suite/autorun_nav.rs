@@ -5,9 +5,9 @@ use crate::common;
 
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    check_no_addresses, find_path, go_home, guide_section, load_nav, module_key, nav_path, no_address, no_path, path_of,
-    put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view, ModulePath, NavFile, PathFailure, Where,
-    NO_ACCOUNT, NO_MODULE,
+    check_areas, check_no_addresses, find_area, find_path, go_home, guide_section, is_setup_problem, load_nav, module_key,
+    nav_path, no_address, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view,
+    ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -29,13 +29,20 @@ fn with(modules: Vec<ModulePath>) -> NavFile {
     NavFile { direct_urls: true, modules }
 }
 
+/// A named area under a module, as the Areas dialog records one.
+fn area(name: &str, module: &str, arrived: &str) -> ModulePath {
+    let mut p = path(module, arrived);
+    p.area = name.to_string();
+    p
+}
+
 #[test]
 fn the_blocked_sentences_are_the_designs_own_words() {
     assert_eq!(NO_MODULE, "This case has no Module - set one in Azure DevOps, or record a path for it.");
     assert_eq!(NO_ACCOUNT, "Choose an account when starting the run, or set Runs as on the script.");
     assert_eq!(
         no_path(" Payroll "),
-        "No menu path recorded for module \"Payroll\" - record one in Auto Run, Module paths."
+        "No menu path recorded for module \"Payroll\" - record one in Auto Run, Areas."
     );
 }
 
@@ -53,7 +60,7 @@ fn no_file_and_a_file_without_the_switch_both_allow_addresses() {
 #[test]
 fn the_file_sits_beside_the_sign_in_recipe_and_round_trips() {
     let dir = tempfile::tempdir().unwrap();
-    let nav = NavFile { direct_urls: false, modules: vec![path("Leave", "/hr/leave/apply")] };
+    let nav = NavFile { direct_urls: false, modules: vec![area("Leave Apply", "Leave", "/hr/leave/apply")] };
     save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
     let expected = dir.path().join("projects").join(format!("{}.nav.json", project_slug("Acme", "Web")));
     assert_eq!(nav_path(dir.path(), "Acme", "Web"), expected);
@@ -68,14 +75,14 @@ fn an_unreadable_file_says_so() {
     std::fs::create_dir_all(dir.path().join("projects")).unwrap();
     std::fs::write(nav_path(dir.path(), "Acme", "Web"), "{ not json").unwrap();
     let err = load_nav(dir.path(), "Acme", "Web").unwrap_err();
-    assert!(err.starts_with("the module paths file is not readable"), "{err}");
+    assert!(err.starts_with("the areas file is not readable"), "{err}");
 }
 
 #[test]
 fn two_paths_for_the_same_module_are_refused_and_nothing_is_written() {
     let dir = tempfile::tempdir().unwrap();
     let err = save_nav(dir.path(), "Acme", "Web", &with(vec![path("Leave", "/a"), path("  leave ", "/b")])).unwrap_err();
-    assert_eq!(err, "module \"leave\" has two paths - keep one");
+    assert_eq!(err, "area \"leave\" has two paths - keep one");
     assert!(!nav_path(dir.path(), "Acme", "Web").exists());
 }
 
@@ -86,7 +93,7 @@ fn a_path_needs_a_name_clicks_and_an_address_path() {
     no_clicks.clicks.clear();
     assert_eq!(
         save_nav(dir.path(), "Acme", "Web", &with(vec![no_clicks])).unwrap_err(),
-        "module \"Leave\" has no clicks - record it again"
+        "area \"Leave\" has no clicks - record it again"
     );
     assert!(save_nav(dir.path(), "Acme", "Web", &with(vec![path("Leave", "hr/leave")])).is_err());
     assert!(save_nav(dir.path(), "Acme", "Web", &with(vec![path("  ", "/x")])).is_err());
@@ -135,19 +142,19 @@ fn removing_a_path_and_turning_the_switch_change_only_their_own_part() {
 
 #[test]
 fn a_project_with_no_paths_needs_neither_a_module_nor_an_account() {
-    assert_eq!(route_for(&NavFile::default(), None, None), Ok(None));
-    assert_eq!(route_for(&NavFile::default(), Some("Leave"), Some("hr.admin")), Ok(None));
+    assert_eq!(route_for(&NavFile::default(), None, None, None), Ok(None));
+    assert_eq!(route_for(&NavFile::default(), None, Some("Leave"), Some("hr.admin")), Ok(None));
 }
 
 #[test]
 fn with_paths_a_case_needs_its_module_a_path_for_it_and_an_account_in_that_order() {
     let nav = with(vec![path("Leave", "/hr/leave/apply")]);
-    assert_eq!(route_for(&nav, None, None), Err(NO_MODULE.to_string()));
-    assert_eq!(route_for(&nav, Some("  "), Some("hr.admin")), Err(NO_MODULE.to_string()));
-    assert_eq!(route_for(&nav, Some("Payroll"), None), Err(no_path("Payroll")));
-    assert_eq!(route_for(&nav, Some("leave"), None), Err(NO_ACCOUNT.to_string()));
-    assert_eq!(route_for(&nav, Some("leave"), Some(" ")), Err(NO_ACCOUNT.to_string()));
-    assert_eq!(route_for(&nav, Some(" Leave "), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()), Some("/hr/leave/apply"));
+    assert_eq!(route_for(&nav, None, None, None), Err(NO_MODULE.to_string()));
+    assert_eq!(route_for(&nav, None, Some("  "), Some("hr.admin")), Err(NO_MODULE.to_string()));
+    assert_eq!(route_for(&nav, None, Some("Payroll"), None), Err(no_path("Payroll")));
+    assert_eq!(route_for(&nav, None, Some("leave"), None), Err(NO_ACCOUNT.to_string()));
+    assert_eq!(route_for(&nav, None, Some("leave"), Some(" ")), Err(NO_ACCOUNT.to_string()));
+    assert_eq!(route_for(&nav, None, Some(" Leave "), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()), Some("/hr/leave/apply"));
 }
 
 #[test]
@@ -168,6 +175,7 @@ fn the_dialog_view_reads_every_click_in_words() {
     let v = view(&with(vec![path("Leave", "/hr/leave/apply")]));
     assert!(v.direct_urls);
     assert_eq!(v.modules[0].module, "Leave");
+    assert_eq!(v.modules[0].area, "Leave", "a path with no area name is the area named after its module");
     assert_eq!(v.modules[0].clicks, vec!["link \"Leave\"".to_string(), "link \"Apply Leave\"".to_string()]);
     assert_eq!(v.modules[0].arrived, "/hr/leave/apply");
 }
@@ -327,4 +335,306 @@ async fn already_home_does_not_run_after_sign_in_again() {
     let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, v2_lib::autorun::nav::TripFrom::Elsewhere, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(*app.log.lock().unwrap(), vec!["click Leave".to_string()]);
+}
+
+// ---- Areas ---------------------------------------------------------------
+
+const UNRECORDED_PMS: &str = "the area \"Appraisals\" is not recorded - record it in Auto Run, Areas";
+
+/// Two areas under PMS and two under Leave, one of them named after it.
+fn pms_and_leave() -> NavFile {
+    with(vec![
+        area("Cycle Setup", "PMS", "/pms/cycle/setup"),
+        area("Manage Cycle", "PMS", "/pms/cycle/manage"),
+        area("Leave", "Leave", "/hr/leave/apply"),
+        area("Leave Balance", "Leave", "/hr/leave/balance"),
+    ])
+}
+
+/// Spec §9 decision 3: a file written before areas existed has only
+/// modules. Each recorded path reads as an area named after its module, so
+/// a script with no `area` still goes where it went.
+#[test]
+fn an_old_paths_file_reads_as_areas_named_after_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "direct_urls": false, "modules": [
+        { "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }], "arrived": "/hr/leave", "recorded": "2026-09-24T10:00:00Z" },
+        { "module": " Payroll ", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll", "recorded": "2026-09-24T10:00:00Z" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Web"), old.to_string()).unwrap();
+    let nav = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert!(!nav.direct_urls);
+    assert_eq!(nav.modules.iter().map(|m| m.area.as_str()).collect::<Vec<_>>(), vec!["Leave", "Payroll"]);
+    assert_eq!(find_area(&nav, "payroll").map(|p| p.arrived.as_str()), Some("/hr/payroll"));
+    let v = view(&nav);
+    assert_eq!(v.modules[0].area, "Leave");
+    assert_eq!(v.modules[0].module, "Leave");
+    // A script with no area routes exactly as it did.
+    assert_eq!(route_for(&nav, None, Some("Leave"), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()), Some("/hr/leave"));
+    // Saving it again writes the areas down; it reads back the same.
+    save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
+}
+
+/// Review Focus 4: an old file whose modules differ only in case would
+/// become two areas whose names differ only in case. The first wins; the
+/// rest are dropped and logged, never kept as a second way into "the same"
+/// area.
+#[test]
+fn old_modules_differing_only_in_case_keep_the_first() {
+    let _tail = crate::serial::log_tail();
+    let _warned = crate::serial::nav_warnings();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "modules": [
+        { "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }], "arrived": "/hr/leave/first", "recorded": "2026-09-24T10:00:00Z" },
+        { "module": "Payroll", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll", "recorded": "2026-09-24T10:00:00Z" },
+        { "module": "LEAVE", "clicks": [{ "role": "link", "name": "Leave" }], "arrived": "/hr/leave/second", "recorded": "2026-09-25T10:00:00Z" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Web"), old.to_string()).unwrap();
+    let nav = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(nav.modules.len(), 2, "{nav:?}");
+    assert_eq!(nav.modules[0].area, "Leave");
+    assert_eq!(nav.modules[0].arrived, "/hr/leave/first");
+    assert_eq!(nav.modules[1].area, "Payroll");
+    assert_eq!(find_area(&nav, "leave").map(|p| p.arrived.as_str()), Some("/hr/leave/first"));
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(
+        lines.iter().any(|m| m.contains("\"LEAVE\"") && m.contains("\"Leave\"")),
+        "the dropped area is logged: {lines:?}"
+    );
+    // What is left is a file that saves.
+    save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+}
+
+/// Area names are unique per project ignoring case. Re-recording an area
+/// (the same name under the same module, in any case) replaces it, as a
+/// module path's Re-record always has; a NEW area whose name clashes with
+/// one under another module is refused and the file is left alone.
+#[test]
+fn area_names_are_unique_ignoring_case() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", area("Manage Cycle", "PMS", "/pms/old")).unwrap();
+    let before = std::fs::read_to_string(nav_path(dir.path(), "Acme", "Web")).unwrap();
+
+    let err = put_path(dir.path(), "Acme", "Web", area(" manage cycle ", "Leave", "/hr/leave")).unwrap_err();
+    assert_eq!(err, "an area named \"Manage Cycle\" is already recorded under PMS - choose another name");
+    assert_eq!(std::fs::read_to_string(nav_path(dir.path(), "Acme", "Web")).unwrap(), before, "nothing written");
+
+    let nav = put_path(dir.path(), "Acme", "Web", area("MANAGE CYCLE", " pms ", "/pms/cycle/manage")).unwrap();
+    assert_eq!(nav.modules.len(), 1, "a re-record replaces: {nav:?}");
+    assert_eq!(nav.modules[0].area, "MANAGE CYCLE");
+    assert_eq!(nav.modules[0].module, "pms");
+    assert_eq!(nav.modules[0].arrived, "/pms/cycle/manage");
+
+    // The rule holds for a hand-made file too.
+    let twice = with(vec![area("Manage Cycle", "PMS", "/a"), area("manage cycle", "PMS", "/b")]);
+    assert_eq!(
+        save_nav(dir.path(), "Acme", "Web", &twice).unwrap_err(),
+        "area \"manage cycle\" has two paths - keep one"
+    );
+
+    // Removing is by area name too, ignoring case, and leaves the module's
+    // other areas alone.
+    put_path(dir.path(), "Acme", "Web", area("Cycle Setup", "PMS", "/pms/cycle/setup")).unwrap();
+    let nav = remove_path(dir.path(), "Acme", "Web", "manage cycle").unwrap();
+    assert_eq!(nav.modules.iter().map(|m| m.area.as_str()).collect::<Vec<_>>(), vec!["Cycle Setup"]);
+}
+
+#[test]
+fn two_areas_under_one_module_both_route() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", area("Cycle Setup", "PMS", "/pms/cycle/setup")).unwrap();
+    let nav = put_path(dir.path(), "Acme", "Web", area("Manage Cycle", "PMS", "/pms/cycle/manage")).unwrap();
+    assert_eq!(nav.modules.len(), 2, "a second area under PMS keeps the first");
+    let to = |a: &str| route_for(&nav, Some(a), Some("PMS"), Some("hr.admin")).unwrap().map(|p| p.arrived.clone());
+    assert_eq!(to("Cycle Setup"), Some("/pms/cycle/setup".to_string()));
+    assert_eq!(to(" manage cycle "), Some("/pms/cycle/manage".to_string()));
+}
+
+#[test]
+fn a_scripts_area_wins_over_its_module() {
+    let nav = pms_and_leave();
+    let arrived =
+        |a: Option<&str>, m: Option<&str>| route_for(&nav, a, m, Some("hr.admin")).unwrap().map(|p| p.arrived.clone());
+    // The Module has an area of its own name, and the script names another.
+    assert_eq!(arrived(Some("Leave Balance"), Some("Leave")), Some("/hr/leave/balance".to_string()));
+    assert_eq!(arrived(None, Some("Leave")), Some("/hr/leave/apply".to_string()));
+    // The script's area routes even when the Module has no area of its name,
+    // or the case has no Module at all.
+    assert_eq!(arrived(Some("Manage Cycle"), Some("PMS")), Some("/pms/cycle/manage".to_string()));
+    assert_eq!(arrived(Some("Manage Cycle"), None), Some("/pms/cycle/manage".to_string()));
+    // An area still needs an account, like any path.
+    assert_eq!(route_for(&nav, Some("Manage Cycle"), Some("PMS"), None), Err(NO_ACCOUNT.to_string()));
+}
+
+/// No `area` (or a blank one) is exactly today: the area named like the
+/// case's Module, with today's sentences word for word.
+#[test]
+fn no_area_routes_by_module_as_today() {
+    let nav = pms_and_leave();
+    for blank in [None, Some(""), Some("   ")] {
+        assert_eq!(
+            route_for(&nav, blank, None, Some("hr.admin")),
+            Err("This case has no Module - set one in Azure DevOps, or record a path for it.".to_string())
+        );
+        // PMS has two areas, but none named PMS.
+        assert_eq!(
+            route_for(&nav, blank, Some(" PMS "), Some("hr.admin")),
+            Err("No menu path recorded for module \"PMS\" - record one in Auto Run, Areas.".to_string())
+        );
+        assert_eq!(
+            route_for(&nav, blank, Some("leave"), None),
+            Err("Choose an account when starting the run, or set Runs as on the script.".to_string())
+        );
+        assert_eq!(
+            route_for(&nav, blank, Some("leave"), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()),
+            Some("/hr/leave/apply")
+        );
+        assert_eq!(route_for(&NavFile::default(), blank, Some("Leave"), Some("hr.admin")), Ok(None));
+    }
+}
+
+#[test]
+fn an_unrecorded_area_refuses_the_case() {
+    let nav = pms_and_leave();
+    let err = route_for(&nav, Some(" Appraisals "), Some("PMS"), Some("hr.admin")).unwrap_err();
+    assert_eq!(err, UNRECORDED_PMS);
+    // The Module's own area is no fallback for an area name that is wrong.
+    assert_eq!(route_for(&nav, Some("Appraisals"), Some("Leave"), Some("hr.admin")).unwrap_err(), UNRECORDED_PMS);
+    // A project with no areas at all cannot run a script that names one.
+    assert_eq!(
+        route_for(&NavFile::default(), Some("Appraisals"), Some("PMS"), Some("hr.admin")).unwrap_err(),
+        UNRECORDED_PMS
+    );
+    // It is about the project's setup, not the script's steps.
+    assert!(is_setup_problem(&err));
+}
+
+fn script_in(case_id: i32, area: Option<&str>) -> serde_json::Value {
+    let mut sc = json!({ "case_id": case_id, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+    ] });
+    if let Some(a) = area {
+        sc["area"] = json!(a);
+    }
+    sc
+}
+
+#[test]
+fn check_areas_names_the_recorded_areas() {
+    let nav = pms_and_leave();
+    let ok: Vec<v2_lib::autorun::CaseScript> = vec![
+        serde_json::from_value(script_in(1, None)).unwrap(),
+        serde_json::from_value(script_in(2, Some(" "))).unwrap(),
+        serde_json::from_value(script_in(3, Some("manage cycle"))).unwrap(),
+    ];
+    assert!(check_areas(&nav, &ok).is_ok());
+    let bad: v2_lib::autorun::CaseScript = serde_json::from_value(script_in(4, Some("Appraisals"))).unwrap();
+    assert_eq!(
+        check_areas(&nav, &[ok[0].clone(), bad.clone()]).unwrap_err(),
+        format!("case 4: {UNRECORDED_PMS} (recorded areas: Cycle Setup, Manage Cycle, Leave, Leave Balance)")
+    );
+    assert_eq!(
+        check_areas(&NavFile::default(), &[bad]).unwrap_err(),
+        format!("case 4: {UNRECORDED_PMS} (no areas are recorded yet)")
+    );
+    // `area` is written only when it is set.
+    let plain = serde_json::to_value(&ok[0]).unwrap();
+    assert!(plain.get("area").is_none(), "{plain}");
+    assert_eq!(serde_json::to_value(&ok[2]).unwrap()["area"], "manage cycle");
+}
+
+/// Every door a script comes in by - the editor, a file import, the
+/// assistant's save - refuses an area the project has not recorded, and
+/// writes nothing.
+#[tokio::test]
+async fn saving_a_script_with_an_unrecorded_area_is_refused() {
+    use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::autorun::store::{load_script, set_root};
+    use v2_lib::commands::autorun::{import_scripts_from_path, save_script_from_editor};
+
+    let _root = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("data");
+    save_nav(&root, "acme", "Web", &pms_and_leave()).unwrap();
+    let expected =
+        |id: i32| format!("case {id}: {UNRECORDED_PMS} (recorded areas: Cycle Setup, Manage Cycle, Leave, Leave Balance)");
+
+    // The editor.
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(script_in(7, Some("Appraisals"))).unwrap();
+    assert_eq!(save_script_from_editor(&root, "acme", "Web", script).unwrap_err(), expected(7));
+    assert!(load_script(&root, 7).unwrap().is_none());
+
+    // A file import: all or nothing, so the good script beside it is not
+    // written either.
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, json!([script_in(8, Some("Manage Cycle")), script_in(9, Some("Appraisals"))]).to_string()).unwrap();
+    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err(), expected(9));
+    assert!(load_script(&root, 8).unwrap().is_none());
+    assert!(load_script(&root, 9).unwrap().is_none());
+
+    // The assistant's save, refused before it ever needs Azure DevOps.
+    set_root(root.clone());
+    let ctx = BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() };
+    let body = json!([script_in(10, Some("Appraisals"))]).to_string();
+    let (status, out) = route(&ctx, None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, expected(10));
+    assert!(load_script(&root, 10).unwrap().is_none());
+
+    // A recorded area saves, and is kept on the script.
+    let good: v2_lib::autorun::CaseScript = serde_json::from_value(script_in(11, Some("manage cycle"))).unwrap();
+    save_script_from_editor(&root, "acme", "Web", good).unwrap();
+    assert_eq!(load_script(&root, 11).unwrap().unwrap().area.as_deref(), Some("manage cycle"));
+}
+
+/// The assistant's guide lists every area - name, module and where it
+/// lands - and says when to set `area`, whatever the address switch says.
+#[test]
+fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
+    assert_eq!(guide_section(&NavFile::default()), "", "nothing to say with no areas and addresses allowed");
+    let text = guide_section(&pms_and_leave());
+    assert!(!text.contains("## This project's runs start on the module screen"), "addresses are allowed: {text}");
+    for line in [
+        "- Cycle Setup - PMS - /pms/cycle/setup",
+        "- Manage Cycle - PMS - /pms/cycle/manage",
+        "- Leave - Leave - /hr/leave/apply",
+        "- Leave Balance - Leave - /hr/leave/balance",
+    ] {
+        assert!(text.contains(line), "missing {line:?}: {text}");
+    }
+    for must in ["`area`", "is not its module's default area", "named like the case's Module"] {
+        assert!(text.contains(must), "missing {must:?}: {text}");
+    }
+    assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    // With the switch off, both sections.
+    let both = guide_section(&NavFile { direct_urls: false, ..pms_and_leave() });
+    assert!(both.contains("## This project's runs start on the module screen"));
+    assert!(both.contains("- Manage Cycle - PMS - /pms/cycle/manage"));
+}
+
+/// Review of Task 8, minor: the paths file is read on every run, check and
+/// save, so the case-only duplicate it drops is logged once per file per
+/// process - not once per read.
+#[test]
+fn a_dropped_duplicate_area_is_logged_once_per_file() {
+    let _tail = crate::serial::log_tail();
+    let _warned = crate::serial::nav_warnings();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "modules": [
+        { "module": "Payroll", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll", "recorded": "2026-09-24T10:00:00Z" },
+        { "module": "PAYROLL", "clicks": [{ "role": "link", "name": "Payroll" }], "arrived": "/hr/payroll/2", "recorded": "2026-09-25T10:00:00Z" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Logged once"), old.to_string()).unwrap();
+    for _ in 0..3 {
+        assert_eq!(load_nav(dir.path(), "Acme", "Logged once").unwrap().modules.len(), 1);
+    }
+    let count = v2_lib::applog::recent(400)
+        .into_iter()
+        .filter(|l| l.message.contains("Acme / Logged once") && l.message.contains("\"PAYROLL\""))
+        .count();
+    assert_eq!(count, 1);
 }

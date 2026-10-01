@@ -175,7 +175,7 @@ pub fn origin_of(url: &str) -> Option<String> {
 /// `origin_of` strips that port, so the raw text is compared against the
 /// canonical origin WITH that port added back, as well as without it - and
 /// nothing may follow the authority but one optional trailing slash.
-fn is_bare_origin(s: &str) -> bool {
+pub fn is_bare_origin(s: &str) -> bool {
     let Some(canonical) = origin_of(s) else { return false };
     let default_port = if canonical.starts_with("https://") {
         ":443"
@@ -292,8 +292,9 @@ impl SignInRecipe {
 
     /// Everywhere `navigate` may go: the start address first. Every entry
     /// is re-derived through `origin_of` rather than trusted as written -
-    /// `load_recipe` relies on that, since it does not itself validate a
-    /// hand-edited recipe file before handing it to a run.
+    /// `load_effective_recipe` relies on that, since it validates neither a
+    /// hand-edited recipe file nor a hand-edited environment's address
+    /// before handing them to a run.
     pub fn origins(&self) -> Vec<String> {
         let mut out: Vec<String> = vec![];
         let all = origin_of(&self.start_url).into_iter().chain(self.allowed_origins.iter().filter_map(|o| origin_of(o)));
@@ -393,6 +394,29 @@ pub fn load_recipe(root: &Path, org: &str, project: &str) -> Result<Option<SignI
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// The recipe as it runs in `env`: an environment with an address signs in
+/// there, and `navigate` may go to that address and the environment's own
+/// allowed sites - never the recipe's, which belong to another site. An
+/// environment with no address leaves the recipe exactly as it is.
+pub fn effective_recipe(recipe: &SignInRecipe, env: &crate::environments::Environment) -> SignInRecipe {
+    let start = env.start_url.trim();
+    if start.is_empty() {
+        return recipe.clone();
+    }
+    SignInRecipe { start_url: start.to_string(), allowed_origins: env.allowed_origins.clone(), ..recipe.clone() }
+}
+
+/// The project's recipe as it runs in the active environment - what every
+/// sign-in and every navigation uses. `load_recipe` is the raw file, read
+/// directly only where the recipe is edited.
+pub fn load_effective_recipe(root: &Path, org: &str, project: &str) -> Result<Option<SignInRecipe>, String> {
+    let Some(recipe) = load_recipe(root, org, project)? else {
+        return Ok(None);
+    };
+    let env = crate::environments::active(root)?;
+    Ok(Some(effective_recipe(&recipe, &env)))
 }
 
 pub fn save_recipe(root: &Path, org: &str, project: &str, recipe: &SignInRecipe) -> Result<(), String> {

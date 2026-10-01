@@ -18,6 +18,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
+import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
@@ -37,7 +38,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
-import ModulePathsDialog from "./ModulePathsDialog";
+import AreasDialog from "./AreasDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import RecordSignInDialog from "./RecordSignInDialog";
@@ -131,6 +132,7 @@ export default function AutoRun({
     enabled: setupReady,
     retry: false,
   });
+  const envs = useEnvironments();
   const accounts = useQuery({
     queryKey: ["autorun-accounts"],
     queryFn: async () => (await unwrapStr(commands.autoRunListAccounts())) ?? null,
@@ -151,7 +153,7 @@ export default function AutoRun({
   // dialog, so adding or removing one there updates the row.
   const testFiles = useTestFiles(org, project);
   const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
-  const moduleCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
+  const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every badge is
@@ -219,7 +221,7 @@ export default function AutoRun({
     () => (grouped ? groupIndices(rows.map((c) => c.title)) : []),
     [grouped, rows],
   );
-  /** The Module values of the loaded cases, for the Module paths dialog's
+  /** The Module values of the loaded cases, for the Areas dialog's
    * picker. A person can still type one that is not here. */
   const caseModules = useMemo(
     () =>
@@ -340,7 +342,11 @@ export default function AutoRun({
 
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
   const saved = recipe.data;
-  const extraSites = saved ? saved.allowed_origins.length : 0;
+  // Where a run goes now: the active environment's address when it has one,
+  // else the recipe's - the header and the Setup row both say this.
+  const site = effectiveSite(envs.data, saved);
+  const activeEnv = activeEnvironment(envs.data);
+  const extraSites = saved ? site.allowed_origins.length : 0;
 
   return (
     <div className="max-w-3xl space-y-4">
@@ -352,14 +358,15 @@ export default function AutoRun({
         </span>
         {recipe.isSuccess && (
           <span>
-            Runs against{" "}
+            {activeEnv ? "Environment" : "Runs against"}{" "}
             <span className="font-medium text-text">
-              {saved ? siteHost(saved.start_url) : "no site set yet"}
+              {activeEnv && `${activeEnv.name} - `}
+              {site.start_url ? siteHost(site.start_url) : "no site set yet"}
             </span>
           </span>
         )}
         {accountCount != null && <span>{plural(accountCount, "account")}</span>}
-        {moduleCount != null && <span>{plural(moduleCount, "module path")}</span>}
+        {areaCount != null && <span>{plural(areaCount, "area")}</span>}
       </div>
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -376,7 +383,7 @@ export default function AutoRun({
                 <span className="text-danger">The saved recipe could not be read</span>
               ) : saved ? (
                 <>
-                  <span className="id-mono break-all">{saved.start_url}</span>
+                  <span className="id-mono break-all">{site.start_url}</span>
                   {extraSites > 0 && (
                     <span className="ml-2 text-xs text-faint">
                       +{plural(extraSites, "allowed site")}
@@ -486,25 +493,25 @@ export default function AutoRun({
           </SetupRow>
 
           <SetupRow
-            label="Module paths"
+            label="Areas"
             state={
               !setupReady ? (
                 <span className="text-muted">{needsProject}</span>
               ) : nav.isError ? (
-                <span className="text-danger">The module paths could not be read</span>
-              ) : nav.isPending || moduleCount == null ? (
+                <span className="text-danger">The areas could not be read</span>
+              ) : nav.isPending || areaCount == null ? (
                 <span className="text-muted">Loading…</span>
-              ) : moduleCount === 0 ? (
-                <span className="text-muted">None mapped yet</span>
+              ) : areaCount === 0 ? (
+                <span className="text-muted">None recorded yet</span>
               ) : (
-                `${plural(moduleCount, "module path")} mapped`
+                `${plural(areaCount, "area")} recorded`
               )
             }
           >
             <Button
               size="sm"
               variant="outline"
-              aria-label="Edit module paths"
+              aria-label="Edit areas"
               disabled={!setupReady}
               title={needsProject}
               onClick={() => setNavOpen(true)}
@@ -712,7 +719,7 @@ export default function AutoRun({
         <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
       )}
       {navOpen && (
-        <ModulePathsDialog
+        <AreasDialog
           org={org}
           project={project}
           caseModules={caseModules}

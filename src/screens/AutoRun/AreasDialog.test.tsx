@@ -1,12 +1,13 @@
-// The Module paths dialog: the recorded paths in words, Remove that asks
-// first, the address switch, and a recording driven by mocked events.
+// The Areas dialog: the recorded areas grouped by module, in words, Remove
+// that asks first, the address switch, and a recording driven by mocked
+// events.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
-import ModulePathsDialog from "./ModulePathsDialog";
+import AreasDialog from "./AreasDialog";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 afterEach(() => {
@@ -17,9 +18,25 @@ afterEach(() => {
 
 const ACCOUNTS = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "p" }];
 const LEAVE = {
+  area: "Leave",
   module: "Leave",
   clicks: ['link "Leave"', 'link "Apply Leave"'],
   arrived: "/hr/leave/apply",
+  recorded: "2026-09-24T10:00:00Z",
+};
+
+const CYCLE_SETUP = {
+  area: "Cycle Setup",
+  module: "PMS",
+  clicks: ['link "PMS"', 'link "Cycle Setup"'],
+  arrived: "/pms/cycle/setup",
+  recorded: "2026-09-24T10:00:00Z",
+};
+const MANAGE_CYCLE = {
+  area: "Manage Cycle",
+  module: "PMS",
+  clicks: ['link "PMS"', 'link "Manage Cycle"'],
+  arrived: "/pms/cycle/manage",
   recorded: "2026-09-24T10:00:00Z",
 };
 
@@ -34,13 +51,13 @@ function mount(handler: (cmd: string, args: Record<string, unknown>) => unknown)
   );
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ModulePathsDialog org="acme" project="Web" caseModules={["Leave", "Payroll"]} onClose={vi.fn()} />
+      <AreasDialog org="acme" project="Web" caseModules={["Leave", "Payroll", "PMS"]} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }
 
 async function startRecording() {
-  const record = await screen.findByRole("button", { name: "Record a module…" });
+  const record = await screen.findByRole("button", { name: "Record an area…" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
   fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
@@ -60,7 +77,7 @@ async function send(payload: { kind: string; index: number; readable: string; de
  * `auto_run_record_start` to settle - for the "starting" phase tests
  * below, where that call is held open on purpose. */
 async function chooseAndStart() {
-  const record = await screen.findByRole("button", { name: "Record a module…" });
+  const record = await screen.findByRole("button", { name: "Record an area…" });
   await waitFor(() => expect(record).toBeEnabled());
   fireEvent.click(record);
   fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
@@ -86,11 +103,11 @@ test("Remove asks first, and only the confirm removes", async () => {
     }
   });
   fireEvent.click(await screen.findByRole("button", { name: "Remove Leave" }));
-  expect(screen.getByText("Remove the path for Leave?")).toBeInTheDocument();
+  expect(screen.getByText("Remove the area Leave?")).toBeInTheDocument();
   expect(removed).toEqual([]);
   fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-  await waitFor(() => expect(removed).toEqual([{ organization: "acme", project: "Web", module: "Leave" }]));
-  expect(await screen.findByText(/No module paths yet/)).toBeInTheDocument();
+  await waitFor(() => expect(removed).toEqual([{ organization: "acme", project: "Web", area: "Leave" }]));
+  expect(await screen.findByText(/No areas yet/)).toBeInTheDocument();
 });
 
 test("the address switch saves the moment it is flipped", async () => {
@@ -118,18 +135,18 @@ test("a recording lists each click as it arrives and saves on Stop", async () =>
       started.push(args);
       return null;
     }
-    if (cmd === "auto_run_record_stop") return { saved: true, module: "Leave", failure: "" };
+    if (cmd === "auto_run_record_stop") return { saved: true, module: "Leave", area: "Leave", failure: "" };
   });
   await startRecording();
   expect(started).toEqual([
-    { organization: "acme", project: "Web", module: "Leave", account: "hr.admin", browserName: "edge" },
+    { organization: "acme", project: "Web", module: "Leave", area: "Leave", account: "hr.admin", browserName: "edge" },
   ]);
   expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   await send({ kind: "click", index: 1, readable: 'link "Leave"', detail: "" });
   expect(await screen.findByText('1. link "Leave"')).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Path saved for Leave."));
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Area Leave saved."));
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
 });
 
 test("a path that does not replay says which click failed and offers to record again", async () => {
@@ -141,7 +158,7 @@ test("a path that does not replay says which click failed and offers to record a
       return null;
     }
     if (cmd === "auto_run_record_stop") {
-      return { saved: false, module: "Leave", failure: 'click 2, link "Apply Leave": no visible match' };
+      return { saved: false, module: "Leave", area: "Leave", failure: 'click 2, link "Apply Leave": no visible match' };
     }
   });
   await startRecording();
@@ -166,6 +183,54 @@ test("closing the recording browser ends the recording and frees it", async () =
   await startRecording();
   await send({ kind: "closed", index: 0, readable: "", detail: "the recording browser was closed - nothing was saved" });
   expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  await waitFor(() => expect(cancels).toBe(1));
+});
+
+/** Emits `closed` the moment `name`'s button is in the page - from the
+ * page-change notice of the very commit that shows it, before React's
+ * passive effects have run. React's scheduler is made to yield after every
+ * task while this waits (its clock jumps on each read), which is what a
+ * busy machine does: the commit lands in one task and the passive effects
+ * in a later one, and the close arrives in between. */
+function closeAsSoonAsShown(name: string): () => void {
+  let t = performance.now();
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 50));
+  const seen = new MutationObserver(() => {
+    if (!screen.queryByRole("button", { name })) return;
+    seen.disconnect();
+    void import("@tauri-apps/api/event").then(({ emit }) =>
+      emit("recording-event", { kind: "closed", index: 0, readable: "", detail: "closed", password: false }),
+    );
+  });
+  seen.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    seen.disconnect();
+    clock.mockRestore();
+  };
+}
+
+test("a close that arrives as the recording screen appears still frees the recorder", async () => {
+  let cancels = 0;
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_record_start") return null;
+    if (cmd === "auto_run_record_cancel") {
+      cancels += 1;
+      return null;
+    }
+  });
+  const record = await screen.findByRole("button", { name: "Record an area…" });
+  await waitFor(() => expect(record).toBeEnabled());
+  fireEvent.click(record);
+  fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Leave" }));
+  const stop = closeAsSoonAsShown("Stop");
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  } finally {
+    stop();
+  }
   await waitFor(() => expect(cancels).toBe(1));
 });
 
@@ -210,7 +275,7 @@ test("Cancel while starting cancels the pending sign-in and returns to the list"
     rejectStart?.("the recording was cancelled - nothing was saved");
   });
 
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
   await waitFor(() =>
     expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved."),
   );
@@ -235,7 +300,7 @@ test("after Cancel, Start's refusal reads as a cancel whatever its words", async
   await act(async () => {
     rejectStart?.("some other words entirely");
   });
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
   expect(screen.queryByText("some other words entirely")).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
 });
@@ -263,7 +328,7 @@ test("a Start that succeeds after Cancel was pressed is cancelled, not shown as 
   await act(async () => {
     resolveStart?.(null);
   });
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
   await waitFor(() => expect(cancels).toBe(2));
   expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
@@ -289,13 +354,13 @@ test("the check after Stop can be cancelled", async () => {
   await startRecording();
   await send({ kind: "click", index: 1, readable: 'link "Leave"', detail: "" });
   fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
-  expect(await screen.findByText("Checking the path for Leave in a fresh browser…")).toBeInTheDocument();
+  expect(await screen.findByText("Checking the area Leave in a fresh browser…")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(cancels).toBe(1));
   await act(async () => {
-    resolveStop?.({ saved: false, module: "Leave", failure: "the recording was cancelled - nothing was saved" });
+    resolveStop?.({ saved: false, module: "Leave", area: "Leave", failure: "the recording was cancelled - nothing was saved" });
   });
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
   expect(screen.queryByText("the recording was cancelled - nothing was saved")).not.toBeInTheDocument();
   expect(toast.info).toHaveBeenCalledWith("The recording was cancelled. Nothing was saved.");
 });
@@ -421,7 +486,7 @@ test("nothing is offered to cancel when nothing was left open", async () => {
     }
   });
   await waitFor(() => expect(asked).toBe(1));
-  expect(await screen.findByRole("button", { name: "Record a module…" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument();
 });
 
@@ -440,4 +505,166 @@ test("Escape while starting cancels instead of being ignored", async () => {
 
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(cancels).toBe(1));
+});
+
+// ---- Areas: several named areas per module ----
+
+test("the list groups areas under their module, each with its own buttons", async () => {
+  mount((cmd) =>
+    cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [CYCLE_SETUP, LEAVE, MANAGE_CYCLE] } : undefined,
+  );
+  const pms = await screen.findByRole("group", { name: "PMS" });
+  expect(within(pms).getByText("Cycle Setup")).toBeInTheDocument();
+  expect(within(pms).getByText("Manage Cycle")).toBeInTheDocument();
+  expect(within(pms).queryByText("Leave")).not.toBeInTheDocument();
+  expect(within(screen.getByRole("group", { name: "Leave" })).getByRole("button", { name: "Try Leave" })).toBeInTheDocument();
+  expect(within(pms).queryByRole("button", { name: "Try Leave" })).not.toBeInTheDocument();
+  for (const area of ["Cycle Setup", "Manage Cycle", "Leave"]) {
+    expect(screen.getByRole("button", { name: `Re-record ${area}` })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Try ${area}` })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Remove ${area}` })).toBeInTheDocument();
+  }
+});
+
+async function openRecordForm() {
+  const record = await screen.findByRole("button", { name: "Record an area…" });
+  await waitFor(() => expect(record).toBeEnabled());
+  fireEvent.click(record);
+}
+
+async function pickModule(name: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: "Module" }));
+  fireEvent.click(await screen.findByRole("option", { name }));
+}
+
+test("Record an area asks for the module and the area, and offers the module's name for its first area", async () => {
+  const started: unknown[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [] };
+    if (cmd === "auto_run_record_start") {
+      started.push(args);
+      return null;
+    }
+  });
+  await openRecordForm();
+  expect(screen.getByRole("textbox", { name: "Area name" })).toHaveValue("");
+  await pickModule("PMS");
+  expect(screen.getByRole("textbox", { name: "Area name" })).toHaveValue("PMS");
+  // A name the person typed is theirs: picking another module leaves it.
+  fireEvent.change(screen.getByRole("textbox", { name: "Area name" }), { target: { value: "Manage Cycle" } });
+  await pickModule("Leave");
+  expect(screen.getByRole("textbox", { name: "Area name" })).toHaveValue("Manage Cycle");
+  await pickModule("PMS");
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  await screen.findByRole("button", { name: "Stop" });
+  expect(started).toEqual([
+    { organization: "acme", project: "Web", module: "PMS", area: "Manage Cycle", account: "hr.admin", browserName: "edge" },
+  ]);
+});
+
+test("a module that already has an area is not offered its own name again", async () => {
+  mount((cmd) => (cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [MANAGE_CYCLE] } : undefined));
+  await screen.findByText("Manage Cycle");
+  await openRecordForm();
+  await pickModule("PMS");
+  expect(screen.getByRole("textbox", { name: "Area name" })).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Start recording" })).toBeDisabled();
+});
+
+test("an area name that is already recorded asks Replace before recording over it", async () => {
+  const started: unknown[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [CYCLE_SETUP, MANAGE_CYCLE] };
+    if (cmd === "auto_run_record_start") {
+      started.push(args);
+      return null;
+    }
+  });
+  await screen.findByText("Manage Cycle");
+  await openRecordForm();
+  await pickModule("PMS");
+  fireEvent.change(screen.getByRole("textbox", { name: "Area name" }), { target: { value: " manage cycle " } });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  expect(await screen.findByText("Replace Manage Cycle?")).toBeInTheDocument();
+  expect(started).toEqual([]);
+  // Keeping it goes back to the form with nothing started.
+  fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+  expect(started).toEqual([]);
+  expect(screen.getByRole("textbox", { name: "Area name" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replace" }));
+  await screen.findByRole("button", { name: "Stop" });
+  expect(started).toEqual([
+    { organization: "acme", project: "Web", module: "PMS", area: "manage cycle", account: "hr.admin", browserName: "edge" },
+  ]);
+});
+
+test("a name another module holds is refused in the form, and nothing starts", async () => {
+  const started: unknown[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [MANAGE_CYCLE] };
+    if (cmd === "auto_run_record_start") {
+      started.push(args);
+      return null;
+    }
+  });
+  await screen.findByText("Manage Cycle");
+  await openRecordForm();
+  await pickModule("Leave");
+  fireEvent.change(screen.getByRole("textbox", { name: "Area name" }), { target: { value: "Manage Cycle" } });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  expect(
+    await screen.findByText('An area named "Manage Cycle" is already recorded under PMS - choose another name.'),
+  ).toBeInTheDocument();
+  expect(started).toEqual([]);
+});
+
+test("Re-record, Try and Remove act on that area, not on its module", async () => {
+  const calls: Record<string, unknown>[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [CYCLE_SETUP, MANAGE_CYCLE] };
+    if (cmd === "auto_run_record_start") {
+      calls.push({ cmd, ...args });
+      return null;
+    }
+    if (cmd === "auto_run_try_module_path") {
+      calls.push({ cmd, ...args });
+      return { ok: true, cancelled: false, detail: "reached /pms/cycle/manage" };
+    }
+    if (cmd === "auto_run_remove_module_path") {
+      calls.push({ cmd, ...args });
+      return { direct_urls: true, modules: [CYCLE_SETUP] };
+    }
+  });
+  const tryIt = await screen.findByRole("button", { name: "Try Manage Cycle" });
+  await waitFor(() => expect(tryIt).toBeEnabled());
+  fireEvent.click(tryIt);
+  expect(await screen.findByText("reached /pms/cycle/manage")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove Manage Cycle" }));
+  expect(screen.getByText("Remove the area Manage Cycle?")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(screen.queryByText("Manage Cycle")).not.toBeInTheDocument());
+  // The other area under PMS stays, and Re-record starts without asking.
+  fireEvent.click(screen.getByRole("button", { name: "Re-record Cycle Setup" }));
+  await screen.findByRole("button", { name: "Stop" });
+  expect(calls).toEqual([
+    { cmd: "auto_run_try_module_path", organization: "acme", project: "Web", area: "Manage Cycle", account: "hr.admin", browserName: "edge" },
+    { cmd: "auto_run_remove_module_path", organization: "acme", project: "Web", area: "Manage Cycle" },
+    { cmd: "auto_run_record_start", organization: "acme", project: "Web", module: "PMS", area: "Cycle Setup", account: "hr.admin", browserName: "edge" },
+  ]);
+});
+
+test("Record an area stays disabled until the areas have loaded, and when they could not be read", async () => {
+  // Loading: the nav answer never arrives.
+  mount((cmd) => (cmd === "auto_run_load_nav" ? new Promise(() => {}) : undefined));
+  const record = await screen.findByRole("button", { name: "Record an area…" });
+  await screen.findByRole("combobox", { name: "Record and try as" });
+  expect(record).toBeDisabled();
+  cleanup();
+  // Failed: reading the areas errors.
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") throw new Error("the areas file is not readable: x");
+  });
+  expect(await screen.findByText(/the areas file is not readable/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Record an area…" })).toBeDisabled();
 });

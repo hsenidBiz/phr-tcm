@@ -323,6 +323,25 @@ export const commands = {
 	 *  databases had ids. Answers the id the card should now select.
 	 */
 	importLegacyDbConnection: (connectionString: string) => typedError<string, string>(__TAURI_INVOKE("import_legacy_db_connection", { connectionString })),
+	/**
+	 *  The environments and which is active. `current_db` is the database the
+	 *  Company database card has chosen now: on first use it becomes Default's.
+	 */
+	envList: (currentDb: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb })),
+	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
+	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
+	envSetActive: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_active", { id })),
+	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
+	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
+	/**  The assistant's proposed accounts for the active environment. */
+	envProposals: () => typedError<ProposedAccount[], string>(__TAURI_INVOKE("env_proposals")),
+	/**  Dismiss the active environment's whole proposal. */
+	envDismissProposals: () => typedError<null, string>(__TAURI_INVOKE("env_dismiss_proposals")),
+	/**
+	 *  Add the picked proposals; returns the keys that are already accounts and
+	 *  need the person's confirmation (resend them in `replace`).
+	 */
+	envAddProposals: (picks: AccountInput[], replace: string[]) => typedError<string[], string>(__TAURI_INVOKE("env_add_proposals", { picks, replace })),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -342,6 +361,13 @@ export const commands = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Serialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -399,6 +425,11 @@ export const commands = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
@@ -445,17 +476,40 @@ export const commands = {
 	session_minutes: number,
 } | null, string>(__TAURI_INVOKE("auto_run_load_recipe", { organization, project })),
 	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
-	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
-	autoRunSaveQuirks: (organization: string, project: string, quirks: Quirk[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_quirks", { organization, project, quirks })),
+	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
 	/**
-	 *  The project's module paths and its address switch, as the Module paths
-	 *  dialog shows them. A project with no file reads as no paths, switch on.
+	 *  What a supervised run just saved says about the project's quirks: the
+	 *  run pane calls this once, after its save; the review screen never does.
+	 */
+	autoRunCountEvidence: (organization: string, project: string, runId: string) => typedError<boolean, string>(__TAURI_INVOKE("auto_run_count_evidence", { organization, project, runId })),
+	/**
+	 *  A note the person types in, added as theirs. Past the active cap it is
+	 *  refused with the notes worth retiring.
+	 */
+	autoRunAddQuirk: (organization: string, project: string, text: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_add_quirk", { organization, project, text })),
+	/**  A note's text, changed - whoever wrote it. */
+	autoRunEditQuirk: (organization: string, project: string, id: string, text: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_edit_quirk", { organization, project, id, text })),
+	/**
+	 *  Retired by the person - any note, theirs or an assistant's, with an
+	 *  optional reason. It stays in the file and can be restored.
+	 */
+	autoRunRetireQuirk: (organization: string, project: string, id: string, reason: string | null) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_retire_quirk", { organization, project, id, reason })),
+	/**  A retired note, back on the active list - refused while that is full. */
+	autoRunRestoreQuirk: (organization: string, project: string, id: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_restore_quirk", { organization, project, id })),
+	/**  A note removed from the file altogether. */
+	autoRunDeleteQuirk: (organization: string, project: string, id: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_delete_quirk", { organization, project, id })),
+	/**
+	 *  The project's areas and its address switch, as the Areas dialog shows
+	 *  them. A project with no file reads as no areas, switch on.
 	 */
 	autoRunLoadNav: (organization: string, project: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_load_nav", { organization, project })),
 	/**  "Scripts may open pages by address", saved the moment it is flipped. */
 	autoRunSetDirectUrls: (organization: string, project: string, allowed: boolean) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_direct_urls", { organization, project, allowed })),
-	/**  Forget one module's path. The dialog asks first. */
-	autoRunRemoveModulePath: (organization: string, project: string, module: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, module })),
+	/**
+	 *  Forget one area, by name. The module's other areas stay. The dialog
+	 *  asks first.
+	 */
+	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one.
@@ -496,7 +550,7 @@ export const commands = {
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
 	 */
-	autoRunRecordStart: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_start", { organization, project, module, account, browserName })),
+	autoRunRecordStart: (organization: string, project: string, module: string, area: string, account: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_start", { organization, project, module, area, account, browserName })),
 	/**
 	 *  Stop, close the recording browser, replay the path in a fresh signed-in
 	 *  browser, and save it only if every click found its one element and the
@@ -517,14 +571,14 @@ export const commands = {
 	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
 	/**
 	 *  Whether the recorder is held: by a recording, or by a Start, a check or
-	 *  a Try still going. The Module paths dialog asks when it opens - one it
+	 *  a Try still going. The Areas dialog asks when it opens - one it
 	 *  replaced may have left any of these behind (the Auto Run section was
 	 *  left mid-recording), and Cancel ends each of them. A recording whose
 	 *  browser was closed has already let go, and Start tidies it away.
 	 */
 	autoRunRecordingIsOpen: () => __TAURI_INVOKE<boolean>("auto_run_recording_is_open"),
-	/**  The same check a recording must pass, on a saved path. */
-	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
+	/**  The same check a recording must pass, on a saved area. */
+	autoRunTryModulePath: (organization: string, project: string, area: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, area, account, browserName })),
 	/**
 	 *  Open a visible browser with nobody signed in, go to `start_url`, and
 	 *  listen. Each step arrives as a `RecordingEvent`.
@@ -939,6 +993,17 @@ export type Account = {
 	password: string,
 };
 
+/**
+ *  One proposed account a person picked to add. `password` is what they
+ *  typed; empty means "use the environment's default password".
+ */
+export type AccountInput = {
+	key: string,
+	label: string,
+	username: string,
+	password: string,
+};
+
 export type Action = Action_Serialize | Action_Deserialize;
 
 export type ActionOutcome = ActionOutcome_Serialize | ActionOutcome_Deserialize;
@@ -1069,7 +1134,7 @@ export type ApiTemplate_Deserialize = {
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
-	proven?: Proven | null,
+	proven?: Proven_Deserialize | null,
 };
 
 export type ApiTemplate_Serialize = {
@@ -1093,7 +1158,7 @@ export type ApiTemplate_Serialize = {
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
-	proven?: Proven | null,
+	proven?: Proven_Serialize | null,
 };
 
 /**
@@ -1394,6 +1459,13 @@ export type CaseScript_Deserialize = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Deserialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -1422,6 +1494,13 @@ export type CaseScript_Serialize = {
 	 *  list, never a login. Absent means the script signs nobody in.
 	 */
 	account?: string | null,
+	/**
+	 *  The recorded area the run takes this case to before step 1, by name
+	 *  (`nav::find_area`). Absent or blank means the area named like the
+	 *  case's Module. A name the project has not recorded is refused when
+	 *  the script is saved, and refuses the case at run time.
+	 */
+	area?: string | null,
 	steps: StepScript_Serialize[],
 	/**
 	 *  How many times an assistant has repaired this script since a person
@@ -1702,6 +1781,35 @@ export type EnsuredSuite = {
 	created_plan: boolean,
 };
 
+/**  An environment to save. An empty `id` adds a new one. */
+export type EnvInput = {
+	id: string,
+	name: string,
+	start_url: string,
+	allowed_origins: string[],
+	db_id: string,
+	test_environment: boolean,
+};
+
+export type EnvListView = {
+	active: string,
+	environments: EnvView[],
+};
+
+/**
+ *  One environment as the webview sees it. There is deliberately no
+ *  password field, not even an empty one.
+ */
+export type EnvView = {
+	id: string,
+	name: string,
+	start_url: string,
+	allowed_origins: string[],
+	db_id: string,
+	test_environment: boolean,
+	has_default_password: boolean,
+};
+
 export type Expect = {
 	status?: number,
 	json?: unknown | null,
@@ -1890,6 +1998,11 @@ export type LocalRun_Deserialize = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 export type LocalRun_Serialize = {
@@ -1905,6 +2018,11 @@ export type LocalRun_Serialize = {
 	mode?: string,
 	/**  Set once the run has been sent to Azure DevOps. */
 	published?: PublishedRun | null,
+	/**
+	 *  The name of the environment the run was made in, as it was then.
+	 *  `None` for a run saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -1994,6 +2112,8 @@ export type Method = "GET" | "POST";
 export type ModuleRecordResult = {
 	saved: boolean,
 	module: string,
+	/**  The area's name, as saved (the module's when none was given). */
+	area: string,
 	/**  Why nothing was saved; empty when `saved`. */
 	failure: string,
 };
@@ -2009,11 +2129,12 @@ export type ModuleTryResult = {
 };
 
 /**
- *  A recorded module as the Module paths dialog shows it. Every click is
- *  already in words (`link "Leave"`), so the webview never keeps a second
- *  copy of how a locator reads.
+ *  A recorded area as the Areas dialog shows it. Every click is already in
+ *  words (`link "Leave"`), so the webview never keeps a second copy of how
+ *  a locator reads.
  */
 export type ModuleView = {
+	area: string,
 	module: string,
 	clicks: string[],
 	arrived: string,
@@ -2282,11 +2403,42 @@ export type Project = {
 	name: string,
 };
 
-export type Proven = {
+/**
+ *  An account the assistant proposed for an environment: a login it found
+ *  (in a seed script, a spec, the database). Never a password - a person
+ *  picks which to add and gives each one its password in the app.
+ */
+export type ProposedAccount = {
+	key: string,
+	label: string,
+	username: string,
+	role?: string | null,
+};
+
+export type Proven = Proven_Serialize | Proven_Deserialize;
+
+export type Proven_Deserialize = {
 	at: string,
 	origin: string,
 	account: string,
 	outputs: { [key in string]: unknown },
+	/**
+	 *  The name of the environment the template was proven in, as it was
+	 *  then. `None` for a proof saved before environments existed.
+	 */
+	environment?: string | null,
+};
+
+export type Proven_Serialize = {
+	at: string,
+	origin: string,
+	account: string,
+	outputs: { [key in string]: unknown },
+	/**
+	 *  The name of the environment the template was proven in, as it was
+	 *  then. `None` for a proof saved before environments existed.
+	 */
+	environment?: string | null,
 };
 
 /**
@@ -2365,12 +2517,126 @@ export type PullRequest = {
 	web_url: string,
 };
 
-export type Quirk = {
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk = Quirk_Serialize | Quirk_Deserialize;
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource = QuirkSource_Serialize | QuirkSource_Deserialize;
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource_Deserialize = {
+	case_id: number,
+	steps: number[],
+	/**
+	 *  The error class (`patterns::ErrorClass::key`) of the failure that
+	 *  led to the repair, when the run that showed it is on this machine.
+	 *  A later failure of the same class is evidence the note did not
+	 *  help; with no class known, any failure is.
+	 */
+	class?: string | null,
+};
+
+/**  The case and steps a quirk was filed about, with a repair. */
+export type QuirkSource_Serialize = {
+	case_id: number,
+	steps: number[],
+	/**
+	 *  The error class (`patterns::ErrorClass::key`) of the failure that
+	 *  led to the repair, when the run that showed it is on this machine.
+	 *  A later failure of the same class is evidence the note did not
+	 *  help; with no class known, any failure is.
+	 */
+	class?: string | null,
+};
+
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk_Deserialize = {
+	/**
+	 *  Short and stable: what the retire tool and the app's own buttons
+	 *  name a quirk by.
+	 */
+	id?: string,
 	text: string,
 	/**  "person" or "assistant" */
 	by: string,
 	/**  Epoch milliseconds as a string. */
 	at: string,
+	sources?: QuirkSource_Deserialize[],
+	/**
+	 *  Runs since the note was filed in which its source steps passed
+	 *  (at most one per source case per run).
+	 */
+	confirmed?: number,
+	/**  Epoch milliseconds as a string, of the latest of those runs. */
+	last_confirmed?: string | null,
+	/**
+	 *  Runs in which a source step failed the same way again (at most
+	 *  one per source case per run).
+	 */
+	doubted?: number,
+	/**  "active" or "retired". */
+	status?: string,
+	retired_reason?: string | null,
+	/**  Epoch milliseconds as a string. */
+	retired_at?: string | null,
+	/**
+	 *  Who retired it: "person" or "assistant". An assistant never brings
+	 *  back a note a person retired.
+	 */
+	retired_by?: string | null,
+	/**  Which assistant's work it came from: "autorun" or "api". */
+	from?: string,
+};
+
+/**
+ *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
+ *  written before they existed loads unchanged, and gains ids on load
+ *  (written down by the next save).
+ */
+export type Quirk_Serialize = {
+	/**
+	 *  Short and stable: what the retire tool and the app's own buttons
+	 *  name a quirk by.
+	 */
+	id: string,
+	text: string,
+	/**  "person" or "assistant" */
+	by: string,
+	/**  Epoch milliseconds as a string. */
+	at: string,
+	sources: QuirkSource_Serialize[],
+	/**
+	 *  Runs since the note was filed in which its source steps passed
+	 *  (at most one per source case per run).
+	 */
+	confirmed: number,
+	/**  Epoch milliseconds as a string, of the latest of those runs. */
+	last_confirmed: string | null,
+	/**
+	 *  Runs in which a source step failed the same way again (at most
+	 *  one per source case per run).
+	 */
+	doubted: number,
+	/**  "active" or "retired". */
+	status: string,
+	retired_reason: string | null,
+	/**  Epoch milliseconds as a string. */
+	retired_at: string | null,
+	/**
+	 *  Who retired it: "person" or "assistant". An assistant never brings
+	 *  back a note a person retired.
+	 */
+	retired_by: string | null,
+	/**  Which assistant's work it came from: "autorun" or "api". */
+	from: string,
 };
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
@@ -3058,18 +3324,18 @@ export type TemplatesImportSkip = {
 };
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_Deserialize;
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Deserialize = {
 	origin: string | null,
@@ -3078,10 +3344,10 @@ export type TemplatesOverview_Deserialize = {
 };
 
 /**
- *  Everything the tab needs to draw itself: the recipe's origin (so the
- *  tab can show which host these templates run against - `None` when the
- *  project has no sign-in recipe yet), and every saved template with its
- *  run history, and every saved flow.
+ *  Everything the tab needs to draw itself: the origin these templates run
+ *  against - the active environment's address, else the sign-in recipe's
+ *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Serialize = {
 	origin: string | null,

@@ -6,6 +6,7 @@
 //! here judges whether an edit is a GOOD idea, only whether it was
 //! honestly declared and never quietly removed an assertion.
 
+use super::nav::module_key;
 use super::{CaseScript, StepScript};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +23,11 @@ pub struct Edit {
     /// to know. Recorded as a project quirk.
     #[serde(default)]
     pub quirk: Option<String>,
+    /// The repair moves the case to another area (or back to the area
+    /// named like its Module, by leaving `area` out). Where a case starts
+    /// is part of the script, so this is declared like a changed step.
+    #[serde(default)]
+    pub area: bool,
 }
 
 /// How many times a script may be repaired by an assistant before a person
@@ -123,6 +129,28 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
             "the account a script runs as cannot be changed by a repair - a person picks it in the app"
                 .to_string(),
         );
+    }
+
+    // Rule 10: where the case starts is part of the script. A repair that
+    // changes the area - and leaving out an area the saved script has IS a
+    // change, never a silent erase, as leaving out `account` is - must say
+    // `"area": true`; one that says so and changes nothing is refused, as a
+    // step declared but not changed is. A blank area is no area, and case
+    // does not tell two area names apart.
+    let (old_area, new_area) = (old.area_name(), new.area_name());
+    let area_changed = old_area.map(module_key) != new_area.map(module_key);
+    let area_declared = declared.is_some_and(|e| e.area);
+    if area_changed && !area_declared {
+        let say = |a: Option<&str>| a.map_or("the case's Module".to_string(), |a| format!("\"{a}\""));
+        return Err(format!(
+            "case {}: the area changed from {} to {} but was not declared - add \"area\": true to the case's \"edits\" entry, or leave the area as it was",
+            old.case_id,
+            say(old_area),
+            say(new_area)
+        ));
+    }
+    if area_declared && !area_changed {
+        return Err("the area was declared but not changed".to_string());
     }
 
     let old_map: BTreeMap<i32, &StepScript> = old.steps.iter().map(|s| (s.step_number, s)).collect();

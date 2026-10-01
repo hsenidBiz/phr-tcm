@@ -66,6 +66,7 @@ fn proven() -> Proven {
         origin: "https://sender-site.example".into(),
         account: "sender.admin".into(),
         outputs: [("cycleId".to_string(), json!(272))].into(),
+        environment: None,
     }
 }
 

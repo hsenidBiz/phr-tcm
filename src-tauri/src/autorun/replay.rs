@@ -204,7 +204,7 @@ pub async fn run_case_as<D: Driver>(
             // The case's own sign-in just above, when it had one; otherwise
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
-            let mut out = nav::reached(&r.path.module, nav::go_to_module(d, r, from, timing).await);
+            let mut out = nav::reached(r.path.name(), nav::go_to_module(d, r, from, timing).await);
             if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
             }
@@ -356,11 +356,14 @@ pub async fn run_cases<B: Browsers>(
     } else {
         // An unreadable recipe gives no route here; the case's own sign-in
         // (step 0, `signin::prepare`) then fails with the read error itself.
-        recipe::load_recipe(root, organization, project).ok().flatten()
+        recipe::load_effective_recipe(root, organization, project).ok().flatten()
     };
     let total = cases.len() as u32;
     let run_id = run.id.clone();
     let mut save_error: Option<String> = None;
+    // Where this call's cases start, so the evidence below counts only
+    // what THIS run did, even into a run record that already held some.
+    let first = run.cases.len();
 
     for (i, case) in cases.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -379,7 +382,7 @@ pub async fn run_cases<B: Browsers>(
             Ok(Some(script)) => {
                 count = script.steps.len() as u32;
                 let account = script.account.as_deref().or(run_account);
-                match nav::route_for(&nav_file, case.module.as_deref(), account) {
+                match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {
                         // A path but no recipe: the sign-in fails first and
@@ -425,6 +428,13 @@ pub async fn run_cases<B: Browsers>(
         }
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
+
+    // What the run says about the project's quirks: a note filed with a
+    // repair is confirmed by its steps passing, or doubted by them failing
+    // the same way again. Bookkeeping on text an assistant reads - it never
+    // changes a script, and a quirks file it cannot write never fails the
+    // run (it is logged).
+    super::quirks::record_run_evidence(root, organization, project, &run.cases[first..], super::sessions::now_ms());
 
     // Every case ran by now: only the save failed, and the words say so.
     save_error.map_or(Ok(()), |e| Err(format!("the run finished but could not be saved: {e}")))

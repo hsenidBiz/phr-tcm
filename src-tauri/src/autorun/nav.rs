@@ -1,6 +1,8 @@
-//! Module paths: how an unattended run gets from the application's home
-//! page to a case's module screen, and the per-project switch that says
-//! whether scripts may open pages by address.
+//! Areas (once "module paths"): how an unattended run gets from the
+//! application's home page to the screen a case starts on, and the
+//! per-project switch that says whether scripts may open pages by address.
+//! A script that names an `area` goes there; one that names none goes to
+//! the area named like its test case's Module.
 //!
 //! One file per project, beside the sign-in recipe:
 //! `<autorun root>/projects/<slug>.nav.json`. It is kept on this machine
@@ -25,10 +27,19 @@ fn yes() -> bool {
     true
 }
 
-/// One module's recorded way in from the home page.
+/// One area's recorded way in from the home page. An area is a named place
+/// inside a test-case Module (PMS has Cycle Setup, Manage Cycle...); a
+/// module can have any number of them.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModulePath {
-    /// Compared with a test case's Module field, trimmed and ignoring case.
+    /// The area's name, unique per project ignoring case: what a script's
+    /// `area` names. Empty in a file written before areas existed; loading
+    /// it gives the area its module's name, so a case with no `area` still
+    /// goes where it went.
+    #[serde(default)]
+    pub area: String,
+    /// The test-case Module the area belongs to, for grouping. An area
+    /// named like a case's Module is where a script with no `area` goes.
     pub module: String,
     /// In order, the locators a run clicks: the same `Target` every script
     /// click uses.
@@ -47,6 +58,17 @@ pub struct ModulePath {
     pub start: String,
 }
 
+impl ModulePath {
+    /// The area's name, trimmed: its own, or - for a path that has none
+    /// yet - its module's.
+    pub fn name(&self) -> &str {
+        match self.area.trim() {
+            "" => self.module.trim(),
+            a => a,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NavFile {
     /// Whether a script may open a page by address. Absent means yes, so a
@@ -63,11 +85,12 @@ impl Default for NavFile {
     }
 }
 
-/// A recorded module as the Module paths dialog shows it. Every click is
-/// already in words (`link "Leave"`), so the webview never keeps a second
-/// copy of how a locator reads.
+/// A recorded area as the Areas dialog shows it. Every click is already in
+/// words (`link "Leave"`), so the webview never keeps a second copy of how
+/// a locator reads.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct ModuleView {
+    pub area: String,
     pub module: String,
     pub clicks: Vec<String>,
     pub arrived: String,
@@ -87,6 +110,7 @@ pub fn view(nav: &NavFile) -> NavView {
             .modules
             .iter()
             .map(|m| ModuleView {
+                area: m.name().to_string(),
                 module: m.module.clone(),
                 clicks: m.clicks.iter().map(Target::describe).collect(),
                 arrived: m.arrived.clone(),
@@ -100,12 +124,19 @@ pub fn view(nav: &NavFile) -> NavView {
 pub const NO_MODULE: &str = "This case has no Module - set one in Azure DevOps, or record a path for it.";
 pub const NO_ACCOUNT: &str = "Choose an account when starting the run, or set Runs as on the script.";
 const NO_PATH_START: &str = "No menu path recorded for module \"";
+const UNRECORDED_AREA_START: &str = "the area \"";
 
 pub fn no_path(module: &str) -> String {
-    format!("{NO_PATH_START}{}\" - record one in Auto Run, Module paths.", module.trim())
+    format!("{NO_PATH_START}{}\" - record one in Auto Run, Areas.", module.trim())
 }
 
-/// How two module names are compared: trimmed, case ignored.
+/// Why a case whose script names an area the project has not recorded is
+/// not run, and the start of why such a script is not saved (spec §9).
+pub fn unrecorded_area(area: &str) -> String {
+    format!("{UNRECORDED_AREA_START}{}\" is not recorded - record it in Auto Run, Areas", area.trim())
+}
+
+/// How two module (or area) names are compared: trimmed, case ignored.
 pub fn module_key(module: &str) -> String {
     module.trim().to_lowercase()
 }
@@ -118,33 +149,70 @@ pub fn load_nav(root: &Path, org: &str, project: &str) -> Result<NavFile, String
     match std::fs::read_to_string(nav_path(root, org, project)) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
-            serde_json::from_str(s).map_err(|e| format!("the module paths file is not readable: {e}"))
+            let nav: NavFile =
+                serde_json::from_str(s).map_err(|e| format!("the areas file is not readable: {e}"))?;
+            Ok(as_areas(nav, org, project, &nav_path(root, org, project)))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(NavFile::default()),
         Err(e) => Err(e.to_string()),
     }
 }
 
+/// A file as areas: each path without an area name takes its module's
+/// (a file written before areas existed), and of two whose names differ
+/// only in case the first is kept and the other logged and left out - an
+/// old file could hold "Leave" and "LEAVE" as two modules, and two areas
+/// one name apart only in case would make a script's `area` ambiguous.
+/// The file is read on every run, check and save, so what was left out is
+/// logged once per file per process, not once per read.
+fn as_areas(mut nav: NavFile, org: &str, project: &str, file: &Path) -> NavFile {
+    let mut kept: Vec<ModulePath> = Vec::with_capacity(nav.modules.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for mut m in std::mem::take(&mut nav.modules) {
+        m.area = m.name().to_string();
+        let key = module_key(&m.area);
+        match kept.iter().find(|k| !key.is_empty() && module_key(&k.area) == key) {
+            Some(first) => dropped.push(format!(
+                "Auto Run areas for {org} / {project}: \"{}\" differs from \"{}\" only in case - kept the first, left this one out",
+                m.area, first.area
+            )),
+            None => kept.push(m),
+        }
+    }
+    if !dropped.is_empty() && first_warning_for(file) {
+        for line in dropped {
+            crate::applog::warn(line);
+        }
+    }
+    nav.modules = kept;
+    nav
+}
+
+/// True the first time it is asked about this file in this process.
+fn first_warning_for(file: &Path) -> bool {
+    static WARNED: std::sync::Mutex<Option<HashSet<PathBuf>>> = std::sync::Mutex::new(None);
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    warned.get_or_insert_with(HashSet::new).insert(file.to_path_buf())
+}
+
 pub fn validate(nav: &NavFile) -> Result<(), String> {
     let mut seen = HashSet::new();
     for m in &nav.modules {
-        let name = m.module.trim();
-        if name.is_empty() {
-            return Err("a module path needs the module's name".to_string());
+        if m.module.trim().is_empty() {
+            return Err("an area needs the name of the module it belongs to".to_string());
         }
+        let name = m.name();
         if !seen.insert(module_key(name)) {
-            return Err(format!("module \"{name}\" has two paths - keep one"));
+            return Err(format!("area \"{name}\" has two paths - keep one"));
         }
         if m.clicks.is_empty() {
-            return Err(format!("module \"{name}\" has no clicks - record it again"));
+            return Err(format!("area \"{name}\" has no clicks - record it again"));
         }
         for (i, click) in m.clicks.iter().enumerate() {
-            click.validate().map_err(|e| format!("module \"{name}\", click {}: {e}", i + 1))?;
+            click.validate().map_err(|e| format!("area \"{name}\", click {}: {e}", i + 1))?;
         }
         if !m.arrived.starts_with('/') {
-            return Err(format!(
-                "module \"{name}\": where it ends must be an address path such as /hr/leave/apply"
-            ));
+            return Err(format!("area \"{name}\": where it ends must be an address path such as /hr/leave/apply"));
         }
     }
     Ok(())
@@ -170,21 +238,47 @@ pub fn save_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<
     Ok(())
 }
 
-pub fn find_path<'a>(nav: &'a NavFile, module: &str) -> Option<&'a ModulePath> {
-    let key = module_key(module);
+/// The area of this name, trimmed and ignoring case.
+pub fn find_area<'a>(nav: &'a NavFile, area: &str) -> Option<&'a ModulePath> {
+    let key = module_key(area);
     if key.is_empty() {
         return None;
     }
-    nav.modules.iter().find(|m| module_key(&m.module) == key)
+    nav.modules.iter().find(|m| module_key(m.name()) == key)
 }
 
-/// Add a path, or replace the one already recorded for the same module
-/// (Re-record). The module name is stored trimmed.
+/// The area named like `module`: where a case with no `area` goes.
+pub fn find_path<'a>(nav: &'a NavFile, module: &str) -> Option<&'a ModulePath> {
+    find_area(nav, module)
+}
+
+/// Whether `area` may be recorded under `module`: refused when another
+/// module already holds an area of that name (names are unique per
+/// project, ignoring case). The same name under the same module is a
+/// Re-record and is fine. Asked before a recording opens a browser, and
+/// again when the path is saved.
+pub fn check_area_free(nav: &NavFile, area: &str, module: &str) -> Result<(), String> {
+    match find_area(nav, area) {
+        Some(slot) if module_key(&slot.module) != module_key(module) => Err(format!(
+            "an area named \"{}\" is already recorded under {} - choose another name",
+            slot.name(),
+            slot.module.trim()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Add an area, or replace the one already recorded under the same name
+/// and module, in any case (Re-record). A new area whose name is taken by
+/// one under ANOTHER module is refused: names are unique per project. An
+/// area with no name is named after its module. Both are stored trimmed.
 pub fn put_path(root: &Path, org: &str, project: &str, mut path: ModulePath) -> Result<NavFile, String> {
     path.module = path.module.trim().to_string();
+    path.area = path.name().to_string();
     let mut nav = load_nav(root, org, project)?;
-    let key = module_key(&path.module);
-    match nav.modules.iter_mut().find(|m| module_key(&m.module) == key) {
+    check_area_free(&nav, &path.area, &path.module)?;
+    let key = module_key(&path.area);
+    match nav.modules.iter_mut().find(|m| module_key(m.name()) == key) {
         Some(slot) => *slot = path,
         None => nav.modules.push(path),
     }
@@ -192,10 +286,12 @@ pub fn put_path(root: &Path, org: &str, project: &str, mut path: ModulePath) -> 
     Ok(nav)
 }
 
-pub fn remove_path(root: &Path, org: &str, project: &str, module: &str) -> Result<NavFile, String> {
+/// Remove the area of this name, ignoring case. The module's other areas
+/// stay.
+pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<NavFile, String> {
     let mut nav = load_nav(root, org, project)?;
-    let key = module_key(module);
-    nav.modules.retain(|m| module_key(&m.module) != key);
+    let key = module_key(area);
+    nav.modules.retain(|m| module_key(m.name()) != key);
     save_nav(root, org, project, &nav)?;
     Ok(nav)
 }
@@ -208,23 +304,33 @@ pub fn set_direct_urls(root: &Path, org: &str, project: &str, allowed: bool) -> 
 }
 
 /// Where a case should be taken after sign-in, or why it cannot run.
-/// `Ok(None)`: the project has no paths, and the case runs as it always
-/// has. `module` is the case's Module field; `account` is the account that
-/// applies to it (the script's own, else the run's). Checked in the
-/// design's order: the Module, then a path for it, then an account.
+///
+/// A script that names an `area` goes there, and a name the project has
+/// not recorded refuses the case - even in a project with no areas at all.
+/// With no `area` (or a blank one) it is exactly as before areas existed:
+/// `Ok(None)` when the project has no paths, and the case runs as it always
+/// has; otherwise the area named like the case's `module`, checked in the
+/// design's order - the Module, then a path for it. Either way an
+/// `account` must apply (the script's own, else the run's).
 pub fn route_for<'a>(
     nav: &'a NavFile,
+    area: Option<&str>,
     module: Option<&str>,
     account: Option<&str>,
 ) -> Result<Option<&'a ModulePath>, String> {
-    if nav.modules.is_empty() {
-        return Ok(None);
-    }
-    let module = module.map(str::trim).unwrap_or("");
-    if module.is_empty() {
-        return Err(NO_MODULE.to_string());
-    }
-    let path = find_path(nav, module).ok_or_else(|| no_path(module))?;
+    let area = area.map(str::trim).unwrap_or("");
+    let path = if !area.is_empty() {
+        find_area(nav, area).ok_or_else(|| unrecorded_area(area))?
+    } else {
+        if nav.modules.is_empty() {
+            return Ok(None);
+        }
+        let module = module.map(str::trim).unwrap_or("");
+        if module.is_empty() {
+            return Err(NO_MODULE.to_string());
+        }
+        find_path(nav, module).ok_or_else(|| no_path(module))?
+    };
     if account.map_or(true, |a| a.trim().is_empty()) {
         return Err(NO_ACCOUNT.to_string());
     }
@@ -322,7 +428,7 @@ impl PathFailure {
         }
     }
 
-    /// The Module paths dialog's shorter form (design §4).
+    /// The Areas dialog's shorter form (design §4).
     pub fn for_dialog(&self) -> String {
         match &self.at {
             Where::Home => self.reason.clone(),
@@ -532,6 +638,7 @@ pub fn is_setup_problem(reason: &str) -> bool {
         || reason == NO_MODULE
         || reason == NO_ACCOUNT
         || reason.starts_with(NO_PATH_START)
+        || reason.starts_with(UNRECORDED_AREA_START)
 }
 
 /// Start of the sentence a saved `navigate` gets while the switch is off.
@@ -559,25 +666,78 @@ pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), S
     Ok(())
 }
 
-/// `check_no_addresses` against the project's own file: the one call every
-/// save path makes (the Script editor, a JSON import, the assistant's
-/// `save_autorun_script`).
-pub fn refuse_addresses(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
-    check_no_addresses(&load_nav(root, org, project)?, scripts)
+/// Every area a script names must be one the project has recorded: a run
+/// would refuse the case anyway, so the script is refused when it is saved,
+/// with the names it could have used. No `area`, or a blank one, is "the
+/// case's Module" and always passes. Names the first case it finds.
+pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> {
+    for sc in scripts {
+        let Some(area) = sc.area_name() else {
+            continue;
+        };
+        if find_area(nav, area).is_none() {
+            let names: Vec<&str> = nav.modules.iter().map(ModulePath::name).collect();
+            let recorded = if names.is_empty() {
+                "no areas are recorded yet".to_string()
+            } else {
+                format!("recorded areas: {}", names.join(", "))
+            };
+            return Err(format!("case {}: {} ({recorded})", sc.case_id, unrecorded_area(area)));
+        }
+    }
+    Ok(())
 }
 
-/// What an assistant's guide gains while the switch is off. Empty while it
-/// is on.
+/// The project's rules for a script, against its own file: no address
+/// while the switch is off (`check_no_addresses`), and only recorded areas
+/// (`check_areas`). The one call every save path makes (the Script editor,
+/// a JSON import, the assistant's `save_autorun_script`).
+pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
+    let nav = load_nav(root, org, project)?;
+    check_no_addresses(&nav, scripts)?;
+    check_areas(&nav, scripts)
+}
+
+/// What an assistant's guide gains for this project: the module-screen
+/// rule while the switch is off, and the recorded areas while there are
+/// any. Empty when neither applies.
 pub fn guide_section(nav: &NavFile) -> String {
-    if nav.direct_urls {
-        return String::new();
+    let mut out = String::new();
+    if !nav.direct_urls {
+        out.push_str(
+            "## This project's runs start on the module screen\n\n\
+             - The run signs in and goes to the case's module screen before step 1, by the menu path recorded in the app.\n\
+             - The script starts there: its first action acts on the module screen.\n\
+             - Never use `navigate`. This project refuses to save a script that opens a page by address; reach every other screen with clicks.\n\
+             - A `sign_in` action lands on the home page, and the run brings the browser back to the module screen before the next action.\n",
+        );
     }
-    "## This project's runs start on the module screen\n\n\
-     - The run signs in and goes to the case's module screen before step 1, by the menu path recorded in the app.\n\
-     - The script starts there: its first action acts on the module screen.\n\
-     - Never use `navigate`. This project refuses to save a script that opens a page by address; reach every other screen with clicks.\n\
-     - A `sign_in` action lands on the home page, and the run brings the browser back to the module screen before the next action.\n"
-        .to_string()
+    if !nav.modules.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&areas_section(nav));
+    }
+    out
+}
+
+/// The recorded areas, one line each: name - module - the address path it
+/// lands on.
+fn areas_section(nav: &NavFile) -> String {
+    let mut out = String::from(
+        "## This project's areas\n\n\
+         Before step 1 a run signs in and goes to an area by the menu path recorded for it in the app. \
+         Each line is one area: its name, the test case Module it belongs to, and the address path it lands on.\n\n",
+    );
+    for m in &nav.modules {
+        out.push_str(&format!("- {} - {} - {}\n", m.name(), m.module.trim(), m.arrived));
+    }
+    out.push_str(
+        "\n- A script with no `area` goes to the area named like the case's Module.\n\
+         - Set `area` on the script, to one of the names above, whenever the case's screen is not its module's default area (the area named like its Module).\n\
+         - A script that names an area not listed here is refused when it is saved.\n",
+    );
+    out
 }
 
 /// `check_path`'s sentence when the browser stopped answering mid sign-in.

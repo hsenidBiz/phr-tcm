@@ -157,6 +157,43 @@ pub const HAS_FOCUS_JS: &str = r#"function() {
   return a === this || (this.isContentEditable && this.contains(a));
 }"#;
 
+// The words a click, a fill or a wait reports a failure in. Named so the
+// one place that reads failures back - `autorun::patterns`, which groups
+// the same failure across cases - classifies them by these constants,
+// never by a second copy of the wording that could drift away from them.
+
+/// Nothing on the page matches the target.
+pub const NOT_FOUND: &str = "not found";
+/// The one element is there, and hidden.
+pub const NOT_VISIBLE: &str = "is not visible";
+/// Drawn, but outside the window even after scrolling it into view.
+pub const OFFSCREEN: &str = "is outside the visible part of the page";
+/// The element (or its fieldset) is disabled.
+pub const DISABLED: &str = "is disabled";
+/// A fill aimed at something that takes no typing.
+pub const NOT_EDITABLE: &str = "cannot be typed into";
+/// Followed by what is in the way (`tag#id.class`, or "another element").
+pub const COVERED_BY: &str = "is covered by ";
+/// It never held still for two looks in a row.
+pub const STILL_MOVING: &str = "is still moving";
+/// The tail of [`matched_many`].
+pub const MATCHED_MANY_TAIL: &str = " elements - narrow it, or add nth";
+/// Followed by the reason the second look found.
+pub const MOVED_BEFORE_CLICK: &str = "moved or was covered just before the click: ";
+/// A fill whose field gave the focus away.
+pub const LOST_FOCUS: &str = "lost focus before it could be typed into";
+/// A select with no such option (followed by the option, quoted).
+pub const NO_OPTION: &str = "the list has no option ";
+/// A select whose option is disabled (followed by the option, quoted).
+pub const OPTION: &str = "the option ";
+/// The page itself refused a protocol call (followed by its message).
+pub const PAGE_REFUSED: &str = "the page refused: ";
+
+/// A target that names more than one element.
+pub fn matched_many(n: usize) -> String {
+    format!("matched {n}{MATCHED_MANY_TAIL}")
+}
+
 /// Why a probed element cannot be used right now, from its own flags:
 /// visible, onscreen, enabled, and - only when the caller means to type
 /// into it - editable, then hit. Shared between `look` (deciding whether
@@ -165,15 +202,15 @@ pub const HAS_FOCUS_JS: &str = r#"function() {
 fn reason(p: &Value, need_editable: bool) -> Option<String> {
     let flag = |k: &str| p[k].as_bool().unwrap_or(false);
     if !flag("visible") {
-        Some("is not visible".to_string())
+        Some(NOT_VISIBLE.to_string())
     } else if !flag("onscreen") {
-        Some("is outside the visible part of the page".to_string())
+        Some(OFFSCREEN.to_string())
     } else if !flag("enabled") {
-        Some("is disabled".to_string())
+        Some(DISABLED.to_string())
     } else if need_editable && !flag("editable") {
-        Some("cannot be typed into".to_string())
+        Some(NOT_EDITABLE.to_string())
     } else if !flag("hit") {
-        Some(format!("is covered by {}", p["covered_by"].as_str().unwrap_or("another element")))
+        Some(format!("{COVERED_BY}{}", p["covered_by"].as_str().unwrap_or("another element")))
     } else {
         None
     }
@@ -200,11 +237,11 @@ async fn look<D: Driver>(
 ) -> Result<Look, CdpError> {
     let handles = resolve(d, target).await?;
     if handles.is_empty() {
-        return Ok(Look::NotYet { why: "not found".to_string(), rect: None });
+        return Ok(Look::NotYet { why: NOT_FOUND.to_string(), rect: None });
     }
     if handles.len() > 1 && !target.is_legacy() {
         return Ok(Look::NotYet {
-            why: format!("matched {} elements - narrow it, or add nth", handles.len()),
+            why: matched_many(handles.len()),
             rect: None,
         });
     }
@@ -219,7 +256,7 @@ async fn look<D: Driver>(
     // as ready.
     let rect = read_rect(&p);
     if Some(rect) != prev_rect {
-        return Ok(Look::NotYet { why: "is still moving".to_string(), rect: Some(rect) });
+        return Ok(Look::NotYet { why: STILL_MOVING.to_string(), rect: Some(rect) });
     }
     Ok(Look::Ready(Ready {
         handle,
@@ -304,7 +341,7 @@ async fn keep_looking<D: Driver>(
 /// `Blocked`.
 fn blame(e: CdpError) -> Blocked {
     match e {
-        CdpError::Protocol { message, .. } => Blocked::Page(format!("the page refused: {message}")),
+        CdpError::Protocol { message, .. } => Blocked::Page(format!("{PAGE_REFUSED}{message}")),
         other => Blocked::Harness(other.to_string()),
     }
 }
@@ -316,7 +353,7 @@ fn blame(e: CdpError) -> Blocked {
 pub async fn click<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
     let p = page::call_value(d, &ready.handle, PROBE_JS, &[]).await.map_err(blame)?;
     if let Some(why) = reason(&p, false) {
-        return Err(Blocked::Page(format!("moved or was covered just before the click: {why}")));
+        return Err(Blocked::Page(format!("{MOVED_BEFORE_CLICK}{why}")));
     }
     let x = p["x"].as_f64().unwrap_or(ready.x);
     let y = p["y"].as_f64().unwrap_or(ready.y);
@@ -340,10 +377,10 @@ pub async fn fill<D: Driver>(d: &mut D, ready: &Ready, value: &str) -> Result<()
     match kind.as_str().unwrap_or("text") {
         "select-ok" | "set" => return Ok(()),
         "select-missing" => {
-            return Err(Blocked::Page(format!("the list has no option \"{value}\"")));
+            return Err(Blocked::Page(format!("{NO_OPTION}\"{value}\"")));
         }
         "select-disabled" => {
-            return Err(Blocked::Page(format!("the option \"{value}\" is disabled")));
+            return Err(Blocked::Page(format!("{OPTION}\"{value}\" {DISABLED}")));
         }
         _ => {}
     }
@@ -351,10 +388,7 @@ pub async fn fill<D: Driver>(d: &mut D, ready: &Ready, value: &str) -> Result<()
     // would land somewhere else and this would still say "filled".
     let kept = page::call_value(d, &ready.handle, HAS_FOCUS_JS, &[]).await.map_err(blame)?;
     if !kept.as_bool().unwrap_or(false) {
-        return Err(Blocked::Page(
-            "lost focus before it could be typed into - something else on the page took it"
-                .to_string(),
-        ));
+        return Err(Blocked::Page(format!("{LOST_FOCUS} - something else on the page took it")));
     }
     if value.is_empty() {
         for kind in ["keyDown", "keyUp"] {

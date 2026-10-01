@@ -55,7 +55,7 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
 /// A case whose machine proposal or human verdict says it did not pass -
 /// the set `describe_failures` reports on. A case nobody has judged either
 /// way (both still "") is not a failure to act on, just an unfinished one.
-fn is_failed(case: &CaseRecord) -> bool {
+pub fn is_failed(case: &CaseRecord) -> bool {
     matches!(case.proposed.as_str(), "Failed" | "Blocked") || matches!(case.verdict.as_str(), "Failed" | "Blocked")
 }
 
@@ -195,6 +195,9 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -
     if let Some(account) = &case.account {
         lines.push(format!("account: {account}"));
     }
+    if let Some(area) = script.and_then(CaseScript::area_name) {
+        lines.push(format!("area: {area}"));
+    }
     if let Some(s) = script {
         lines.push(format!("repairs so far: {} of {MAX_REPAIRS}", s.repairs));
     }
@@ -228,7 +231,15 @@ pub fn describe_failures(run: &LocalRun, scripts: &[CaseScript]) -> String {
     if blocks.is_empty() {
         return format!("no failed case in run {}", run.id);
     }
-    blocks.join("\n\n")
+    let mut out = blocks.join("\n\n");
+    // The same failure in more than one case, last: read after the cases
+    // it summarises, and absent altogether when nothing repeats.
+    let patterns = super::patterns::patterns_section(&super::patterns::find_patterns(run, scripts));
+    if !patterns.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(patterns.trim_end());
+    }
+    out
 }
 
 /// The newest run on this machine that holds this case, or - with no case

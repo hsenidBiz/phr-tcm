@@ -13,7 +13,11 @@ import AutoRun from "./index";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
+/** What auto_run_load_recipe answers; a test that needs a recipe sets it. */
+let savedRecipe: unknown = null;
+
 afterEach(() => {
+  savedRecipe = null;
   clearMocks();
   localStorage.clear();
   vi.restoreAllMocks();
@@ -57,7 +61,7 @@ function mockList(
     }
     if (cmd === "auto_run_list_runs") return runs;
     if (cmd === "auto_run_list_accounts") return [];
-    if (cmd === "auto_run_load_recipe") return null;
+    if (cmd === "auto_run_load_recipe") return savedRecipe;
     if (onCommand) return onCommand(cmd, args);
     return null;
   });
@@ -359,14 +363,14 @@ test("Clear results opens its confirm with the exact sentence and, once confirme
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 run removed."));
 });
 
-test("the Setup card's Module paths button opens its dialog", async () => {
+test("the Setup card's Areas button opens its dialog", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [] } : null,
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  fireEvent.click(screen.getByRole("button", { name: "Edit module paths" }));
-  expect(await screen.findByRole("heading", { name: "Module paths" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit areas" }));
+  expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
 
 // ---- Setup card, header line, site address ----
@@ -383,8 +387,10 @@ const RECIPE = {
 /** A project that is fully set up: a recipe, two accounts, one module
  * path. `saves` records every recipe written, and the mock hands back the
  * last one written - the way the file on disk would. */
-function mockSetUp() {
+function mockSetUp(env?: ReturnType<typeof envList>) {
   const saves: { recipe: typeof RECIPE }[] = [];
+  const envSaves: { env: Record<string, unknown> }[] = [];
+  let envView = env;
   let recipe: unknown = RECIPE;
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -400,6 +406,13 @@ function mockSetUp() {
     if (cmd === "auto_run_load_nav") {
       return { direct_urls: true, modules: [{ module: "Leave", clicks: [], arrived: "", recorded: "" }] };
     }
+    if (cmd === "env_list") return envView ?? null;
+    if (cmd === "env_save") {
+      const a = args as { env: Record<string, unknown> };
+      envSaves.push(a);
+      envView = { active: envView!.active, environments: [{ ...envView!.environments[0], ...a.env }] } as never;
+      return envView;
+    }
     if (cmd === "auto_run_load_recipe") return recipe;
     if (cmd === "auto_run_save_recipe") {
       const a = args as { recipe: typeof RECIPE };
@@ -409,10 +422,45 @@ function mockSetUp() {
     }
     return null;
   });
-  return saves;
+  return Object.assign(saves, { envSaves });
 }
 
 const row = (name: string) => screen.getByRole("group", { name });
+
+function envList(start_url: string, allowed_origins: string[] = []) {
+  return {
+    active: "qa",
+    environments: [
+      { id: "qa", name: "QA", start_url, allowed_origins, db_id: "db", test_environment: false, has_default_password: false },
+    ],
+  };
+}
+
+test("the header names the active environment and the host of its address", async () => {
+  savedRecipe = RECIPE;
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "env_list" ? envList("https://qa.example.com/start", ["https://sso.qa.example.com"]) : undefined,
+  );
+  renderScreen();
+  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
+  expect(screen.getByText("QA - qa.example.com").parentElement).toHaveTextContent("Environment QA - qa.example.com");
+  // The Setup card says the same address, not the recipe's.
+  const site = row("Site address");
+  expect(await within(site).findByText("https://qa.example.com/start")).toBeInTheDocument();
+  expect(within(site).queryByText("https://hr.example.internal/login")).not.toBeInTheDocument();
+  expect(within(site).getByText(/\+1 allowed site/)).toBeInTheDocument();
+});
+
+test("an environment with no address of its own shows the recipe's host", async () => {
+  savedRecipe = RECIPE;
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "env_list" ? envList("") : undefined,
+  );
+  renderScreen();
+  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
+  expect(within(row("Site address")).getByText("https://hr.example.internal/login")).toBeInTheDocument();
+});
+
 
 test("the Setup card's Test files row counts the project's files, and Manage opens them", async () => {
   const listed: unknown[] = [];
@@ -455,9 +503,9 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(within(row("Accounts")).getByText("None yet")).toBeInTheDocument();
   // The nav query answers null in this mock: an answer, so the row reads
   // "none" rather than sitting on "Loading…" forever.
-  expect(await within(row("Module paths")).findByText("None mapped yet")).toBeInTheDocument();
-  expect(within(row("Module paths")).queryByText("Loading…")).not.toBeInTheDocument();
-  expect(within(row("Module paths")).getByRole("button", { name: "Edit module paths" })).toBeEnabled();
+  expect(await within(row("Areas")).findByText("None recorded yet")).toBeInTheDocument();
+  expect(within(row("Areas")).queryByText("Loading…")).not.toBeInTheDocument();
+  expect(within(row("Areas")).getByRole("button", { name: "Edit areas" })).toBeEnabled();
   expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
   // Without a recipe there is no address to edit on its own: the row's one
@@ -482,40 +530,46 @@ test("the Setup card and the header line read a project that is set up", async (
   expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
   expect(await within(row("Accounts")).findByText("2 accounts on this machine")).toBeInTheDocument();
   // One wording for the same count, in the row and in the header.
-  expect(await within(row("Module paths")).findByText("1 module path mapped")).toBeInTheDocument();
+  expect(await within(row("Areas")).findByText("1 area recorded")).toBeInTheDocument();
 
   // The header line: project, the host the runs go to, and the counts.
   expect(screen.getByText("proj")).toBeInTheDocument();
   expect(screen.getByText("hr.example.internal")).toBeInTheDocument();
   expect(screen.getByText("2 accounts")).toBeInTheDocument();
-  expect(screen.getByText("1 module path")).toBeInTheDocument();
+  expect(screen.getByText("1 area")).toBeInTheDocument();
 });
 
-test("saving a new site address updates the Setup row and the header, keeping the rest of the recipe", async () => {
-  const saves = mockSetUp();
+test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the header", async () => {
+  const saves = mockSetUp(envList(""));
   renderScreen();
   await screen.findByText("Alpha check");
+  // No address of its own yet: the header shows the recipe's host.
+  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit site address" }));
   expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
   const start = screen.getByRole("textbox", { name: "Start address" }) as HTMLInputElement;
-  await waitFor(() => expect(start.value).toBe("https://hr.example.internal/login"));
+  expect(await screen.findByText("Using the sign-in recipe's address")).toBeInTheDocument();
   fireEvent.change(start, { target: { value: "https://people.example.org/" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Also allowed" }), {
     target: { value: "https://sso.example.org\n\n  https://cdn.example.org  " },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-  await waitFor(() => expect(saves).toHaveLength(1));
-  expect(saves[0].recipe).toEqual({
-    ...RECIPE,
-    start_url: "https://people.example.org/",
-    allowed_origins: ["https://sso.example.org", "https://cdn.example.org"],
-  });
+  await waitFor(() => expect(saves.envSaves).toHaveLength(1));
+  expect(saves.envSaves[0].env).toEqual(
+    expect.objectContaining({
+      id: "qa",
+      start_url: "https://people.example.org/",
+      allowed_origins: ["https://sso.example.org", "https://cdn.example.org"],
+    }),
+  );
+  // The recipe file is untouched.
+  expect(saves).toHaveLength(0);
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Site address" })).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText("people.example.org")).toBeInTheDocument();
+  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("https://people.example.org/")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("+2 allowed sites")).toBeInTheDocument();
 });
@@ -578,7 +632,7 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   await screen.findByText("Alpha check");
 
   const why = "Pick an organization and project first";
-  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit module paths"]) {
+  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
     const b = screen.getByRole("button", { name });
     expect(b).toBeDisabled();
     expect(b).toHaveAttribute("title", why);

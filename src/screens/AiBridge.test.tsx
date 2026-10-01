@@ -679,11 +679,14 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
   expect([...disabledTools].sort()).toEqual([
+    "get_accounts",
     "get_autorun_failures",
     "get_autorun_guide",
     "get_autorun_page",
     "probe_autorun_locator",
+    "propose_accounts",
     "record_autorun_quirk",
+    "retire_autorun_quirk",
     "save_autorun_script",
     "try_autorun_action",
   ]);
@@ -987,4 +990,237 @@ test("the test design card switches the risk-tiered writing guide on and off", a
   fireEvent.click(trial);
   expect(trial).toHaveAttribute("aria-checked", "false");
   expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBeNull();
+});
+
+// ------------------------------------------------------- environments
+
+const ENV_DEFAULT = {
+  id: "env-00000001", name: "Default", start_url: "", allowed_origins: [],
+  db_id: "dev-read", test_environment: false, has_default_password: false,
+};
+const ENV_QA = {
+  id: "env-00000002", name: "QA", start_url: "https://qa.example.internal/", allowed_origins: [],
+  db_id: "qa-read", test_environment: false, has_default_password: false,
+};
+const ENV_GONE = {
+  id: "env-00000003", name: "Old custom", start_url: "", allowed_origins: [],
+  db_id: "removed-login", test_environment: false, has_default_password: false,
+};
+
+/** Rust's side of the environments, enough for the card: a list, a switch
+ * that moves `active`, and a save that replaces one entry. */
+function envMocks(envs = [ENV_DEFAULT, ENV_QA, ENV_GONE]) {
+  const calls: { cmd: string; args: unknown }[] = [];
+  const state = { active: ENV_DEFAULT.id, envs };
+  const view = () => ({ active: state.active, environments: state.envs });
+  dbMocks((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "env_list") return view();
+    if (cmd === "env_set_active") {
+      state.active = (args as { id: string }).id;
+      return view();
+    }
+    if (cmd === "env_save") {
+      const env = (args as { env: (typeof envs)[number] }).env;
+      state.envs = state.envs.map((e) => (e.id === env.id ? { ...e, ...env } : e));
+      return view();
+    }
+    return undefined;
+  });
+  return calls;
+}
+
+function envCard(): HTMLElement {
+  return screen.getByRole("heading", { name: "Environment" }).closest("section")!;
+}
+
+test("the Environment card lists the environments and shows the active one's address", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const picker = await screen.findByRole("combobox", { name: "Environment" });
+  await waitFor(() => expect(picker).toHaveTextContent("Default"));
+  expect(within(envCard()).getByText("Using the sign-in recipe's address")).toBeInTheDocument();
+  fireEvent.click(picker);
+  expect(await screen.findByRole("option", { name: "QA" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Old custom" })).toBeInTheDocument();
+});
+
+test("choosing an environment switches it and the database card shows its database", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  const calls = envMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "env_set_active")?.args).toEqual({ id: ENV_QA.id }),
+  );
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
+  expect(await screen.findByText("Signs in as sgqa01db01_readonly")).toBeInTheDocument();
+  expect(within(envCard()).getByText("https://qa.example.internal/")).toBeInTheDocument();
+});
+
+test("an environment whose database is gone still switches, sets no database and says so", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Old custom" }));
+
+  expect(
+    await screen.findByText("the database this environment uses is not set up any more - pick one"),
+  ).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
+  expect(selectedDbSnapshot()).toBe("");
+});
+
+test("a refused switch is shown and nothing moves", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks((cmd) => {
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_set_active") throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    return undefined;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read"));
+  expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("Default");
+});
+
+test("changing the database card saves it into the active environment", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  const calls = envMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("Default"));
+  fireEvent.click(screen.getByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
+
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  expect(calls.find((c) => c.cmd === "env_save")!.args).toEqual({
+    env: {
+      id: ENV_DEFAULT.id,
+      name: "Default",
+      start_url: "",
+      allowed_origins: [],
+      db_id: "qa-read",
+      test_environment: false,
+    },
+  });
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read");
+});
+
+test("a refused save puts the database card back where it was", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  dbMocks((cmd) => {
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_save") throw "\"Default\" uses a database that is not set up - pick one";
+    return undefined;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("Default"));
+  fireEvent.click(screen.getByRole("combobox", { name: "Database" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA - read only" }));
+
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read"));
+  expect(await screen.findByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
+});
+
+test("a switch forgets what was read for the environment before it", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // What another screen read while Default was active: its accounts (with
+  // passwords), the assistant's proposals for it, and a template overview.
+  qc.setQueryData(["autorun-accounts"], [{ key: "hr.sup", label: "Sup", username: "sup-default", password: "pw" }]);
+  qc.setQueryData(["env-proposals"], [{ key: "hr.emp", label: "Emp", username: "emp", role: null }]);
+  qc.setQueryData(["api-templates", "acme", "Web"], { templates: [] });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("QA"));
+  expect(qc.getQueryData(["autorun-accounts"])).toBeUndefined();
+  expect(qc.getQueryData(["env-proposals"])).toBeUndefined();
+  expect(qc.getQueryData(["api-templates", "acme", "Web"])).toBeUndefined();
+});
+
+test("a refused switch keeps what was read", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  let asked = false;
+  dbMocks((cmd) => {
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_set_active") {
+      asked = true;
+      throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    }
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const accounts = [{ key: "hr.sup", label: "Sup", username: "sup-default", password: "pw" }];
+  qc.setQueryData(["autorun-accounts"], accounts);
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+  await waitFor(() => expect(asked).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(qc.getQueryData(["autorun-accounts"])).toEqual(accounts);
+});
+
+test("Edit environments opens the environments dialog", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(screen.queryByRole("button", { name: "Manage environments" })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit environments" }));
+  expect(await screen.findByRole("heading", { name: "Environments" })).toBeInTheDocument();
+});
+
+test("the environments are asked for with the card's choice when it is a known database", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "qa-read");
+  const calls = envMocks([ENV_QA]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
+  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: "qa-read" });
+});
+
+test("a card choice that names no database is never handed to the environments", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "not-a-database");
+  const calls = envMocks([ENV_DEFAULT]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
+  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: null });
+  expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
+});
+
+test("a Default made without the card's choice is brought in line with it once", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "qa-read");
+  const calls = envMocks([ENV_DEFAULT]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  expect((calls.find((c) => c.cmd === "env_save")!.args as { env: { db_id: string } }).env.db_id).toBe("qa-read");
+  expect(localStorage.getItem("tcm-v2-env-db-reconciled")).toBe("1");
+});
+
+test("once reconciled, a differing card choice is not forced onto the environment again", async () => {
+  localStorage.setItem("tcm-v2-env-db-reconciled", "1");
+  localStorage.setItem("tcm-v2-db-selected", "qa-read");
+  const calls = envMocks([ENV_DEFAULT]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
 });

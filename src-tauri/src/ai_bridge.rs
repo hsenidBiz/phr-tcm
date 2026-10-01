@@ -291,6 +291,12 @@ pub async fn route(
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
+        ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
+        // The active environment's accounts: the assistant proposes logins
+        // (never passwords) for a person to add, and reads the ones there -
+        // passwords included only in an environment marked as a test one.
+        ("POST", "/accounts-propose") => accounts_propose(body),
+        ("GET", "/accounts") => accounts_read(ctx),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -402,14 +408,19 @@ pub fn autorun_route_guard(offered: bool) -> Option<(u16, String)> {
 }
 
 /// The same guard, applied by PATH rather than by arm. `route` calls this
-/// once, before its match, so every `/autorun-` route - and every
+/// once, before its match, so every `/autorun-` route - every
 /// `/api-template` one, which rides on the same signed-in browser and is
-/// offered exactly where Auto Run is - is covered by the shape of its
+/// offered exactly where Auto Run is, and `/accounts` and every
+/// `/accounts-` one, the Auto Run accounts - is covered by the shape of its
 /// name: a route added later cannot be left ungated by forgetting to
 /// repeat the check. `offered` is explicit for the same reason
 /// `autorun_route_guard`'s is: both branches stay testable.
 pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
-    if path.starts_with("/autorun-") || path.starts_with("/api-template") {
+    if path.starts_with("/autorun-")
+        || path.starts_with("/api-template")
+        || path == "/accounts"
+        || path.starts_with("/accounts-")
+    {
         autorun_route_guard(offered)
     } else {
         None
@@ -431,9 +442,10 @@ fn real_template_browsers(which: crate::browser::launch::Browser) -> crate::comm
     crate::commands::autorun_replay::RealBrowsers::new(which, false)
 }
 
-/// The origin of this project's sign-in recipe, or None without one.
+/// The origin this project signs in at in the active environment - the
+/// environment's address, else the recipe's - or None without a recipe.
 fn recipe_origin(root: &std::path::Path, org: &str, project: &str) -> Option<String> {
-    crate::autorun::recipe::load_recipe(root, org, project)
+    crate::autorun::recipe::load_effective_recipe(root, org, project)
         .ok()
         .flatten()
         .and_then(|r| crate::autorun::recipe::origin_of(&r.start_url))
@@ -454,7 +466,21 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
         .collect();
     let origin = recipe_origin(&root, &ctx.org, &ctx.project);
     let mut out = crate::api_templates::guide::text(&keys, origin.as_deref());
+    match crate::environments::active(&root) {
+        Ok(env) => out.push_str(&crate::api_templates::guide::active_environment_line(&env.name)),
+        Err(e) => crate::applog::warn(format!("Guide: the active environment could not be read: {e}")),
+    }
     out.push_str(&crate::test_files::guide_section(&project_test_files(&root, ctx)));
+    // The project's quirks - the same list, and the same section, the Auto
+    // Run guide ends with: active notes only, each with its evidence.
+    if !ctx.org.trim().is_empty() && !ctx.project.trim().is_empty() {
+        let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+        let section = crate::autorun::quirks::quirks_section(&quirks);
+        if !section.is_empty() {
+            out.push('\n');
+            out.push_str(&section);
+        }
+    }
     out
 }
 
@@ -730,10 +756,11 @@ fn one_short_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect()
 }
 
-/// What a prove and a run share once the call is read: every check
-/// together; for a template on a flow, the gate - the stages before its own,
-/// asked of the database - before anything else is taken; the one-at-a-time
-/// slot, the run, then the bookkeeping - a proven template saved with its
+/// What a prove and a run share once the call is read: the one-at-a-time
+/// slot, taken first so no environment switch can come between the checks
+/// and the run; every check together; for a template on a flow, the gate -
+/// the stages before its own, asked of the database - before the browser
+/// opens; the run, then the bookkeeping - a proven template saved with its
 /// evidence (on a flow, only once its own stage checks done), the run
 /// appended to the template's history, and the tab told. 200 with the
 /// report when it passed, 502 with the report when it did not.
@@ -756,6 +783,13 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
     use crate::api_templates::runner::{claim, preflight, run_template, stage_flow, Mode};
     use crate::api_templates::store::{self, RunRecord};
     use crate::api_templates::{ApiTemplate, Proven};
+    // The slot first, before the template, its flow or the database is
+    // looked at: holding it is what refuses an environment switch, so none
+    // can land between those checks and the run. Every return below drops
+    // it, as the run's end does.
+    let Some(_claim) = claim() else {
+        return (409, API_TEMPLATE_BUSY.to_string());
+    };
     if let Err(problems) = preflight(root, &req, existing) {
         return (400, problems.join("\n"));
     }
@@ -793,9 +827,6 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
         }
     }
 
-    let Some(_claim) = claim() else {
-        return (409, API_TEMPLATE_BUSY.to_string());
-    };
     let mut browsers = open(which);
     let report = run_template(&mut browsers, root, &req, timing).await;
     drop(browsers);
@@ -881,6 +912,9 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
             origin: recipe_origin(root, org, project).unwrap_or_default(),
             account: req.account.clone(),
             outputs: report.outputs.clone(),
+            // The run held the template slot, so no switch happened since
+            // it signed in: the active environment is the one it ran in.
+            environment: crate::environments::active(root).ok().map(|e| e.name),
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
         match store::save(root, org, project, &t) {
@@ -1198,23 +1232,41 @@ fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
     ))
 }
 
+/// The active environment's live guide section, or None when the list
+/// cannot be read (said in the log; a guide without it still teaches the
+/// format).
+fn active_environment_section(root: &std::path::Path) -> Option<String> {
+    match crate::environments::active(root) {
+        Ok(env) => Some(crate::autorun::guide::active_environment_section(&env)),
+        Err(e) => {
+            crate::applog::warn(&format!("Guide: the active environment could not be read: {e}"));
+            None
+        }
+    }
+}
+
 /// The guide's own text, plus this project's sections when it has any: the
 /// module-screen rule while "Scripts may open pages by address" is off,
 /// then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
 fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
-    let base = crate::autorun::guide::autorun_guide();
-    if ctx.project.trim().is_empty() {
-        return base;
-    }
+    let mut out = crate::autorun::guide::autorun_guide();
     let Some(root) = crate::autorun::store::configured_root() else {
-        return base;
+        return out;
     };
+    // The environment is the app's, not a project's: named even with no
+    // project open.
+    if let Some(section) = active_environment_section(&root) {
+        out.push('\n');
+        out.push_str(&section);
+    }
+    if ctx.project.trim().is_empty() {
+        return out;
+    }
     let nav = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let files = project_test_files(&root, ctx);
-    let mut out = base;
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::quirks::quirks_section(&quirks),
@@ -1459,28 +1511,253 @@ fn autorun_failures(target: &str) -> (u16, String) {
 
 /// Record something learned about the application, attributed, so the
 /// next script does not rediscover the same surprise.
+///
+/// `from` says which assistant's work it came out of: "autorun" (the
+/// default) or "api", for one building API templates. Both read the same
+/// list - one per project.
 fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::quirks::{record_quirk, Recorded, FROM_API, FROM_AUTORUN};
     let text = match body_field(body, "text", "{ \"text\": \"one line about this application\" }") {
         Ok(serde_json::Value::String(s)) => s,
         Ok(_) => return (400, "\"text\" is one line of text".to_string()),
         Err(refused) => return refused,
     };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let from = match v.get("from") {
+        None | Some(serde_json::Value::Null) => FROM_AUTORUN,
+        Some(serde_json::Value::String(s)) if s == FROM_AUTORUN => FROM_AUTORUN,
+        Some(serde_json::Value::String(s)) if s == FROM_API => FROM_API,
+        Some(_) => return (400, format!("\"from\" is \"{FROM_AUTORUN}\" or \"{FROM_API}\"")),
+    };
+    // The cases and steps it is about, when the assistant names them -
+    // each step checked against the newest run of its case, so a note can
+    // only be tied to steps that really failed. That tie is what later
+    // runs count evidence against.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NamedCase {
+        case_id: i32,
+        steps: Vec<i32>,
+    }
+    let named: Vec<NamedCase> = match v.get("cases") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(c) => match serde_json::from_value(c.clone()) {
+            Ok(list) => list,
+            Err(e) => {
+                return (400, format!("\"cases\" is a list of {{ case_id, steps: [number] }}: {e}"))
+            }
+        },
+    };
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    match crate::autorun::quirks::add_quirk(
+    let mut sources: Vec<crate::autorun::quirks::QuirkSource> = Vec::with_capacity(named.len());
+    for c in &named {
+        let run = crate::autorun::failures::latest_run(&root, Some(c.case_id));
+        let script = crate::autorun::store::load_script(&root, c.case_id).ok().flatten();
+        match crate::autorun::quirks::source_from_run(run.as_ref(), script.as_ref(), c.case_id, &c.steps) {
+            Ok(s) => sources.push(s),
+            Err(why) => return (400, why),
+        }
+    }
+    match record_quirk(
         &root,
         &ctx.org,
         &ctx.project,
         &text,
         "assistant",
+        from,
+        sources,
         crate::autorun::sessions::now_ms(),
     ) {
-        Ok(true) => (200, "recorded".to_string()),
-        Ok(false) => (200, "already known".to_string()),
+        Ok(Recorded::Added(id)) => (200, format!("recorded as {id}")),
+        Ok(Recorded::AlreadyKnown(id)) => (200, format!("already known, as {id}")),
+        Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
         Err(why) => (400, why),
     }
+}
+
+/// What an assistant is told when its line brought a retired note back.
+fn reactivated_reply(id: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(r) => format!("{id} had been retired (\"{r}\") - it is back on the list; check that reason no longer holds"),
+        None => format!("{id} had been retired - it is back on the list"),
+    }
+}
+
+/// Retire one of the assistant's own quirks, with a reason - and, when
+/// `replacement` is given, file the better note in the same call, keeping
+/// the old one's sources. A person's note is refused: it is theirs to
+/// remove, in the app.
+fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::quirks::{retire_in, update_quirks, Recorded};
+    let shape = "{ \"id\": \"q1a2b3c\", \"reason\": \"why it no longer helps\", \"replacement\": \"optional better note\" }";
+    let id = match body_field(body, "id", shape) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(_) => return (400, "\"id\" is a quirk's id, as the guide shows it".to_string()),
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let reason = match v.get("reason") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(_) => return (400, "\"reason\" is one sentence".to_string()),
+    };
+    let replacement = match v.get("replacement") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(_) => return (400, "\"replacement\" is one line of text".to_string()),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let now = crate::autorun::sessions::now_ms();
+    match update_quirks(&root, &ctx.org, &ctx.project, |list| {
+        retire_in(list, &id, reason.as_deref(), replacement.as_deref(), true, now)
+    }) {
+        Ok((None, _)) => (200, format!("retired {}", id.trim())),
+        Ok((Some(Recorded::Added(new)), _)) => (200, format!("retired {}, replaced by {new}", id.trim())),
+        Ok((Some(Recorded::AlreadyKnown(new) | Recorded::Reactivated(new, _)), _)) => {
+            (200, format!("retired {} - the replacement is already on the list as {new}", id.trim()))
+        }
+        Err(why) => (400, why),
+    }
+}
+
+// ------------------------------------------------- the environment's accounts
+
+/// `POST /accounts-propose`: the assistant's proposed logins for the active
+/// environment, REPLACING whatever it proposed before. Never a password -
+/// a field the shape does not have is refused, `password` included - and
+/// nothing reaches the accounts until a person adds it in the app.
+fn accounts_propose(body: &str) -> (u16, String) {
+    use crate::environments::{active, save_proposals, ProposedAccount};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Proposal {
+        key: String,
+        #[serde(default)]
+        label: String,
+        username: String,
+        #[serde(default)]
+        role: Option<String>,
+    }
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\" }] }";
+    let raw = match body_field(body, "accounts", shape) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let raw = json_arg(Some(&raw)).unwrap_or(raw);
+    let list: Vec<Proposal> = match serde_json::from_value(raw) {
+        Ok(l) => l,
+        Err(e) => {
+            return (400, format!("\"accounts\" is a list of {{ key, label, username, role? }} - never a password: {e}"))
+        }
+    };
+    if list.is_empty() {
+        return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
+    }
+    let proposals: Vec<ProposedAccount> = list
+        .into_iter()
+        .map(|p| {
+            let key = p.key.trim().to_string();
+            let label = match p.label.trim() {
+                "" => key.clone(),
+                l => l.to_string(),
+            };
+            let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            ProposedAccount { key, label, username: p.username.trim().to_string(), role }
+        })
+        .collect();
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let env = match active(&root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    if let Err(why) = save_proposals(&root, &env.id, &proposals) {
+        return (400, why);
+    }
+    crate::applog::info(format!(
+        "Environments: the assistant proposed {} account(s) for {}",
+        proposals.len(),
+        env.name
+    ));
+    (
+        200,
+        format!(
+            "proposed {} account(s) for the environment {} - a person picks which to add, and gives each its password, in the app. Another call replaces this proposal.",
+            proposals.len(),
+            env.name
+        ),
+    )
+}
+
+/// Said when `GET /accounts` arrives while the person has switched the
+/// `get_accounts` tool off.
+pub const GET_ACCOUNTS_OFF: &str =
+    "reading the accounts is switched off - turn on get_accounts on the AI Bridge tab";
+
+/// `GET /accounts`: the active environment's accounts - key, label and
+/// username, and the password ONLY when the environment is marked as a
+/// test environment. The one place a password leaves the app; it is never
+/// logged, and the log line says only how many were read.
+///
+/// Refused while the person has switched `get_accounts` off on the AI
+/// Bridge tab. The MCP proxy already hides a switched-off tool; this route
+/// checks again itself, as the database routes do (`stage_db`), because it
+/// is the one that can hand out passwords.
+fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
+    if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
+        return (409, GET_ACCOUNTS_OFF.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let env = match crate::environments::active(&root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    // Read by the id just read, so the accounts and the test-environment
+    // mark are the same environment's even if a switch lands in between.
+    let accounts = match crate::autorun::accounts::load_accounts_for(&root, &env.id) {
+        Ok(a) => a,
+        Err(e) => return (500, e),
+    };
+    let shown = env.test_environment;
+    let list: Vec<serde_json::Value> = accounts
+        .iter()
+        .map(|a| {
+            let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
+            if shown {
+                one["password"] = serde_json::Value::String(a.password.clone());
+            }
+            one
+        })
+        .collect();
+    let mut out = serde_json::json!({
+        "environment": env.name,
+        "test_environment": shown,
+        "accounts": list,
+    });
+    if !shown {
+        out["note"] = serde_json::Value::String(format!(
+            "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",
+            env.name
+        ));
+    }
+    crate::applog::info(format!(
+        "AI bridge: the assistant read the {} account(s) of {}{}",
+        accounts.len(),
+        env.name,
+        if shown { ", passwords included" } else { "" }
+    ));
+    (200, out.to_string())
 }
 
 // ------------------------------------------------------- the company database
@@ -1786,25 +2063,38 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
         None => vec![],
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
             format!(
-                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, quirk (optional) }}."
+                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional) }}."
             )
         })?,
     };
     Ok(SaveRequest { scripts: serde_json::from_value(scripts_value).map_err(bad_scripts)?, edits })
 }
 
+/// The case and steps a repair's quirk is about, with the class of the
+/// failure that led to it (read from the newest run of that case).
+fn repair_source(
+    root: &std::path::Path,
+    old: &crate::autorun::CaseScript,
+    edit: &crate::autorun::edits::Edit,
+) -> crate::autorun::quirks::QuirkSource {
+    let run = crate::autorun::failures::latest_run(root, Some(edit.case_id));
+    crate::autorun::quirks::source_for_repair(run.as_ref(), old, edit.case_id, &edit.steps)
+}
+
 /// Is the script sent word for word the one already on disk?
 ///
 /// Compared the way the declared-edit gate compares steps - by
 /// `step_signature`, so JSON formatting does not count as a change -
-/// plus the two fields outside the steps a save can carry, `title` and
-/// `account`. Positional rather than keyed by step number, so a bundle
+/// plus the three fields outside the steps a save can carry, `title`,
+/// `account` and `area` (a blank area is no area; case does not tell two
+/// area names apart). Positional rather than keyed by step number, so a bundle
 /// that merely REORDERS the same steps counts as a change and goes
 /// through the gate rather than around it. `repairs` is deliberately
 /// not compared: it is never the sender's to set.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
     old.title == sent.title
         && old.account == sent.account
+        && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
         && old.steps.iter().zip(&sent.steps).all(|(a, b)| {
             a.step_number == b.step_number
@@ -1889,16 +2179,18 @@ async fn save_autorun_scripts(
         Ok(r) => r,
     };
 
-    // Gate 0: a project whose runs start on the module screen refuses a
-    // script that opens pages by address - before anything is read from
-    // disk or Azure DevOps.
-    if let Err(why) = crate::autorun::nav::refuse_addresses(&root, &ctx.org, &ctx.project, &scripts) {
+    // Gate 0: the project's own rules, before anything is read from disk
+    // or Azure DevOps - a project whose runs start on the module screen
+    // refuses a script that opens pages by address, and every project
+    // refuses an `area` it has not recorded.
+    if let Err(why) = crate::autorun::nav::check_project_rules(&root, &ctx.org, &ctx.project, &scripts) {
         return (400, why);
     }
 
     // Gate 1: what this bundle does to the scripts already on disk.
     let mut prepared: Vec<crate::autorun::CaseScript> = Vec::with_capacity(scripts.len());
     let mut lines: Vec<String> = Vec::with_capacity(scripts.len());
+    let mut repair_sources: Vec<crate::autorun::quirks::QuirkSource> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -1943,6 +2235,11 @@ async fn save_autorun_scripts(
                         script.case_id, e.steps
                     ));
                     script.last_repair = Some(why.to_string());
+                    // Read now, while the script on disk is still the
+                    // one that ran: its targets classify the failure.
+                    if e.quirk.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+                        repair_sources.push(repair_source(&root, &old, e));
+                    }
                 }
                 lines.push(format!(
                     "case {} (repaired, {} of {} used)",
@@ -2035,20 +2332,33 @@ async fn save_autorun_scripts(
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
     // so about, but it is not worth losing a good repair over.
+    // Each quirk keeps the case and steps of its repair, and the class of
+    // the failure that led to it, so later runs can say whether it helped.
     for edit in &edits {
         let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
             continue;
         };
-        match crate::autorun::quirks::add_quirk(
+        let sources: Vec<crate::autorun::quirks::QuirkSource> =
+            repair_sources.iter().filter(|s| s.case_id == edit.case_id).cloned().collect();
+        match crate::autorun::quirks::record_quirk(
             &root,
             &ctx.org,
             &ctx.project,
             text,
             "assistant",
+            crate::autorun::quirks::FROM_AUTORUN,
+            sources,
             crate::autorun::sessions::now_ms(),
         ) {
-            Ok(true) => report.push(format!("quirk recorded: {}", text.trim())),
-            Ok(false) => report.push(format!("quirk already known: {}", text.trim())),
+            Ok(crate::autorun::quirks::Recorded::Added(id)) => {
+                report.push(format!("quirk recorded as {id}: {}", text.trim()))
+            }
+            Ok(crate::autorun::quirks::Recorded::AlreadyKnown(id)) => {
+                report.push(format!("quirk already known, as {id}: {}", text.trim()))
+            }
+            Ok(crate::autorun::quirks::Recorded::Reactivated(id, reason)) => {
+                report.push(format!("quirk {}: {}", reactivated_reply(&id, reason.as_deref()), text.trim()))
+            }
             Err(why) => report.push(format!("quirk not recorded: {why}")),
         }
     }

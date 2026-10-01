@@ -39,7 +39,7 @@ async fn the_recipe_signs_in_and_the_session_is_saved() {
     assert_eq!(out.steps.len(), 5, "{:?}", out.steps);
     assert!(out.steps[4].ok && out.steps[4].detail.contains("carried on"), "{:?}", out.steps[4]);
     no_password_anywhere(&out);
-    assert!(session_path(dir.path(), "admin").is_file(), "the session was not saved");
+    assert!(session_path(dir.path(), "admin").unwrap().is_file(), "the session was not saved");
     // It started by clearing whatever the browser held.
     assert_eq!(d.methods().iter().position(|m| m == "Network.clearBrowserCookies"), Some(0));
 }
@@ -78,7 +78,7 @@ async fn a_transport_failure_while_trying_a_saved_session_keeps_the_session_file
     assert!(out.detail.contains("browser"), "{}", out.detail);
     no_password_anywhere(&out);
     assert!(
-        session_path(dir.path(), "admin").is_file(),
+        session_path(dir.path(), "admin").unwrap().is_file(),
         "a browser that stopped answering says nothing about whether the saved session is still good"
     );
 }
@@ -104,7 +104,7 @@ async fn a_failing_step_stops_the_sign_in_and_names_it() {
     assert!(!out.ok);
     assert!(out.detail.contains("step 2") && out.detail.contains("#pass"), "{}", out.detail);
     no_password_anywhere(&out);
-    assert!(!session_path(dir.path(), "admin").exists(), "a failed sign-in must not save a session");
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "a failed sign-in must not save a session");
 }
 
 #[tokio::test]
@@ -131,7 +131,7 @@ async fn a_browser_that_will_not_clear_cookies_says_someone_may_still_be_signed_
     assert!(out.detail.contains("browser") && out.detail.contains("may still be signed in"), "{}", out.detail);
     assert!(d.calls_to("Page.navigate").is_empty(), "nothing was cleared, so nothing should have been visited");
     assert!(d.calls_to("Input.insertText").is_empty());
-    assert!(!session_path(dir.path(), "admin").exists());
+    assert!(!session_path(dir.path(), "admin").unwrap().exists());
 }
 
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn a_browser_that_clears_cookies_but_not_storage_says_someone_may_still_be
     assert!(out.detail.contains("browser") && out.detail.contains("may still be signed in"), "{}", out.detail);
     assert!(d.calls_to("Page.navigate").is_empty());
     assert!(d.calls_to("Input.insertText").is_empty());
-    assert!(!session_path(dir.path(), "admin").exists());
+    assert!(!session_path(dir.path(), "admin").unwrap().exists());
 }
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn a_browser_that_fails_mid_restore_is_cleared_before_giving_up_but_keeps_
         "cleared once up front, once best-effort after the failed restore"
     );
     assert!(
-        session_path(dir.path(), "admin").is_file(),
+        session_path(dir.path(), "admin").unwrap().is_file(),
         "a browser that stopped answering says nothing about whether the saved session is still good"
     );
 }
@@ -217,7 +217,7 @@ async fn after_sign_in_runs_after_a_recipe_sign_in_and_before_the_session_is_sav
     let last_click = methods.iter().rposition(|m| m == "Input.dispatchMouseEvent").unwrap();
     let captured = methods.iter().position(|m| m == "Network.getAllCookies").unwrap();
     assert!(last_click < captured, "the session was captured before the steps ran: {methods:?}");
-    assert!(session_path(dir.path(), "admin").is_file());
+    assert!(session_path(dir.path(), "admin").unwrap().is_file());
 }
 
 /// A saved session skips the recipe's steps, but not these: the page was
@@ -281,5 +281,5 @@ async fn a_failing_after_sign_in_step_fails_the_sign_in_and_names_it() {
     assert!(!out.ok);
     assert!(out.detail.contains("after_sign_in step 1"), "{}", out.detail);
     no_password_anywhere(&out);
-    assert!(session_path(dir.path(), "admin").is_file(), "the sign-in itself worked");
+    assert!(session_path(dir.path(), "admin").unwrap().is_file(), "the sign-in itself worked");
 }

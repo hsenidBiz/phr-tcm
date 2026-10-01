@@ -332,7 +332,8 @@ export default function TemplateRow({
               <h3 className="font-semibold text-muted">Proven</h3>
               <div data-testid="template-proof" className="space-y-0.5 text-muted">
                 <p>
-                  {whenLong(t.proven.at)} as {t.proven.account} against {hostOf(t.proven.origin)}
+                  {whenLong(t.proven.at)} as {t.proven.account}{" "}
+                  {t.proven.environment ? `on ${t.proven.environment}` : `against ${hostOf(t.proven.origin)}`}
                 </p>
                 {provenOutputs.length > 0 && (
                   <p className="id-mono break-all text-faint">Created {provenOutputs.join(", ")}</p>

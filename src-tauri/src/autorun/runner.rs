@@ -96,7 +96,7 @@ pub async fn run_step_routed<D: Driver>(
     account: &mut Option<String>,
     route: Option<&Route>,
 ) -> Result<Vec<ActionOutcome>, String> {
-    let recipe = recipe::load_recipe(root, organization, project)?;
+    let recipe = recipe::load_effective_recipe(root, organization, project)?;
     let policy = policy_for(recipe.as_ref());
     // Read per step, like the recipe: a person may flip the switch between
     // two steps of a supervised run.
@@ -132,7 +132,7 @@ pub async fn run_step_routed<D: Driver>(
                         None => as_action_outcome(&signed),
                         Some(rt) => {
                             let went = nav::reached(
-                                &rt.path.module,
+                                rt.path.name(),
                                 nav::go_to_module(d, rt, nav::TripFrom::SignIn, timing).await,
                             );
                             if !went.ok {

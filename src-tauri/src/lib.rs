@@ -24,6 +24,7 @@ pub mod app_settings;
 pub mod assigned_watch;
 pub mod db;
 pub mod db_defaults;
+pub mod environments;
 pub mod audio;
 pub mod auth;
 pub mod backup;
@@ -73,7 +74,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, board, bugs, cases, discovery, guide, misc, prs, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
         test_files, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
@@ -171,6 +172,15 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::reset_db_credentials,
             ai_tools::forget_db_credentials,
             ai_tools::import_legacy_db_connection,
+            environments::env_list,
+            environments::env_save,
+            environments::env_remove,
+            environments::env_set_active,
+            environments::env_set_default_password,
+            environments::env_clear_default_password,
+            environments::env_proposals,
+            environments::env_dismiss_proposals,
+            environments::env_add_proposals,
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,
             autorun::auto_run_step,
@@ -187,7 +197,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_load_recipe,
             autorun::auto_run_save_recipe,
             autorun::auto_run_load_quirks,
-            autorun::auto_run_save_quirks,
+            autorun::auto_run_count_evidence,
+            autorun::auto_run_add_quirk,
+            autorun::auto_run_edit_quirk,
+            autorun::auto_run_retire_quirk,
+            autorun::auto_run_restore_quirk,
+            autorun::auto_run_delete_quirk,
             autorun::auto_run_load_nav,
             autorun::auto_run_set_direct_urls,
             autorun::auto_run_remove_module_path,

@@ -39,12 +39,13 @@ const DRAFT: SignInDraftView = {
 
 type Handler = (cmd: string, args: Record<string, unknown>) => unknown;
 
-function mount(handler: Handler, opts: { accounts?: unknown[]; recipe?: unknown } = {}) {
+function mount(handler: Handler, opts: { accounts?: unknown[]; recipe?: unknown; env?: unknown } = {}) {
   const onClose = vi.fn();
   mockIPC(
     (cmd, args) => {
       if (cmd === "auto_run_list_accounts") return opts.accounts ?? ACCOUNTS;
       if (cmd === "auto_run_load_recipe") return opts.recipe ?? null;
+      if (cmd === "env_list" && opts.env !== undefined) return opts.env;
       const out = handler(String(cmd), (args ?? {}) as Record<string, unknown>);
       return out === undefined ? null : out;
     },
@@ -134,6 +135,25 @@ test("the address comes from the saved recipe, and with no accounts Start stays 
   await waitFor(() => expect(address).toHaveValue("https://hr.example.internal/login"));
   expect(await screen.findByText(/Add an account in Accounts first/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+});
+
+const ENV_LIST = (start_url: string) => ({
+  active: "qa",
+  environments: [
+    { id: "qa", name: "QA", start_url, allowed_origins: [], db_id: "db", test_environment: false, has_default_password: false },
+  ],
+});
+
+test("the address is the active environment's when it has one, and the recipe's when it has none", async () => {
+  mount(() => undefined, { recipe: RECIPE, env: ENV_LIST("https://qa.example.internal/") });
+  const address = await screen.findByRole("textbox", { name: "Start address" });
+  await waitFor(() => expect(address).toHaveValue("https://qa.example.internal/"));
+});
+
+test("an environment with no address of its own leaves the recipe's address in the box", async () => {
+  mount(() => undefined, { recipe: RECIPE, env: ENV_LIST("") });
+  const address = await screen.findByRole("textbox", { name: "Start address" });
+  await waitFor(() => expect(address).toHaveValue("https://hr.example.internal/login"));
 });
 
 test("the recording lists steps as they arrive, says which field is the password, and shows notes", async () => {
@@ -370,6 +390,49 @@ test("closing the recording browser ends the recording and frees the recorder", 
   await startRecording();
   await send({ kind: "closed", index: 0, readable: "", detail: "the recording browser was closed - nothing was saved", password: false });
   expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  await waitFor(() => expect(cancels).toBe(1));
+});
+
+/** Emits `closed` the moment `name`'s button is in the page - from the
+ * page-change notice of the very commit that shows it, before React's
+ * passive effects have run. React's scheduler is made to yield after every
+ * task while this waits (its clock jumps on each read), which is what a
+ * busy machine does: the commit lands in one task and the passive effects
+ * in a later one, and the close arrives in between. */
+function closeAsSoonAsShown(name: string): () => void {
+  let t = performance.now();
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 50));
+  const seen = new MutationObserver(() => {
+    if (!screen.queryByRole("button", { name })) return;
+    seen.disconnect();
+    void import("@tauri-apps/api/event").then(({ emit }) =>
+      emit("recording-event", { kind: "closed", index: 0, readable: "", detail: "closed", password: false }),
+    );
+  });
+  seen.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    seen.disconnect();
+    clock.mockRestore();
+  };
+}
+
+test("a close that arrives as the recording screen appears still frees the recorder", async () => {
+  let cancels = 0;
+  mount(
+    recorder(undefined, (cmd) => {
+      if (cmd === "auto_run_record_cancel") cancels += 1;
+    }),
+    { recipe: RECIPE },
+  );
+  const start = await screen.findByRole("button", { name: "Start" });
+  await waitFor(() => expect(start).toBeEnabled());
+  const stop = closeAsSoonAsShown("Finish");
+  try {
+    fireEvent.click(start);
+    expect(await screen.findByText("The recording browser was closed. Nothing was saved.")).toBeInTheDocument();
+  } finally {
+    stop();
+  }
   await waitFor(() => expect(cancels).toBe(1));
 });
 

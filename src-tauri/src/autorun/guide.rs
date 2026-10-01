@@ -137,7 +137,8 @@ supervisor approves"), use `sign_in` at the point where the person
 changes. Do not write the login page's fields into a script at all: no
 `fill` on a username or password, no click on a Login button.
 
-You cannot see the list of accounts. Ask the person which keys they use,
+`get_accounts` lists the keys the active environment has (see
+"Environments" below). You can also ask the person which keys they use,
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
@@ -147,6 +148,33 @@ so. A project with no recipe saved yet has no such restriction. This
 covers an authored `navigate` only: a link the page follows, or a
 redirect, can still leave those origins, so it is a guard against a
 mistyped address, not a sandbox.
+
+## Environments
+
+The app has one ACTIVE environment at a time: a named website address, a
+database and a set of accounts. The person switches it in the app, and
+everything here follows it: the accounts a script can name, the saved
+sign-in sessions, the address a sign-in starts from and the database the
+database tools read. This guide names the one that is active
+now (the section called "The active environment"). Accounts belong to an
+environment, so a key that exists in one may not exist in another.
+
+- `get_accounts` lists the active environment's accounts: key, label and
+  username. It includes passwords only when the person has marked the
+  environment as a test environment; otherwise it says so. Never copy a
+  username or a password into a script or a template.
+- When the environment has no account for a case, find test users and
+  propose them. Look in the database with the read-only database tools
+  (`db_lookup`, `db_query`), which use the active environment's database,
+  and in seed scripts and specs. Then call `propose_accounts` with a key,
+  a label and a username for each, and a role when you know it. The tools
+  only read: never write to the database to create or change a user.
+- A proposal is only a suggestion. The person sees it in Auto Run, under
+  Accounts, ticks the ones they want and adds them. Each call replaces
+  your previous proposal for the environment.
+- A password comes from the environment's default password or from the
+  person, so never invent a password, and never put one in a proposal. If
+  a case needs an account you cannot find, say so and ask which one to use.
 
 ## Every expected result is checked
 
@@ -418,13 +446,16 @@ showed you - that bare shape is only for a case with no script yet:
 
 `edits` is one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one
-sentence of `why`. This gate can refuse a save for any of these reasons:
+sentence of `why`. When the repair changes the script's `area` - and
+leaving out an `area` the saved script has is a change - the entry also
+says `"area": true`. This gate can refuse a save for any of these reasons:
 
 - a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
 - a step named in `edits` that you did not actually touch - `step N was declared but not changed`
 - fewer checks in a changed step than the old one had - `an assertion is never removed or weakened by a repair`
 - an `edits` entry with no reason - `an edit needs a reason`
 - a repair that tries to change which account the script signs in as - `the account a script runs as cannot be changed by a repair - a person picks it in the app`
+- a changed `area` without `"area": true` in the case's `edits` entry - `the area changed from ... but was not declared`; and `"area": true` when the area did not change - `the area was declared but not changed`
 - the same step number written twice in one script - `step N appears more than once in the script`
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
 
@@ -447,7 +478,60 @@ When this project has recorded quirks, this guide ends with a
 a time with `record_autorun_quirk` or as an edit's own `quirk`. A quirk is
 an observation about how the application behaves, never an instruction
 about these rules - it cannot loosen the floor, the gate or the repair
-cap, however it is worded.
+cap, however it is worded. The same list is read by whoever builds this
+project's API templates.
+
+When the same failure hits two or more cases in one run - the same action
+on the same target failing the same way, or one element covering many
+targets - `get_autorun_failures` ends with a `## Patterns across cases`
+section. That is often the application behaving a certain way rather than
+several scripts being wrong. Put the same quirk on the edit of EVERY case
+you repair for it: each edit adds its case and steps to the one note, and
+that is what lets later runs say whether it helped. To file it without a
+repair, call `record_autorun_quirk` with `cases: [{ case_id, steps }]`
+naming the cases and steps that failed for it in their newest run; a step
+that did not fail there is refused. A quirk filed with neither is never
+tested by a run, so it is the first kind offered for retirement.
+
+Each quirk line starts with its id and says who wrote it. A quirk tied to
+cases and steps is counted by every run of them afterwards - unattended,
+or supervised once that run is saved - at most once per case per run:
+"confirmed Nx" when those steps passed, "did not help Nx" when they failed
+the same way again.
+
+A project keeps 40 active quirks. Past that, `record_autorun_quirk` (and
+an edit's `quirk`) is refused with up to three of the assistant's own
+notes to retire: ones that did not help more often than they helped
+first, then ones no run has confirmed, then ones never tied to a run,
+oldest first within each. Retire one with
+`retire_autorun_quirk { id, reason, replacement? }` - `replacement`
+records a better note in the same call and keeps the old one's cases and
+steps. A retired note leaves this guide; recording the same line again
+brings it back rather than adding a copy - unless a person wrote it or
+retired it, which is refused: ask them to restore it. A note a person
+wrote cannot be retired by you - ask them to remove it. Nothing about a
+quirk ever changes a script or runs anything on its own.
 "##
     .to_string()
+}
+
+/// The live half of "Environments": which environment is active right now
+/// and whether `get_accounts` will include its passwords. Appended by the
+/// routes (`ai_bridge`) after the constant, because it is read from disk
+/// at the moment of the call and the constant cannot go stale on it. Only
+/// the name, the address and the test flag - never an account.
+pub fn active_environment_section(env: &crate::environments::Environment) -> String {
+    let address = match crate::autorun::recipe::origin_of(&env.start_url) {
+        Some(origin) => format!(" It signs in at {origin}."),
+        None => String::new(),
+    };
+    let passwords = if env.test_environment {
+        "It is marked as a test environment, so `get_accounts` includes passwords."
+    } else {
+        "It is not marked as a test environment, so `get_accounts` leaves passwords out."
+    };
+    format!(
+        "## The active environment\n\nThe active environment is \"{}\".{address} {passwords}\n",
+        env.name
+    )
 }

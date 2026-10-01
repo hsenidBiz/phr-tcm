@@ -170,6 +170,9 @@ pub async fn auto_run_replay(
         cases: vec![],
         mode: "unattended".to_string(),
         published: None,
+        // A switch is refused while this run holds its slot, so this is the
+        // environment every case of it signs in to.
+        environment: crate::environments::active(&root).ok().map(|e| e.name),
     };
 
     let list: Vec<CaseToRun> = cases

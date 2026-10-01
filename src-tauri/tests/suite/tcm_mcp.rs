@@ -78,8 +78,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the thirteen dev-only
-    // tools (Auto Run's seven, then the six API template ones) are listed
+    // debug assertions on), so with nothing disabled the eighteen dev-only
+    // tools (Auto Run's ten, then the API templates row's eight) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -100,12 +100,17 @@ fn tools_list_names_every_tool() {
             "try_autorun_action",
             "get_autorun_failures",
             "record_autorun_quirk",
+            "retire_autorun_quirk",
+            "propose_accounts",
+            "get_accounts",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
             "save_api_flow",
             "get_api_flow_progress",
+            "record_app_quirk",
+            "retire_app_quirk",
             "db_lookup",
             "db_query",
             "optimize_cases",
@@ -419,10 +424,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 30 in this development build: nothing is disabled by an unreachable
-    // bridge, including the thirteen dev-only tools, which default to ON here
+    // 35 in this development build: nothing is disabled by an unreachable
+    // bridge, including the eighteen dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 30, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 35, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -586,14 +591,14 @@ fn core_tools_survive_a_disabled_list_and_autorun_tools_are_switchable_in_a_dev_
 /// disappear from the list and a call gets the ORDINARY "switched off"
 /// sentence - not "not available", which would claim there is no switch
 /// when there plainly is one right here. They move as one row in the app,
-/// so the list the bridge reports names all seven together.
+/// so the list the bridge reports names all eight together.
 #[test]
 fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordinary_way() {
     let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -737,13 +742,15 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 6] = [
+const API_TEMPLATE_TOOLS: [&str; 8] = [
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "record_app_quirk",
+    "retire_app_quirk",
 ];
 
 fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> Vec<String> {
@@ -777,14 +784,14 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress"]}"#
+                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","record_app_quirk","retire_app_quirk"]}"#
                     .into(),
             ));
         }
         Ok((200, "{}".into()))
     };
     let names = listed_names(&call);
-    assert!(names.iter().all(|n| !n.contains("api_template") && !n.contains("api_flow")), "{names:?}");
+    assert!(names.iter().all(|n| !n.contains("api_template") && !n.contains("api_flow") && !n.contains("app_quirk")), "{names:?}");
 }
 
 /// Each tool reaches its own route; prove and run forward the arguments
@@ -871,4 +878,192 @@ fn a_failed_api_template_run_is_a_tool_error_with_the_report() {
     assert_eq!(v["result"]["isError"], true);
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("Evaluation rules") && text.contains("274"), "{text}");
+}
+
+/// The retire tool: listed with a schema that asks for the id and a
+/// reason (a replacement is optional), and a call forwards its arguments
+/// whole to the bridge's retire route. `record_autorun_quirk` says which
+/// assistant filed a note with an optional `from`.
+#[test]
+fn the_quirk_tools_carry_the_schemas_an_assistant_needs() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let retire = tools.iter().find(|t| t["name"] == "retire_autorun_quirk").expect("the retire tool is listed");
+    let schema = &retire["inputSchema"];
+    assert_eq!(schema["type"], "object");
+    for prop in ["id", "reason", "replacement"] {
+        assert_eq!(schema["properties"][prop]["type"], "string", "{prop}: {schema}");
+    }
+    let mut required: Vec<&str> = schema["required"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    required.sort_unstable();
+    assert_eq!(required, vec!["id", "reason"]);
+    assert!(retire["description"].as_str().unwrap().contains("person"), "says a person's note is refused");
+
+    let record = tools.iter().find(|t| t["name"] == "record_autorun_quirk").unwrap();
+    assert_eq!(record["inputSchema"]["properties"]["from"]["enum"], serde_json::json!(["autorun", "api"]));
+    assert_eq!(record["inputSchema"]["required"], serde_json::json!(["text"]));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "retired q1a2b3c".to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"retire_autorun_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["content"][0]["text"], "retired q1a2b3c");
+    let recorded = calls.borrow();
+    let last = recorded.last().unwrap();
+    assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", "/autorun-quirk-retire"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&last.2).unwrap(),
+        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped" })
+    );
+}
+
+/// With the Auto Run row switched off and the API templates row on, the
+/// API templates assistant still has its quirk tools - under that row's
+/// own names - and each reaches the same route with `from` set to "api"
+/// here, whatever the caller sent.
+#[test]
+fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((
+                200,
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk"]}"#.into(),
+            ));
+        }
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "ok".into()))
+    };
+    let names = listed_names(&call);
+    assert!(names.iter().all(|n| !n.contains("autorun")), "{names:?}");
+    for name in ["record_app_quirk", "retire_app_quirk", "get_api_template_guide"] {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+    }
+
+    let record = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_app_quirk","arguments":{"text":"the handler wants a CSRF header","from":"autorun","cases":[{"case_id":7,"steps":[2]}]}}}"#;
+    let v: serde_json::Value = serde_json::from_str(&handle_message(record, "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], serde_json::json!(true), "{v}");
+    let retire = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"retire_app_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
+    handle_message(retire, "1.0.0", &call).unwrap();
+
+    let recorded = calls.borrow();
+    let posts: Vec<&(String, String, String)> = recorded.iter().filter(|c| c.0 == "POST").collect();
+    assert_eq!(posts.len(), 2, "{recorded:?}");
+    assert_eq!(posts[0].1, "/autorun-quirk");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&posts[0].2).unwrap(),
+        serde_json::json!({ "text": "the handler wants a CSRF header", "from": "api", "cases": [{ "case_id": 7, "steps": [2] }] })
+    );
+    assert_eq!(posts[1].1, "/autorun-quirk-retire");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&posts[1].2).unwrap(),
+        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped", "from": "api" })
+    );
+
+    // Both record tools take the same optional `cases`.
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    for name in ["record_autorun_quirk", "record_app_quirk"] {
+        let t = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        let cases = &t["inputSchema"]["properties"]["cases"];
+        assert_eq!(cases["type"], "array", "{name}");
+        assert_eq!(cases["items"]["required"], serde_json::json!(["case_id", "steps"]), "{name}");
+        assert_eq!(t["inputSchema"]["required"], serde_json::json!(["text"]), "{name}");
+    }
+}
+
+/// The two account tools belong to the Auto Run row: listed while that row
+/// is on and Auto Run is offered, gone when the row is switched off, and
+/// "not available" where Auto Run is not offered at all.
+#[test]
+fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_offered() {
+    const ACCOUNT_TOOLS: [&str; 2] = ["propose_accounts", "get_accounts"];
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    for name in ACCOUNT_TOOLS {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+        assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
+    }
+
+    let row_off = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((
+                200,
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","propose_accounts","get_accounts"]}"#.into(),
+            ));
+        }
+        Ok((200, "{}".into()))
+    };
+    let names = listed_names(&row_off);
+    for name in ACCOUNT_TOOLS {
+        assert!(!names.iter().any(|n| n == name), "{name} listed with the row off: {names:?}");
+    }
+
+    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
+    assert!(!offered);
+    for name in ACCOUNT_TOOLS {
+        assert!(off.iter().any(|n| n == name), "{name} not disabled in a locked release app: {off:?}");
+        assert!(v2_lib::mcp::refusal_text(name, false).contains("not available"), "{name}");
+    }
+}
+
+/// `propose_accounts` forwards its arguments whole; `get_accounts` is a
+/// plain read. Neither takes a password.
+#[test]
+fn the_account_tools_reach_their_routes() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let propose = tools.iter().find(|t| t["name"] == "propose_accounts").unwrap();
+    assert_eq!(propose["inputSchema"]["required"], serde_json::json!(["accounts"]));
+    let item = &propose["inputSchema"]["properties"]["accounts"]["items"];
+    assert!(item["properties"].get("password").is_none(), "{item}");
+    assert_eq!(item["required"], serde_json::json!(["key", "label", "username"]));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let args = serde_json::json!({ "accounts": [{ "key": "hr.sup", "label": "Supervisor", "username": "sup1" }] });
+    for (name, args, method, path) in [
+        ("propose_accounts", args.clone(), "POST", "/accounts-propose"),
+        ("get_accounts", serde_json::json!({}), "GET", "/accounts"),
+    ] {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": args },
+        });
+        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_ne!(v["result"]["isError"], serde_json::json!(true), "{name}: {resp}");
+        let (m, p, _) = calls.borrow().last().unwrap().clone();
+        assert_eq!((m.as_str(), p.as_str()), (method, path), "{name}");
+    }
+    let (_, _, body) = calls.borrow().iter().find(|c| c.1 == "/accounts-propose").unwrap().clone();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args);
+}
+
+/// Review of Task 8: an assistant learns a script may name its `area` -
+/// and that changing it is declared - from the save tool itself.
+#[test]
+fn the_save_tool_documents_a_scripts_area() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.10.3", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "save_autorun_script")
+        .expect("the save tool is listed in a development build")
+        .clone();
+    let description = tool["description"].as_str().unwrap();
+    assert!(description.contains("area (optional:"), "{description}");
+    let props = &tool["inputSchema"]["properties"];
+    assert!(props["scripts"]["description"].as_str().unwrap().contains("area?"), "{props}");
+    assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
 }
