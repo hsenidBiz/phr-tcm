@@ -67,7 +67,9 @@ pub const TOKEN_FN: &str = r#"function () { const i = this.querySelector('input[
 /// into the `RequestVerificationToken` header and is never returned. The
 /// request is aborted after 30 s, and at most 64 KB of the body is read
 /// back. A request that did not complete comes back as `{ error }` rather
-/// than a throw, so the runner can tell a timeout from anything else.
+/// than a throw, so the runner can tell a timeout from anything else. A
+/// form's files (`exec::FormFile`) are appended after its text fields, each
+/// a `Blob` of its own bytes, type and name.
 pub const FETCH_FN: &str = r#"async function (req, token) {
   const headers = { "RequestVerificationToken": token, "Accept": "application/json" };
   let body;
@@ -77,6 +79,9 @@ pub const FETCH_FN: &str = r#"async function (req, token) {
   } else if (req.body && req.body.kind === "form") {
     body = new FormData();
     for (const [k, v] of Object.entries(req.body.fields)) body.append(k, v);
+    for (const f of (req.body.files || [])) {
+      body.append(f.field, new Blob([Uint8Array.from(atob(f.base64), c => c.charCodeAt(0))], { type: f.contentType }), f.name);
+    }
   }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
@@ -208,6 +213,7 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     if let Err(e) = prepare(root, &req.org, &req.project, &req.account) {
         problems.push(e);
     }
+    problems.extend(file_problems(root, req));
     let (stage, missing_subject) = stage_problems(root, req);
     // A flow template left without its record id gets the flow's own
     // sentence, which says why the value is needed - not also the general
@@ -231,6 +237,27 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     } else {
         Err(problems)
     }
+}
+
+/// Every test file the template's steps upload that this project's Test
+/// files does not have, or that is over the cap - one problem per file, the
+/// first step that uploads it named.
+fn file_problems(root: &Path, req: &RunRequest) -> Vec<String> {
+    let folder = crate::test_files::folder(root, &req.org, &req.project);
+    let mut seen = std::collections::HashSet::new();
+    let mut problems = Vec::new();
+    for step in &req.template.steps {
+        for name in step.files.values() {
+            if !seen.insert(name.as_str()) {
+                continue;
+            }
+            let who = format!("the step \"{}\"", step.name);
+            if let Err(e) = crate::test_files::check_for_run(&folder, name, &who) {
+                problems.push(e);
+            }
+        }
+    }
+    problems
 }
 
 /// The saved flow a template's `stage` names, or `None` when it is not
@@ -384,13 +411,48 @@ fn method_name(m: Method) -> &'static str {
     }
 }
 
-/// The request body as the activity log keeps it (then excerpted).
-fn body_text(b: &Body) -> String {
+/// The request body as the activity log keeps it (then excerpted). A file
+/// is named with its size (`FormFile::describe`), never its bytes.
+pub fn body_text(b: &Body) -> String {
     match b {
         Body::None => String::new(),
         Body::Json { value } => value.to_string(),
-        Body::Form { fields } => serde_json::to_string(fields).unwrap_or_default(),
+        Body::Form { fields, files } => {
+            let mut shown = fields.clone();
+            for f in files {
+                shown.insert(f.field.clone(), f.describe());
+            }
+            serde_json::to_string(&shown).unwrap_or_default()
+        }
     }
+}
+
+/// The bytes of every test file `step` uploads, by name - read here, at
+/// the step, so a run holds at most one step's files at a time.
+fn step_files(ctx: &Ctx<'_>, step: &Step) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    let mut out = BTreeMap::new();
+    if step.files.is_empty() {
+        return Ok(out);
+    }
+    let folder = crate::test_files::folder(ctx.root, &ctx.req.org, &ctx.req.project);
+    let who = format!("the step \"{}\"", step.name);
+    for name in step.files.values() {
+        if !out.contains_key(name) {
+            out.insert(name.clone(), crate::test_files::read_for_run(&folder, name, &who)?);
+        }
+    }
+    Ok(out)
+}
+
+/// What a step that sent files says about them: `sent "a.pdf" (1.2 KB)`.
+fn sent_files(body: &Body) -> Option<String> {
+    let Body::Form { files, .. } = body else { return None };
+    if files.is_empty() {
+        return None;
+    }
+    let each: Vec<String> =
+        files.iter().map(|f| format!("\"{}\" ({})", f.name, crate::test_files::human_size(f.size))).collect();
+    Some(format!("sent {}", each.join(", ")))
 }
 
 /// What one run needs from its request, resolved once.
@@ -731,7 +793,9 @@ async fn run_step<D: Driver>(
     progress: &mut Progress,
     attempt: u8,
 ) -> StepResult {
-    let mut built = build_request(step, vars).map_err(|e| (None, e))?;
+    let files = step_files(ctx, step).map_err(|e| (None, e))?;
+    let mut built = build_request(step, vars, &files).map_err(|e| (None, e))?;
+    drop(files);
     let adapted = adapt_path_case(d, ctx, step, &mut built).await;
     let wire = serde_json::to_value(&built).map_err(|e| (None, format!("the request could not be built: {e}")))?;
     // Which cookies the browser holds for this address - the one thing a
@@ -819,11 +883,13 @@ async fn run_step<D: Driver>(
         vars.insert(name.clone(), value);
         got.push(name.as_str());
     }
-    let detail = if got.is_empty() {
-        format!("status {status}")
-    } else {
-        format!("status {status}, captured {}", got.join(", "))
-    };
+    let mut detail = format!("status {status}");
+    if let Some(sent) = sent_files(&built.body) {
+        detail.push_str(&format!(", {sent}"));
+    }
+    if !got.is_empty() {
+        detail.push_str(&format!(", captured {}", got.join(", ")));
+    }
     Ok((status, detail))
 }
 

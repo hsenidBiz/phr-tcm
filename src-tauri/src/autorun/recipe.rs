@@ -208,6 +208,11 @@ fn check(action: &Action) -> Result<(), String> {
     if kind.as_deref() == Some("sign_in") {
         return Err("a recipe cannot contain sign_in - it IS the sign-in".to_string());
     }
+    // Signing in never sends a document, and a recipe runs for every
+    // project's sign-in, where no Test files folder is in reach.
+    if kind.as_deref() == Some("upload") {
+        return Err("a recipe cannot contain upload - signing in never sends a file; upload belongs in a case script".to_string());
+    }
     // `{{username}}`/`{{password}}` are filled in only for a fill's own
     // VALUE (see `fill_in`); anywhere else - a navigate url, a locator, an
     // expectation, even a fill's own selector - the placeholder is left

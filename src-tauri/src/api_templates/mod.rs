@@ -102,15 +102,20 @@ impl Default for Expect {
     }
 }
 
+/// One step of a template. Everything in this crate calls it `Step`.
+pub type Step = ApiTemplateStep;
+
 // `steps_xml::Step` (Azure DevOps' step XML) already owns the plain name in
-// the generated bindings; Task 4 is the first to expose ApiTemplate (and so
-// this Step) through a command, and specta refuses two types of the same
-// name in one export. `serde(rename)` on a struct container has no effect
-// on the JSON shape (only enum tags and the like read it) - it only
-// renames the type specta exports it as.
+// the generated bindings, and specta refuses two types of the same name in
+// one export - so this one is NAMED `ApiTemplateStep` (`Step` above is an
+// alias). It used to be a `Step` with `serde(rename = "ApiTemplateStep")`,
+// which only renamed the exported type; but `files`' `skip_serializing_if`
+// splits a type into `_Serialize` and `_Deserialize` shapes, and both of
+// those took the rename whole and collided. The JSON shape is the same
+// either way: a struct's container name is not in it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
-#[serde(deny_unknown_fields, rename = "ApiTemplateStep")]
-pub struct Step {
+#[serde(deny_unknown_fields)]
+pub struct ApiTemplateStep {
     pub name: String,
     pub method: Method,
     pub path: String,
@@ -124,6 +129,13 @@ pub struct Step {
     pub json: Option<Value>,
     #[serde(default)]
     pub form: Option<BTreeMap<String, String>>,
+    /// Files the step sends with its `form`: a form field name to the NAME
+    /// of a file in the project's Test files (`crate::test_files`) - one
+    /// file per field, a name and never a path, no placeholders. Left out
+    /// when empty, so a template written before files existed reads and
+    /// writes back exactly as it was.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
     #[serde(default)]
     pub expect: Expect,
     #[serde(default)]
@@ -312,6 +324,48 @@ fn step_placeholder_names(step: &Step) -> Vec<String> {
     out
 }
 
+/// Every problem with a step's `files`. They ride on a `form` body - one
+/// that may be empty (`"form": {}`) when the step sends nothing but files -
+/// so `files` on a step with no `form` (a `json` step, or no body at all)
+/// is refused. Each field is non-empty, takes no placeholder, is not also a
+/// `form` field, and names a file by a name `test_files` accepts; a file
+/// name is written out in full, never through a placeholder.
+fn file_problems(step: &Step) -> Vec<String> {
+    let mut problems = Vec::new();
+    if step.files.is_empty() {
+        return problems;
+    }
+    if step.form.is_none() {
+        problems.push(format!(
+            "step '{}' sends files but has no form body - files go with a form (use \"form\": {{}} when there are no other fields)",
+            step.name
+        ));
+    }
+    for (field, name) in &step.files {
+        if field.trim().is_empty() {
+            problems.push(format!("step '{}' has a file field with an empty name", step.name));
+            continue;
+        }
+        if !exec::placeholders(field).is_empty() || !exec::placeholders(name).is_empty() {
+            problems.push(format!(
+                "step '{}' file field '{field}' uses a placeholder - write the field and the test file's name out in full",
+                step.name
+            ));
+            continue;
+        }
+        if step.form.as_ref().is_some_and(|f| f.contains_key(field)) {
+            problems.push(format!(
+                "step '{}' has '{field}' in both form and files - a field is one or the other",
+                step.name
+            ));
+        }
+        if !crate::test_files::valid_test_file_name(name) {
+            problems.push(format!("step '{}' file field '{field}': {}", step.name, crate::test_files::bad_name(name)));
+        }
+    }
+    problems
+}
+
 /// A real calendar day in `YYYY-MM-DD` form, leap years included.
 fn is_valid_date(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
@@ -406,6 +460,8 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
                 step.name
             ));
         }
+
+        problems.extend(file_problems(step));
 
         let mut reported = HashSet::new();
         for name in step_placeholder_names(step) {

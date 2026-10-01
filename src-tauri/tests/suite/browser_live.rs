@@ -1397,3 +1397,52 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     assert!(err.starts_with("the recorded steps ran, but the signed-in check never appeared"), "{err}");
     assert!(!err.contains("nope") && !err.contains("://"), "{err}");
 }
+
+/// `upload` against the real thing: a test file put into a plain file
+/// input, and into a hidden one through the chooser its button opens - and
+/// a button that opens no chooser refused with the sentence. What the
+/// PAGE saw (each input's `change` handler writes the file's name and size)
+/// is what is checked.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn upload_reaches_a_file_input_directly_and_through_the_chooser() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<input type="file" id="direct" onchange="document.getElementById('seen-direct').textContent = this.files[0].name + ' ' + this.files[0].size">
+<p id="seen-direct"></p>
+<input type="file" id="hidden" style="display:none" onchange="document.getElementById('seen-chooser').textContent = this.files[0].name + ' ' + this.files[0].size">
+<button id="attach" onclick="document.getElementById('hidden').click()">Attach</button>
+<p id="seen-chooser"></p>
+<button id="nothing">Nothing</button>
+</body></html>"#;
+    let mut live = open().await;
+    let root = tempfile::tempdir().unwrap();
+    let files = v2_lib::test_files::folder(root.path(), "acme", "PMS");
+    std::fs::create_dir_all(&files).unwrap();
+    std::fs::write(files.join("cv.txt"), b"hello").unwrap();
+    let page = root.path().join("upload.html");
+    std::fs::write(&page, PAGE).unwrap();
+    let url = format!(
+        "file:///{}",
+        page.display().to_string().replace('\\', "/").trim_start_matches('/').replace(' ', "%20")
+    );
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+
+    let step = StepScript {
+        step_number: 1,
+        actions: vec![
+            action_of(json!({ "kind": "upload", "selector": { "css": "#direct" }, "file": "cv.txt" })),
+            action_of(json!({ "kind": "upload", "selector": { "role": "button", "name": "Attach" }, "file": "cv.txt" })),
+            action_of(json!({ "kind": "upload", "selector": { "css": "#nothing" }, "file": "cv.txt" })),
+        ],
+        unchecked: None,
+    };
+    let mut account = None;
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &step, &timing(), &mut account).await.unwrap();
+    assert_eq!(out[0].detail, "uploaded \"cv.txt\" (5 bytes) to #direct");
+    must(out[0].clone());
+    must(out[1].clone());
+    refused(out[2].clone(), "did not open a file chooser");
+
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#seen-direct" }, "equals": "cv.txt 5" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#seen-chooser" }, "equals": "cv.txt 5" })).await);
+}

@@ -1903,3 +1903,117 @@ async fn a_step_that_expects_a_400_is_not_retried() {
     assert!(report.ok, "{report:?}");
     assert_eq!(r.fetched().len(), 1);
 }
+
+mod test_files {
+    //! A form step that uploads a test file: what reaches the page, and
+    //! that the file's bytes reach nothing else.
+
+    use super::*;
+    use base64::Engine;
+
+    const PDF: &[u8] = b"%PDF-1.7 a test document";
+
+    /// `template()` with its first step also sending `appraisal.pdf` as
+    /// `Document`.
+    fn uploading() -> ApiTemplate {
+        let mut t = template();
+        t.steps[0].files = BTreeMap::from([("Document".to_string(), "appraisal.pdf".to_string())]);
+        t
+    }
+
+    fn put_test_file(r: &Rig) -> String {
+        let dir = v2_lib::test_files::folder(r.root.path(), ORG, PROJECT);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("appraisal.pdf"), PDF).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(PDF)
+    }
+
+    #[tokio::test]
+    async fn the_page_gets_the_file_and_nothing_else_gets_its_bytes() {
+        let _log = crate::serial::log_tail();
+        let _act = crate::serial::activity_log();
+        let activity = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(activity.path().to_path_buf());
+
+        let mut r = rig(
+            vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+            None,
+        );
+        let b64 = put_test_file(&r);
+        let report = run(&mut r, uploading()).await;
+        assert!(report.ok, "{report:?}");
+
+        let fetched = r.fetched();
+        assert_eq!(
+            fetched[0][0]["body"],
+            json!({ "kind": "form", "fields": { "CycleName": "FY27" },
+                    "files": [{ "field": "Document", "name": "appraisal.pdf", "contentType": "application/pdf",
+                                "size": PDF.len(), "base64": b64 }] })
+        );
+        assert_eq!(fetched[1][0]["body"], json!({ "kind": "form", "fields": { "CycleId": "274" } }));
+        assert!(FETCH_FN.contains("new Blob([Uint8Array.from(atob(f.base64)"), "{FETCH_FN}");
+
+        assert_eq!(report.steps[0].detail, format!("status 200, sent \"appraisal.pdf\" ({} bytes), captured cycleId", PDF.len()));
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains(&b64), "the bytes reached the report: {text}");
+        assert!(!report.message().contains(&b64));
+
+        let records = activity_records(activity.path(), "api");
+        for rec in &records {
+            assert!(!rec.to_string().contains(&b64), "the bytes reached an activity record: {rec}");
+        }
+        let first = step_records(&records)[0];
+        assert!(
+            first["request"].as_str().unwrap().contains(&format!("<file appraisal.pdf, {} bytes>", PDF.len())),
+            "{first}"
+        );
+        for line in v2_lib::applog::recent(400) {
+            assert!(!line.message.contains(&b64), "the bytes reached the app log: {}", line.message);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_upload_step_names_the_file_never_its_bytes() {
+        let _act = crate::serial::activity_log();
+        let activity = tempfile::tempdir().unwrap();
+        v2_lib::activity_log::init(activity.path().to_path_buf());
+        let mut r = rig(vec![answer(400, json!({ "success": false, "error": "bad file" }))], None);
+        let b64 = put_test_file(&r);
+        let report = run(&mut r, uploading()).await;
+        assert!(!report.ok);
+        assert_eq!(report.failed.as_deref(), Some("Cycle setup"));
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains(&b64), "{text}");
+        for rec in activity_records(activity.path(), "api") {
+            assert!(!rec.to_string().contains(&b64), "{rec}");
+        }
+    }
+
+    #[test]
+    fn preflight_refuses_a_file_this_project_does_not_have() {
+        let root = tempfile::tempdir().unwrap();
+        save_recipe(root.path(), ORG, PROJECT, &recipe()).unwrap();
+        save_accounts(root.path(), &[account()]).unwrap();
+        let mut t = uploading();
+        // Uploaded by two steps: still one problem, naming the first.
+        t.steps[1].files = BTreeMap::from([("Again".to_string(), "appraisal.pdf".to_string())]);
+        let problems = preflight(root.path(), &request(t.clone(), prove()), None).unwrap_err();
+        assert_eq!(
+            problems,
+            vec!["add \"appraisal.pdf\" to Test files (Auto Run or API Templates) - the step \"Cycle setup\" uploads it"
+                .to_string()]
+        );
+
+        let dir = v2_lib::test_files::folder(root.path(), ORG, PROJECT);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("appraisal.pdf"), PDF).unwrap();
+        assert_eq!(preflight(root.path(), &request(t.clone(), prove()), None), Ok(()));
+
+        std::fs::File::create(dir.join("appraisal.pdf"))
+            .unwrap()
+            .set_len(v2_lib::test_files::MAX_BYTES + 1)
+            .unwrap();
+        let problems = preflight(root.path(), &request(t, prove()), None).unwrap_err();
+        assert!(problems[0].contains("larger than 25 MB"), "{problems:?}");
+    }
+}

@@ -10,7 +10,7 @@ use super::nav::{self, Route};
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
 use super::{store, StepScript};
-use crate::browser::actions::{execute_in, Action, ActionOutcome, Policy};
+use crate::browser::actions::{execute_in, upload_in, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
 use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
@@ -143,6 +143,7 @@ pub async fn run_step_routed<D: Driver>(
                     }
                 }
             },
+            Action::Upload { selector, file } => upload(d, root, organization, project, action, selector, file, timing).await,
             other => execute_in(d, other, timing, &policy).await,
         };
         if !outcome.ok && !outcome.harness {
@@ -151,6 +152,34 @@ pub async fn run_step_routed<D: Driver>(
         out.push(outcome);
     }
     Ok(out)
+}
+
+/// An `upload`, carried out here because only the runner knows the
+/// project, and so where its Test files are. The file is checked - there,
+/// and within the cap - before anything in the page is touched; a missing
+/// one fails the action with the sentence saying where to add it.
+#[allow(clippy::too_many_arguments)]
+async fn upload<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    action: &Action,
+    selector: &crate::browser::locator::Target,
+    file: &str,
+    timing: &Timing,
+) -> ActionOutcome {
+    if let Err(why) = action.validate() {
+        return ActionOutcome::failed(format!("this action cannot run: {why}"));
+    }
+    let folder = crate::test_files::folder(root, organization, project);
+    match crate::test_files::check_for_run(&folder, file, "this step") {
+        Err(why) => ActionOutcome::failed(why),
+        Ok((path, size)) => {
+            let shown = format!("\"{file}\" ({})", crate::test_files::human_size(size));
+            upload_in(d, selector, &path, &shown, timing).await
+        }
+    }
 }
 
 /// A sign-in and the trip back to the module that follows it, as the one

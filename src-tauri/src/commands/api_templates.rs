@@ -16,7 +16,7 @@ fn refuse_unless_offered() -> Result<(), String> {
     refuse_unless(crate::ai_tools::autorun_offered())
 }
 
-fn refuse_unless(offered: bool) -> Result<(), String> {
+pub(crate) fn refuse_unless(offered: bool) -> Result<(), String> {
     if !offered {
         return Err("not available in this build".to_string());
     }
@@ -265,6 +265,14 @@ pub fn import_at(
         crate::applog::warn(format!("api templates import: {what} {id} could not be saved: {e}"));
         TemplatesImportSkip { id: id.to_string(), reason: format!("this {what} could not be saved - see Settings, Logs") }
     };
+    // The names in this machine's Test files, for the note on a template
+    // that uploads one this machine does not have. A folder that cannot be
+    // read is logged and reads as empty: every file is then named.
+    let have: Vec<String> = crate::test_files::list(&crate::test_files::folder(root, organization, project))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
     let mut replaced_flows: Vec<&Flow> = Vec::new();
     for f in &plan.flows {
         // A saved copy that no longer reads still stands for that id.
@@ -299,6 +307,9 @@ pub fn import_at(
                     Err(()) => share::FlowFound::Unreadable,
                 };
                 if let Some(note) = share::stage_note(t, found) {
+                    result.notes.push(TemplatesImportNote { id: t.id.clone(), title: t.title.clone(), note });
+                }
+                if let Some(note) = share::missing_files_note(t, &have) {
                     result.notes.push(TemplatesImportNote { id: t.id.clone(), title: t.title.clone(), note });
                 }
             }

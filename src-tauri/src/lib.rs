@@ -51,6 +51,7 @@ pub mod speccov;
 pub mod state;
 pub mod steps_xml;
 pub mod test_map;
+pub mod test_files;
 pub mod transform;
 pub mod tray;
 pub mod updater;
@@ -73,7 +74,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
         autorun_record_signin, autorun_replay, board, bugs, cases, discovery, guide, misc, prs, queue, run_order, runs,
-        testplan, workspace,
+        test_files, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -275,7 +276,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             api_templates::api_templates_remove_flow,
             api_templates::api_templates_open_flow,
             api_templates::api_templates_export,
-            api_templates::api_templates_import
+            api_templates::api_templates_import,
+            test_files::test_files_list,
+            test_files::test_files_add,
+            test_files::test_files_remove,
+            test_files::test_files_open_folder
         ])
 }
 

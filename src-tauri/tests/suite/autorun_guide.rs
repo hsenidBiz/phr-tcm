@@ -37,6 +37,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
+        Action::Upload { selector: "s".into(), file: "f.pdf".into() },
     ];
     let emitted: Vec<String> = samples
         .iter()

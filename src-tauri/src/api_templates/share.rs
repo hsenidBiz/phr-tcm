@@ -297,6 +297,34 @@ pub fn stage_note(t: &ApiTemplate, flow: FlowFound) -> Option<String> {
     }
 }
 
+/// Why an imported template cannot run as it is on this machine: it
+/// uploads test files that are not in this project's Test files here. A
+/// file travels in the export by its name only - never its bytes - so the
+/// person adds their own copy. `have` is the names in this machine's Test
+/// files; a name is matched ignoring case, as Windows' file names are.
+/// `None` when every file it uploads is here, or it uploads none.
+pub fn missing_files_note(t: &ApiTemplate, have: &[String]) -> Option<String> {
+    let mut missing: Vec<&str> = Vec::new();
+    for step in &t.steps {
+        for name in step.files.values() {
+            let here = have.iter().any(|h| h.eq_ignore_ascii_case(name));
+            if !here && !missing.iter().any(|m| m.eq_ignore_ascii_case(name)) {
+                missing.push(name);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = missing.iter().map(|n| format!("\"{n}\"")).collect();
+    let (it, them) = if missing.len() == 1 { ("a test file", "it") } else { ("test files", "them") };
+    Some(format!(
+        "it uploads {it} this machine does not have: {} - add {them} to {} before running it",
+        names.join(", "),
+        crate::test_files::WHERE
+    ))
+}
+
 /// The note for a template saved here, not in the file, that a flow the
 /// import replaced no longer fits.
 pub fn replaced_flow_note(flow_id: &str, why: &str) -> String {

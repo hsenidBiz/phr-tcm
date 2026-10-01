@@ -105,7 +105,21 @@ with every problem listed together:
   account's other session closed - not a changed template.
 - A step has at most one body: `json` (any JSON value) or `form` (string
   values, sent as multipart/form-data - what the application's own forms
-  send). File fields are not supported.
+  send).
+- `files`: a form step that uploads a document maps each file field to the
+  NAME of a file in this project's Test files -
+  `"files": { "Attachment": "appraisal-form.pdf" }` - one file per field.
+  It goes with a `form` (write `"form": {}` when the step sends nothing
+  else), a field is in `form` or `files`, never both, and the file name is
+  written out in full: no placeholders, no paths. Test files are the
+  person's, kept on their machine; the names there now are listed under
+  "Test files" at the end of this guide (no such section means there are
+  none yet). Use only those names - if the test needs a file that
+  is not there, ask the person to add it to Test files (Auto Run or API
+  Templates), never invent a name. A run that names a missing file is
+  refused before anything is sent. The file is sent with a content type
+  from its extension; reports name it and its size, never its contents.
+  At most 25 MB per file.
 - `expect` defaults to `{ "status": 200 }`. Its `json` is a partial match:
   every key given must be present in the response with an equal value.
 - `outputs`: captured names handed back to you when a run succeeds.

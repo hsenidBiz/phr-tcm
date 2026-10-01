@@ -22,5 +22,6 @@ pub mod prs;
 pub mod queue;
 pub mod run_order;
 pub mod runs;
+pub mod test_files;
 pub mod testplan;
 pub mod workspace;
