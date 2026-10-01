@@ -891,6 +891,8 @@ export const commands = {
 	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
+	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
+	apiTemplatesImport: (organization: string, project: string, path: string) => typedError<TemplatesImportResult, string>(__TAURI_INVOKE("api_templates_import", { organization, project, path })),
 };
 
 /** Events */
@@ -2956,6 +2958,45 @@ export type Target_Serialize = string | LocatorStep_Serialize | LocatorStep_Seri
 export type TeamRef = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  What an export wrote, and how many saved files it could not read (each
+ *  is in the log, as the tab's own listing logs it).
+ */
+export type TemplatesExportResult = {
+	templates: number,
+	flows: number,
+	skipped: number,
+};
+
+/**
+ *  One template that was imported but cannot run as it is - its flow is
+ *  not saved here, or that flow does not have its stage.
+ */
+export type TemplatesImportNote = {
+	id: string,
+	title: string,
+	note: string,
+};
+
+/**
+ *  What an import did. `added` and `replaced` are titles - a flow's marked
+ *  " (flow)" - flows first, each list in file order. `skipped` names the
+ *  entry by its id, which is all an entry that does not parse is sure to
+ *  have.
+ */
+export type TemplatesImportResult = {
+	added: string[],
+	replaced: string[],
+	skipped: TemplatesImportSkip[],
+	notes: TemplatesImportNote[],
+};
+
+/**  One entry of the file that was not imported, and why. */
+export type TemplatesImportSkip = {
+	id: string,
+	reason: string,
 };
 
 /**

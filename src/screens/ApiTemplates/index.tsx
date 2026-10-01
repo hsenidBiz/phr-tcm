@@ -1,13 +1,14 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { commands, events, type Flow, type SavedTemplate } from "../../bindings";
+import { commands, events, type Flow, type SavedTemplate, type TemplatesExportResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
-import { IconCollapseAll, IconExpandAll } from "../../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconExport, IconImport } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
@@ -15,6 +16,7 @@ import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
 import FlowMap from "./FlowMap";
+import ImportTemplates from "./ImportTemplates";
 import RemoveFlow from "./RemoveFlow";
 import RemoveTemplate from "./RemoveTemplate";
 import TemplateRow, { hostOf, type StageLine } from "./TemplateRow";
@@ -43,6 +45,29 @@ function stageLine(t: SavedTemplate["template"], flows: Map<string, Flow>): Stag
   if (flow && stage) return { stage: stage.title, flow: flow.title, missing: false };
   return { stage: ref.id, flow: flow ? flow.title : ref.flow, missing: true };
 }
+
+/** The file name an export offers: the project's name, made safe for one. */
+function exportFileName(project: string): string {
+  const slug = project
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `api-templates-${slug || "project"}.json`;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** The toast after an export: what went into the file, and - when a saved
+ * file could not be read - that it was left out. */
+function exportedSentence(r: TemplatesExportResult): string {
+  const done = `Exported ${plural(r.templates, "template")} and ${plural(r.flows, "flow")}.`;
+  if (r.skipped === 0) return done;
+  return `${done} ${plural(r.skipped, "saved file")} could not be read and ${
+    r.skipped === 1 ? "was" : "were"
+  } left out - see Settings, Logs.`;
+}
+
+const JSON_FILTER = [{ name: "API templates", extensions: ["json"] }];
 
 /** The tab's two views: the templates as rows, or the flows as maps. */
 type View = "templates" | "flows";
@@ -100,6 +125,8 @@ export default function ApiTemplates({
   const [scrollTo, setScrollTo] = useState<string | null>(null);
   const [removing, setRemoving] = useState<SavedTemplate["template"] | null>(null);
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
+  // The file picked to import, while its warning and result are up.
+  const [importPath, setImportPath] = useState<string | null>(null);
   // Rows opened by their own toggle or from a flow map. A set, so opening
   // one from a map does not fold the others a person had open.
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
@@ -118,6 +145,31 @@ export default function ApiTemplates({
       un.then((f) => f()).catch(() => {});
     };
   }, [qc]);
+
+  // Every template and flow of the project into one file, proof stripped
+  // by Rust. Cancelling the save dialog does nothing.
+  const exportAll = useMutation({
+    mutationFn: async () => {
+      const path = await save({ defaultPath: exportFileName(project), filters: JSON_FILTER });
+      if (!path) return null;
+      return unwrapStr(commands.apiTemplatesExport(org, project, path));
+    },
+    onSuccess: (r) => {
+      if (!r) return;
+      if (r.skipped > 0) toast.warning(exportedSentence(r));
+      else toast.success(exportedSentence(r));
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const pickImport = async () => {
+    try {
+      const path = await open({ multiple: false, filters: JSON_FILTER });
+      if (typeof path === "string") setImportPath(path);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const templates = useMemo(() => overview.data?.templates ?? [], [overview.data]);
   // An overview from before flows existed has no `flows` at all.
@@ -233,6 +285,27 @@ export default function ApiTemplates({
         >
           API templates {writesOn ? "on" : "off"}
         </button>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={(templates.length === 0 && flows.length === 0) || exportAll.isPending}
+            title="Every template and flow of this project in one file, without the proof from your site"
+            onClick={() => exportAll.mutate()}
+          >
+            <IconExport aria-hidden />
+            Export
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            title="Templates and flows from a file someone exported"
+            onClick={() => void pickImport()}
+          >
+            <IconImport aria-hidden />
+            Import
+          </Button>
+        </div>
       </div>
 
       {overview.isLoading && <p className="text-sm text-muted">Loading templates…</p>}
@@ -399,6 +472,17 @@ export default function ApiTemplates({
           template={removing}
           onClose={() => setRemoving(null)}
           onRemoved={() => void qc.invalidateQueries({ queryKey: [KEY] })}
+        />
+      )}
+
+      {importPath && (
+        <ImportTemplates
+          org={org}
+          project={project}
+          path={importPath}
+          onClose={() => setImportPath(null)}
+          // An import emits no change event: read the files again here.
+          onImported={() => void qc.invalidateQueries({ queryKey: [KEY] })}
         />
       )}
 

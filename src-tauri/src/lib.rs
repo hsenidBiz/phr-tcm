@@ -273,7 +273,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             api_templates::api_templates_overview,
             api_templates::api_templates_remove,
             api_templates::api_templates_remove_flow,
-            api_templates::api_templates_open_flow
+            api_templates::api_templates_open_flow,
+            api_templates::api_templates_export,
+            api_templates::api_templates_import
         ])
 }
 

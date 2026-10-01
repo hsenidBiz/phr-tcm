@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { saveApiWrites } from "../../lib/apiTemplates";
+import { toast } from "../../lib/toast";
 import ApiTemplates from "./index";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -812,4 +813,138 @@ test("the details count the parameters and show what an optional one sends when 
   const comments = within(table).getByText("comments").closest("tr")!;
   const cells = within(comments).getAllByRole("cell").map((c) => c.textContent);
   expect(cells.slice(0, 4)).toEqual(["comments", "list", "no", "[]"]);
+});
+
+// ------------------------------------------------------- export and import
+
+test("Export and Import sit in the header, and Export is off with nothing to export", async () => {
+  mockOverview({ origin: null, templates: [], flows: [] });
+  renderScreen();
+  await screen.findByText(/Your assistant builds these/);
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
+});
+
+test("Export writes every template and flow to the picked file and says how many", async () => {
+  const calls = mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|save") return "C:\\Users\\me\\api-templates-proj.json";
+    if (cmd === "api_templates_export") return { templates: 3, flows: 1, skipped: 0 };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Exported 3 templates and 1 flow."));
+  const dialog = calls.find((c) => c.cmd === "plugin:dialog|save")?.args as { options: { defaultPath: string } };
+  expect(dialog.options.defaultPath).toBe("api-templates-proj.json");
+  expect(calls.find((c) => c.cmd === "api_templates_export")?.args).toEqual({
+    organization: "acme",
+    project: "proj",
+    path: "C:\\Users\\me\\api-templates-proj.json",
+  });
+});
+
+test("an export that left a saved file out says so", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|save") return "C:\\out.json";
+    if (cmd === "api_templates_export") return { templates: 1, flows: 0, skipped: 1 };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() =>
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Exported 1 template and 0 flows. 1 saved file could not be read and was left out - see Settings, Logs.",
+    ),
+  );
+});
+
+test("cancelling either file dialog does nothing", async () => {
+  const calls = mockOverview(OVERVIEW, (cmd) =>
+    cmd === "plugin:dialog|save" || cmd === "plugin:dialog|open" ? null : undefined,
+  );
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "plugin:dialog|save")).toBe(true));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "plugin:dialog|open")).toBe(true));
+  await act(async () => {});
+
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(calls.some((c) => c.cmd === "api_templates_export" || c.cmd === "api_templates_import")).toBe(false);
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+test("Import warns first, then shows what was added, replaced and skipped, and reads the lists again", async () => {
+  const calls = mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return {
+        added: ["Performance cycle wizard (flow)", "Remove a goal"],
+        replaced: ["Create a draft performance cycle"],
+        skipped: [{ id: "Bad Id", reason: "this template's id is not valid" }],
+        notes: [{ id: "goals-remove-goal", title: "Remove a goal", note: "its flow goals is not in the file" }],
+      };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  const imports = () => calls.filter((c) => c.cmd === "api_templates_import");
+
+  // The warning comes first, and Cancel leaves everything as it was.
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  let dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  expect(dialog).toHaveTextContent(
+    "Templates and flows with the same id as ones saved here are replaced, and arrive unproven - prove them on your site before relying on them.",
+  );
+  expect(dialog).not.toHaveTextContent("Downloads");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(imports()).toHaveLength(0);
+
+  // Import: once, with the picked file - then the result.
+  const overviewsBefore = calls.filter((c) => c.cmd === "api_templates_overview").length;
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Import shared.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(imports()).toHaveLength(1);
+  expect(imports()[0].args).toEqual({ organization: "acme", project: "proj", path: "C:\\Downloads\\shared.json" });
+
+  const added = within(dialog).getByRole("region", { name: "Added" });
+  expect(within(added).getByText("Performance cycle wizard (flow)")).toBeInTheDocument();
+  expect(within(added).getByText("Remove a goal")).toBeInTheDocument();
+  const replaced = within(dialog).getByRole("region", { name: "Replaced" });
+  expect(within(replaced).getByText("Create a draft performance cycle")).toBeInTheDocument();
+  const skipped = within(dialog).getByRole("region", { name: "Skipped" });
+  expect(skipped).toHaveTextContent("Bad Id: this template's id is not valid");
+  const notes = within(dialog).getByRole("region", { name: "Imported, but cannot run yet" });
+  expect(notes).toHaveTextContent("Remove a goal: its flow goals is not in the file");
+
+  // The tab reads its lists again.
+  await waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "api_templates_overview").length).toBeGreaterThan(overviewsBefore),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+test("an import the file refuses says why and closes", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\other.json";
+    if (cmd === "api_templates_import") throw "that file is not an API templates export";
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const dialog = await screen.findByRole("dialog", { name: "Import other.json?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("that file is not an API templates export"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
