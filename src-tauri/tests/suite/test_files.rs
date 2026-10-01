@@ -265,6 +265,11 @@ fn where_offered_the_commands_work_on_the_projects_folder() {
     let picked = tempfile::tempdir().unwrap();
     let file = write(picked.path(), "cv.pdf", b"x");
     assert!(list_at(true, root.path(), " ", PROJECT).unwrap_err().contains("choose an organization and a project"));
+    assert_eq!(
+        add_at(true, root.path(), ORG, PROJECT, Path::new("cv.pdf"), false).unwrap_err(),
+        v2_lib::commands::test_files::NOT_A_FULL_PATH
+    );
+    assert!(!folder(root.path(), ORG, PROJECT).exists(), "nothing was copied");
     add_at(true, root.path(), ORG, PROJECT, &file, false).unwrap();
     assert_eq!(list_at(true, root.path(), ORG, PROJECT).unwrap()[0].name, "cv.pdf");
     assert!(list_at(true, root.path(), ORG, "Other").unwrap().is_empty(), "another project has its own");

@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 /// Said when a command names no organization or project.
 pub const NO_PROJECT: &str = "choose an organization and a project first - test files belong to a project";
 
+/// Said when `add` is given a path that is not a full one.
+pub const NOT_A_FULL_PATH: &str = "only a file picked with Add files can be added - that is not a full path to one";
+
 /// The project's Test files folder, after the gate and a project check.
 fn folder_for(offered: bool, root: &Path, organization: &str, project: &str) -> Result<PathBuf, String> {
     refuse_unless(offered)?;
@@ -37,7 +40,13 @@ pub fn add_at(
     path: &Path,
     replace: bool,
 ) -> Result<TestFile, String> {
-    test_files::add(&folder_for(offered, root, organization, project)?, path, replace)
+    let folder = folder_for(offered, root, organization, project)?;
+    // Only a file the person picked, which the file dialog always hands
+    // over as a full path - never one read against the working directory.
+    if !path.is_absolute() {
+        return Err(NOT_A_FULL_PATH.to_string());
+    }
+    test_files::add(&folder, path, replace)
 }
 
 pub fn remove_at(offered: bool, root: &Path, organization: &str, project: &str, name: &str) -> Result<(), String> {
