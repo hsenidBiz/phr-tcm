@@ -137,8 +137,9 @@ impl Drop for RealBrowsers {
 
 /// Run the selection unattended and return the finished run. Progress
 /// arrives as `ReplayProgress` events while this is pending. `account`
-/// signs in every script that names no account of its own; it must be a
-/// key in the Accounts list, or the run does not start.
+/// signs in every case, over the account a script names (null leaves each
+/// script to its own); it must be a key in the Accounts list, or the run
+/// does not start.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]

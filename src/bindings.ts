@@ -540,8 +540,9 @@ export const commands = {
 	/**
 	 *  Run the selection unattended and return the finished run. Progress
 	 *  arrives as `ReplayProgress` events while this is pending. `account`
-	 *  signs in every script that names no account of its own; it must be a
-	 *  key in the Accounts list, or the run does not start.
+	 *  signs in every case, over the account a script names (null leaves each
+	 *  script to its own); it must be a key in the Accounts list, or the run
+	 *  does not start.
 	 */
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */

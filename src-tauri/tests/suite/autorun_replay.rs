@@ -267,6 +267,24 @@ async fn a_successful_sign_in_is_step_zero_and_the_account_is_recorded() {
 }
 
 #[tokio::test]
+async fn with_no_account_picked_a_script_signs_in_as_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    store::save_script(root, &script(1, Some("admin"), serde_json::json!([]))).unwrap();
+    let (d, _state) = common::stateful_app(false, None);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(run.cases[0].account.as_deref(), Some("admin"));
+}
+
+#[tokio::test]
 async fn a_harness_failure_is_blocked_and_takes_no_picture() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -1125,7 +1143,7 @@ fn lee() -> v2_lib::autorun::accounts::Account {
 }
 
 #[tokio::test]
-async fn the_scripts_own_account_wins_and_the_runs_account_fills_in_for_a_script_with_none() {
+async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -1140,10 +1158,11 @@ async fn the_scripts_own_account_wins_and_the_runs_account_fills_in_for_a_script
     run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], Some("lee"), &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
-    assert_eq!(run.cases[0].account.as_deref(), Some("admin"));
-    assert_eq!(run.cases[1].account.as_deref(), Some("lee"));
-    assert_eq!(run.cases[1].steps[0].step_number, SIGN_IN_STEP);
-    assert!(run.cases[1].steps[0].outcomes.iter().all(|o| o.ok), "{:?}", run.cases[1].steps[0].outcomes);
+    for case in &run.cases {
+        assert_eq!(case.account.as_deref(), Some("lee"), "case {}", case.case_id);
+        assert_eq!(case.steps[0].step_number, SIGN_IN_STEP);
+        assert!(case.steps[0].outcomes.iter().all(|o| o.ok), "{:?}", case.steps[0].outcomes);
+    }
 }
 
 #[tokio::test]

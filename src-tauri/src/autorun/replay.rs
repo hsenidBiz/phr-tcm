@@ -331,8 +331,11 @@ pub async fn run_selection<B: Browsers>(
 }
 
 /// Run a whole selection, one fresh browser each, saving the run after
-/// every case so a crash or a stop loses nothing. `run_account` signs in
-/// every script that names no account of its own. The module paths file
+/// every case so a crash or a stop loses nothing. `run_account`, the
+/// account the person picked for the run, signs in every case - over the
+/// account a script names, which only decides when nothing was picked. A
+/// `sign_in` step inside a script still changes to the account it names.
+/// The module paths file
 /// is read once, first: an unreadable one stops the run before any
 /// browser opens.
 #[allow(clippy::too_many_arguments)]
@@ -381,7 +384,7 @@ pub async fn run_cases<B: Browsers>(
             Ok(None) => unrun(case_id, title, "", "this case has no script on this machine".into()),
             Ok(Some(script)) => {
                 count = script.steps.len() as u32;
-                let account = script.account.as_deref().or(run_account);
+                let account = run_account.or(script.account.as_deref());
                 match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {

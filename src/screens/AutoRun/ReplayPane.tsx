@@ -207,7 +207,9 @@ export default function ReplayPane({
               ))}
             </Select>
           </label>
-          <p className="text-xs text-faint">Used only for scripts that name no account.</p>
+          <p className="text-xs text-faint">
+            An account picked here signs in every case, over the account a script names.
+          </p>
           <label className="flex items-center gap-2 text-xs text-muted">
             Browser
             <Select
