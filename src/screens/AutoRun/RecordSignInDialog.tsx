@@ -33,7 +33,7 @@ import {
 import { effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
-import { chosenBrowser } from "./ModulePathsDialog";
+import { chosenBrowser } from "./AreasDialog";
 
 /** One recorded step as the recording lists it. */
 type Row = { kind: "click" | "field"; readable: string; password: boolean };

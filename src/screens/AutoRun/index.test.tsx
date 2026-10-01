@@ -363,14 +363,14 @@ test("Clear results opens its confirm with the exact sentence and, once confirme
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 run removed."));
 });
 
-test("the Setup card's Module paths button opens its dialog", async () => {
+test("the Setup card's Areas button opens its dialog", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "auto_run_load_nav" ? { direct_urls: true, modules: [] } : null,
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  fireEvent.click(screen.getByRole("button", { name: "Edit module paths" }));
-  expect(await screen.findByRole("heading", { name: "Module paths" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit areas" }));
+  expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
 
 // ---- Setup card, header line, site address ----
@@ -503,9 +503,9 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(within(row("Accounts")).getByText("None yet")).toBeInTheDocument();
   // The nav query answers null in this mock: an answer, so the row reads
   // "none" rather than sitting on "Loading…" forever.
-  expect(await within(row("Module paths")).findByText("None mapped yet")).toBeInTheDocument();
-  expect(within(row("Module paths")).queryByText("Loading…")).not.toBeInTheDocument();
-  expect(within(row("Module paths")).getByRole("button", { name: "Edit module paths" })).toBeEnabled();
+  expect(await within(row("Areas")).findByText("None recorded yet")).toBeInTheDocument();
+  expect(within(row("Areas")).queryByText("Loading…")).not.toBeInTheDocument();
+  expect(within(row("Areas")).getByRole("button", { name: "Edit areas" })).toBeEnabled();
   expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
   // Without a recipe there is no address to edit on its own: the row's one
@@ -530,13 +530,13 @@ test("the Setup card and the header line read a project that is set up", async (
   expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeInTheDocument();
   expect(await within(row("Accounts")).findByText("2 accounts on this machine")).toBeInTheDocument();
   // One wording for the same count, in the row and in the header.
-  expect(await within(row("Module paths")).findByText("1 module path mapped")).toBeInTheDocument();
+  expect(await within(row("Areas")).findByText("1 area recorded")).toBeInTheDocument();
 
   // The header line: project, the host the runs go to, and the counts.
   expect(screen.getByText("proj")).toBeInTheDocument();
   expect(screen.getByText("hr.example.internal")).toBeInTheDocument();
   expect(screen.getByText("2 accounts")).toBeInTheDocument();
-  expect(screen.getByText("1 module path")).toBeInTheDocument();
+  expect(screen.getByText("1 area")).toBeInTheDocument();
 });
 
 test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the header", async () => {
@@ -632,7 +632,7 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   await screen.findByText("Alpha check");
 
   const why = "Pick an organization and project first";
-  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit module paths"]) {
+  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
     const b = screen.getByRole("button", { name });
     expect(b).toBeDisabled();
     expect(b).toHaveAttribute("title", why);

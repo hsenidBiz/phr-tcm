@@ -60,6 +60,22 @@ export default function ScriptEditor({
     queryFn: () => unwrapStr(commands.autoRunListAccounts()),
     retry: false,
   });
+  // The project's recorded areas, for the Area select. Shares its key with
+  // the Areas dialog, so a recording there updates this list.
+  const areas = useQuery({
+    queryKey: ["autorun-nav", org, project],
+    queryFn: async () => (await unwrapStr(commands.autoRunLoadNav(org, project))) ?? null,
+    enabled: Boolean(org && project),
+    retry: false,
+  });
+  const recorded = areas.data?.modules ?? [];
+  // null = untouched, so the saved script's area shows until the person picks.
+  const [pickedArea, setPickedArea] = useState<string | null>(null);
+  const named = pickedArea ?? existing.data?.area?.trim() ?? "";
+  // A script may name an area in another case than it was recorded in.
+  const match = recorded.find((a) => a.area.trim().toLowerCase() === named.toLowerCase());
+  const area = match?.area ?? named;
+  const areaKnown = match !== undefined;
   // null = untouched, so the saved script's account shows until the person picks.
   const [picked, setPicked] = useState<string | null>(null);
   const account = picked ?? existing.data?.account ?? "";
@@ -115,6 +131,8 @@ export default function ScriptEditor({
       title,
       steps: parsed,
       account: account === "" ? null : account,
+      // Left out when blank: the area named like the case's Module.
+      ...(area === "" ? {} : { area }),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -167,6 +185,24 @@ export default function ScriptEditor({
               {account !== "" && !known && (
                 <option value={account}>{`${account} (not on this machine)`}</option>
               )}
+            </Select>
+          </label>
+
+          <label className="block text-xs text-muted">
+            Area
+            <Select
+              aria-label="Area"
+              className="mt-1 w-full"
+              value={area}
+              onChange={(e) => setPickedArea(e.target.value)}
+            >
+              <option value="">the case's Module</option>
+              {recorded.map((a) => (
+                <option key={a.area} value={a.area}>
+                  {a.area}
+                </option>
+              ))}
+              {area !== "" && !areaKnown && <option value={area}>{`${area} (not recorded)`}</option>}
             </Select>
           </label>
 

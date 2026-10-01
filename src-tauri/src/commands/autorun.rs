@@ -531,8 +531,8 @@ pub fn auto_run_delete_quirk(
     Ok(list)
 }
 
-/// The project's module paths and its address switch, as the Module paths
-/// dialog shows them. A project with no file reads as no paths, switch on.
+/// The project's areas and its address switch, as the Areas dialog shows
+/// them. A project with no file reads as no areas, switch on.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_load_nav(
@@ -561,17 +561,18 @@ pub fn auto_run_set_direct_urls(
     Ok(crate::autorun::nav::view(&nav))
 }
 
-/// Forget one module's path. The dialog asks first.
+/// Forget one area, by name. The module's other areas stay. The dialog
+/// asks first.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_remove_module_path(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    module: String,
+    area: String,
 ) -> Result<crate::autorun::nav::NavView, String> {
-    let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &module)?;
-    crate::applog::info("Auto-run module path removed");
+    let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &area)?;
+    crate::applog::info("Auto-run area removed");
     Ok(crate::autorun::nav::view(&nav))
 }
 

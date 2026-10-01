@@ -12,6 +12,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const AREAS = [
+  { area: "Cycle Setup", module: "PMS", clicks: [], arrived: "/pms/cycle/setup", recorded: "t" },
+  { area: "Manage Cycle", module: "PMS", clicks: [], arrived: "/pms/cycle/manage", recorded: "t" },
+];
+
 function mountWith(
   script: unknown,
   accounts: unknown[],
@@ -21,6 +26,7 @@ function mountWith(
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_script") return script;
     if (cmd === "auto_run_list_accounts") return accounts;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
     if (cmd === "auto_run_save_script") {
       saved.push((args as { script: unknown }).script);
       return null;
@@ -152,4 +158,47 @@ test("saving names the organization and project, so the project's address rule a
   fireEvent.click(saveButton);
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]).toEqual(expect.objectContaining({ organization: "acme", project: "Web" }));
+});
+
+test("the area select lists the recorded areas after the case's Module, and saves the one chosen", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Area" });
+  expect(pick).toHaveTextContent("the case's Module");
+  fireEvent.click(pick);
+  await screen.findByRole("option", { name: "Manage Cycle" });
+  const options = screen.getAllByRole("option").map((o) => o.textContent);
+  expect(options).toEqual(["the case's Module", "Cycle Setup", "Manage Cycle"]);
+  fireEvent.click(screen.getByRole("option", { name: "Manage Cycle" }));
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() =>
+    expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null, area: "Manage Cycle" }]),
+  );
+});
+
+test("a script's own area shows, and choosing the case's Module again saves it with no area", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, area: "Cycle Setup" }, ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Area" });
+  await waitFor(() => expect(pick).toHaveTextContent("Cycle Setup"));
+  fireEvent.click(pick);
+  fireEvent.click(await screen.findByRole("option", { name: "the case's Module" }));
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null }]));
+});
+
+test("an area the project has not recorded is kept and marked, not silently dropped", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, area: "Assessments" }, ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Area" });
+  await waitFor(() => expect(pick).toHaveTextContent("Assessments (not recorded)"));
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { area: string }).area).toBe("Assessments");
 });

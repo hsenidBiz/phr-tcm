@@ -500,7 +500,7 @@ pub async fn capture<D: Driver>(
 }
 
 /// A finished recording as a path to check, or why there is none.
-pub fn finish(module: &str, captured: Captured, recorded: &str) -> Result<ModulePath, String> {
+pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> Result<ModulePath, String> {
     match captured.ended {
         Ended::Cancelled => Err(CANCELLED.to_string()),
         Ended::Closed => Err(BROWSER_CLOSED.to_string()),
@@ -509,8 +509,8 @@ pub fn finish(module: &str, captured: Captured, recorded: &str) -> Result<Module
                 return Err(NO_CLICKS.to_string());
             }
             Ok(ModulePath {
-                // Named after its module until recording asks for a name.
-                area: String::new(),
+                // Blank names it after its module (`ModulePath::name`).
+                area: area.trim().to_string(),
                 module: module.trim().to_string(),
                 clicks: captured.clicks,
                 arrived: nav::path_of(&href),

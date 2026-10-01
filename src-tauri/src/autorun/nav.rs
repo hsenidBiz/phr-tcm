@@ -252,6 +252,22 @@ pub fn find_path<'a>(nav: &'a NavFile, module: &str) -> Option<&'a ModulePath> {
     find_area(nav, module)
 }
 
+/// Whether `area` may be recorded under `module`: refused when another
+/// module already holds an area of that name (names are unique per
+/// project, ignoring case). The same name under the same module is a
+/// Re-record and is fine. Asked before a recording opens a browser, and
+/// again when the path is saved.
+pub fn check_area_free(nav: &NavFile, area: &str, module: &str) -> Result<(), String> {
+    match find_area(nav, area) {
+        Some(slot) if module_key(&slot.module) != module_key(module) => Err(format!(
+            "an area named \"{}\" is already recorded under {} - choose another name",
+            slot.name(),
+            slot.module.trim()
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Add an area, or replace the one already recorded under the same name
 /// and module, in any case (Re-record). A new area whose name is taken by
 /// one under ANOTHER module is refused: names are unique per project. An
@@ -260,15 +276,9 @@ pub fn put_path(root: &Path, org: &str, project: &str, mut path: ModulePath) -> 
     path.module = path.module.trim().to_string();
     path.area = path.name().to_string();
     let mut nav = load_nav(root, org, project)?;
+    check_area_free(&nav, &path.area, &path.module)?;
     let key = module_key(&path.area);
     match nav.modules.iter_mut().find(|m| module_key(m.name()) == key) {
-        Some(slot) if module_key(&slot.module) != module_key(&path.module) => {
-            return Err(format!(
-                "an area named \"{}\" is already recorded under {} - choose another name",
-                slot.name(),
-                slot.module.trim()
-            ));
-        }
         Some(slot) => *slot = path,
         None => nav.modules.push(path),
     }

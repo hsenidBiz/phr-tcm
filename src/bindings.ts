@@ -499,14 +499,17 @@ export const commands = {
 	/**  A note removed from the file altogether. */
 	autoRunDeleteQuirk: (organization: string, project: string, id: string) => typedError<Quirk_Serialize[], string>(__TAURI_INVOKE("auto_run_delete_quirk", { organization, project, id })),
 	/**
-	 *  The project's module paths and its address switch, as the Module paths
-	 *  dialog shows them. A project with no file reads as no paths, switch on.
+	 *  The project's areas and its address switch, as the Areas dialog shows
+	 *  them. A project with no file reads as no areas, switch on.
 	 */
 	autoRunLoadNav: (organization: string, project: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_load_nav", { organization, project })),
 	/**  "Scripts may open pages by address", saved the moment it is flipped. */
 	autoRunSetDirectUrls: (organization: string, project: string, allowed: boolean) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_direct_urls", { organization, project, allowed })),
-	/**  Forget one module's path. The dialog asks first. */
-	autoRunRemoveModulePath: (organization: string, project: string, module: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, module })),
+	/**
+	 *  Forget one area, by name. The module's other areas stay. The dialog
+	 *  asks first.
+	 */
+	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one.
@@ -547,7 +550,7 @@ export const commands = {
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
 	 */
-	autoRunRecordStart: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_start", { organization, project, module, account, browserName })),
+	autoRunRecordStart: (organization: string, project: string, module: string, area: string, account: string, browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_record_start", { organization, project, module, area, account, browserName })),
 	/**
 	 *  Stop, close the recording browser, replay the path in a fresh signed-in
 	 *  browser, and save it only if every click found its one element and the
@@ -568,14 +571,14 @@ export const commands = {
 	autoRunRecordCancel: () => typedError<null, string>(__TAURI_INVOKE("auto_run_record_cancel")),
 	/**
 	 *  Whether the recorder is held: by a recording, or by a Start, a check or
-	 *  a Try still going. The Module paths dialog asks when it opens - one it
+	 *  a Try still going. The Areas dialog asks when it opens - one it
 	 *  replaced may have left any of these behind (the Auto Run section was
 	 *  left mid-recording), and Cancel ends each of them. A recording whose
 	 *  browser was closed has already let go, and Start tidies it away.
 	 */
 	autoRunRecordingIsOpen: () => __TAURI_INVOKE<boolean>("auto_run_recording_is_open"),
-	/**  The same check a recording must pass, on a saved path. */
-	autoRunTryModulePath: (organization: string, project: string, module: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, module, account, browserName })),
+	/**  The same check a recording must pass, on a saved area. */
+	autoRunTryModulePath: (organization: string, project: string, area: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, area, account, browserName })),
 	/**
 	 *  Open a visible browser with nobody signed in, go to `start_url`, and
 	 *  listen. Each step arrives as a `RecordingEvent`.
@@ -2109,6 +2112,8 @@ export type Method = "GET" | "POST";
 export type ModuleRecordResult = {
 	saved: boolean,
 	module: string,
+	/**  The area's name, as saved (the module's when none was given). */
+	area: string,
 	/**  Why nothing was saved; empty when `saved`. */
 	failure: string,
 };

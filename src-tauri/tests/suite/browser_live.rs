@@ -1304,7 +1304,7 @@ async fn a_recorded_menu_path_is_saved_only_after_it_replays_in_a_fresh_browser(
     let captured = recorder::capture(&mut live.cdp, &stop, &cancel, &mut |_| {}).await;
     assert_eq!(captured.clicks.len(), 1, "{captured:?}");
     assert!(captured.clicks[0].describe().contains("Leave"), "{captured:?}");
-    let path = recorder::finish("Leave", captured, "2026-09-24T10:00:00Z").unwrap();
+    let path = recorder::finish("Leave", "", captured, "2026-09-24T10:00:00Z").unwrap();
     assert_eq!(path.arrived, "/leave");
     drop(live);
 

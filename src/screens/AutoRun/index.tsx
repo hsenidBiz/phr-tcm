@@ -38,7 +38,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
-import ModulePathsDialog from "./ModulePathsDialog";
+import AreasDialog from "./AreasDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import RecordSignInDialog from "./RecordSignInDialog";
@@ -153,7 +153,7 @@ export default function AutoRun({
   // dialog, so adding or removing one there updates the row.
   const testFiles = useTestFiles(org, project);
   const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
-  const moduleCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
+  const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every badge is
@@ -221,7 +221,7 @@ export default function AutoRun({
     () => (grouped ? groupIndices(rows.map((c) => c.title)) : []),
     [grouped, rows],
   );
-  /** The Module values of the loaded cases, for the Module paths dialog's
+  /** The Module values of the loaded cases, for the Areas dialog's
    * picker. A person can still type one that is not here. */
   const caseModules = useMemo(
     () =>
@@ -366,7 +366,7 @@ export default function AutoRun({
           </span>
         )}
         {accountCount != null && <span>{plural(accountCount, "account")}</span>}
-        {moduleCount != null && <span>{plural(moduleCount, "module path")}</span>}
+        {areaCount != null && <span>{plural(areaCount, "area")}</span>}
       </div>
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -493,25 +493,25 @@ export default function AutoRun({
           </SetupRow>
 
           <SetupRow
-            label="Module paths"
+            label="Areas"
             state={
               !setupReady ? (
                 <span className="text-muted">{needsProject}</span>
               ) : nav.isError ? (
-                <span className="text-danger">The module paths could not be read</span>
-              ) : nav.isPending || moduleCount == null ? (
+                <span className="text-danger">The areas could not be read</span>
+              ) : nav.isPending || areaCount == null ? (
                 <span className="text-muted">Loading…</span>
-              ) : moduleCount === 0 ? (
-                <span className="text-muted">None mapped yet</span>
+              ) : areaCount === 0 ? (
+                <span className="text-muted">None recorded yet</span>
               ) : (
-                `${plural(moduleCount, "module path")} mapped`
+                `${plural(areaCount, "area")} recorded`
               )
             }
           >
             <Button
               size="sm"
               variant="outline"
-              aria-label="Edit module paths"
+              aria-label="Edit areas"
               disabled={!setupReady}
               title={needsProject}
               onClick={() => setNavOpen(true)}
@@ -719,7 +719,7 @@ export default function AutoRun({
         <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
       )}
       {navOpen && (
-        <ModulePathsDialog
+        <AreasDialog
           org={org}
           project={project}
           caseModules={caseModules}

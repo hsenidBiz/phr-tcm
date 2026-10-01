@@ -9,7 +9,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use v2_lib::autorun::nav::{check_path, ModulePath, SIGN_IN_BROWSER_SILENT, SIGN_IN_FAILED};
+use v2_lib::autorun::nav::{check_area_free, check_path, load_nav, put_path, remove_path, ModulePath, SIGN_IN_BROWSER_SILENT, SIGN_IN_FAILED};
 use v2_lib::autorun::recorder::{
     arm, ax_chain, capture, finish, locate, locator_from_ax, locator_from_hints, narrow, next_click, stable_id, AxLink,
     Captured, ClickHints, ClickPayload, Ended, ScopeHint, BINDING, BROWSER_CLOSED, CANCELLED, LISTENER_JS, NO_CLICKS,
@@ -20,7 +20,7 @@ use v2_lib::browser::launch::Browser;
 use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::commands::autorun::close_autorun_browsers;
 use v2_lib::commands::autorun_record::{
-    auto_run_record_cancel, auto_run_recording_is_open, listen, open_the_recording, prepare_to_record,
+    area_to_record, area_to_try, auto_run_record_cancel, auto_run_recording_is_open, listen, open_the_recording, prepare_to_record,
     recording_is_going, recording_is_open, refuse_to_record_now, refuse_while_recording, unless_cancelled,
     RecorderClaim, RecordingFor, ALREADY_RECORDING, RECORDING_BUSY, TRY_CANCELLED,
 };
@@ -215,10 +215,73 @@ async fn capture_keeps_every_reported_click_then_stops_where_the_page_is() {
     assert_eq!(captured.clicks, vec![exact_role("link", "Leave"), exact_text("Apply Leave")]);
     assert_eq!(seen, vec!["link \"Leave\"".to_string(), "text \"Apply Leave\"".to_string()]);
     assert_eq!(captured.ended, Ended::Stopped { href: "https://hr.example.internal/hr/leave/apply?tab=2#top".into() });
-    let path = finish(" Leave ", captured, "2026-09-24T10:00:00Z").unwrap();
+    let path = finish(" Leave ", "", captured, "2026-09-24T10:00:00Z").unwrap();
     assert_eq!(path.module, "Leave");
+    assert_eq!(path.name(), "Leave", "no area given: named after its module");
     assert_eq!(path.arrived, "/hr/leave/apply");
     assert_eq!(path.clicks.len(), 2);
+}
+
+fn pms_recording(href: &str) -> Captured {
+    Captured { clicks: vec![exact_role("link", "PMS"), exact_role("link", "Manage Cycle")], ended: Ended::Stopped { href: href.into() } }
+}
+
+/// Areas: a finished recording keeps the area's name beside its module, and
+/// a second area under the same module sits next to the first.
+#[test]
+fn a_recording_saves_an_area_with_its_module_and_a_second_area_keeps_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let cycle = finish(" PMS ", " Manage Cycle ", pms_recording("https://hr.example.internal/pms/cycle/manage"), "t").unwrap();
+    assert_eq!((cycle.area.as_str(), cycle.module.as_str()), ("Manage Cycle", "PMS"));
+    put_path(dir.path(), "acme", "Web", cycle).unwrap();
+    let setup = finish("PMS", "Cycle Setup", pms_recording("https://hr.example.internal/pms/cycle/setup"), "t").unwrap();
+    let nav = put_path(dir.path(), "acme", "Web", setup).unwrap();
+    let saved: Vec<(&str, &str)> = nav.modules.iter().map(|m| (m.area.as_str(), m.module.as_str())).collect();
+    assert_eq!(saved, vec![("Manage Cycle", "PMS"), ("Cycle Setup", "PMS")]);
+    assert_eq!(load_nav(dir.path(), "acme", "Web").unwrap().modules.len(), 2);
+}
+
+#[test]
+fn the_area_is_named_after_its_module_unless_one_is_typed() {
+    assert_eq!(area_to_record(" PMS ", "  "), "PMS");
+    assert_eq!(area_to_record("PMS", " Manage Cycle "), "Manage Cycle");
+}
+
+/// A Try addresses an area by its name, trimmed and ignoring case, and an
+/// area that is not recorded says so in the spec's words.
+#[test]
+fn try_finds_an_area_by_name_and_names_one_that_is_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, arrived) in [("Cycle Setup", "/pms/cycle/setup"), ("Manage Cycle", "/pms/cycle/manage")] {
+        let mut p = finish("PMS", name, pms_recording(&format!("https://hr.example.internal{arrived}")), "t").unwrap();
+        p.recorded = "t".into();
+        put_path(dir.path(), "acme", "Web", p).unwrap();
+    }
+    let nav = load_nav(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(area_to_try(&nav, " manage cycle ").unwrap().arrived, "/pms/cycle/manage");
+    assert_eq!(area_to_try(&nav, "Cycle Setup").unwrap().arrived, "/pms/cycle/setup");
+    assert_eq!(
+        area_to_try(&nav, "Assessments").unwrap_err(),
+        "the area \"Assessments\" is not recorded - record it in Auto Run, Areas"
+    );
+    // Removing one leaves the other.
+    let nav = remove_path(dir.path(), "acme", "Web", "MANAGE CYCLE").unwrap();
+    assert_eq!(nav.modules.iter().map(|m| m.area.as_str()).collect::<Vec<_>>(), vec!["Cycle Setup"]);
+}
+
+/// A name another module holds is refused before any browser opens; the
+/// same name under the same module is a Re-record.
+#[test]
+fn an_area_name_held_by_another_module_is_refused_before_recording() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = finish("PMS", "Manage Cycle", pms_recording("https://hr.example.internal/pms/cycle/manage"), "t").unwrap();
+    let nav = put_path(dir.path(), "acme", "Web", p).unwrap();
+    assert_eq!(check_area_free(&nav, " manage cycle ", " pms "), Ok(()));
+    assert_eq!(check_area_free(&nav, "Payroll Run", "PMS"), Ok(()));
+    assert_eq!(
+        check_area_free(&nav, "MANAGE CYCLE", "Leave").unwrap_err(),
+        "an area named \"Manage Cycle\" is already recorded under PMS - choose another name"
+    );
 }
 
 /// Review focus 1.
@@ -231,7 +294,7 @@ async fn a_closed_recording_browser_ends_the_recording_and_saves_nothing() {
     let captured = capture(&mut d, &stop, &cancel, &mut |_| {}).await;
     assert_eq!(captured.clicks.len(), 1);
     assert_eq!(captured.ended, Ended::Closed);
-    assert_eq!(finish("Leave", captured, "t").unwrap_err(), BROWSER_CLOSED);
+    assert_eq!(finish("Leave", "", captured, "t").unwrap_err(), BROWSER_CLOSED);
 }
 
 #[tokio::test]
@@ -240,9 +303,9 @@ async fn cancel_ends_at_once_and_stop_with_no_clicks_saves_nothing() {
     d.events.push_back(clicked(0, "Leave"));
     let captured = capture(&mut d, &AtomicBool::new(false), &AtomicBool::new(true), &mut |_| {}).await;
     assert_eq!(captured, Captured { clicks: vec![], ended: Ended::Cancelled });
-    assert_eq!(finish("Leave", captured, "t").unwrap_err(), CANCELLED);
+    assert_eq!(finish("Leave", "", captured, "t").unwrap_err(), CANCELLED);
     let none = Captured { clicks: vec![], ended: Ended::Stopped { href: "https://hr.example.internal/hr/home/index".into() } };
-    assert_eq!(finish("Leave", none, "t").unwrap_err(), NO_CLICKS);
+    assert_eq!(finish("Leave", "", none, "t").unwrap_err(), NO_CLICKS);
 }
 
 fn leave_path() -> ModulePath {
@@ -488,6 +551,7 @@ fn about() -> RecordingFor {
         organization: "acme".into(),
         project: "Web".into(),
         module: "Leave".into(),
+        area: "Leave".into(),
         account: "admin".into(),
         which: Browser::Edge,
         start: "/hr/home/index".into(),

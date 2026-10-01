@@ -1,4 +1,4 @@
-//! Recording a module's menu path: a visible browser the person clicks
+//! Recording an area's menu path: a visible browser the person clicks
 //! through, a check in a fresh browser, and the path saved only if that
 //! replay lands where the recording did.
 //!
@@ -127,6 +127,8 @@ pub struct RecordingFor {
     pub organization: String,
     pub project: String,
     pub module: String,
+    /// The area's name, as typed (blank: the module's name).
+    pub area: String,
     pub account: String,
     pub which: Browser,
     /// The path part of the page the recording began on, kept with the
@@ -173,7 +175,7 @@ pub async fn open_the_recording(
 ) -> Result<(), String> {
     let mut slot = CURRENT.lock().await;
     if CANCEL_PENDING.swap(false, Ordering::SeqCst) {
-        crate::applog::info("Auto-run module recording cancelled while it was signing in");
+        crate::applog::info("Auto-run area recording cancelled while it was signing in");
         return Err(recorder::CANCELLED.to_string());
     }
     let stop = Arc::new(AtomicBool::new(false));
@@ -196,6 +198,8 @@ async fn drop_a_finished_recording() {
 pub struct ModuleRecordResult {
     pub saved: bool,
     pub module: String,
+    /// The area's name, as saved (the module's when none was given).
+    pub area: String,
     /// Why nothing was saved; empty when `saved`.
     pub failure: String,
 }
@@ -361,6 +365,7 @@ pub async fn auto_run_record_start(
     organization: String,
     project: String,
     module: String,
+    area: String,
     account: String,
     browser_name: String,
 ) -> Result<(), String> {
@@ -368,15 +373,19 @@ pub async fn auto_run_record_start(
     if module.is_empty() {
         return Err("name the module first".to_string());
     }
+    let area = area_to_record(&module, &area);
     drop_a_finished_recording().await;
     let claim = claim_the_recorder().await?;
     let root = super::autorun::root(&app)?;
+    // A name another module holds is refused now, not after the person has
+    // recorded and checked a path that could never be saved.
+    nav::check_area_free(&nav::load_nav(&root, &organization, &project)?, &area, &module)?;
     let (recipe, who) = signin::prepare(&root, &organization, &project, &account)?;
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
     let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default()).await?;
 
-    let about = RecordingFor { organization, project, module, account, which, start };
+    let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
         tokio::spawn(async move {
             let out = listen(&mut cdp, claim, &stop, &cancel, &mut |ev| {
@@ -389,7 +398,7 @@ pub async fn auto_run_record_start(
         })
     })
     .await?;
-    crate::applog::info("Auto-run module recording started");
+    crate::applog::info("Auto-run area recording started");
     Ok(())
 }
 
@@ -413,27 +422,27 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
         }
     };
     rec.stop.store(true, Ordering::SeqCst);
-    let Recording { task, about: RecordingFor { organization, project, module, account, which, start }, .. } = rec;
+    let Recording { task, about: RecordingFor { organization, project, module, area, account, which, start }, .. } = rec;
     let (captured, _claim) = task.await.map_err(|e| {
         crate::applog::warn(format!("module recording: the recorder stopped unexpectedly: {e}"));
         RECORDER_FELL_OVER.to_string()
     })?;
-    let path = match recorder::finish(&module, captured, &now_iso()) {
+    let path = match recorder::finish(&module, &area, captured, &now_iso()) {
         Ok(mut p) => {
             p.start = start;
             p
         }
-        Err(failure) => return Ok(ModuleRecordResult { saved: false, module, failure }),
+        Err(failure) => return Ok(ModuleRecordResult { saved: false, module, area, failure }),
     };
     let root = super::autorun::root(&app)?;
     match check_in_fresh_browser(&root, &organization, &project, &account, which, &path, recorder::CANCELLED).await {
         Ok(_) => {
             let clicks = path.clicks.len();
             nav::put_path(&root, &organization, &project, path)?;
-            crate::applog::info(format!("Auto-run module path saved ({clicks} clicks)"));
-            Ok(ModuleRecordResult { saved: true, module, failure: String::new() })
+            crate::applog::info(format!("Auto-run area saved ({clicks} clicks)"));
+            Ok(ModuleRecordResult { saved: true, module, area, failure: String::new() })
         }
-        Err(failure) => Ok(ModuleRecordResult { saved: false, module, failure }),
+        Err(failure) => Ok(ModuleRecordResult { saved: false, module, area, failure }),
     }
 }
 
@@ -476,7 +485,7 @@ pub async fn auto_run_record_cancel() -> Result<(), String> {
 }
 
 /// Whether the recorder is held: by a recording, or by a Start, a check or
-/// a Try still going. The Module paths dialog asks when it opens - one it
+/// a Try still going. The Areas dialog asks when it opens - one it
 /// replaced may have left any of these behind (the Auto Run section was
 /// left mid-recording), and Cancel ends each of them. A recording whose
 /// browser was closed has already let go, and Start tidies it away.
@@ -486,14 +495,29 @@ pub async fn auto_run_recording_is_open() -> bool {
     recording_is_going()
 }
 
-/// The same check a recording must pass, on a saved path.
+/// The name an area is recorded under: the one typed, trimmed, or - when
+/// none was typed - the module's.
+pub fn area_to_record(module: &str, area: &str) -> String {
+    match area.trim() {
+        "" => module.trim().to_string(),
+        a => a.to_string(),
+    }
+}
+
+/// The saved area a Try addresses, by name: trimmed, case ignored. Its
+/// module plays no part - two areas of one module are two paths.
+pub fn area_to_try(nav: &nav::NavFile, area: &str) -> Result<ModulePath, String> {
+    nav::find_area(nav, area).cloned().ok_or_else(|| nav::unrecorded_area(area))
+}
+
+/// The same check a recording must pass, on a saved area.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_try_module_path(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    module: String,
+    area: String,
     account: String,
     browser_name: String,
 ) -> Result<ModuleTryResult, String> {
@@ -501,7 +525,7 @@ pub async fn auto_run_try_module_path(
     let _claim = claim_the_recorder().await?;
     let root = super::autorun::root(&app)?;
     let nav_file = nav::load_nav(&root, &organization, &project)?;
-    let path = nav::find_path(&nav_file, &module).cloned().ok_or_else(|| nav::no_path(&module))?;
+    let path = area_to_try(&nav_file, &area)?;
     let which = Browser::from_name(&browser_name);
     Ok(match check_in_fresh_browser(&root, &organization, &project, &account, which, &path, TRY_CANCELLED).await {
         Ok(arrived) => ModuleTryResult { ok: true, cancelled: false, detail: format!("reached {arrived}") },
