@@ -221,7 +221,12 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         }
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
         restored += 1;
-        if f.path.replace('\\', "/").eq_ignore_ascii_case("autorun/accounts.json") {
+        let norm = f.path.replace('\\', "/").to_ascii_lowercase();
+        // The old single list, or any one environment's list
+        // (`autorun/accounts/<env id>.json`).
+        let is_accounts_file = norm == "autorun/accounts.json"
+            || norm.strip_prefix("autorun/accounts/").is_some_and(|rest| rest.ends_with(".json") && !rest.contains('/'));
+        if is_accounts_file {
             // `accounts::save_accounts` drops a saved session the moment the
             // login behind it changes, so a saved session never outlives the
             // login it was made with - through the app. A restore writes

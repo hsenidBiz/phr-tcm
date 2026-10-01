@@ -195,6 +195,27 @@ fn restoring_accounts_json_drops_the_old_sessions() {
     let _ = std::fs::remove_dir_all(&dst);
 }
 
+/// Accounts are kept per environment now: restoring any one environment's
+/// list must drop the saved sessions just as restoring `accounts.json` does.
+#[test]
+fn restoring_an_environments_accounts_drops_the_old_sessions() {
+    let dst = tmpdir("restore-env-drops-sessions");
+    std::fs::create_dir_all(dst.join("autorun/sessions/env-0a1b2c3d")).unwrap();
+    std::fs::write(dst.join("autorun/sessions/env-0a1b2c3d/admin.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    // Mixed case in the folder below autorun, as Windows would read it.
+    let files = vec![BackupFile { path: "autorun/Accounts/env-0a1b2c3d.json".into(), b64: b64.encode(b"[]") }];
+    restore_files(&dst, &files).unwrap();
+
+    assert!(dst.join("autorun/accounts/env-0a1b2c3d.json").is_file(), "the list was not restored");
+    assert!(
+        !dst.join("autorun/sessions").exists(),
+        "a restore that writes an environment's accounts must drop the old sessions folder"
+    );
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
 /// A backup with no accounts.json in it must leave saved sessions alone -
 /// there is no new login for them to disagree with.
 #[test]
