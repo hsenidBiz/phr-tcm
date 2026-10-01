@@ -16,6 +16,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.1",
+    date: "2026-10-01",
+    items: [
+      "Environments: pick the environment you are working in on the AI Bridge tab, and the website and database your AI tools use switch together. The title bar shows which one is active when you have more than one.",
+      "Small reliability fixes.",
+    ],
+  },
+  {
     version: "2.0.8",
     date: "2026-10-01",
     items: [
