@@ -19,13 +19,13 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove } from "../../lib/actionIcons";
-import { activeEnvironment, useEnvironments } from "../../lib/environments";
+import { activeEnvironment, envKeys, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
 
 /** The small word over each field, shown only while a row is stacked. */
 const fieldLabel = "block text-xs font-medium text-muted lg:hidden";
 
-const PROPOSALS_KEY = ["env-proposals"];
+const PROPOSALS_KEY = envKeys.proposals;
 
 /** The accounts just added or replaced, put into the rows on screen: each
  * one's saved version takes the place of the row with its key, or joins

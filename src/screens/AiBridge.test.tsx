@@ -1134,12 +1134,56 @@ test("a refused save puts the database card back where it was", async () => {
   expect(await screen.findByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
 });
 
-test("Manage environments opens the environments dialog", async () => {
+test("a switch forgets what was read for the environment before it", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // What another screen read while Default was active: its accounts (with
+  // passwords), the assistant's proposals for it, and a template overview.
+  qc.setQueryData(["autorun-accounts"], [{ key: "hr.sup", label: "Sup", username: "sup-default", password: "pw" }]);
+  qc.setQueryData(["env-proposals"], [{ key: "hr.emp", label: "Emp", username: "emp", role: null }]);
+  qc.setQueryData(["api-templates", "acme", "Web"], { templates: [] });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Environment" })).toHaveTextContent("QA"));
+  expect(qc.getQueryData(["autorun-accounts"])).toBeUndefined();
+  expect(qc.getQueryData(["env-proposals"])).toBeUndefined();
+  expect(qc.getQueryData(["api-templates", "acme", "Web"])).toBeUndefined();
+});
+
+test("a refused switch keeps what was read", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  let asked = false;
+  dbMocks((cmd) => {
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_set_active") {
+      asked = true;
+      throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    }
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const accounts = [{ key: "hr.sup", label: "Sup", username: "sup-default", password: "pw" }];
+  qc.setQueryData(["autorun-accounts"], accounts);
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+  await waitFor(() => expect(asked).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(qc.getQueryData(["autorun-accounts"])).toEqual(accounts);
+});
+
+test("Edit environments opens the environments dialog", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   envMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  fireEvent.click(await screen.findByRole("button", { name: "Manage environments" }));
+  expect(screen.queryByRole("button", { name: "Manage environments" })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit environments" }));
   expect(await screen.findByRole("heading", { name: "Environments" })).toBeInTheDocument();
 });
 

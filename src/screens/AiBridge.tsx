@@ -21,7 +21,14 @@ import {
   subscribeDbSettings,
 } from "../lib/dbServer";
 import { loadApiWrites, saveApiWrites } from "../lib/apiTemplates";
-import { activeDbMissing, envKeys, switchEnvironment, toInput, useEnvironments } from "../lib/environments";
+import {
+  activeDbMissing,
+  envKeys,
+  forgetEnvironmentData,
+  switchEnvironment,
+  toInput,
+  useEnvironments,
+} from "../lib/environments";
 import { loadRiskTiered, saveRiskTiered } from "../lib/riskTieredGuide";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
@@ -177,6 +184,9 @@ export default function AiBridge() {
     try {
       const { view } = await switchEnvironment(id);
       qc.setQueryData(envKeys.list, view);
+      // Nothing read for the environment before may be shown - or saved
+      // back by the Accounts dialog - in this one.
+      void forgetEnvironmentData(qc);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -672,7 +682,7 @@ export default function AiBridge() {
             </span>
             <Button size="sm" variant="outline" onClick={() => setManagingEnvs(true)}>
               <IconEdit aria-hidden />
-              Manage environments
+              Edit environments
             </Button>
           </div>
           {dbGone && (

@@ -70,9 +70,42 @@ test("opens with the active environment's address and allowed sites", async () =
     "https://sso.qa.example.internal",
   );
   expect(screen.queryByText("Using the sign-in recipe's address")).not.toBeInTheDocument();
-  // The note states what really happens to a saved session: sessions are
-  // kept per account, and one the new site does not accept is replaced.
-  expect(screen.getByText(/a saved sign-in is tried first/i)).toBeInTheDocument();
+  // The note states what really happens to a saved session: a new address
+  // forgets this environment's saved sign-ins (env_save drops them).
+  expect(screen.getByText(/changing the address forgets this environment's saved sign-ins/i)).toBeInTheDocument();
+});
+
+test("with no address, Also allowed is off and shows the recipe's allowed sites instead", async () => {
+  mount(RECIPE, undefined, listOf({ start_url: "", allowed_origins: [] }));
+  const start = (await screen.findByRole("textbox", { name: "Start address" })) as HTMLInputElement;
+  await waitFor(() => expect(start).toBeEnabled());
+  const also = screen.getByRole("textbox", { name: "Also allowed" }) as HTMLTextAreaElement;
+  expect(also).toBeDisabled();
+  await waitFor(() => expect(also.value).toBe("https://sso.example.internal"));
+  expect(screen.getByText("Also allowed needs a start address - until then the sign-in recipe's are used.")).toBeInTheDocument();
+
+  // Typing an address turns the box on, for this environment's own sites.
+  fireEvent.change(start, { target: { value: "https://people.example.org/" } });
+  expect(also).toBeEnabled();
+  expect(also.value).toBe("");
+});
+
+test("saving with no address sends no allowed sites, even if the environment had some", async () => {
+  const calls: { env: { start_url: string; allowed_origins: string[] } }[] = [];
+  mount(
+    RECIPE,
+    (a) => {
+      calls.push(a as never);
+      return listOf({ start_url: "", allowed_origins: [] });
+    },
+    listOf({ start_url: "", allowed_origins: ["https://stale.example.org"] }),
+  );
+  const start = (await screen.findByRole("textbox", { name: "Start address" })) as HTMLInputElement;
+  await waitFor(() => expect(start).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0].env.start_url).toBe("");
+  expect(calls[0].env.allowed_origins).toEqual([]);
 });
 
 test("an environment with no address says it uses the recipe's, and shows that address as the placeholder", async () => {

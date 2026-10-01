@@ -115,6 +115,31 @@ test("a new environment is saved with an empty id and the form's fields", async 
   });
 });
 
+test("Also allowed is off until there is a website address, and nothing stale is sent without one", async () => {
+  const stale: Env = { ...DEFAULT, allowed_origins: ["https://stale.example.org"] };
+  const { calls } = mount({ env_save: () => ({ active: DEFAULT.id, environments: [DEFAULT, QA] }) }, [stale, QA]);
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit Default" }));
+  const also = (await screen.findByRole("textbox", { name: "Also allowed" })) as HTMLTextAreaElement;
+  expect(also).toBeDisabled();
+  expect(
+    screen.getByText("Also allowed needs a website address - until then the sign-in recipe's are used."),
+  ).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  expect((calls.find((c) => c.cmd === "env_save")!.args.env as { allowed_origins: string[] }).allowed_origins).toEqual([]);
+
+  // A new environment starts with no address, so the box starts off too.
+  fireEvent.click(await screen.findByRole("button", { name: "Add environment" }));
+  const fresh = (await screen.findByRole("textbox", { name: "Also allowed" })) as HTMLTextAreaElement;
+  expect(fresh).toBeDisabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Website address" }), {
+    target: { value: "https://stg.example.internal/" },
+  });
+  expect(fresh).toBeEnabled();
+});
+
 test("the Test environment switch carries the fixed warning", async () => {
   mount();
   await screen.findByText("QA");

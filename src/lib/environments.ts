@@ -8,7 +8,7 @@
 // every password: this file only ever sees `EnvView`s, which carry a
 // "default password is set" flag and nothing more.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { saveSelectedDb, selectedDbSnapshot } from "./dbServer";
 import { logUi } from "./uiLog";
@@ -16,7 +16,26 @@ import { logUi } from "./uiLog";
 /** React Query keys for the environments. */
 export const envKeys = {
   list: ["environments"] as const,
+  /** The active environment's accounts (passwords included - the
+   * Accounts dialog edits them). */
+  accounts: ["autorun-accounts"] as const,
+  /** The assistant's proposed accounts for the active environment. */
+  proposals: ["env-proposals"] as const,
+  /** Every API template overview: each names the environment's site and
+   * account keys. */
+  apiTemplates: ["api-templates"] as const,
 };
+
+/** Forgets everything read for the environment that was active: after a
+ * switch, a screen must never show - or save back - the previous
+ * environment's accounts. A screen showing one of these reads it afresh. */
+export async function forgetEnvironmentData(qc: QueryClient): Promise<void> {
+  await Promise.all(
+    [envKeys.accounts, envKeys.proposals, envKeys.apiTemplates].map((queryKey) =>
+      qc.resetQueries({ queryKey }),
+    ),
+  );
+}
 
 /** Set once the first list has been compared with the Company database
  * card, so that comparison can never override a later deliberate change. */

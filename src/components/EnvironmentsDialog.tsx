@@ -25,6 +25,12 @@ export const TEST_ENVIRONMENT_WARNING =
 /** Said for an environment with no address of its own. */
 export const RECIPE_ADDRESS = "Using the sign-in recipe's address";
 
+/** Said under Also allowed while there is no address: without one the
+ * recipe's address and allowed sites are used (Rust refuses sites saved
+ * without an address). */
+export const ALLOWED_NEEDS_ADDRESS =
+  "Also allowed needs a website address - until then the sign-in recipe's are used.";
+
 /** What the form is editing: a new environment, or one by id. */
 type Form = {
   id: string;
@@ -52,10 +58,14 @@ function inputFor(form: Form): EnvInput {
     id: form.id,
     name: form.name,
     start_url: form.start_url,
-    allowed_origins: form.also
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean),
+    // No address, no allowed sites of its own: the recipe's are used.
+    allowed_origins:
+      form.start_url.trim() === ""
+        ? []
+        : form.also
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean),
     db_id: form.db_id,
     test_environment: form.test_environment,
   };
@@ -276,9 +286,14 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 className="min-h-[4rem] font-mono text-xs"
                 placeholder="https://login.example.com"
                 value={form.also}
+                disabled={form.start_url.trim() === ""}
                 onChange={(e) => setForm({ ...form, also: e.target.value })}
               />
-              <span className="block text-xs text-faint">Other sites scripts may open, one per line.</span>
+              <span className="block text-xs text-faint">
+                {form.start_url.trim() === ""
+                  ? ALLOWED_NEEDS_ADDRESS
+                  : "Other sites scripts may open, one per line."}
+              </span>
             </label>
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted">Database</span>
