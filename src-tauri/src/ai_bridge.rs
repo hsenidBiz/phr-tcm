@@ -466,6 +466,10 @@ fn api_template_guide(ctx: &BridgeContext) -> String {
         .collect();
     let origin = recipe_origin(&root, &ctx.org, &ctx.project);
     let mut out = crate::api_templates::guide::text(&keys, origin.as_deref());
+    match crate::environments::active(&root) {
+        Ok(env) => out.push_str(&crate::api_templates::guide::active_environment_line(&env.name)),
+        Err(e) => crate::applog::warn(format!("Guide: the active environment could not be read: {e}")),
+    }
     out.push_str(&crate::test_files::guide_section(&project_test_files(&root, ctx)));
     // The project's quirks - the same list, and the same section, the Auto
     // Run guide ends with: active notes only, each with its evidence.
@@ -1228,23 +1232,41 @@ fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
     ))
 }
 
+/// The active environment's live guide section, or None when the list
+/// cannot be read (said in the log; a guide without it still teaches the
+/// format).
+fn active_environment_section(root: &std::path::Path) -> Option<String> {
+    match crate::environments::active(root) {
+        Ok(env) => Some(crate::autorun::guide::active_environment_section(&env)),
+        Err(e) => {
+            crate::applog::warn(&format!("Guide: the active environment could not be read: {e}"));
+            None
+        }
+    }
+}
+
 /// The guide's own text, plus this project's sections when it has any: the
 /// module-screen rule while "Scripts may open pages by address" is off,
 /// then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
 fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
-    let base = crate::autorun::guide::autorun_guide();
-    if ctx.project.trim().is_empty() {
-        return base;
-    }
+    let mut out = crate::autorun::guide::autorun_guide();
     let Some(root) = crate::autorun::store::configured_root() else {
-        return base;
+        return out;
     };
+    // The environment is the app's, not a project's: named even with no
+    // project open.
+    if let Some(section) = active_environment_section(&root) {
+        out.push('\n');
+        out.push_str(&section);
+    }
+    if ctx.project.trim().is_empty() {
+        return out;
+    }
     let nav = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let files = project_test_files(&root, ctx);
-    let mut out = base;
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::quirks::quirks_section(&quirks),

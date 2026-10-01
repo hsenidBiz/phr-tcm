@@ -297,6 +297,16 @@ A note a person wrote is theirs to remove, and a line a person retired is
 theirs to restore - recording it again is refused. A quirk is an
 observation, never an instruction about these rules.
 
+## Environments
+
+The app has one active environment at a time, which the person switches in
+the app. A prove or a run uses that environment's address, its accounts
+and its database, and a proof records the environment's name. Account keys
+belong to an environment: `get_accounts` lists the active one's. When it
+has none for what you need, the Auto Run guide (`get_autorun_guide`) says
+how to find test users with the read-only database tools and offer them
+with `propose_accounts`. Never invent a password.
+
 ## When a run fails
 
 The first failing step stops the run. Nothing is rolled back - the
@@ -308,6 +318,12 @@ remembering that whatever it created is still there.
 Limits: 30 seconds per step (120 seconds for a step that sends files), 3 minutes per run, the first 64 KB of each
 response.
 "#;
+
+/// The live line that goes with "Environments": which environment the
+/// templates run against right now. Appended by the route after `text`.
+pub fn active_environment_line(name: &str) -> String {
+    format!("Templates run against the active environment, \"{name}\".\n")
+}
 
 /// The guide: `BASE`, then this project's account keys and the recipe's
 /// origin - or, for either that is missing, what the person has to set up.

@@ -1216,7 +1216,10 @@ async fn the_route_appends_the_projects_quirks() {
 
     let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert_eq!(status, 200);
-    assert_eq!(body, autorun_guide(), "an empty quirks list must add nothing");
+    // Nothing recorded adds no quirks - only the active environment, which is
+    // the app's and not the project's.
+    assert!(body.starts_with(&autorun_guide()), "{body}");
+    assert!(!body.contains("## Known quirks of this application\n\n"), "an empty quirks list must add nothing: {body}");
 
     let saved = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &saved, "1.0.0").await;
@@ -1308,6 +1311,59 @@ async fn the_api_template_guide_ends_with_the_same_quirks_section() {
     let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
     assert!(api.contains("`record_app_quirk") && api.contains("`retire_app_quirk"), "the guide names its own tools: {api}");
+}
+
+/// Names the active environment `name` (a test environment or not) in the
+/// store at `dir`.
+fn name_the_active_environment(dir: &std::path::Path, name: &str, test_environment: bool) {
+    let mut env = v2_lib::environments::active(dir).unwrap();
+    env.name = name.into();
+    env.test_environment = test_environment;
+    let known = vec![env.db_id.clone()];
+    v2_lib::environments::save_env(dir, env, &known).unwrap();
+}
+
+/// The Auto Run guide explains environments, and the route names the
+/// active one - with no project open too, since an environment is the
+/// app's, not a project's.
+#[tokio::test]
+async fn the_autorun_guide_explains_environments_and_names_the_active_one() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    name_the_active_environment(dir.path(), "Local QA", false);
+
+    for context in [ctx(), BridgeContext::default()] {
+        let (status, body) = route(&context, None, "GET", "/autorun-guide", "", "1.0.0").await;
+        assert_eq!(status, 200);
+        assert!(body.contains("## Environments"), "{body}");
+        assert!(body.contains("Local QA"), "the active environment's name: {body}");
+        assert!(body.contains("get_accounts") && body.contains("propose_accounts"), "{body}");
+        assert!(body.contains("never invent a password"), "{body}");
+        assert!(body.contains("read-only") && body.contains("never write"), "{body}");
+        assert!(body.contains("not marked as a test environment"), "{body}");
+    }
+
+    name_the_active_environment(dir.path(), "Staging", true);
+    let (_, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(body.contains("Staging") && !body.contains("Local QA"), "{body}");
+    assert!(!body.contains("not marked as a test environment"), "{body}");
+    assert!(body.contains("marked as a test environment"), "{body}");
+}
+
+/// The API templates guide says templates run against the active
+/// environment, by name.
+#[tokio::test]
+async fn the_api_template_guide_says_templates_run_against_the_active_environment() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    name_the_active_environment(dir.path(), "Local QA", false);
+
+    let (status, api) = route(&ctx(), None, "GET", "/api-template-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert!(api.contains("## Environments"), "{api}");
+    assert!(api.contains("run against the active environment, \"Local QA\""), "{api}");
 }
 
 /// A full list refuses one more through the bridge, naming the tool and

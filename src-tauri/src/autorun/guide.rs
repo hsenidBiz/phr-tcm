@@ -137,7 +137,8 @@ supervisor approves"), use `sign_in` at the point where the person
 changes. Do not write the login page's fields into a script at all: no
 `fill` on a username or password, no click on a Login button.
 
-You cannot see the list of accounts. Ask the person which keys they use,
+`get_accounts` lists the keys the active environment has (see
+"Environments" below). You can also ask the person which keys they use,
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
@@ -147,6 +148,33 @@ so. A project with no recipe saved yet has no such restriction. This
 covers an authored `navigate` only: a link the page follows, or a
 redirect, can still leave those origins, so it is a guard against a
 mistyped address, not a sandbox.
+
+## Environments
+
+The app has one ACTIVE environment at a time: a named website address, a
+database and a set of accounts. The person switches it in the app, and
+everything here follows it: the accounts a script can name, the saved
+sign-in sessions, the address a sign-in starts from and the database the
+database tools read. This guide names the one that is active
+now (the section called "The active environment"). Accounts belong to an
+environment, so a key that exists in one may not exist in another.
+
+- `get_accounts` lists the active environment's accounts: key, label and
+  username. It includes passwords only when the person has marked the
+  environment as a test environment; otherwise it says so. Never copy a
+  username or a password into a script or a template.
+- When the environment has no account for a case, find test users and
+  propose them. Look in the database with the read-only database tools
+  (`db_lookup`, `db_query`), which use the active environment's database,
+  and in seed scripts and specs. Then call `propose_accounts` with a key,
+  a label and a username for each, and a role when you know it. The tools
+  only read: never write to the database to create or change a user.
+- A proposal is only a suggestion. The person sees it in Auto Run, under
+  Accounts, ticks the ones they want and adds them. Each call replaces
+  your previous proposal for the environment.
+- A password comes from the environment's default password or from the
+  person, so never invent a password, and never put one in a proposal. If
+  a case needs an account you cannot find, say so and ask which one to use.
 
 ## Every expected result is checked
 
@@ -482,4 +510,25 @@ wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
 "##
     .to_string()
+}
+
+/// The live half of "Environments": which environment is active right now
+/// and whether `get_accounts` will include its passwords. Appended by the
+/// routes (`ai_bridge`) after the constant, because it is read from disk
+/// at the moment of the call and the constant cannot go stale on it. Only
+/// the name, the address and the test flag - never an account.
+pub fn active_environment_section(env: &crate::environments::Environment) -> String {
+    let address = match crate::autorun::recipe::origin_of(&env.start_url) {
+        Some(origin) => format!(" It signs in at {origin}."),
+        None => String::new(),
+    };
+    let passwords = if env.test_environment {
+        "It is marked as a test environment, so `get_accounts` includes passwords."
+    } else {
+        "It is not marked as a test environment, so `get_accounts` leaves passwords out."
+    };
+    format!(
+        "## The active environment\n\nThe active environment is \"{}\".{address} {passwords}\n",
+        env.name
+    )
 }
