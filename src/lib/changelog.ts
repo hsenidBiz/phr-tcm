@@ -16,6 +16,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.8",
+    date: "2026-10-01",
+    items: [
+      "Updates are smaller: the app now downloads only what changed since your version, instead of the whole app each time.",
+      "The update progress now shows the size actually being downloaded.",
+      "What's new and the changelog in Settings now list release versions only, each one including what its beta builds changed.",
+      "Small reliability fixes.",
+    ],
+  },
+  {
     version: "2.0.8-beta.4",
     date: "2026-10-01",
     items: [
