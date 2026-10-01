@@ -1104,3 +1104,45 @@ async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_nav
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, no_address(1));
 }
+
+/// After an unattended run, the project's quirks count what THIS call ran
+/// - a case record already in the run (a resumed run) is not counted again.
+#[tokio::test]
+async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
+    use v2_lib::autorun::quirks::{load_quirks, save_quirks, Quirk, QuirkSource};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut about_1 = Quirk::new("case one's page settles late", "assistant", "autorun", 1);
+    about_1.sources = vec![QuirkSource { case_id: 1, steps: vec![1], class: None }];
+    let mut about_2 = Quirk::new("case two's grid paginates", "assistant", "autorun", 2);
+    about_2.sources = vec![QuirkSource { case_id: 2, steps: vec![1], class: None }];
+    save_quirks(root, "Acme", "Web", &[about_1, about_2]).unwrap();
+
+    // The run already holds case 2 from an earlier call, step 1 passed.
+    let mut run = new_run("run-q");
+    let mut earlier: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
+    }))
+    .unwrap();
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    run.cases.push(earlier);
+
+    let mut browsers = FakeBrowsers {
+        queue: [Some(common::FakePage::default().driver())].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let cancel = AtomicBool::new(false);
+    let cases = vec![(1, "case 1".to_string())];
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    assert_eq!(run.cases.last().unwrap().proposed, "Passed");
+
+    let quirks = load_quirks(root, "Acme", "Web").unwrap();
+    let one = quirks.iter().find(|q| q.text.starts_with("case one")).unwrap();
+    let two = quirks.iter().find(|q| q.text.starts_with("case two")).unwrap();
+    assert_eq!((one.confirmed, one.doubted), (1, 0), "the case this call ran confirms its note");
+    assert!(one.last_confirmed.is_some());
+    assert_eq!((two.confirmed, two.doubted), (0, 0), "the earlier record is not counted again");
+}

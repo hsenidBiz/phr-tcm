@@ -5,7 +5,7 @@
 
 use v2_lib::autorun::quirks::{
     add_quirk, apply_run_evidence, cap_refusal, delete_in, edit_in, load_quirks, quirks_path, quirks_section,
-    record_in, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair,
+    record_in, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair, source_from_run, count_saved_run, person_retired, RETIRE_APP_TOOL,
     Quirk, QuirkSource, Recorded, MAX_QUIRKS, MAX_QUIRK_CHARS, MAX_RETIRED, PERSON_NOTE, RETIRE_TOOL,
 };
 use v2_lib::autorun::recipe::project_slug;
@@ -289,7 +289,7 @@ fn a_full_list_refuses_one_more_and_names_the_three_best_candidates_oldest_first
     let person = record_in(&mut list, "one more", "person", "autorun", vec![], 9999).unwrap_err();
     assert!(!person.contains(RETIRE_TOOL), "{person}");
     assert!(person.contains("\"note 9\"") && person.contains("retire one"), "{person}");
-    assert_eq!(person, cap_refusal(&list, false));
+    assert_eq!(person, cap_refusal(&list, None));
 }
 
 /// Retiring one frees its place.
@@ -356,7 +356,7 @@ fn a_duplicate_of_a_retired_note_reactivates_it() {
     let mut list = vec![quirk("dates render as dd/mm", "assistant", "1")];
     retire_in(&mut list, "q1", Some("gone"), None, true, 10).unwrap();
     let r = record_in(&mut list, "DATES render as dd/mm", "assistant", "autorun", vec![source(4, &[1], None)], 20).unwrap();
-    assert_eq!(r, Recorded::Reactivated("q1".into()));
+    assert_eq!(r, Recorded::Reactivated("q1".into(), Some("gone".into())));
     assert_eq!(list.len(), 1);
     assert!(list[0].is_active());
     assert_eq!(list[0].retired_reason, None);
@@ -529,4 +529,134 @@ fn a_repairs_source_carries_the_class_of_the_failure_that_led_to_it() {
     let s = source_for_repair(Some(&run), &script_for(7), 7, &[3, 2, 3]);
     assert_eq!(s, source(7, &[2, 3], Some("covered")));
     assert_eq!(source_for_repair(None, &script_for(7), 7, &[3]), source(7, &[3], None));
+}
+
+// ------------------------------------------------------------ review fixes
+
+/// A line a person retired - or a note a person wrote - is the person's
+/// decision: the assistant recording it again is refused, naming why it
+/// was retired; the person may bring it back.
+#[test]
+fn the_assistant_never_brings_back_a_note_a_person_retired_or_wrote() {
+    let mut list = vec![quirk("dates render as dd/mm", "assistant", "1"), quirk("the grid paginates", "person", "2")];
+    retire_in(&mut list, "q1", Some("wrong - it was the locale"), None, false, 10).unwrap();
+    retire_in(&mut list, "q2", None, None, false, 11).unwrap();
+    assert_eq!(list[0].retired_by.as_deref(), Some("person"));
+
+    let err = record_in(&mut list, "Dates render as dd/mm", "assistant", "autorun", vec![], 20).unwrap_err();
+    assert_eq!(err, "a person retired this note (wrong - it was the locale) - ask them to restore it");
+    assert_eq!(err, person_retired(Some("wrong - it was the locale")));
+    let err = record_in(&mut list, "the grid paginates", "assistant", "api", vec![], 20).unwrap_err();
+    assert_eq!(err, "a person retired this note - ask them to restore it");
+    assert!(list.iter().all(|q| !q.is_active()), "nothing came back");
+
+    // The person, adding the same line in the app, may.
+    let back = record_in(&mut list, "dates render as dd/mm", "person", "autorun", vec![], 30).unwrap();
+    assert_eq!(back, Recorded::Reactivated("q1".into(), Some("wrong - it was the locale".into())));
+    assert!(list[0].is_active() && list[0].retired_by.is_none());
+}
+
+/// An API caller's refusal names the retire tool it has.
+#[test]
+fn a_full_list_names_the_api_retire_tool_to_an_api_caller() {
+    let mut list = full_list();
+    let err = record_in(&mut list, "one more", "assistant", "api", vec![], 9999).unwrap_err();
+    assert!(err.contains(RETIRE_APP_TOOL), "{err}");
+}
+
+/// Candidates: runs say it did not help, then filed with a repair and
+/// never confirmed, then never tied to a run ("untested") - oldest first
+/// within each.
+#[test]
+fn candidates_rank_unhelpful_then_unconfirmed_then_untested() {
+    let mut untested_old = quirk("an old standing fact", "assistant", "1");
+    untested_old.from = "api".into();
+    let mut unconfirmed = quirk("filed with a repair", "assistant", "5");
+    unconfirmed.sources = vec![source(1, &[1], None)];
+    let mut unhelpful = quirk("did not help", "assistant", "9");
+    unhelpful.sources = vec![source(2, &[1], None)];
+    unhelpful.doubted = 2;
+    unhelpful.confirmed = 1;
+    let mut helpful = quirk("confirmed often", "assistant", "3");
+    helpful.sources = vec![source(3, &[1], None)];
+    helpful.confirmed = 4;
+    let list = vec![untested_old, unconfirmed, unhelpful, helpful];
+    let order: Vec<&str> = retire_candidates(&list).iter().map(|q| q.text.as_str()).collect();
+    assert_eq!(order, vec!["did not help", "filed with a repair", "an old standing fact"]);
+    let text = cap_refusal(&list, Some(RETIRE_TOOL));
+    assert!(text.contains("\"an old standing fact\" (untested - not tied to any run)"), "{text}");
+    assert!(text.contains("\"filed with a repair\" (never confirmed by a run)"), "{text}");
+}
+
+/// One run counts at most once per source case: three passing steps of
+/// one case are one confirmation; a step that failed the same way again
+/// outweighs the ones that passed.
+#[test]
+fn one_run_counts_at_most_once_per_source_case() {
+    let mut q = quirk("the form settles late", "assistant", "1");
+    q.sources = vec![source(7, &[2, 3], None)];
+    let mut list = vec![q];
+    let both_pass = vec![case(
+        7,
+        vec![step(2, vec![ActionOutcome::passed("a")]), step(3, vec![ActionOutcome::passed("b")])],
+    )];
+    assert!(apply_run_evidence(&mut list, &both_pass, &[script_for(7)], 10));
+    assert_eq!((list[0].confirmed, list[0].doubted), (1, 0));
+
+    let mixed = vec![case(
+        7,
+        vec![
+            step(2, vec![ActionOutcome::passed("a")]),
+            step(3, vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")]),
+        ],
+    )];
+    assert!(apply_run_evidence(&mut list, &mixed, &[script_for(7)], 11));
+    assert_eq!((list[0].confirmed, list[0].doubted), (1, 1));
+}
+
+/// `cases` on a quirk recorded on its own: each named step must have
+/// failed in its case's newest run; the source keeps that failure's class.
+#[test]
+fn a_named_case_must_have_failed_there() {
+    let run = LocalRun {
+        id: "run-9".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        cases: vec![case(
+            7,
+            vec![
+                step(2, vec![ActionOutcome::passed("clicked")]),
+                step(3, vec![ActionOutcome::failed("waited 5000ms: button \"Save\" is covered by div.modal")]),
+            ],
+        )],
+        mode: "unattended".into(),
+        published: None,
+    };
+    let ok = source_from_run(Some(&run), Some(&script_for(7)), 7, &[3]).unwrap();
+    assert_eq!(ok, source(7, &[3], Some("covered")));
+    let err = source_from_run(Some(&run), Some(&script_for(7)), 7, &[2, 3]).unwrap_err();
+    assert!(err.contains("case 7 step 2 did not fail") && err.contains("run-9"), "{err}");
+    let err = source_from_run(None, None, 8, &[1]).unwrap_err();
+    assert!(err.contains("no run on this machine has case 8"), "{err}");
+    assert!(source_from_run(Some(&run), None, 7, &[]).is_err());
+}
+
+/// A supervised run is counted from the run file once it is saved.
+#[test]
+fn a_saved_run_is_counted_by_its_id() {
+    let dir = tempfile::tempdir().unwrap();
+    save_quirks(dir.path(), "Acme", "Web", &[sourced(None)]).unwrap();
+    let run = LocalRun {
+        id: "run-55".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        cases: vec![case(7, vec![step(2, vec![ActionOutcome::passed("clicked")])])],
+        mode: String::new(),
+        published: None,
+    };
+    v2_lib::autorun::store::save_run(dir.path(), &run).unwrap();
+    assert!(count_saved_run(dir.path(), "Acme", "Web", "run-55", 5).unwrap());
+    assert_eq!(load_quirks(dir.path(), "Acme", "Web").unwrap()[0].confirmed, 1);
+    assert!(count_saved_run(dir.path(), "Acme", "Web", "run-56", 5).is_err());
+    assert!(count_saved_run(dir.path(), "Acme", "Web", "../x", 5).is_err());
 }

@@ -454,24 +454,32 @@ When the same failure hits two or more cases in one run - the same action
 on the same target failing the same way, or one element covering many
 targets - `get_autorun_failures` ends with a `## Patterns across cases`
 section. That is often the application behaving a certain way rather than
-several scripts being wrong: record it once as a quirk, and repair each
-case with it in mind.
+several scripts being wrong. Put the same quirk on the edit of EVERY case
+you repair for it: each edit adds its case and steps to the one note, and
+that is what lets later runs say whether it helped. To file it without a
+repair, call `record_autorun_quirk` with `cases: [{ case_id, steps }]`
+naming the cases and steps that failed for it in their newest run; a step
+that did not fail there is refused. A quirk filed with neither is never
+tested by a run, so it is the first kind offered for retirement.
 
-Each quirk line starts with its id and says who wrote it. A quirk filed
-with a repair remembers that case and those steps, and every unattended
-run afterwards counts it: "confirmed Nx" when those steps passed, "did not
-help Nx" when they failed the same way again.
+Each quirk line starts with its id and says who wrote it. A quirk tied to
+cases and steps is counted by every run of them afterwards - unattended,
+or supervised once that run is saved - at most once per case per run:
+"confirmed Nx" when those steps passed, "did not help Nx" when they failed
+the same way again.
 
 A project keeps 40 active quirks. Past that, `record_autorun_quirk` (and
-an edit's `quirk`) is refused with up to three candidates to retire: the
-assistant's own notes that were never confirmed, or that did not help more
-often than they were confirmed, oldest first. Retire one with
+an edit's `quirk`) is refused with up to three of the assistant's own
+notes to retire: ones that did not help more often than they helped
+first, then ones no run has confirmed, then ones never tied to a run,
+oldest first within each. Retire one with
 `retire_autorun_quirk { id, reason, replacement? }` - `replacement`
 records a better note in the same call and keeps the old one's cases and
 steps. A retired note leaves this guide; recording the same line again
-brings it back rather than adding a copy. A note a person wrote cannot be
-retired by you - ask them to remove it. Nothing about a quirk ever changes
-a script or runs anything on its own.
+brings it back rather than adding a copy - unless a person wrote it or
+retired it, which is refused: ask them to restore it. A note a person
+wrote cannot be retired by you - ask them to remove it. Nothing about a
+quirk ever changes a script or runs anything on its own.
 "##
     .to_string()
 }

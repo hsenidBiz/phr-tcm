@@ -168,7 +168,7 @@ test("only the switchable tools are left, as eight rows in a development build",
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
     "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk",
-    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress",
+    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
     "get_tags",
     "search_pbis",
@@ -235,8 +235,8 @@ test("with DEV stubbed true, the Auto Run scripts row carries all eight tools", 
 });
 
 /// Building an API template is one job - guide, list, prove, run, and the
-/// flow it belongs to - so its six tools are one row with one switch, offered where Auto Run is.
-test("the API templates row carries all six tools and switches them together", () => {
+/// flow it belongs to - and the quirks it learns - so its eight tools are one row with one switch, offered where Auto Run is.
+test("the API templates row carries all eight tools and switches them together", () => {
   const row = visibleRows().find((r) => r.label === "API templates");
   expect(row, "the API templates row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -246,6 +246,8 @@ test("the API templates row carries all six tools and switches them together", (
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "record_app_quirk",
+    "retire_app_quirk",
   ]);
   expect(row!.summary).toBe(
     "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",

@@ -102,6 +102,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Which stages are done for one record and which come next.",
   },
   {
+    name: "record_app_quirk",
+    label: "Record a quirk (API)",
+    summary: "One line about how this application behaves, learned building API templates.",
+  },
+  {
+    name: "retire_app_quirk",
+    label: "Retire a quirk (API)",
+    summary: "Retire one of the assistant's own quirks that no longer helps.",
+  },
+  {
     name: "db_lookup",
     label: "Find a table",
     summary: "The tables and columns behind a topic, or one table's whole column list.",
@@ -150,6 +160,8 @@ export const DEV_ONLY_TOOLS = [
   "run_api_template",
   "save_api_flow",
   "get_api_flow_progress",
+  "record_app_quirk",
+  "retire_app_quirk",
 ] as const;
 
 /** True in `tauri dev` and in this test suite, false in `tauri build` - a
@@ -230,6 +242,11 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    // What a template's author learns about the application goes on the
+    // project's one quirks list - the Auto Run row's tools under this
+    // row's own names, so switching Auto Run off does not take them away.
+    "record_app_quirk",
+    "retire_app_quirk",
   ],
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose

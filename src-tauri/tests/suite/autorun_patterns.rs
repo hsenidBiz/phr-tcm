@@ -202,3 +202,30 @@ fn describe_failures_has_no_patterns_section_when_nothing_repeats() {
     assert!(!text.contains("Patterns across cases"), "{text}");
     assert!(!text.contains("record_autorun_quirk"), "{text}");
 }
+
+/// An overlay whose later classes change as it animates is one overlay:
+/// grouped on its tag, id and first class only.
+#[test]
+fn an_overlay_is_grouped_on_its_tag_id_and_first_class() {
+    use v2_lib::autorun::patterns::overlay_key;
+    assert_eq!(overlay_key("div.modal.fade.show"), "div.modal");
+    assert_eq!(overlay_key("div#dlg.modal.fade"), "div#dlg.modal");
+    assert_eq!(overlay_key("div#spinner"), "div#spinner");
+    assert_eq!(overlay_key("another element"), "another element");
+
+    let r = run(vec![
+        failed_case(11, 2, "waited 5000ms: button \"Save\" is covered by div.modal.fade"),
+        failed_case(12, 3, "waited 5000ms: textbox \"Name\" is covered by div.modal.fade.show"),
+    ]);
+    let patterns = find_patterns(&r, &[script(11, 2, click("Save")), script(12, 3, fill("Name", "x"))]);
+    assert_eq!(patterns.len(), 1, "{patterns:?}");
+    assert_eq!(patterns[0].class, ErrorClass::CoveredBy("div.modal".into()));
+    assert!(patterns_section(&patterns).contains("covered by div.modal (in 2 cases)"));
+}
+
+/// The advice points at the edit of every repaired case, and at `cases`.
+#[test]
+fn the_advice_says_how_to_tie_the_quirk_to_the_cases() {
+    assert!(PATTERN_ADVICE.contains("EVERY case you repair"), "{PATTERN_ADVICE}");
+    assert!(PATTERN_ADVICE.contains("`cases`"), "{PATTERN_ADVICE}");
+}

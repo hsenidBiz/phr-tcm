@@ -1488,10 +1488,38 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Some(serde_json::Value::String(s)) if s == FROM_API => FROM_API,
         Some(_) => return (400, format!("\"from\" is \"{FROM_AUTORUN}\" or \"{FROM_API}\"")),
     };
+    // The cases and steps it is about, when the assistant names them -
+    // each step checked against the newest run of its case, so a note can
+    // only be tied to steps that really failed. That tie is what later
+    // runs count evidence against.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NamedCase {
+        case_id: i32,
+        steps: Vec<i32>,
+    }
+    let named: Vec<NamedCase> = match v.get("cases") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(c) => match serde_json::from_value(c.clone()) {
+            Ok(list) => list,
+            Err(e) => {
+                return (400, format!("\"cases\" is a list of {{ case_id, steps: [number] }}: {e}"))
+            }
+        },
+    };
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    let mut sources: Vec<crate::autorun::quirks::QuirkSource> = Vec::with_capacity(named.len());
+    for c in &named {
+        let run = crate::autorun::failures::latest_run(&root, Some(c.case_id));
+        let script = crate::autorun::store::load_script(&root, c.case_id).ok().flatten();
+        match crate::autorun::quirks::source_from_run(run.as_ref(), script.as_ref(), c.case_id, &c.steps) {
+            Ok(s) => sources.push(s),
+            Err(why) => return (400, why),
+        }
+    }
     match record_quirk(
         &root,
         &ctx.org,
@@ -1499,13 +1527,21 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         &text,
         "assistant",
         from,
-        Vec::new(),
+        sources,
         crate::autorun::sessions::now_ms(),
     ) {
         Ok(Recorded::Added(id)) => (200, format!("recorded as {id}")),
         Ok(Recorded::AlreadyKnown(id)) => (200, format!("already known, as {id}")),
-        Ok(Recorded::Reactivated(id)) => (200, format!("{id} had been retired - it is back on the list")),
+        Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
         Err(why) => (400, why),
+    }
+}
+
+/// What an assistant is told when its line brought a retired note back.
+fn reactivated_reply(id: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(r) => format!("{id} had been retired (\"{r}\") - it is back on the list; check that reason no longer holds"),
+        None => format!("{id} had been retired - it is back on the list"),
     }
 }
 
@@ -1542,7 +1578,7 @@ fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }) {
         Ok((None, _)) => (200, format!("retired {}", id.trim())),
         Ok((Some(Recorded::Added(new)), _)) => (200, format!("retired {}, replaced by {new}", id.trim())),
-        Ok((Some(Recorded::AlreadyKnown(new) | Recorded::Reactivated(new)), _)) => {
+        Ok((Some(Recorded::AlreadyKnown(new) | Recorded::Reactivated(new, _)), _)) => {
             (200, format!("retired {} - the replacement is already on the list as {new}", id.trim()))
         }
         Err(why) => (400, why),
@@ -2142,8 +2178,8 @@ async fn save_autorun_scripts(
             Ok(crate::autorun::quirks::Recorded::AlreadyKnown(id)) => {
                 report.push(format!("quirk already known, as {id}: {}", text.trim()))
             }
-            Ok(crate::autorun::quirks::Recorded::Reactivated(id)) => {
-                report.push(format!("quirk {id} had been retired - it is back on the list: {}", text.trim()))
+            Ok(crate::autorun::quirks::Recorded::Reactivated(id, reason)) => {
+                report.push(format!("quirk {}: {}", reactivated_reply(&id, reason.as_deref()), text.trim()))
             }
             Err(why) => report.push(format!("quirk not recorded: {why}")),
         }

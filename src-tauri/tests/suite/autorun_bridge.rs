@@ -1306,7 +1306,7 @@ async fn the_api_template_guide_ends_with_the_same_quirks_section() {
     assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
     let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
-    assert!(api.contains("retire_autorun_quirk") && api.contains("\"from\": \"api\""), "the guide teaches both: {api}");
+    assert!(api.contains("`record_app_quirk") && api.contains("`retire_app_quirk"), "the guide names its own tools: {api}");
 }
 
 /// A full list refuses one more through the bridge, naming the tool and
@@ -1406,4 +1406,61 @@ async fn the_guide_says_a_run_starts_on_the_module_screen_only_while_addresses_a
     assert_eq!(status, 200);
     assert!(off.contains("## This project's runs start on the module screen"), "{off}");
     assert!(!off.contains('\u{2014}'));
+}
+
+/// `cases` ties a quirk recorded on its own to steps that failed in their
+/// case's newest run - a step that did not fail there is refused and
+/// nothing is written - and a line a person retired is not brought back by
+/// the assistant.
+#[tokio::test]
+async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
+    use v2_lib::autorun::quirks::{save_quirks, update_quirks, retire_in, QuirkSource};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1700000000000", "pbi_id": 1, "started_at": "1700000000000", "cases": [], "mode": "unattended"
+    }))
+    .unwrap();
+    let mut case: CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "case 7", "verdict": "", "note": "", "steps": [], "proposed": "Failed"
+    }))
+    .unwrap();
+    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    case.steps.push(StepRecord {
+        step_number: 2,
+        outcomes: vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")],
+        screenshot: None,
+    });
+    run.cases.push(case);
+    save_run(dir.path(), &run).unwrap();
+
+    let wrong = serde_json::json!({ "text": "the save button loads late", "cases": [{ "case_id": 7, "steps": [1] }] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &wrong, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("case 7 step 1 did not fail"), "{out}");
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
+
+    let right = serde_json::json!({ "text": "the save button loads late", "cases": [{ "case_id": 7, "steps": [2] }] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &right, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks[0].sources, vec![QuirkSource { case_id: 7, steps: vec![2], class: Some("not_found".into()) }]);
+
+    // The person retires it in the app; the assistant cannot bring it back.
+    let id = quirks[0].id.clone();
+    update_quirks(dir.path(), "acme", "Web", |l| retire_in(l, &id, Some("it was the network"), None, false, 5)).unwrap();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &right, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "a person retired this note (it was the network) - ask them to restore it"));
+
+    // One the assistant retired itself comes back, with its old reason.
+    save_quirks(dir.path(), "acme", "Web", &[]).unwrap();
+    let body = serde_json::json!({ "text": "dates render as dd/mm" }).to_string();
+    route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    let id = load_quirks(dir.path(), "acme", "Web").unwrap()[0].id.clone();
+    let retire = serde_json::json!({ "id": id, "reason": "the locale changed" }).to_string();
+    route(&ctx(), None, "POST", "/autorun-quirk-retire", &retire, "1.0.0").await;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with(&format!("{id} had been retired (\"the locale changed\")")), "{out}");
 }

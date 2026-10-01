@@ -65,13 +65,15 @@ pub struct Quirk {
     pub at: String,
     #[serde(default)]
     pub sources: Vec<QuirkSource>,
-    /// Source steps that passed in a run since the note was filed.
+    /// Runs since the note was filed in which its source steps passed
+    /// (at most one per source case per run).
     #[serde(default)]
     pub confirmed: u32,
     /// Epoch milliseconds as a string, of the latest of those runs.
     #[serde(default)]
     pub last_confirmed: Option<String>,
-    /// Source steps that failed the same way again.
+    /// Runs in which a source step failed the same way again (at most
+    /// one per source case per run).
     #[serde(default)]
     pub doubted: u32,
     /// "active" or "retired".
@@ -82,6 +84,10 @@ pub struct Quirk {
     /// Epoch milliseconds as a string.
     #[serde(default)]
     pub retired_at: Option<String>,
+    /// Who retired it: "person" or "assistant". An assistant never brings
+    /// back a note a person retired.
+    #[serde(default)]
+    pub retired_by: Option<String>,
     /// Which assistant's work it came from: "autorun" or "api".
     #[serde(default = "autorun")]
     pub from: String,
@@ -103,6 +109,7 @@ impl Quirk {
             status: active(),
             retired_reason: None,
             retired_at: None,
+            retired_by: None,
             from: from.to_string(),
         }
     }
@@ -131,6 +138,21 @@ pub const MAX_QUIRK_CHARS: usize = 300;
 /// The MCP tool that retires an assistant's quirk - named in the cap's
 /// refusal and in both guides.
 pub const RETIRE_TOOL: &str = "retire_autorun_quirk";
+
+/// The same two tools as the API templates assistant has them: in the API
+/// templates tool row, so a person who switches Auto Run's row off still
+/// leaves that assistant able to file and retire what it learns.
+pub const RECORD_APP_TOOL: &str = "record_app_quirk";
+pub const RETIRE_APP_TOOL: &str = "retire_app_quirk";
+
+/// The retire tool an assistant working from `from` has.
+pub fn retire_tool_for(from: &str) -> &'static str {
+    if from == FROM_API {
+        RETIRE_APP_TOOL
+    } else {
+        RETIRE_TOOL
+    }
+}
 
 /// What the retire tool answers about a person's note.
 pub const PERSON_NOTE: &str = "that note was written by a person - ask them to remove it";
@@ -296,26 +318,53 @@ fn normalized(s: &str) -> String {
 
 // ------------------------------------------------------------ the cap
 
-/// The assistant's notes most worth retiring: never confirmed, or more
-/// often unhelpful than helpful - oldest first, at most three. A person's
-/// note is never a candidate; it is theirs to remove.
+/// How strong a case there is for retiring a note: 0 - runs say it did
+/// not help more often than it helped; 1 - it was filed with a repair and
+/// no run has confirmed it yet; 2 - it was never tied to a run at all, so
+/// nothing has tested it. `None` for a note that is not a candidate.
+fn candidate_tier(q: &Quirk) -> Option<u8> {
+    if !q.is_active() || q.by != "assistant" {
+        return None;
+    }
+    if q.sources.is_empty() {
+        return Some(2);
+    }
+    if q.doubted > q.confirmed {
+        return Some(0);
+    }
+    if q.confirmed == 0 {
+        return Some(1);
+    }
+    None
+}
+
+/// The assistant's notes most worth retiring, at most three: ones runs say
+/// did not help first, then ones filed with a repair that no run has
+/// confirmed, then ones nothing has tested - oldest first within each. A
+/// person's note is never a candidate; it is theirs to remove.
 pub fn retire_candidates(list: &[Quirk]) -> Vec<&Quirk> {
-    let mut out: Vec<&Quirk> = list
-        .iter()
-        .filter(|q| q.is_active() && q.by == "assistant" && (q.confirmed == 0 || q.doubted > q.confirmed))
-        .collect();
-    out.sort_by_key(|q| q.at_ms());
+    let mut out: Vec<(u8, &Quirk)> = list.iter().filter_map(|q| candidate_tier(q).map(|t| (t, q))).collect();
+    out.sort_by_key(|(t, q)| (*t, q.at_ms()));
     out.truncate(3);
-    out
+    out.into_iter().map(|(_, q)| q).collect()
+}
+
+fn candidate_label(q: &Quirk) -> &'static str {
+    match candidate_tier(q) {
+        Some(0) => "did not help more often than it helped",
+        Some(1) => "never confirmed by a run",
+        _ => "untested - not tied to any run",
+    }
 }
 
 /// Why one more quirk does not fit, and which to retire. Worded for an
-/// assistant (naming the retire tool) or for the person in the app.
-pub fn cap_refusal(list: &[Quirk], for_assistant: bool) -> String {
+/// assistant (naming the retire tool it has, `retire_tool`) or, with
+/// `None`, for the person in the app.
+pub fn cap_refusal(list: &[Quirk], retire_tool: Option<&str>) -> String {
     let candidates = retire_candidates(list);
-    let mut out = if for_assistant {
+    let mut out = if let Some(tool) = retire_tool {
         format!(
-            "this project already has {MAX_QUIRKS} active quirks - retire one with {RETIRE_TOOL} {{ id, reason, replacement? }} before adding another."
+            "this project already has {MAX_QUIRKS} active quirks - retire one with {tool} {{ id, reason, replacement? }} before adding another."
         )
     } else {
         format!("This project already has {MAX_QUIRKS} active notes - retire one before adding another.")
@@ -325,11 +374,9 @@ pub fn cap_refusal(list: &[Quirk], for_assistant: bool) -> String {
             " No assistant note is an obvious candidate (each has been confirmed by a run more often than not) - pick the least useful one.",
         );
     } else {
-        let names: Vec<String> = candidates.iter().map(|q| format!("{} \"{}\"", q.id, q.text)).collect();
-        out.push_str(&format!(
-            " Best candidates - written by an assistant, never confirmed or more often unhelpful than helpful, oldest first: {}.",
-            names.join("; ")
-        ));
+        let names: Vec<String> =
+            candidates.iter().map(|q| format!("{} \"{}\" ({})", q.id, q.text, candidate_label(q))).collect();
+        out.push_str(&format!(" Best candidates, written by an assistant: {}.", names.join("; ")));
     }
     out
 }
@@ -349,14 +396,14 @@ pub enum Recorded {
     /// it is added to that note.
     AlreadyKnown(String),
     /// The same fact had been retired: it is active again rather than
-    /// copied. Its id.
-    Reactivated(String),
+    /// copied. Its id, and why it had been retired.
+    Reactivated(String, Option<String>),
 }
 
 impl Recorded {
     pub fn id(&self) -> &str {
         match self {
-            Recorded::Added(id) | Recorded::AlreadyKnown(id) | Recorded::Reactivated(id) => id,
+            Recorded::Added(id) | Recorded::AlreadyKnown(id) | Recorded::Reactivated(id, _) => id,
         }
     }
 }
@@ -380,10 +427,20 @@ fn merge_source(q: &mut Quirk, source: QuirkSource) {
     }
 }
 
+/// The sentence an assistant gets for a line a person took off the list.
+pub fn person_retired(reason: Option<&str>) -> String {
+    match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => format!("a person retired this note ({r}) - ask them to restore it"),
+        None => "a person retired this note - ask them to restore it".to_string(),
+    }
+}
+
 /// Adds one note to a list in memory. A repeat (case- and whitespace-
 /// insensitive) of an active note adds nothing new but its sources; a
-/// repeat of a retired one brings that one back rather than copying it.
-/// Refused when the active list is full, with the candidates to retire.
+/// repeat of a retired one brings that one back rather than copying it -
+/// except that an assistant never brings back a note a person wrote or
+/// retired: that decision is the person's. Refused when the active list is
+/// full, with the candidates to retire.
 pub fn record_in(
     list: &mut Vec<Quirk>,
     text: &str,
@@ -396,7 +453,7 @@ pub fn record_in(
     if trimmed.is_empty() {
         return Err("a quirk needs some text".to_string());
     }
-    let for_assistant = by == "assistant";
+    let tool = (by == "assistant").then(|| retire_tool_for(from));
     if let Some(i) = list.iter().position(|q| normalized(&q.text) == normalized(trimmed)) {
         if list[i].is_active() {
             for s in sources {
@@ -404,20 +461,27 @@ pub fn record_in(
             }
             return Ok(Recorded::AlreadyKnown(list[i].id.clone()));
         }
+        // A retirement nobody signed is treated as a person's: only the
+        // safe side of the line is ever guessed.
+        let by_person = list[i].by != "assistant" || list[i].retired_by.as_deref() != Some("assistant");
+        if by == "assistant" && by_person {
+            return Err(person_retired(list[i].retired_reason.as_deref()));
+        }
         if active_count(list) >= MAX_QUIRKS {
-            return Err(cap_refusal(list, for_assistant));
+            return Err(cap_refusal(list, tool));
         }
         let q = &mut list[i];
+        let reason = q.retired_reason.take();
         q.status = active();
-        q.retired_reason = None;
         q.retired_at = None;
+        q.retired_by = None;
         for s in sources {
             merge_source(q, s);
         }
-        return Ok(Recorded::Reactivated(q.id.clone()));
+        return Ok(Recorded::Reactivated(q.id.clone(), reason));
     }
     if active_count(list) >= MAX_QUIRKS {
-        return Err(cap_refusal(list, for_assistant));
+        return Err(cap_refusal(list, tool));
     }
     let mut q = Quirk::new(trimmed, by, from, now_ms);
     q.sources = sources;
@@ -487,6 +551,7 @@ pub fn retire_in(
     q.status = STATUS_RETIRED.to_string();
     q.retired_reason = reason.map(str::to_string);
     q.retired_at = Some(now_ms.to_string());
+    q.retired_by = Some(if by_assistant { "assistant" } else { "person" }.to_string());
     let (sources, from) = (q.sources.clone(), q.from.clone());
     match replacement.map(str::trim).filter(|t| !t.is_empty()) {
         None => Ok(None),
@@ -500,12 +565,13 @@ pub fn restore_in(list: &mut [Quirk], id: &str) -> Result<(), String> {
         return Ok(());
     }
     if active_count(list) >= MAX_QUIRKS {
-        return Err(cap_refusal(list, false));
+        return Err(cap_refusal(list, None));
     }
     let q = find_mut(list, id)?;
     q.status = active();
     q.retired_reason = None;
     q.retired_at = None;
+    q.retired_by = None;
     Ok(())
 }
 
@@ -531,6 +597,56 @@ pub fn delete_in(list: &mut Vec<Quirk>, id: &str) -> Result<(), String> {
 
 // ------------------------------------------------------------ evidence
 
+fn about_the_app(c: &ErrorClass) -> bool {
+    !matches!(c, ErrorClass::Browser | ErrorClass::CannotRun)
+}
+
+/// The cases a quirk recorded on its own is about - `cases: [{ case_id,
+/// steps }]` - checked against `run`, the newest run of that case on this
+/// machine: every step named must have FAILED there (a failure about the
+/// application, not the browser). The source keeps that failure's class.
+/// `script` is the case's script on disk, for the failures' targets.
+pub fn source_from_run(
+    run: Option<&super::LocalRun>,
+    script: Option<&CaseScript>,
+    case_id: i32,
+    steps: &[i32],
+) -> Result<QuirkSource, String> {
+    let Some(run) = run else {
+        return Err(format!("no run on this machine has case {case_id} - leave it out of `cases`"));
+    };
+    let Some(case) = run.cases.iter().rev().find(|c| c.case_id == case_id) else {
+        return Err(format!("no run on this machine has case {case_id} - leave it out of `cases`"));
+    };
+    if steps.is_empty() {
+        return Err(format!("case {case_id} names no steps - name the steps that failed"));
+    }
+    let mut class: Option<String> = None;
+    for n in steps {
+        let failed = case
+            .steps
+            .iter()
+            .find(|s| s.step_number == *n)
+            .and_then(|s| step_failure_class(s, script))
+            .filter(about_the_app);
+        match failed {
+            Some(c) => {
+                class.get_or_insert_with(|| c.key().to_string());
+            }
+            None => {
+                return Err(format!(
+                    "case {case_id} step {n} did not fail in the newest run of that case on this machine ({}) - name only steps that failed there, or leave the case out",
+                    run.id
+                ))
+            }
+        }
+    }
+    let mut steps: Vec<u32> = steps.iter().filter_map(|n| u32::try_from(*n).ok()).collect();
+    steps.sort_unstable();
+    steps.dedup();
+    Ok(QuirkSource { case_id, steps, class })
+}
+
 /// The source a repair's quirk is filed with: the repaired case, its
 /// declared steps, and the class of the first failure among those steps
 /// in `run` (the newest run of the case), classified against the script
@@ -542,7 +658,7 @@ pub fn source_for_repair(run: Option<&super::LocalRun>, ran: &CaseScript, case_i
             case.steps
                 .iter()
                 .filter(|s| steps.contains(&s.step_number))
-                .find_map(|s| step_failure_class(s, Some(ran)))
+                .find_map(|s| step_failure_class(s, Some(ran)).filter(about_the_app))
         })
         .map(|c| c.key().to_string());
     let mut steps: Vec<u32> = steps.iter().filter_map(|n| u32::try_from(*n).ok()).collect();
@@ -570,25 +686,34 @@ pub fn apply_run_evidence(quirks: &mut [Quirk], cases: &[CaseRecord], scripts: &
     let mut changed = false;
     for q in quirks.iter_mut().filter(|q| q.is_active() && !q.sources.is_empty()) {
         let (mut confirmed, mut doubted) = (0u32, 0u32);
+        // One run counts at most once per source case: three passing steps
+        // of one case are one run that confirmed the note, not three. A
+        // step that failed the same way again outweighs one that passed.
         for src in &q.sources {
             // The newest record of the case in this run, if it ran.
             let Some(case) = cases.iter().rev().find(|c| c.case_id == src.case_id) else { continue };
             let script = scripts.iter().find(|s| s.case_id == src.case_id);
+            let (mut any_passed, mut any_doubted) = (false, false);
             for &n in &src.steps {
                 let Some(step) = case.steps.iter().find(|s| i64::from(s.step_number) == i64::from(n)) else {
                     continue;
                 };
                 if passed(step) {
-                    confirmed += 1;
+                    any_passed = true;
                     continue;
                 }
                 let Some(class) = step_failure_class(step, script) else { continue };
-                if matches!(class, ErrorClass::Browser | ErrorClass::CannotRun) {
+                if !about_the_app(&class) {
                     continue;
                 }
                 if src.class.as_deref().is_none_or(|c| c == class.key()) {
-                    doubted += 1;
+                    any_doubted = true;
                 }
+            }
+            if any_doubted {
+                doubted += 1;
+            } else if any_passed {
+                confirmed += 1;
             }
         }
         if confirmed > 0 {
@@ -636,6 +761,19 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
     }
 }
 
+/// A saved supervised run, counted into the quirks file once it is on
+/// disk. Called by the run pane right after it saves a run under a fresh
+/// id - never by the review screen, whose saves re-write a run already
+/// counted. Returns whether the file was written; a run that is not there
+/// is an error, a quirks file that cannot be written is logged.
+pub fn count_saved_run(root: &Path, org: &str, project: &str, run_id: &str, now_ms: u64) -> Result<bool, String> {
+    if !super::store::safe_run_id(run_id) {
+        return Err(format!("run id {run_id:?} is not a safe filename"));
+    }
+    let run = super::store::load_run(root, run_id)?.ok_or_else(|| format!("no run {run_id} on this machine"))?;
+    Ok(record_run_evidence(root, org, project, &run.cases, now_ms))
+}
+
 // ------------------------------------------------------------ the guide
 
 /// An epoch-milliseconds string as a UTC date, `2026-10-01`.
@@ -680,7 +818,7 @@ pub fn quirks_section(quirks: &[Quirk]) -> String {
     }
     let mut out = String::from("## Known quirks of this application\n\n");
     out.push_str(&format!(
-        "Each line starts with the note's id, for {RETIRE_TOOL}. \"confirmed\" counts source steps that passed in a run since; \"did not help\" counts ones that failed the same way again.\n\n"
+        "Each line starts with the note's id, for {RETIRE_TOOL} ({RETIRE_APP_TOOL} when you build API templates). \"confirmed\" counts runs since in which the steps it was filed about passed; \"did not help\" counts runs in which they failed the same way again.\n\n"
     ));
     for q in active {
         out.push_str(&format!("- [{}] ({}) {}\n", q.id, attribution(q), q.text));

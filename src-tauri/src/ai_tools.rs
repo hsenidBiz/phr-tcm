@@ -144,6 +144,8 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "record_app_quirk",
+    "retire_app_quirk",
 ];
 
 /// Whether this process is a development build: `cargo test` and

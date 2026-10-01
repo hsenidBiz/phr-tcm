@@ -386,6 +386,19 @@ impl Pattern {
     }
 }
 
+/// What a covering element is grouped by: its tag, id and FIRST class
+/// only. An overlay's later classes come and go as it animates
+/// (`div.modal.fade` and `div.modal.fade.show` are one overlay), so the
+/// whole list would split one fact into several patterns.
+pub fn overlay_key(covering: &str) -> String {
+    let mut parts = covering.trim().splitn(3, '.');
+    let head = parts.next().unwrap_or_default();
+    match parts.next() {
+        Some(first) if !first.is_empty() => format!("{head}.{first}"),
+        _ => head.to_string(),
+    }
+}
+
 /// The repeated failures in one run's failed cases. A case the assistant
 /// is told to leave alone (`stop_reason`) is left out here too.
 ///
@@ -413,7 +426,7 @@ pub fn find_patterns(run: &LocalRun, scripts: &[CaseScript]) -> Vec<Pattern> {
                     _ => None,
                 };
                 let key = match (&f.class, &what) {
-                    (ErrorClass::CoveredBy(by), _) => Key::Covering(by.clone()),
+                    (ErrorClass::CoveredBy(by), _) => Key::Covering(overlay_key(by)),
                     (_, Some(_)) => Key::Target {
                         kind: f.kind.clone().unwrap_or_default(),
                         target: f.target.clone().unwrap_or_default(),
@@ -422,7 +435,11 @@ pub fn find_patterns(run: &LocalRun, scripts: &[CaseScript]) -> Vec<Pattern> {
                     // No script action to name: nothing to group it by.
                     (_, None) => continue,
                 };
-                let entry = groups.entry(key).or_insert_with(|| (Vec::new(), Vec::new(), f.class.clone()));
+                let class = match &f.class {
+                    ErrorClass::CoveredBy(by) => ErrorClass::CoveredBy(overlay_key(by)),
+                    other => other.clone(),
+                };
+                let entry = groups.entry(key).or_insert_with(|| (Vec::new(), Vec::new(), class));
                 if let Some(w) = what {
                     if !entry.0.contains(&w) {
                         entry.0.push(w);
@@ -442,7 +459,7 @@ pub fn find_patterns(run: &LocalRun, scripts: &[CaseScript]) -> Vec<Pattern> {
 }
 
 /// What an assistant is told to do with a pattern - one line, once.
-pub const PATTERN_ADVICE: &str = "If this is how the application behaves, record it with record_autorun_quirk (or as the repair's quirk) so the next script avoids it.";
+pub const PATTERN_ADVICE: &str = "If this is how the application behaves, put the same quirk on the edit of EVERY case you repair for it, so later runs can tell whether it helped - or record it once with record_autorun_quirk and `cases` naming those cases and steps. Either way the next script avoids it.";
 
 /// The `## Patterns across cases` section, or nothing when there is none.
 pub fn patterns_section(patterns: &[Pattern]) -> String {

@@ -603,7 +603,9 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "prove_api_template",
             "run_api_template",
             "save_api_flow",
-            "get_api_flow_progress"
+            "get_api_flow_progress",
+            "record_app_quirk",
+            "retire_app_quirk"
         ]
     );
     assert_eq!(

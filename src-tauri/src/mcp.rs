@@ -124,6 +124,24 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": props, "required": required })
 }
 
+/// The `cases` a quirk can be tied to when it is recorded on its own: the
+/// cases and steps it explains, each step one that failed in its case's
+/// newest run. Shared by both record tools.
+fn quirk_cases() -> serde_json::Value {
+    serde_json::json!({
+        "type": "array",
+        "description": "Optional: the cases and steps this quirk explains - each step must have failed in its case's newest run on this machine. Later runs of those steps count whether the quirk helped.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "case_id": { "type": "number" },
+                "steps": { "type": "array", "items": { "type": "number" } },
+            },
+            "required": ["case_id", "steps"],
+        },
+    })
+}
+
 /// What the app says about its tools right now: the disabled set as it is
 /// applied, and whether the Auto Run tools are offered at all. Asked fresh
 /// on every `tools/list` and `tools/call`, so a toggle takes effect without
@@ -360,9 +378,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one that was retired comes back rather than being copied. A quirk can also travel with a repair, as an edit's `quirk` - then later runs count whether it helped. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
+            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
+                "cases": quirk_cases(),
                 "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
             }), &["text"]),
         },
@@ -424,6 +443,23 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "flow": { "type": "string", "description": "The flow's id, from list_api_templates." },
                 "subject": { "description": "The record's identifier - the flow's subject, e.g. the cycle id.", "type": ["string", "number"] },
             }), &["flow", "subject"]),
+        },
+        {
+            "name": "record_app_quirk",
+            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
+            "inputSchema": schema(serde_json::json!({
+                "text": { "type": "string", "description": "One line, at most 300 characters." },
+                "cases": quirk_cases(),
+            }), &["text"]),
+        },
+        {
+            "name": "retire_app_quirk",
+            "description": "Retire one of the assistant's own quirks that no longer helps. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows and one sentence of why; with `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
+                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
+                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
+            }), &["id", "reason"]),
         },
         {
             "name": "db_lookup",
@@ -758,6 +794,14 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "run_api_template" => call("POST", "/api-template-run", &args.to_string()),
         "save_api_flow" => call("POST", "/api-template-flow-save", &args.to_string()),
         "get_api_flow_progress" => call("POST", "/api-template-flow-progress", &args.to_string()),
+        // The API templates row's own names for the quirk tools: the same
+        // routes, with `from` set here rather than trusted to the caller.
+        "record_app_quirk" | "retire_app_quirk" => {
+            let mut body = if args.is_object() { args.clone() } else { serde_json::json!({}) };
+            body["from"] = serde_json::json!("api");
+            let path = if name == "record_app_quirk" { "/autorun-quirk" } else { "/autorun-quirk-retire" };
+            call("POST", path, &body.to_string())
+        }
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

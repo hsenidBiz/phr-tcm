@@ -78,8 +78,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the fourteen dev-only
-    // tools (Auto Run's eight, then the six API template ones) are listed
+    // debug assertions on), so with nothing disabled the sixteen dev-only
+    // tools (Auto Run's eight, then the API templates row's eight) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -107,6 +107,8 @@ fn tools_list_names_every_tool() {
             "run_api_template",
             "save_api_flow",
             "get_api_flow_progress",
+            "record_app_quirk",
+            "retire_app_quirk",
             "db_lookup",
             "db_query",
             "optimize_cases",
@@ -420,10 +422,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 31 in this development build: nothing is disabled by an unreachable
-    // bridge, including the fourteen dev-only tools, which default to ON here
+    // 33 in this development build: nothing is disabled by an unreachable
+    // bridge, including the sixteen dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 31, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 33, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -738,13 +740,15 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 6] = [
+const API_TEMPLATE_TOOLS: [&str; 8] = [
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "record_app_quirk",
+    "retire_app_quirk",
 ];
 
 fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> Vec<String> {
@@ -778,14 +782,14 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress"]}"#
+                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","record_app_quirk","retire_app_quirk"]}"#
                     .into(),
             ));
         }
         Ok((200, "{}".into()))
     };
     let names = listed_names(&call);
-    assert!(names.iter().all(|n| !n.contains("api_template") && !n.contains("api_flow")), "{names:?}");
+    assert!(names.iter().all(|n| !n.contains("api_template") && !n.contains("api_flow") && !n.contains("app_quirk")), "{names:?}");
 }
 
 /// Each tool reaches its own route; prove and run forward the arguments
@@ -914,4 +918,59 @@ fn the_quirk_tools_carry_the_schemas_an_assistant_needs() {
         serde_json::from_str::<serde_json::Value>(&last.2).unwrap(),
         serde_json::json!({ "id": "q1a2b3c", "reason": "never helped" })
     );
+}
+
+/// With the Auto Run row switched off and the API templates row on, the
+/// API templates assistant still has its quirk tools - under that row's
+/// own names - and each reaches the same route with `from` set to "api"
+/// here, whatever the caller sent.
+#[test]
+fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((
+                200,
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk"]}"#.into(),
+            ));
+        }
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "ok".into()))
+    };
+    let names = listed_names(&call);
+    assert!(names.iter().all(|n| !n.contains("autorun")), "{names:?}");
+    for name in ["record_app_quirk", "retire_app_quirk", "get_api_template_guide"] {
+        assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
+    }
+
+    let record = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_app_quirk","arguments":{"text":"the handler wants a CSRF header","from":"autorun","cases":[{"case_id":7,"steps":[2]}]}}}"#;
+    let v: serde_json::Value = serde_json::from_str(&handle_message(record, "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], serde_json::json!(true), "{v}");
+    let retire = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"retire_app_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
+    handle_message(retire, "1.0.0", &call).unwrap();
+
+    let recorded = calls.borrow();
+    let posts: Vec<&(String, String, String)> = recorded.iter().filter(|c| c.0 == "POST").collect();
+    assert_eq!(posts.len(), 2, "{recorded:?}");
+    assert_eq!(posts[0].1, "/autorun-quirk");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&posts[0].2).unwrap(),
+        serde_json::json!({ "text": "the handler wants a CSRF header", "from": "api", "cases": [{ "case_id": 7, "steps": [2] }] })
+    );
+    assert_eq!(posts[1].1, "/autorun-quirk-retire");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&posts[1].2).unwrap(),
+        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped", "from": "api" })
+    );
+
+    // Both record tools take the same optional `cases`.
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    for name in ["record_autorun_quirk", "record_app_quirk"] {
+        let t = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        let cases = &t["inputSchema"]["properties"]["cases"];
+        assert_eq!(cases["type"], "array", "{name}");
+        assert_eq!(cases["items"]["required"], serde_json::json!(["case_id", "steps"]), "{name}");
+        assert_eq!(t["inputSchema"]["required"], serde_json::json!(["text"]), "{name}");
+    }
 }
