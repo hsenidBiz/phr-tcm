@@ -131,6 +131,46 @@ async function showFlows() {
   fireEvent.click(await screen.findByRole("tab", { name: /^Flows/ }));
 }
 
+test("the header's Test files button opens the project's Test files", async () => {
+  const calls = mockOverview(OVERVIEW, (cmd) =>
+    cmd === "test_files_list" ? [{ name: "appraisal.pdf", size: 2048, modified: "1" }] : undefined,
+  );
+  renderScreen();
+  await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Test files" }));
+  const dialog = await screen.findByRole("dialog", { name: "Test files" });
+  expect(await within(dialog).findByText("appraisal.pdf")).toBeInTheDocument();
+  expect(within(dialog).getByText("2.0 KB")).toBeInTheDocument();
+  expect(calls.find((c) => c.cmd === "test_files_list")?.args).toEqual(
+    expect.objectContaining({ organization: "acme", project: "proj" }),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Test files" })).not.toBeInTheDocument());
+});
+
+test("an expanded step names the test files it uploads", async () => {
+  const withFiles = {
+    ...OVERVIEW,
+    templates: OVERVIEW.templates.map((s, i) =>
+      i === 0
+        ? {
+            ...s,
+            template: {
+              ...s.template,
+              steps: s.template.steps.map((st, j) => (j === 0 ? { ...st, files: { Document: "appraisal.pdf" } } : st)),
+            },
+          }
+        : s,
+    ),
+  };
+  mockOverview(withFiles);
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
+  expect(within(within(row).getByTestId("template-details")).getByText("Document ← appraisal.pdf")).toBeInTheDocument();
+});
+
 test("groups templates by module and filters by title, module or id", async () => {
   mockOverview(OVERVIEW);
   renderScreen();

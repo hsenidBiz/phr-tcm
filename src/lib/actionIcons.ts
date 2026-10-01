@@ -119,6 +119,11 @@ export {
   KeyRound as IconRecipe,
   // The menu paths an unattended run follows to each module's screen.
   Route as IconModulePaths,
+  // A project's Test files: the documents scripts and API templates upload
+  // into the application (Auto Run's Setup card, the API Templates tab).
+  Files as IconTestFiles,
+  // Copying files from this machine into those Test files.
+  FileUp as IconAddFiles,
   // The site a project's runs sign in to and start from (Auto Run's
   // Setup card) - a globe, since what it opens is a web address.
   Globe as IconSiteAddress,

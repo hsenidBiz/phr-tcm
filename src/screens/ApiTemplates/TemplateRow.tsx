@@ -85,6 +85,12 @@ function expectText(step: ApiTemplateStep): string | null {
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
+/** The test files a form step uploads: each field and the file's name. */
+function filesText(step: ApiTemplateStep): string | null {
+  const f = Object.entries(step.files ?? {});
+  return f.length > 0 ? f.map(([field, name]) => `${field} ← ${name}`).join(", ") : null;
+}
+
 function captureText(step: ApiTemplateStep): string | null {
   const c = Object.entries(step.capture ?? {});
   return c.length > 0 ? c.map(([name, path]) => `${name} ← ${path}`).join(", ") : null;
@@ -291,6 +297,7 @@ export default function TemplateRow({
                     <span className="text-faint">{s.name}</span>
                   </div>
                   <Detail label="Body" value={bodyFields(s)} />
+                  <Detail label="Files" value={filesText(s)} />
                   <Detail label="Expects" value={expectText(s)} />
                   <Detail label="Captures" value={captureText(s)} />
                 </li>
