@@ -45,6 +45,13 @@ pub struct EnvInput {
 /// or Try - which would mix two environments' accounts and sessions.
 pub const SWITCH_BUSY: &str =
     "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+/// Said while an API template run holds its slot.
+pub const SWITCH_TEMPLATE_RUNNING: &str =
+    "the environment cannot be switched while an API template is running - wait for it to finish first";
+/// Said while the supervised Auto Run browser is open: it is signed in to
+/// the environment it was opened in.
+pub const SWITCH_SUPERVISED_OPEN: &str =
+    "the environment cannot be switched while the supervised browser is open in Auto Run - close it first";
 
 fn has_password(store: &dyn SecretStore, id: &str) -> bool {
     match store.get(&environments::password_target(id)) {
@@ -117,11 +124,28 @@ pub fn remove_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<Env
     Ok(view(store, file))
 }
 
-pub fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<EnvListView, String> {
+/// Whether a switch may happen now. `supervised_open` is passed in because
+/// the supervised slot is behind an async lock the caller holds.
+pub fn refuse_switch(supervised_open: bool) -> Result<(), String> {
     if crate::commands::autorun_record::recording_is_going() || crate::commands::autorun_replay::replay_is_running() {
         return Err(SWITCH_BUSY.to_string());
     }
+    if crate::api_templates::runner::is_running() {
+        return Err(SWITCH_TEMPLATE_RUNNING.to_string());
+    }
+    if supervised_open {
+        return Err(SWITCH_SUPERVISED_OPEN.to_string());
+    }
+    Ok(())
+}
+
+pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<EnvListView, String> {
+    // Held across the switch, so a supervised browser cannot open halfway
+    // through it - the same way Open browser holds it to look for a recording.
+    let slot = crate::commands::autorun::supervised().lock().await;
+    refuse_switch(slot.is_some())?;
     let file = environments::set_active(root, id)?;
+    drop(slot);
     if let Some(e) = file.environments.iter().find(|e| e.id == file.active) {
         crate::applog::info(format!("Environments: switched to {}", e.name));
     }
@@ -167,8 +191,12 @@ pub fn env_remove(app: tauri::AppHandle, secrets: State<'_, DbSecrets>, id: Stri
 
 #[tauri::command]
 #[specta::specta]
-pub fn env_set_active(app: tauri::AppHandle, secrets: State<'_, DbSecrets>, id: String) -> Result<EnvListView, String> {
-    set_active_with(&super::autorun::root(&app)?, &*secrets.0, &id)
+pub async fn env_set_active(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    id: String,
+) -> Result<EnvListView, String> {
+    set_active_with(&super::autorun::root(&app)?, &*secrets.0, &id).await
 }
 
 #[tauri::command]

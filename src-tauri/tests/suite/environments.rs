@@ -7,8 +7,8 @@ use std::path::Path;
 use v2_lib::commands::autorun_record::RecorderClaim;
 use v2_lib::commands::autorun_replay::OneAtATime;
 use v2_lib::commands::environments::{
-    clear_default_password_with, list_view, remove_with, save_with, set_active_with, set_default_password_with,
-    EnvInput, SWITCH_BUSY,
+    clear_default_password_with, list_view, refuse_switch, remove_with, save_with, set_active_with,
+    set_default_password_with, EnvInput, SWITCH_BUSY, SWITCH_SUPERVISED_OPEN, SWITCH_TEMPLATE_RUNNING,
 };
 use v2_lib::db::credentials::{MemoryStore, SecretStore};
 use v2_lib::environments::*;
@@ -274,27 +274,64 @@ fn commands_add_edit_and_remove_through_the_store() {
     assert_eq!(store.get(&password_target(&qa)).unwrap(), None, "a removed environment's password goes with it");
 }
 
-#[test]
-fn switching_is_refused_while_recording_or_running() {
+#[tokio::test]
+async fn switching_is_refused_while_recording_or_running() {
     let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
     let (first, qa) = two_envs(root);
 
     let rec = RecorderClaim::claim().expect("nothing is recording");
-    let err = set_active_with(root, &store, &qa).unwrap_err();
+    let err = set_active_with(root, &store, &qa).await.unwrap_err();
     assert_eq!(err, SWITCH_BUSY);
     assert!(err.contains("recorded or run"), "{err}");
     drop(rec);
 
     let run = OneAtATime::claim().expect("nothing is running");
-    assert_eq!(set_active_with(root, &store, &qa).unwrap_err(), SWITCH_BUSY);
+    assert_eq!(set_active_with(root, &store, &qa).await.unwrap_err(), SWITCH_BUSY);
     drop(run);
 
     assert_eq!(active_id(root).unwrap(), first, "a refused switch changes nothing");
-    let view = set_active_with(root, &store, &qa).unwrap();
+    // Nothing recording, running or open: the switch goes through.
+    let view = set_active_with(root, &store, &qa).await.unwrap();
     assert_eq!(view.active, qa);
+}
+
+#[tokio::test]
+async fn switching_is_refused_while_an_api_template_runs() {
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+
+    let run = v2_lib::api_templates::runner::claim().expect("no template is running");
+    assert!(v2_lib::api_templates::runner::is_running());
+    let err = set_active_with(root, &store, &qa).await.unwrap_err();
+    assert_eq!(err, SWITCH_TEMPLATE_RUNNING);
+    assert!(err.contains("API template"), "{err}");
+    assert_eq!(active_id(root).unwrap(), first, "a refused switch changes nothing");
+    drop(run);
+
+    assert!(!v2_lib::api_templates::runner::is_running(), "dropping the claim frees the slot");
+    assert_eq!(set_active_with(root, &store, &qa).await.unwrap().active, qa);
+}
+
+/// A real supervised browser cannot be opened in a test, so the decision is
+/// driven directly: the command passes in whether the slot holds a session
+/// (and `switching_is_refused_while_recording_or_running` shows an empty
+/// slot lets the switch through).
+#[test]
+fn switching_is_refused_while_the_supervised_browser_is_open() {
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let err = refuse_switch(true).unwrap_err();
+    assert_eq!(err, SWITCH_SUPERVISED_OPEN);
+    assert!(err.contains("supervised browser") && err.contains("close it first"), "{err}");
+    assert_eq!(refuse_switch(false), Ok(()));
 }
 
 #[test]
