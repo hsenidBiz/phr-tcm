@@ -8,6 +8,7 @@
 
 use crate::api_templates::flow::Flow;
 use crate::api_templates::flow_store;
+use crate::api_templates::share::{self, TemplatesExportResult, TemplatesImportNote, TemplatesImportResult, TemplatesImportSkip};
 use crate::api_templates::store::{self, SavedTemplate};
 use crate::autorun::recipe::{load_recipe, origin_of};
 
@@ -134,4 +135,205 @@ pub fn remove_flow_at(
     flow_store::remove(root, organization, project, id)?;
     crate::applog::info(format!("api template flow removed: {id}"));
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn api_templates_export(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    path: String,
+) -> Result<TemplatesExportResult, String> {
+    let root = crate::commands::autorun::root(&app)?;
+    export_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn api_templates_import(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    path: String,
+) -> Result<TemplatesImportResult, String> {
+    let root = crate::commands::autorun::root(&app)?;
+    import_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, std::path::Path::new(&path))
+}
+
+/// The name of the file a person picked, for a sentence or the log - never
+/// the folder it is in.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "that file".to_string())
+}
+
+/// How many `.json` files in `dir` a listing that found `listed` of them
+/// left out because they did not read or parse (the listing logged each).
+/// `runs` files are run history, never a template.
+fn unreadable(dir: &std::path::Path, listed: usize) -> u32 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let files = entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.ends_with(".json") && !name.ends_with(".runs.json")
+        })
+        .count();
+    files.saturating_sub(listed) as u32
+}
+
+/// `api_templates_export` for a given data root: every saved template and
+/// flow of the project, proof stripped (`share::build_doc`), written
+/// atomically to `path`. Run history never goes in the file: `store::list`
+/// loads each template's history beside it (a damaged history file is
+/// logged there, as the tab's own listing logs it) and the export drops
+/// it. A saved file that does not parse is left out and counted, as the
+/// tab's listing leaves it out.
+/// "Is Auto Run offered here" is passed in, as `remove_flow_at` takes it.
+pub fn export_at(
+    offered: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    path: &std::path::Path,
+) -> Result<TemplatesExportResult, String> {
+    refuse_unless(offered)?;
+    let templates = store::list(root, organization, project)?;
+    let flows = flow_store::list(root, organization, project)?;
+    let skipped = unreadable(&store::templates_dir(root, organization, project), templates.len())
+        + unreadable(&flow_store::flows_dir(root, organization, project), flows.len());
+    if templates.is_empty() && flows.is_empty() {
+        return Err(share::NOTHING_TO_EXPORT.to_string());
+    }
+    let result = TemplatesExportResult { templates: templates.len() as u32, flows: flows.len() as u32, skipped };
+    let doc = share::build_doc(
+        templates.into_iter().map(|s| s.template).collect(),
+        flows,
+        &crate::run_order::now_rfc3339(),
+    );
+    let json = share::to_json(&doc)?;
+    let name = file_name(path);
+    crate::ai_tools::atomic_write(path, &json).map_err(|e| {
+        crate::applog::warn(format!("api templates export to {name} could not be written: {e}"));
+        format!("{name} could not be written - see Settings, Logs")
+    })?;
+    crate::applog::info(format!(
+        "api templates exported to {name}: {} template(s), {} flow(s), {skipped} unreadable file(s) left out",
+        result.templates, result.flows
+    ));
+    Ok(result)
+}
+
+/// `api_templates_import` for a given data root. The file is refused whole
+/// only when it is not an export this app can read (`share::read_doc`);
+/// past that, each entry stands alone - an invalid one is a skip line and
+/// the rest still land. Flows are written before templates, so a
+/// template's stage resolves against the flows just imported. A same-id
+/// entry is written over the saved one - a template arrives unproven, a
+/// flow without its sample - and a template's run history is left as it
+/// is: it is a record of runs that happened here.
+pub fn import_at(
+    offered: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    path: &std::path::Path,
+) -> Result<TemplatesImportResult, String> {
+    refuse_unless(offered)?;
+    let name = file_name(path);
+    let unreadable_file = |e: std::io::Error| {
+        crate::applog::warn(format!("api templates import from {name} could not be read: {e}"));
+        format!("{name} could not be read - see Settings, Logs")
+    };
+    // The size is checked on what is read, not on what the file said it
+    // was a moment before: at most one byte over the limit is ever read.
+    let mut bytes = Vec::new();
+    {
+        use std::io::Read;
+        let file = std::fs::File::open(path).map_err(&unreadable_file)?;
+        file.take(share::MAX_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(&unreadable_file)?;
+    }
+    if bytes.len() as u64 > share::MAX_FILE_BYTES {
+        return Err(share::TOO_BIG.to_string());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| share::NOT_JSON.to_string())?;
+    let doc = share::read_doc(&text)?;
+    let plan = share::plan_import(&doc);
+
+    let mut result = TemplatesImportResult { skipped: plan.skipped, ..TemplatesImportResult::default() };
+    let could_not_save = |what: &str, id: &str, e: String| {
+        crate::applog::warn(format!("api templates import: {what} {id} could not be saved: {e}"));
+        TemplatesImportSkip { id: id.to_string(), reason: format!("this {what} could not be saved - see Settings, Logs") }
+    };
+    let mut replaced_flows: Vec<&Flow> = Vec::new();
+    for f in &plan.flows {
+        // A saved copy that no longer reads still stands for that id.
+        let existed = !matches!(flow_store::load(root, organization, project, &f.id), Ok(None));
+        match flow_store::save(root, organization, project, f) {
+            Ok(()) if existed => {
+                result.replaced.push(share::flow_label(f));
+                replaced_flows.push(f);
+            }
+            Ok(()) => result.added.push(share::flow_label(f)),
+            Err(e) => result.skipped.push(could_not_save("flow", &f.id, e)),
+        }
+    }
+    for t in &plan.templates {
+        let existed = !matches!(store::load(root, organization, project, &t.id), Ok(None));
+        match store::save(root, organization, project, t) {
+            Ok(()) => {
+                if existed {
+                    result.replaced.push(t.title.clone());
+                } else {
+                    result.added.push(t.title.clone());
+                }
+                let loaded = match &t.stage {
+                    None => Ok(None),
+                    Some(r) => flow_store::load(root, organization, project, &r.flow).map_err(|e| {
+                        crate::applog::warn(format!("api templates import: flow {} could not be read: {e}", r.flow));
+                    }),
+                };
+                let found = match &loaded {
+                    Ok(Some(f)) => share::FlowFound::Saved(f),
+                    Ok(None) => share::FlowFound::Missing,
+                    Err(()) => share::FlowFound::Unreadable,
+                };
+                if let Some(note) = share::stage_note(t, found) {
+                    result.notes.push(TemplatesImportNote { id: t.id.clone(), title: t.title.clone(), note });
+                }
+            }
+            Err(e) => result.skipped.push(could_not_save("template", &t.id, e)),
+        }
+    }
+    // A replaced flow can leave templates saved here - not in this file -
+    // performing a stage it no longer has, or no longer fits: each is named,
+    // as the AI Bridge's own flow save names them.
+    if !replaced_flows.is_empty() {
+        let imported: std::collections::HashSet<&str> = plan.templates.iter().map(|t| t.id.as_str()).collect();
+        let saved = store::list(root, organization, project).unwrap_or_else(|e| {
+            crate::applog::warn(format!("api templates import: the saved templates could not be listed: {e}"));
+            Vec::new()
+        });
+        for s in saved.iter().filter(|s| !imported.contains(s.template.id.as_str())) {
+            let t = &s.template;
+            let Some(f) = t.stage.as_ref().and_then(|r| replaced_flows.iter().find(|f| f.id == r.flow)) else {
+                continue;
+            };
+            if let Some(why) = share::stage_note(t, share::FlowFound::Saved(f)) {
+                result.notes.push(TemplatesImportNote {
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                    note: share::replaced_flow_note(&f.id, &why),
+                });
+            }
+        }
+    }
+    crate::applog::info(format!(
+        "api templates imported from {name}: {} added, {} replaced, {} skipped, {} with a note",
+        result.added.len(),
+        result.replaced.len(),
+        result.skipped.len(),
+        result.notes.len()
+    ));
+    Ok(result)
 }

@@ -914,6 +914,18 @@ mod page_tests {
     }
 
     #[test]
+    fn an_unproven_template_is_marked_on_the_page() {
+        let mut imported = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        imported.template.proven = None;
+        let html = page_html(&flow(), &[imported], &PagePalette::default());
+        assert!(html.contains("Save the rules</span><span class='fx' title='Imported - not proven on this site."), "{html}");
+        assert!(html.contains("Templates: Save the rules (unproven).</li>"), "{html}");
+
+        let proven = on("pms-save-rules", "Save the rules", Effect::Edit, "rules");
+        assert!(!page_html(&flow(), &[proven], &PagePalette::default()).contains("unproven"));
+    }
+
+    #[test]
     fn every_title_the_assistant_wrote_is_escaped() {
         let mut f = flow();
         f.title = "Cycle </style><script>alert(1)</script>".into();

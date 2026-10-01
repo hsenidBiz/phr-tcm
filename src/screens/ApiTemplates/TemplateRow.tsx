@@ -116,6 +116,11 @@ export function runMode(r: RunRecord): "prove" | "run" {
   return r.mode === "prove" ? "prove" : "run";
 }
 
+/** Said wherever a template with no proof is shown: only an import saves
+ * one without it, and runs of it are allowed. */
+export const UNPROVEN_HINT =
+  "Imported - not proven on this site. Prove it here before relying on it; its run history may be from the version it replaced.";
+
 function LastRun({ run }: { run: RunRecord | undefined }) {
   if (!run) return <span className="text-xs text-faint">never run</span>;
   const d = stampDate(run.at);
@@ -202,6 +207,13 @@ export default function TemplateRow({
             flow, and when it last ran. Its parameters and proof are one
             click away, in the details. */}
         <span className="min-w-0 flex-1 text-sm font-medium break-words text-text">{t.title}</span>
+        {/* Before the effect and the last run, so a run of the version an
+            import replaced is never read as this one's proof. */}
+        {!t.proven && (
+          <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
+            Unproven
+          </Badge>
+        )}
         <EffectBadge effect={t.effect} />
         {stage && (
           <span className={cn("text-xs", stage.missing ? "text-warning" : "text-muted")}>
@@ -299,6 +311,15 @@ export default function TemplateRow({
             </section>
           )}
 
+          {!t.proven && (
+            <section className="space-y-1">
+              <h3 className="font-semibold text-muted">Not proven</h3>
+              <p data-testid="template-proof" className="text-warning">
+                {UNPROVEN_HINT}
+              </p>
+            </section>
+          )}
+
           {t.proven && (
             <section className="space-y-1">
               <h3 className="font-semibold text-muted">Proven</h3>
@@ -315,7 +336,10 @@ export default function TemplateRow({
 
           <section className="space-y-1">
             <h3 className="font-semibold text-muted">Runs</h3>
-            {!lastRun && <p className="text-faint">Not run since it was proven.</p>}
+            {!lastRun && <p className="text-faint">{t.proven ? "Not run since it was proven." : "Not run yet."}</p>}
+            {!t.proven && saved.runs.length > 0 && (
+              <p className="text-warning">These lines may be from the version an import replaced, not this one.</p>
+            )}
             {saved.runs.length > 0 && (
               <ol aria-label="Runs" className="space-y-1">
                 {saved.runs.map((r, i) => (

@@ -32,6 +32,7 @@ mod ai_tools;
 mod api_template_flows;
 mod api_templates;
 mod api_templates_runner;
+mod api_templates_share;
 mod app_settings;
 mod applog;
 mod assigned_watch;

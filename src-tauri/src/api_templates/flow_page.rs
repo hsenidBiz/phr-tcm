@@ -216,8 +216,14 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         } else {
             list.iter()
                 .map(|tpl| {
+                    // Only an import saves a template without its proof.
+                    let unproven = if tpl.proven.is_none() {
+                        "<span class='fx' title='Imported - not proven on this site. Prove it here before relying on it.'>unproven</span>"
+                    } else {
+                        ""
+                    };
                     format!(
-                        "<li><span class='name'>{}</span><span class='fx'>{}</span></li>",
+                        "<li><span class='name'>{}</span>{unproven}<span class='fx'>{}</span></li>",
                         esc(&tpl.title),
                         effect_word(&tpl.effect)
                     )
@@ -243,8 +249,14 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
         .iter()
         .map(|s| {
             let requires: Vec<&str> = s.requires.iter().map(|r| *title_of.get(r.as_str()).unwrap_or(&r.as_str())).collect();
-            let performers: Vec<&str> =
-                on.get(&s.id).map(|l| l.iter().map(|t| t.title.as_str()).collect()).unwrap_or_default();
+            let performers: Vec<String> = on
+                .get(&s.id)
+                .map(|l| {
+                    l.iter()
+                        .map(|t| if t.proven.is_some() { t.title.clone() } else { format!("{} (unproven)", t.title) })
+                        .collect()
+                })
+                .unwrap_or_default();
             format!(
                 "<li>{}. Requires: {}. {}Templates: {}.</li>",
                 esc(&s.title),
