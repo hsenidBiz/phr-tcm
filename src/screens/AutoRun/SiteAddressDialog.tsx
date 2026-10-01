@@ -104,7 +104,7 @@ export default function SiteAddressDialog({
           disabled={blocked}
           onChange={(e) => setStart(e.target.value)}
         />
-        {startValue.trim() === "" && !blocked && (
+        {startValue.trim() === "" && !blocked && recipeAddress !== "" && (
           <span className="block text-xs text-faint">Using the sign-in recipe's address</span>
         )}
       </label>

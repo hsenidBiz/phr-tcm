@@ -83,6 +83,13 @@ test("an environment with no address says it uses the recipe's, and shows that a
   await waitFor(() => expect(start).toHaveAttribute("placeholder", "https://hr.example.internal/"));
 });
 
+test("an environment with no address and no recipe address says nothing about the recipe's", async () => {
+  mount(null, undefined, listOf({ start_url: "", allowed_origins: [] }));
+  const start = (await screen.findByRole("textbox", { name: "Start address" })) as HTMLInputElement;
+  await waitFor(() => expect(start).toBeEnabled());
+  expect(screen.queryByText("Using the sign-in recipe's address")).not.toBeInTheDocument();
+});
+
 test("save writes the address to the active environment and keeps its other fields", async () => {
   const calls: unknown[] = [];
   const { onClose, commandsSeen } = mount(RECIPE, (a) => {

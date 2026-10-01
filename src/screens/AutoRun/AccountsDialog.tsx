@@ -51,12 +51,11 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
     retry: false,
   });
   // Read afresh on every open (nothing tells this screen when the assistant
-  // writes one), and never kept once the dialog is gone.
+  // writes one): always fetched again when the dialog mounts.
   const proposed = useQuery({
     queryKey: PROPOSALS_KEY,
     queryFn: async () => (await unwrapStr(commands.envProposals())) ?? [],
     retry: false,
-    gcTime: 0,
     staleTime: 0,
     refetchOnMount: "always",
   });

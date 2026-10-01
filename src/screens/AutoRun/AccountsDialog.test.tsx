@@ -172,12 +172,26 @@ test("no proposal section at all when the assistant proposed nothing", async () 
 });
 
 test("the proposals are read afresh each time the dialog opens", async () => {
-  const first = mountWithProposals({ proposals: [PROPOSED[0]] });
+  // ONE client across both opens: only a refetch on open can show the new one.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const state = { proposals: [PROPOSED[0]] };
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_list_accounts") return [];
+    if (cmd === "env_proposals") return state.proposals;
+    return null;
+  });
+  const open = () =>
+    render(
+      <QueryClientProvider client={client}>
+        <AccountsDialog onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+  const first = open();
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (1)" })).toBeInTheDocument();
   first.unmount();
-  clearMocks();
   // The assistant proposed one more while the dialog was shut.
-  mountWithProposals({ proposals: PROPOSED });
+  state.proposals = PROPOSED;
+  open();
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (2)" })).toBeInTheDocument();
 });
 

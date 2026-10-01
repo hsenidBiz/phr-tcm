@@ -877,6 +877,67 @@ async fn a_save_keeps_the_draft_until_a_check_signs_in_then_saves_and_forgets_it
     assert!(!recording_is_going());
 }
 
+/// Records `stateful_draft()` at `recorded_at` and saves it, with the active
+/// environment given `env_address` (empty: none) and the project's recipe
+/// already `existing` (or not). Answers the recipe on disk afterwards.
+async fn record_and_save(env_address: &str, recorded_at: &str, existing: Option<SignInRecipe>) -> SignInRecipe {
+    let _claims = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let mut env = v2_lib::environments::active(dir.path()).unwrap();
+    env.start_url = env_address.into();
+    let known = vec![env.db_id.clone()];
+    v2_lib::environments::save_env(dir.path(), env, &known).unwrap();
+    if let Some(recipe) = &existing {
+        save_recipe(dir.path(), "acme", "Web", recipe).unwrap();
+    }
+    let fields = [choice(FieldRole::Username, ""), choice(FieldRole::Password, "")];
+    let mut draft = stateful_draft();
+    draft.start_url = recorded_at.into();
+    keep_draft(draft);
+    let (d, _state) = stateful_app(false, None);
+    save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async move { Ok::<_, String>((d, ())) })
+        .await
+        .unwrap();
+    load_recipe(dir.path(), "acme", "Web").unwrap().expect("saved")
+}
+
+fn project_recipe() -> SignInRecipe {
+    SignInRecipe {
+        start_url: "https://prod.example.internal/".into(),
+        allowed_origins: vec!["https://sso.example.internal".into()],
+        session_minutes: 90,
+        ..stateful_draft().recipe(&[choice(FieldRole::Username, ""), choice(FieldRole::Password, "")], None).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn recording_in_an_environment_with_an_address_keeps_the_projects_own_address() {
+    let before = project_recipe();
+    let saved = record_and_save("https://qa.example.internal/", "https://qa.example.internal/", Some(before.clone())).await;
+    // The address and allowed sites are the project's, not QA's.
+    assert_eq!(saved.start_url, "https://prod.example.internal/");
+    assert_eq!(saved.allowed_origins, vec!["https://sso.example.internal".to_string()]);
+    // What was recorded is saved, and the other settings kept.
+    assert_eq!(saved.steps, stateful_draft().recipe(&[choice(FieldRole::Username, ""), choice(FieldRole::Password, "")], None).unwrap().steps);
+    assert_eq!(saved.signed_in, css("#marker"));
+    assert_eq!(saved.session_minutes, 90);
+}
+
+#[tokio::test]
+async fn recording_in_an_environment_without_an_address_saves_the_recorded_address() {
+    let saved = record_and_save("", "https://hr.example.internal/", Some(project_recipe())).await;
+    assert_eq!(saved.start_url, "https://hr.example.internal/");
+    // The allowed sites are still the project's, as before.
+    assert_eq!(saved.allowed_origins, vec!["https://sso.example.internal".to_string()]);
+}
+
+#[tokio::test]
+async fn recording_with_no_recipe_yet_saves_the_recorded_address_even_in_an_environment_with_one() {
+    let saved = record_and_save("https://qa.example.internal/", "https://qa.example.internal/", None).await;
+    assert_eq!(saved.start_url, "https://qa.example.internal/");
+}
+
 /// A click on a plain `<span>Username</span>` beside the input in a table
 /// cell: the span holds no field, so the page does not mark it quiet and
 /// sends its own words - but climbing the tree from it reaches the cell,
