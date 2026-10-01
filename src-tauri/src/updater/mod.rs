@@ -254,8 +254,70 @@ pub struct Progress {
     pub percent: i16,
     /// Bytes, DERIVED from `percent` (see `bytes_at`) - not a byte counter.
     pub downloaded: u64,
-    /// Bytes, exact: the size the release feed gives for the package.
+    /// Bytes, exact: the size the release feed gives for what is being
+    /// downloaded - the deltas when Velopack patches, else the package.
     pub total: u64,
+}
+
+/// What a download will fetch, and how its percentages turn into bytes.
+///
+/// Velopack patches when the update names a base release and at least one
+/// delta (`download_updates` in its `manager.rs`), and then downloads only
+/// the deltas - 4.1 MB where the package is 14.9. That route reports no
+/// byte progress: 0 before, `floor(i / n * 70)` after each of `n` deltas,
+/// 70 once they are all down and 100 once they are applied. If a delta will
+/// not apply it falls back to the full package, whose progress comes in
+/// steps of 5 from its own downloader; a percentage the delta route never
+/// sends is how that is noticed, and from then on the full package's size
+/// is the total.
+pub struct ProgressPlan {
+    full: u64,
+    deltas: Vec<u64>,
+    fell_back: bool,
+}
+
+impl ProgressPlan {
+    pub fn for_update(info: &UpdateInfo) -> Self {
+        let deltas = if info.BaseRelease.is_some() {
+            info.DeltasToTarget.iter().map(|d| d.Size).collect()
+        } else {
+            vec![]
+        };
+        ProgressPlan { full: info.TargetFullRelease.Size, deltas, fell_back: false }
+    }
+
+    fn patching(&self) -> bool {
+        !self.deltas.is_empty() && !self.fell_back
+    }
+
+    /// The bytes this download fetches, as it stands.
+    pub fn total(&self) -> u64 {
+        if self.patching() {
+            self.deltas.iter().fold(0u64, |a, &d| a.saturating_add(d))
+        } else {
+            self.full
+        }
+    }
+
+    /// Whether the delta route can send `percent`.
+    fn delta_step(&self, percent: i16) -> bool {
+        let n = self.deltas.len();
+        percent == 70 || percent == 100 || (0..n).any(|i| (i as f64 / n as f64 * 70.0) as i16 == percent)
+    }
+
+    pub fn at(&mut self, percent: i16) -> Progress {
+        if self.patching() && !self.delta_step(percent) {
+            self.fell_back = true;
+        }
+        let total = self.total();
+        let downloaded = if self.patching() {
+            // The deltas are down at 70; below it, 70 is the whole of them.
+            bytes_at(((i32::from(percent.clamp(0, 70)) * 100) / 70) as i16, total)
+        } else {
+            bytes_at(percent, total)
+        };
+        Progress { percent, downloaded, total }
+    }
 }
 
 /// The byte figure behind a percentage of a known total.
@@ -374,7 +436,8 @@ fn try_source(
     // you whether the feed is unreachable or whether it moved out from
     // under a stale banner, and that distinction is the whole bug above.
     let version = info.TargetFullRelease.Version.clone();
-    let total = info.TargetFullRelease.Size;
+    let plan = std::sync::Arc::new(std::sync::Mutex::new(ProgressPlan::for_update(&info)));
+    let total = plan.lock().unwrap().total();
 
     report(Progress { percent: 0, downloaded: 0, total });
 
@@ -384,9 +447,11 @@ fn try_source(
     let (tx, rx) = std::sync::mpsc::channel::<i16>();
     let pump = {
         let report = std::sync::Arc::clone(&report);
+        let plan = std::sync::Arc::clone(&plan);
         std::thread::spawn(move || {
             for percent in rx {
-                report(Progress { percent, downloaded: bytes_at(percent, total), total });
+                let progress = plan.lock().unwrap().at(percent);
+                report(progress);
             }
         })
     };
@@ -402,6 +467,7 @@ fn try_source(
         ))
     })?;
 
+    let total = plan.lock().unwrap().total();
     report(Progress { percent: 100, downloaded: total, total });
     // The last thing written before the hand-off: if the next launch is
     // still older than this version, the apply below must have failed - a
