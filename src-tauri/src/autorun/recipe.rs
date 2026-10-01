@@ -175,7 +175,7 @@ pub fn origin_of(url: &str) -> Option<String> {
 /// `origin_of` strips that port, so the raw text is compared against the
 /// canonical origin WITH that port added back, as well as without it - and
 /// nothing may follow the authority but one optional trailing slash.
-fn is_bare_origin(s: &str) -> bool {
+pub fn is_bare_origin(s: &str) -> bool {
     let Some(canonical) = origin_of(s) else { return false };
     let default_port = if canonical.starts_with("https://") {
         ":443"

@@ -323,6 +323,16 @@ export const commands = {
 	 *  databases had ids. Answers the id the card should now select.
 	 */
 	importLegacyDbConnection: (connectionString: string) => typedError<string, string>(__TAURI_INVOKE("import_legacy_db_connection", { connectionString })),
+	/**
+	 *  The environments and which is active. `current_db` is the database the
+	 *  Company database card has chosen now: on first use it becomes Default's.
+	 */
+	envList: (currentDb: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb })),
+	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
+	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
+	envSetActive: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_active", { id })),
+	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
+	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
@@ -1720,6 +1730,35 @@ export type EnsuredSuite = {
 	 *  nowhere would otherwise be a mystery).
 	 */
 	created_plan: boolean,
+};
+
+/**  An environment to save. An empty `id` adds a new one. */
+export type EnvInput = {
+	id: string,
+	name: string,
+	start_url: string,
+	allowed_origins: string[],
+	db_id: string,
+	test_environment: boolean,
+};
+
+export type EnvListView = {
+	active: string,
+	environments: EnvView[],
+};
+
+/**
+ *  One environment as the webview sees it. There is deliberately no
+ *  password field, not even an empty one.
+ */
+export type EnvView = {
+	id: string,
+	name: string,
+	start_url: string,
+	allowed_origins: string[],
+	db_id: string,
+	test_environment: boolean,
+	has_default_password: boolean,
 };
 
 export type Expect = {

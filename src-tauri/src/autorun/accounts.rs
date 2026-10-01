@@ -93,6 +93,17 @@ pub fn session_path(root: &Path, key: &str) -> PathBuf {
     root.join("sessions").join(format!("{key}.json"))
 }
 
+/// One environment's accounts file: `accounts/<env id>.json`. The id is
+/// checked by `environments` before it gets here (`env-` and hex only).
+pub fn accounts_path_for(root: &Path, env_id: &str) -> PathBuf {
+    root.join("accounts").join(format!("{env_id}.json"))
+}
+
+/// One environment's saved sign-in sessions: `sessions/<env id>/`.
+pub fn sessions_dir_for(root: &Path, env_id: &str) -> PathBuf {
+    root.join("sessions").join(env_id)
+}
+
 pub fn load_accounts(root: &Path) -> Result<Vec<Account>, String> {
     match std::fs::read_to_string(accounts_path(root)) {
         Ok(s) => {

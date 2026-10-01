@@ -80,6 +80,7 @@ mod db_sqlcmd;
 mod deletion;
 mod draft_comments;
 mod draft_merge;
+mod environments;
 mod extras;
 mod filewatch;
 mod guide;
