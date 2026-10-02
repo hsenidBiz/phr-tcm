@@ -7,6 +7,7 @@
 //! a person has reviewed a run and presses Send.
 
 pub mod accounts;
+pub mod api_checks;
 pub mod edits;
 pub mod failures;
 pub mod floor;
@@ -18,6 +19,7 @@ pub mod quirks;
 pub mod recipe;
 pub mod recorder;
 pub mod replay;
+pub mod report;
 pub mod runner;
 pub mod sessions;
 pub mod signin;

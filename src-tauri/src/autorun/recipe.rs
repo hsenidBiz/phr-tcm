@@ -213,6 +213,11 @@ fn check(action: &Action) -> Result<(), String> {
     if kind.as_deref() == Some("upload") {
         return Err("a recipe cannot contain upload - signing in never sends a file; upload belongs in a case script".to_string());
     }
+    // Checking what a page asks its server is part of a case: a recipe
+    // runs for every case's sign-in, and its steps carry no expectations.
+    if let Some(k @ ("expect_response" | "api_request")) = kind.as_deref() {
+        return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
+    }
     // `{{username}}`/`{{password}}` are filled in only for a fill's own
     // VALUE (see `fill_in`); anywhere else - a navigate url, a locator, an
     // expectation, even a fill's own selector - the placeholder is left

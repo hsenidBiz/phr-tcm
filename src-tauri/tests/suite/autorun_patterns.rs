@@ -3,7 +3,7 @@
 //! assistant only when at least two different cases hit it.
 
 use v2_lib::autorun::failures::describe_failures;
-use v2_lib::autorun::patterns::{classify, find_patterns, patterns_section, ErrorClass, PATTERN_ADVICE};
+use v2_lib::autorun::patterns::{action_target, classify, find_patterns, patterns_section, ErrorClass, PATTERN_ADVICE};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
 use v2_lib::browser::locator::{LocatorStep, Target};
@@ -103,6 +103,17 @@ fn the_classifier_reads_the_real_failure_sentences() {
     // A target whose own words read like a reason is stripped first, not
     // matched against.
     assert_eq!(classify("waited 5000ms: text \"not found\" is disabled", Some("text \"not found\"")), ErrorClass::Disabled);
+}
+
+#[test]
+fn an_api_checks_target_drops_the_query_string_and_fragment() {
+    let watch: Action = serde_json::from_value(serde_json::json!({
+        "kind": "expect_response", "url_contains": " /hr/Cycle/Save?access_token=abc#top "
+    }))
+    .unwrap();
+    assert_eq!(action_target(&watch).as_deref(), Some("/hr/Cycle/Save"));
+    let ask: Action = serde_json::from_value(serde_json::json!({ "kind": "api_request", "path": "/api/me?token=abc#x" })).unwrap();
+    assert_eq!(action_target(&ask).as_deref(), Some("/api/me"));
 }
 
 #[test]

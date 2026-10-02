@@ -29,6 +29,8 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_attribute",
     "sign_in",
     "upload",
+    "expect_response",
+    "api_request",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -78,6 +80,8 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page, right now?
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
+- `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
+- `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 
 There is nothing else. An action of any other kind is rejected.
 
@@ -120,6 +124,86 @@ where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
 Never add a fixed pause. There is no action for one, on purpose.
+
+## Checking the API
+
+Some expected results are not on the screen at all: "the cycle is saved",
+"the rule is stored with the right name". Two actions check the
+application's own requests. Both are checks, so either one satisfies a
+step's expected result, like an `expect_` action.
+
+`expect_response` checks a request the page made. Do the thing that sends
+it (a click, usually) and then check it, in the same step:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+    { "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }
+
+- It looks only at requests the page started since the step began. A
+  request from an earlier step is not seen, so put the check in the step
+  that causes the request.
+- `url_contains` is required. It is a path fragment such as
+  `/PerformanceCycle/Save`, matched against the path and query of the
+  request, ignoring case. It is never a full address: the host is never
+  part of the match, so an address with `://` in it can never match and
+  is refused.
+- `method` is optional (any method matches when it is left out). `status`
+  defaults to 200. `timeout_ms` defaults to 10 seconds.
+- When several requests match, the most recent one that finished is
+  checked. A request that never finishes within the time fails, and the
+  answer says it had not finished.
+- A request the server redirected is judged on the redirect it answered:
+  give that status (302, say) to check a form that saves and then moves
+  on. Any other status fails, naming the path it was sent to.
+- Tried on its own with `try_autorun_action`, an `expect_response` is a
+  step of its own: it sees only the requests the page makes while it
+  waits. A request made by an action you tried before it has already gone
+  by, so trying the click and then the check says no request matched. To
+  rehearse it, try it right after telling the person to do the action
+  that causes the request, give it a longer `timeout_ms`, and let them do
+  that action while it waits.
+
+`api_request` makes the page ask its own site a question, without
+touching the screen:
+
+    { "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }
+
+- GET only. Nothing is ever written this way.
+- `path` is a path on the site you are testing, starting with one `/`.
+  It is never an address, and it has no `?` or `#` in it: put the query in
+  the `query` map, which is encoded for you.
+- It is sent as the signed-in person, so what it returns is what that
+  person is allowed to see. If their session has ended and the site
+  redirects to its sign-in page, the check fails and names that page.
+- `expect.status` defaults to 200. `expect.json` is optional.
+
+With `json`, the body must be JSON, and only the fields you list are
+compared. A nested object is compared the same way, a list or a plain
+value must be equal, and any other field in the answer is ignored. List
+the few fields the expected result is about, not the whole body. Answers
+over 64 KB cannot be checked this way. A failure names the method and the
+path (never the query or the host) and shows the start of the body with
+anything secret hidden.
+
+A status on its own proves little. A sign-in page or an app shell sent
+straight back with 200 and no redirect passes a check on the status
+alone, for either kind, so give `json` whenever the answer must be data.
+
+Looking up the real address, path and fields:
+
+- Do not guess endpoints. Call `list_api_templates`: of the API templates
+  saved for this project, the ones marked proven have run against this
+  site, so they show real paths, methods and response fields. Use it as
+  reference only. Copy a path or a field name from a template, but
+  never run a template from a script: a script has no action that does,
+  and a template writes data.
+- The application's source can also show where a request goes. As with
+  selectors, that tells you WHERE to look, never what the answer should be.
+- What a check asserts comes from the case's expected result, written
+  down by a person. If the case says the saved name is "Q4 Cycle", the
+  `json` says "Q4 Cycle", whatever the code or a template happens to
+  return. If the expected result does not say what the data should be, do
+  not invent it: check only what it does say, or mark the step
+  `"unchecked"` with the reason.
 
 ## Who the case runs as
 

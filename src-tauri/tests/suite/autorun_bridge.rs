@@ -1060,6 +1060,17 @@ fn describe_try_never_carries_a_fills_value() {
 }
 
 #[test]
+fn describe_try_drops_an_api_checks_query_string_and_fragment() {
+    let watch: Action = serde_json::from_value(serde_json::json!({
+        "kind": "expect_response", "url_contains": "/hr/Cycle/Save?access_token=abc#top"
+    }))
+    .unwrap();
+    assert_eq!(describe_try(&watch, true), "AI tried expect_response /hr/Cycle/Save in the supervised browser: ok");
+    let ask: Action = serde_json::from_value(serde_json::json!({ "kind": "api_request", "path": "/api/me?token=abc#x" })).unwrap();
+    assert_eq!(describe_try(&ask, false), "AI tried api_request /api/me in the supervised browser: failed");
+}
+
+#[test]
 fn describe_try_names_the_kind_the_target_and_whether_it_worked() {
     let navigate = Action::Navigate { url: "https://app.example/ratings".to_string() };
     assert_eq!(

@@ -18,7 +18,9 @@ import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
+import ResultFilterRow from "./ResultFilterRow";
 import VerdictPicker from "./VerdictPicker";
+import { countBuckets, matchesFilter, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -142,6 +144,23 @@ export default function RunReview(props: {
       else next.add(caseId);
       return next;
     });
+
+  /** Which cases the list shows. Only the LIST: Accept every proposal,
+   * Save and Send always act on the whole run. */
+  const [filter, setFilter] = useState<ResultFilter>("All");
+  /** The cases the filter matched WHEN IT WAS PICKED, by id; `null` under
+   * All. Frozen on purpose: a reviewer filtering to Failed who marks a
+   * false failure Passed must keep that card - to check it, to write its
+   * note - rather than have it vanish (taking keyboard focus with it) the
+   * moment its bucket changes. The counts stay live; the list follows them
+   * only when a filter is picked again. */
+  const [visibleIds, setVisibleIds] = useState<Set<number> | null>(null);
+  const pickFilter = (f: ResultFilter) => {
+    setFilter(f);
+    setVisibleIds(
+      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f)).map((c) => c.case_id)),
+    );
+  };
 
   const [shot, setShot] = useState<string | null>(null);
   const openShot = (name: string) =>
@@ -313,6 +332,10 @@ export default function RunReview(props: {
   const mismatch = pbiMismatch(run);
   const sendDisabled = dirty || confirmed === 0 || sending || mismatch;
   const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
+  // Counted off the cases as they stand on screen, so a verdict confirmed
+  // here moves its case to its new bucket at once.
+  const counts = countBuckets(run.cases);
+  const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
 
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
@@ -320,8 +343,12 @@ export default function RunReview(props: {
         {when(run.started_at)} - {run.cases.length} case{run.cases.length === 1 ? "" : "s"}
       </h2>
 
+      <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} />
+
+      {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
+
       <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
-        {run.cases.map((c) => {
+        {shown.map((c) => {
           const isExpanded = expanded.has(c.case_id);
           return (
             <li
@@ -474,6 +501,15 @@ export default function RunReview(props: {
                 </Button>
               )}
             </div>
+            {/* The filter narrows the list, never what the buttons act on -
+                said only while it could surprise, i.e. while some cases are
+                hidden. */}
+            {!readOnly && filter !== "All" && (
+              <p className="order-last w-full text-xs text-faint">
+                The filter only changes what is listed. Accept every proposal, Save review and Send act
+                on every case in this run.
+              </p>
+            )}
             <div className="flex flex-wrap items-center justify-end gap-2">
               {/* A refusal is an answer, not a toast - it stays on screen
                   until the next attempt changes it. */}
@@ -530,7 +566,9 @@ export default function RunReview(props: {
       )}
 
       {shot && (
-        <Modal onClose={() => setShot(null)} className="max-h-[90vh] max-w-5xl overflow-auto p-3">
+        // max-h-full, not a vh: the backdrop starts below the title bar, so
+        // 90vh of the window no longer fits inside it.
+        <Modal onClose={() => setShot(null)} className="max-h-full max-w-5xl overflow-auto p-3">
           <img src={shot} alt="Screenshot of the step" className="max-w-full" />
         </Modal>
       )}

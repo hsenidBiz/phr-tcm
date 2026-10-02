@@ -11,8 +11,13 @@ use super::input::{self, Blocked};
 use super::locator::{resolve, Target};
 use super::page;
 use super::timing::Timing;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
+
+fn ok_status() -> u16 {
+    200
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -67,6 +72,116 @@ pub enum Action {
     /// runner finds the file (it knows the project) and hands this driver
     /// its path - see `upload_in`.
     Upload { selector: Target, file: String },
+    /// Check a request the page made since this script step began: that
+    /// one matching `url_contains` (and `method`, when given) finished,
+    /// answered `status`, and, with `json`, carried those fields. Carried
+    /// out by the runner, which alone holds the network record.
+    ExpectResponse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        url_contains: String,
+        #[serde(default = "ok_status")]
+        status: u16,
+        // See `ApiExpect::json` for why the TypeScript type is overridden.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[specta(type = Option<specta_typescript::Unknown>)]
+        json: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+        /// Any other key the script carried - see `Stray`.
+        #[serde(flatten)]
+        #[specta(skip)]
+        stray: Stray,
+    },
+    /// Ask the current site a GET question, sent by the page itself, and
+    /// check the answer. `path` is a path on the page's own site, never an
+    /// address. Carried out by the runner.
+    ApiRequest {
+        path: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        query: BTreeMap<String, String>,
+        #[serde(default)]
+        expect: ApiExpect,
+        /// Any other key the script carried - see `Stray`.
+        #[serde(flatten)]
+        #[specta(skip)]
+        stray: Stray,
+    },
+}
+
+/// Keys a script gave one of the two API checks that it does not take,
+/// kept only so `validate` can refuse them: an expectation written in the
+/// other kind's shape (`api_request` with `status` beside `kind`) would
+/// otherwise be dropped without a word, and the step would still count as
+/// a check. Empty in every valid action, so never written back out, and
+/// not part of the TypeScript type. The other kinds keep ignoring a key
+/// they do not know, as scripts saved by older versions rely on.
+pub type Stray = BTreeMap<String, Value>;
+
+/// What an `api_request` expects back. Mirrors the API templates'
+/// `Expect` (status, then a partial JSON match), and like it refuses a key
+/// it does not know: a misspelt `json` must not pass as "answered 200".
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct ApiExpect {
+    #[serde(default = "ok_status")]
+    pub status: u16,
+    // `serde_json::Value`'s specta mapping pulls in `serde_json::Number`'s
+    // i64/u64 variants, which the TypeScript exporter refuses to emit
+    // (precision loss) - the same override, and reason, as
+    // `api_templates::Expect::json`. The wire format is still real JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<specta_typescript::Unknown>)]
+    pub json: Option<Value>,
+}
+
+impl Default for ApiExpect {
+    fn default() -> Self {
+        ApiExpect { status: 200, json: None }
+    }
+}
+
+/// An `api_request` path that is not a safe path on the page's own site -
+/// not repeated, since it can be a whole address.
+const UNSAFE_API_PATH: &str =
+    "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address";
+
+const HTTP_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+/// A key an API check does not take, refused with what goes where. The
+/// key is the script's own word, shown cut short; its value never is.
+fn refuse_stray(kind: &str, stray: &Stray) -> Result<(), String> {
+    // The other kind's expectation keys first: they are the likely mistake.
+    let sibling: &[&str] = match kind {
+        "api_request" => &["status", "json", "method", "url_contains", "timeout_ms"],
+        _ => &["expect"],
+    };
+    let first = sibling.iter().copied().find(|k| stray.contains_key(*k));
+    let Some(key) = first.or_else(|| stray.keys().next().map(String::as_str)) else {
+        return Ok(());
+    };
+    let shown: String = key.chars().take(40).collect();
+    Err(match (kind, key) {
+        ("api_request", "status" | "json") => {
+            "api_request takes status and json under \"expect\", not beside \"kind\"".to_string()
+        }
+        ("api_request", "method" | "url_contains" | "timeout_ms") => {
+            format!("api_request takes status and json under \"expect\", and has no \"{shown}\" (that is expect_response's)")
+        }
+        ("api_request", _) => format!("api_request has no \"{shown}\" - it takes path, query and expect"),
+        (_, "expect") => "expect_response takes status and json directly, not under \"expect\"".to_string(),
+        _ => format!(
+            "expect_response has no \"{shown}\" - it takes method, url_contains, status, json and timeout_ms"
+        ),
+    })
+}
+
+fn check_status(status: u16) -> Result<(), String> {
+    if (100..=599).contains(&status) {
+        Ok(())
+    } else {
+        Err(format!("status {status} is not an HTTP status"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -270,6 +385,39 @@ impl Action {
                 Err(format!("upload: {}", crate::test_files::bad_name(file)))
             }
             Action::Upload { selector, .. } => selector.validate(),
+            Action::ExpectResponse { method, url_contains, status, stray, .. } => {
+                refuse_stray("expect_response", stray)?;
+                if url_contains.trim().is_empty() {
+                    return Err("expect_response needs url_contains".to_string());
+                }
+                // The record holds no host: a whole address could never match.
+                if url_contains.contains("://") {
+                    return Err("url_contains is a path fragment, not a full address".to_string());
+                }
+                if let Some(m) = method {
+                    if !HTTP_METHODS.iter().any(|k| k.eq_ignore_ascii_case(m.trim())) {
+                        return Err(format!("expect_response method \"{m}\" is not an HTTP method"));
+                    }
+                }
+                check_status(*status)
+            }
+            Action::ApiRequest { path, expect, stray, .. } => {
+                refuse_stray("api_request", stray)?;
+                // A refusal repeats only a safe path on this site: never
+                // what follows a `?` (it can be a token), never an address
+                // (it names a host).
+                let before = path.find(['?', '#']).map(|i| &path[..i]);
+                if !crate::api_templates::is_safe_relative_path(before.unwrap_or(path)) {
+                    return Err(UNSAFE_API_PATH.to_string());
+                }
+                // The query goes only through `query`.
+                if let Some(before) = before {
+                    return Err(format!(
+                        "api_request path \"{before}\" must not contain ? or # - put the query in \"query\""
+                    ));
+                }
+                check_status(expect.status)
+            }
         }
     }
 
@@ -285,6 +433,8 @@ impl Action {
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
+                | Action::ExpectResponse { .. }
+                | Action::ApiRequest { .. }
         )
     }
 }
@@ -535,6 +685,10 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         // The same for `upload`: only the runner knows the project, and so
         // where its Test files are. It calls `upload_in` with the path.
         Action::Upload { .. } => ActionOutcome::failed("upload is carried out by the runner"),
+        // The runner holds the network record and runs the page's own
+        // requests; this driver has neither.
+        Action::ExpectResponse { .. } => ActionOutcome::failed("expect_response is carried out by the runner"),
+        Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
     }
 }
 

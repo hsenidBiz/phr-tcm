@@ -16,9 +16,10 @@ export type CheckState =
   | { kind: "unchecked" };
 
 /** Does this action kind JUDGE the page, the way `Action::is_check` does on
- * the Rust side? Every `check_` and `expect_` kind does; nothing else does. */
+ * the Rust side? Every `check_` and `expect_` kind does, and so does
+ * `api_request` (it asks the site and judges the answer); nothing else does. */
 function isCheckKind(kind: string): boolean {
-  return kind === "check_text" || kind === "check_url" || kind.startsWith("expect_");
+  return kind === "check_text" || kind === "check_url" || kind === "api_request" || kind.startsWith("expect_");
 }
 
 /** One entry per case step with a non-empty expected result, in that

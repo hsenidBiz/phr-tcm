@@ -714,3 +714,71 @@ test("the card never carries theme swatches of its own any more", () => {
   expect(screen.queryByRole("button", { name: "Theme System" })).not.toBeInTheDocument();
   expect(getThemeChoice()).toBe(before);
 });
+
+/// The window's title bar is never swallowed: like every dialog, the tour
+/// leaves the window draggable and its buttons working. jsdom lays nothing
+/// out, so the title bar's height is mocked here.
+test("the tour's sheet starts below the window's title bar", async () => {
+  const bar = document.createElement("header");
+  bar.setAttribute("data-title-bar", "");
+  document.body.appendChild(bar);
+  vi.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+    top: 0, left: 0, right: 1024, bottom: 36, width: 1024, height: 36, x: 0, y: 0, toJSON: () => ({}),
+  } as DOMRect);
+  try {
+    render(
+      <UiTour
+        steps={THEME_STEPS}
+        at={SETTINGS_WHERE}
+        onNavigate={vi.fn()}
+        onAwait={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    // The first stop rings the theme card but `theme` is not on the page
+    // here, so the sheet is whole.
+    await waitFor(() => expect(swallows()).toHaveLength(1));
+    expect(swallows()[0].style.top).toBe("36px");
+  } finally {
+    bar.remove();
+  }
+});
+
+/// The four-piece path: a ring whose top runs up under the title bar is
+/// clamped to start below it, so the piece above is empty and the bar is
+/// never swallowed.
+test("a ring overlapping the title bar is cut from below the bar", async () => {
+  const bar = document.createElement("header");
+  bar.setAttribute("data-title-bar", "");
+  document.body.appendChild(bar);
+  vi.spyOn(bar, "getBoundingClientRect").mockReturnValue({
+    top: 0, left: 0, right: 1024, bottom: 36, width: 1024, height: 36, x: 0, y: 0, toJSON: () => ({}),
+  } as DOMRect);
+  addAnchor("theme");
+  const el = document.querySelector('[data-tour="theme"]') as HTMLElement;
+  vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+    top: 20, left: 400, right: 600, bottom: 60, width: 200, height: 40, x: 400, y: 20, toJSON: () => ({}),
+  } as DOMRect);
+  try {
+    render(
+      <UiTour
+        steps={THEME_STEPS}
+        at={SETTINGS_WHERE}
+        onNavigate={vi.fn()}
+        onAwait={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(swallows()).toHaveLength(4));
+    const [above, below, leftOf, rightOf] = swallows();
+    // pad(6): the ring would start at 14px, inside the 36px bar.
+    expect(above.style.top).toBe("36px");
+    expect(above.style.height).toBe("0px");
+    expect(below.style.top).toBe("66px");
+    expect(leftOf.style.top).toBe("36px");
+    expect(leftOf.style.height).toBe("30px");
+    expect(rightOf.style.top).toBe("36px");
+  } finally {
+    bar.remove();
+  }
+});

@@ -73,3 +73,30 @@ test("a modal is named by the heading it points at, or by a label", () => {
   );
   expect(screen.getByRole("dialog", { name: "Screenshot" })).toBeInTheDocument();
 });
+
+// A dialog's backdrop once covered the whole window, title bar included -
+// the window could not be dragged, minimised or closed while any dialog was
+// open. It starts below the title bar now, at the height the mounted title
+// bar publishes. jsdom cannot drag a window or hit-test; what is held here
+// is the value the backdrop is positioned by.
+test("the backdrop starts below the title bar, at the height the title bar publishes", async () => {
+  const { default: TitleBar } = await import("../TitleBar");
+  const { TITLE_BAR_HEIGHT, TITLE_BAR_VAR } = await import("../../lib/titleBar");
+  const { unmount } = render(
+    <>
+      <TitleBar title="Test Case Manager" />
+      <Modal onClose={() => {}} label="A dialog">
+        content
+      </Modal>
+    </>,
+  );
+  expect(document.documentElement.style.getPropertyValue(TITLE_BAR_VAR)).toBe(TITLE_BAR_HEIGHT);
+  const backdrop = screen.getByRole("dialog", { name: "A dialog" }).parentElement!;
+  expect(getComputedStyle(backdrop).top).toBe(`var(${TITLE_BAR_VAR}, 0px)`);
+  // The title bar itself is drawn at that same height.
+  expect(screen.getByRole("banner").style.height).toBe(TITLE_BAR_HEIGHT);
+
+  unmount();
+  // No title bar, no offset: the fallback covers the whole viewport.
+  expect(document.documentElement.style.getPropertyValue(TITLE_BAR_VAR)).toBe("");
+});

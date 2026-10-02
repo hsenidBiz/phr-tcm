@@ -30,6 +30,9 @@ export {
   Copy as IconCopy,
   FolderOpen as IconBrowse,
   FileText as IconReport,
+  // Saving a report of a run as a file (Auto Run's Past runs) - a page with
+  // a down arrow, since it writes a file rather than opening one to read.
+  FileDown as IconExportReport,
   AppWindow as IconOpenWindow,
 
   // Making and changing things

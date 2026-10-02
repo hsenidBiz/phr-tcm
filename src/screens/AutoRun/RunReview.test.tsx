@@ -134,9 +134,14 @@ test("a proposal is shown and nothing is preselected", async () => {
   expect(screen.getByText(/proposed: passed - every action/i)).toBeInTheDocument();
   expect(screen.getByText(/nothing proposed - this script checks nothing/i)).toBeInTheDocument();
 
-  expect(screen.queryAllByRole("button", { pressed: true })).toHaveLength(0);
+  // Counted inside the verdict pickers only: the result filter above the
+  // list is a toggle row too, with All pressed.
+  const verdictButtons = screen
+    .getAllByRole("group", { name: /^Verdict for #/ })
+    .flatMap((g) => within(g).getAllByRole("button"));
+  expect(verdictButtons.filter((b) => b.getAttribute("aria-pressed") === "true")).toHaveLength(0);
   // Nine verdict buttons total: three cases, three verdicts each.
-  expect(screen.getAllByRole("button", { pressed: false })).toHaveLength(9);
+  expect(verdictButtons.filter((b) => b.getAttribute("aria-pressed") === "false")).toHaveLength(9);
 });
 
 test("accept every proposal fills only the unset ones that have a proposal", async () => {
@@ -631,4 +636,137 @@ test("Accept every proposal sits in the footer beside the confirmed count", asyn
   // ...and the footer is below every case, not a row of its own above them.
   const lastCard = caseCard(203);
   expect(lastCard.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+// Filtering the review by result. A case counts under the person's own
+// verdict once confirmed, else under the machine's proposal, else Not run.
+const filterRow = () => screen.getByRole("group", { name: "Filter by result" });
+const filterButton = (name: RegExp) => within(filterRow()).getByRole("button", { name });
+
+test("the filter row counts each result, and All is pressed by default", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  expect(filterButton(/^All \(3\)$/)).toHaveAttribute("aria-pressed", "true");
+  expect(filterButton(/^Passed \(1\)$/)).toHaveAttribute("aria-pressed", "false");
+  expect(filterButton(/^Failed \(1\)$/)).toBeInTheDocument();
+  expect(filterButton(/^Blocked \(0\)$/)).toBeInTheDocument();
+  expect(filterButton(/^Not run \(1\)$/)).toBeInTheDocument();
+});
+
+test("a filter shows only the matching cases, one filter at a time", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  fireEvent.click(filterButton(/^Failed/));
+  expect(filterButton(/^Failed/)).toHaveAttribute("aria-pressed", "true");
+  expect(filterButton(/^All/)).toHaveAttribute("aria-pressed", "false");
+  expect(caseCard(201)).toBeInTheDocument();
+  expect(screen.queryByRole("listitem", { name: /#202/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("listitem", { name: /#203/ })).not.toBeInTheDocument();
+
+  fireEvent.click(filterButton(/^Not run/));
+  expect(caseCard(203)).toBeInTheDocument();
+  expect(screen.queryByRole("listitem", { name: /#201/ })).not.toBeInTheDocument();
+
+  fireEvent.click(filterButton(/^All/));
+  expect(screen.getAllByRole("listitem", { name: /^Case #/ })).toHaveLength(3);
+});
+
+test("a filter that matches nothing says so", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  fireEvent.click(filterButton(/^Blocked/));
+  expect(screen.getByText("No case in this run matches that filter.")).toBeInTheDocument();
+  expect(screen.queryAllByRole("listitem", { name: /^Case #/ })).toHaveLength(0);
+});
+
+test("a confirmed verdict overrides the proposal, and the counts follow it", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  // #202 is proposed Passed; the person says Blocked.
+  fireEvent.click(within(caseCard(202)).getByRole("button", { name: "Blocked" }));
+  expect(filterButton(/^Passed \(0\)$/)).toBeInTheDocument();
+  expect(filterButton(/^Blocked \(1\)$/)).toBeInTheDocument();
+
+  fireEvent.click(filterButton(/^Blocked/));
+  expect(caseCard(202)).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem", { name: /^Case #/ })).toHaveLength(1);
+});
+
+test("Accept every proposal and Save act on every case, whatever the filter shows", async () => {
+  let saved: { run: typeof RUN } | null = null;
+  renderReview(RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_save_run") saved = args as { run: typeof RUN };
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: failed/i);
+
+  // Only #201 (proposed Failed) is listed...
+  fireEvent.click(filterButton(/^Failed/));
+  expect(screen.getByText(/the filter only changes what is listed/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Accept every proposal" }));
+  // ...but #202's proposal was accepted too.
+  expect(screen.getByText("2 of 3 confirmed")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save review" }));
+  await waitFor(() => expect(saved).not.toBeNull());
+  expect(saved!.run.cases.map((c) => [c.case_id, c.verdict])).toEqual([
+    [201, "Failed"],
+    [202, "Passed"],
+    [203, ""],
+  ]);
+});
+
+test("Send sends every confirmed case, not only the ones the filter shows", async () => {
+  const publishCalls: { cases: { case_id: number }[] }[] = [];
+  renderReview(SEND_RUN, {
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_publish") {
+        publishCalls.push(args as { cases: { case_id: number }[] });
+        return { status: "sent", run_id: 9, web_url: "https://example.test/9", sent: [1, 2], skipped: [], problems: [] };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(filterButton(/^Not run/));
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => expect(publishCalls).toHaveLength(1));
+  expect(publishCalls[0].cases.map((c) => c.case_id)).toEqual([1, 2]);
+});
+
+// Review's own flow: filter to Failed, find a false failure, mark it Passed
+// - and keep its card to check it and write the note. The counts move at
+// once; the list only when a filter is picked again.
+test("a case re-bucketed under a filter stays listed, with its note field and focus", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  fireEvent.click(filterButton(/^Failed/));
+  const passed = within(caseCard(201)).getByRole("button", { name: "Passed" });
+  passed.focus();
+  fireEvent.click(passed);
+
+  expect(caseCard(201)).toBeInTheDocument();
+  expect(within(caseCard(201)).getByLabelText("Note for #201")).toBeInTheDocument();
+  expect(document.activeElement).toBe(passed);
+  expect(filterButton(/^Failed \(0\)$/)).toBeInTheDocument();
+  expect(filterButton(/^Passed \(2\)$/)).toBeInTheDocument();
+  expect(screen.queryByText("No case in this run matches that filter.")).not.toBeInTheDocument();
+
+  // Picking the filter again re-reads it: #201 is no longer Failed.
+  fireEvent.click(filterButton(/^Passed/));
+  fireEvent.click(filterButton(/^Failed/));
+  expect(screen.queryByRole("listitem", { name: /#201/ })).not.toBeInTheDocument();
+  expect(screen.getByText("No case in this run matches that filter.")).toBeInTheDocument();
 });

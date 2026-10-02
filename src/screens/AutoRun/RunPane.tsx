@@ -504,7 +504,9 @@ export default function RunPane({
       </div>
 
       {shot && (
-        <Modal onClose={() => setShot(null)} className="max-h-[90vh] max-w-5xl overflow-auto p-3">
+        // max-h-full, not a vh: the backdrop starts below the title bar, so
+        // 90vh of the window no longer fits inside it.
+        <Modal onClose={() => setShot(null)} className="max-h-full max-w-5xl overflow-auto p-3">
           <img src={shot} alt="Screenshot of the failed action" className="max-w-full" />
         </Modal>
       )}

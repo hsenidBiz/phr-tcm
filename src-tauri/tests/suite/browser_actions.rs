@@ -630,6 +630,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -644,9 +646,117 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_contains_text"
                 | "expect_count"
                 | "expect_attribute"
+                | "expect_response"
+                | "api_request"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
         assert_eq!(action.is_check(), is_a_check(kind), "`{kind}` disagreed with is_check()");
+    }
+}
+
+#[test]
+fn expect_response_and_api_request_round_trip_with_their_defaults() {
+    let a: Action =
+        serde_json::from_value(json!({ "kind": "expect_response", "url_contains": "/Cycle/Save" })).unwrap();
+    assert_eq!(
+        a,
+        Action::ExpectResponse {
+            method: None,
+            url_contains: "/Cycle/Save".into(),
+            status: 200,
+            json: None,
+            timeout_ms: None,
+            stray: Default::default()
+        }
+    );
+    // Nothing optional is written back out when it is not set.
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        json!({ "kind": "expect_response", "url_contains": "/Cycle/Save", "status": 200 })
+    );
+
+    let full = json!({
+        "kind": "expect_response", "method": "POST", "url_contains": "/Save",
+        "status": 201, "json": { "success": true }, "timeout_ms": 5000
+    });
+    let a: Action = serde_json::from_value(full.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&a).unwrap(), full);
+
+    let r: Action = serde_json::from_value(json!({ "kind": "api_request", "path": "/api/cycles/42" })).unwrap();
+    match &r {
+        Action::ApiRequest { path, query, expect, .. } => {
+            assert_eq!(path, "/api/cycles/42");
+            assert!(query.is_empty());
+            assert_eq!(expect.status, 200);
+            assert!(expect.json.is_none());
+        }
+        other => panic!("{other:?}"),
+    }
+    let written = serde_json::to_value(&r).unwrap();
+    assert!(written.get("query").is_none(), "an empty query is omitted: {written}");
+    assert_eq!(written["expect"], json!({ "status": 200 }));
+
+    let full = json!({
+        "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" },
+        "expect": { "status": 200, "json": { "name": "Q4 Cycle" } }
+    });
+    let r: Action = serde_json::from_value(full.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&r).unwrap(), full);
+    assert!(r.validate().is_ok());
+}
+
+#[test]
+fn the_two_response_steps_say_what_is_wrong_with_them() {
+    let err = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+
+    assert_eq!(
+        err(json!({ "kind": "expect_response", "url_contains": "  " })),
+        "expect_response needs url_contains"
+    );
+    assert_eq!(
+        err(json!({ "kind": "expect_response", "url_contains": "/x", "method": "FETCH" })),
+        "expect_response method \"FETCH\" is not an HTTP method"
+    );
+    assert_eq!(
+        err(json!({ "kind": "expect_response", "url_contains": "/x", "status": 99 })),
+        "status 99 is not an HTTP status"
+    );
+    assert_eq!(
+        err(json!({ "kind": "expect_response", "url_contains": "/x", "status": 600 })),
+        "status 600 is not an HTTP status"
+    );
+    for m in ["get", "POST", "Put", "PATCH", "delete", "HEAD", "options"] {
+        let a: Action =
+            serde_json::from_value(json!({ "kind": "expect_response", "url_contains": "/x", "method": m })).unwrap();
+        assert!(a.validate().is_ok(), "{m}");
+    }
+
+    for p in ["api/x", "//evil.example/x", "/a/../b", "https://evil.example/x", "/a\\b", ""] {
+        assert_eq!(
+            err(json!({ "kind": "api_request", "path": p })),
+            // Never repeated: an unsafe path can be a whole address.
+            "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address",
+        );
+    }
+    assert_eq!(
+        err(json!({ "kind": "api_request", "path": "/api/x", "expect": { "status": 700 } })),
+        "status 700 is not an HTTP status"
+    );
+}
+
+/// Like `sign_in`, both are carried out by the runner (it alone holds the
+/// network record and the page's cookies for a request).
+#[tokio::test]
+async fn the_driver_alone_never_runs_the_response_steps() {
+    for a in [
+        json!({ "kind": "expect_response", "url_contains": "/x" }),
+        json!({ "kind": "api_request", "path": "/api/x" }),
+    ] {
+        let a: Action = serde_json::from_value(a).unwrap();
+        let mut d = FakePage::default().driver();
+        let out = execute_with(&mut d, &a, &quick()).await;
+        assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
+        assert!(d.calls.is_empty());
     }
 }
