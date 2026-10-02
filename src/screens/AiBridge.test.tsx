@@ -272,7 +272,7 @@ function dbCard(): HTMLElement {
 
 /// The card is which database, its login, and whether it may write. The
 /// login itself lives in Rust: nothing on the card can show or take one.
-test("the database card is a picker, a login line, Manage credentials and the write switch", async () => {
+test("the database card is a picker, a login line, the list of databases and the write switch", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -281,7 +281,12 @@ test("the database card is a picker, a login line, Manage credentials and the wr
   await waitFor(() => expect(picker).toHaveTextContent("Dev - read only"));
   const card = dbCard();
   expect(within(card).getByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
-  expect(within(card).getByRole("button", { name: "Manage credentials" })).toBeInTheDocument();
+  // One place to manage logins: every database's own Edit, and no
+  // separate button for the chosen one.
+  expect(within(card).queryByRole("button", { name: "Manage credentials" })).not.toBeInTheDocument();
+  for (const d of DATABASES) {
+    expect(within(card).getByRole("button", { name: `Edit ${d.label}` })).toBeInTheDocument();
+  }
   expect(within(card).getByRole("switch", { name: "Create, update and delete" })).toBeInTheDocument();
 
   expect(within(card).queryByText("Edit as one string")).not.toBeInTheDocument();
@@ -324,23 +329,25 @@ test("choosing a database stores its id and tells the bridge subscribers", async
   stop();
 });
 
-test("Manage credentials opens the login of the chosen database", async () => {
-  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+test("a shipped database's Edit opens its login, with no name to change", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  const manage = await screen.findByRole("button", { name: "Manage credentials" });
-  await waitFor(() => expect(manage).not.toBeDisabled());
-  fireEvent.click(manage);
-  expect(
-    await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" }),
-  ).toBeInTheDocument();
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Edit Dev - dev login" }));
+  const dialog = await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" });
+  expect(within(dialog).queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+  // Editing a database does not choose it.
+  expect(selectedDbSnapshot()).toBe("dev-read");
 });
 
-test("with no database chosen there is no login to manage", async () => {
+test("with no database chosen every login can still be edited", async () => {
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByRole("button", { name: "Manage credentials" })).toBeDisabled();
+  const edit = await within(dbCard()).findByRole("button", { name: "Edit QA - read only" });
+  expect(edit).not.toBeDisabled();
+  fireEvent.click(edit);
+  expect(await screen.findByRole("dialog", { name: "Credentials for QA - read only" })).toBeInTheDocument();
 });
 
 // ------------------------------------------------- your own databases
@@ -376,8 +383,10 @@ test("your own databases are listed under the picker with Edit and Remove", asyn
   expect(within(card).getByText("Not set up yet")).toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "Edit Staging" })).toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "Remove Staging" })).toBeInTheDocument();
-  // The shipped ones are not removable and are not listed there.
+  // A shipped one is listed with Edit, but can never be removed.
+  expect(within(card).getByRole("button", { name: "Edit Dev - read only" })).toBeInTheDocument();
   expect(within(card).queryByRole("button", { name: "Remove Dev - read only" })).not.toBeInTheDocument();
+  expect(within(card).getByText("hrmmain on sgdev01db02.cloud")).toBeInTheDocument();
 
   fireEvent.click(within(card).getByRole("button", { name: "Edit Staging" }));
   const dialog = await screen.findByRole("dialog", { name: "Credentials for Staging" });
@@ -467,7 +476,7 @@ test("removing the chosen database clears the card's choice", async () => {
   expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
   expect(told).toHaveBeenCalled();
   await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
-  expect(await screen.findByRole("button", { name: "Manage credentials" })).toBeDisabled();
+  expect(within(dbCard()).queryByText(/^Signs in as /)).not.toBeInTheDocument();
   stop();
 });
 

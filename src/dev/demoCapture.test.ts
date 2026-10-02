@@ -245,3 +245,29 @@ test("in capture mode the AI Bridge shows sample tools and databases, never this
   const plainTools = (await plain.commands.detectAiTools(null)) as { registered_servers?: string[] }[];
   expect(plainTools.map((t) => t.registered_servers)).toEqual([undefined, undefined]);
 });
+
+/// Demo and capture runs happen on the owner's own machine: adding,
+/// renaming or removing a database there would write its real Credential
+/// Manager and databases.json. All three answer a refusal and never reach
+/// the backend.
+test("demo and capture modes never add, rename or remove a real database", async () => {
+  for (const capture of [false, true]) {
+    vi.resetModules();
+    localStorage.clear();
+    const { commands } = await boot({ demo: true, capture });
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    const invoke = vi.fn();
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke };
+    const form = { server: "h", port: null, database: "d", user: "u", password: "p", trust_cert: false };
+    for (const res of [
+      await commands.dbAddCustom("Staging", form),
+      await commands.dbRenameCustom("own", "Mine"),
+      await commands.dbRemoveCustom("own"),
+    ]) {
+      expect(res).toMatchObject({ status: "error" });
+      expect(String((res as { error: string }).error)).toMatch(/a database is disabled$/);
+    }
+    expect(invoke).not.toHaveBeenCalled();
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
+  }
+});

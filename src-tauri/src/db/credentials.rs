@@ -33,6 +33,10 @@ pub trait SecretStore: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<String>, String>;
     fn put(&self, id: &str, value: &str) -> Result<(), String>;
     fn remove(&self, id: &str) -> Result<(), String>;
+    /// Every saved target name that starts with `prefix` - how `forget_all`
+    /// finds a login whatever the list of databases says, even with the list
+    /// gone.
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String>;
     /// The file naming a person's own databases (`catalog`) - ids and
     /// labels, no secret. `None`, the default, reads as the starting list
     /// (`own` alone) and refuses every change to it.
@@ -58,6 +62,9 @@ impl<S: SecretStore> SecretStore for WithList<S> {
     }
     fn remove(&self, id: &str) -> Result<(), String> {
         self.store.remove(id)
+    }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        self.store.targets(prefix)
     }
     fn list_file(&self) -> Option<&Path> {
         Some(&self.list)
@@ -88,6 +95,9 @@ impl SecretStore for MemoryStore {
     fn remove(&self, id: &str) -> Result<(), String> {
         self.values()?.remove(id);
         Ok(())
+    }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        Ok(self.values()?.keys().filter(|k| k.starts_with(prefix)).cloned().collect())
     }
 }
 
@@ -137,8 +147,11 @@ impl std::fmt::Debug for DbCredentialsForm {
     }
 }
 
+/// What every database login's target name starts with.
+const TARGET_PREFIX: &str = "tcm-v2/db/";
+
 fn target(id: &str) -> String {
-    format!("tcm-v2/db/{id}")
+    format!("{TARGET_PREFIX}{id}")
 }
 
 fn shipped(id: &str) -> Option<&'static DbPreset> {
@@ -415,19 +428,33 @@ fn taken_labels<'a>(list: &'a Catalog, except: Option<&'a str>) -> impl Iterator
 /// the rest on the machine. The list goes back to how it starts - `own`
 /// alone, nothing saved for it - and every id it held is retired.
 ///
-/// A list that cannot be read is left exactly as it is: which logins it
-/// names is the one thing that would have said what else to remove.
+/// The logins to remove are found in the store itself as well as on the
+/// list: a list that was deleted or cannot be read, or an add whose
+/// rollback failed, must not leave a login behind that nothing names. A
+/// list that cannot be read is left exactly as it is.
 pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
     let _held = catalog::lock();
     let mut first_error = None;
     let list = catalog::read(store.list_file());
-    let own: Vec<String> = match &list {
+    let mut own: Vec<String> = match &list {
         Ok(c) => c.databases.iter().map(|d| d.id.clone()).filter(|id| id != OWN_ID).collect(),
         Err(e) => {
             first_error = Some(e.clone());
             vec![]
         }
     };
+    match store.targets(TARGET_PREFIX) {
+        Ok(found) => {
+            for id in found.iter().filter_map(|t| t.strip_prefix(TARGET_PREFIX)) {
+                if id != OWN_ID && shipped(id).is_none() && !own.iter().any(|o| o == id) {
+                    own.push(id.to_string());
+                }
+            }
+        }
+        Err(e) => {
+            first_error.get_or_insert(e);
+        }
+    }
     let ids = std::iter::once(OWN_ID.to_string())
         .chain(DB_PRESETS.iter().map(|p| p.id.to_string()))
         .chain(own.iter().cloned());
@@ -439,7 +466,9 @@ pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
     if let (Ok(old), Some(file)) = (list, store.list_file()) {
         let mut fresh = Catalog::starting();
         fresh.retired = old.retired;
-        for id in own {
+        // Only well-formed ids go on the list: a stray target name found in
+        // the store was removed above, and that is all it needs.
+        for id in own.into_iter().filter(|id| catalog::valid_id(id)) {
             if !fresh.retired.contains(&id) {
                 fresh.retired.push(id);
             }
@@ -604,6 +633,12 @@ impl SecretStore for CredentialManager {
             "Could not remove the saved login.".to_string()
         })
     }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        wincred::enumerate(prefix).map_err(|code| {
+            crate::applog::warn(format!("Credential Manager listing failed (Win32 error {code})"));
+            "Could not list the saved logins.".to_string()
+        })
+    }
 }
 
 #[cfg(not(windows))]
@@ -617,6 +652,9 @@ impl SecretStore for CredentialManager {
     fn remove(&self, _id: &str) -> Result<(), String> {
         Err("Windows Credential Manager is not available.".into())
     }
+    fn targets(&self, _prefix: &str) -> Result<Vec<String>, String> {
+        Err("Windows Credential Manager is not available.".into())
+    }
 }
 
 /// The Win32 calls, each wrapped small enough that its safety argument
@@ -626,7 +664,7 @@ impl SecretStore for CredentialManager {
 mod wincred {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND};
     use windows_sys::Win32::Security::Credentials::{
-        CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
+        CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
         CRED_TYPE_GENERIC,
     };
 
@@ -702,6 +740,56 @@ mod wincred {
             Err(last_error())
         } else {
             Ok(())
+        }
+    }
+
+    /// The target names of every generic entry whose name starts with
+    /// `prefix`. Only names come back - every blob is freed unread.
+    pub(super) fn enumerate(prefix: &str) -> Result<Vec<String>, u32> {
+        let filter = wide(&format!("{prefix}*"));
+        let mut count: u32 = 0;
+        let mut creds: *mut *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: `filter` is NUL-terminated and outlives the call; `count`
+        // and `creds` are out-pointers the API fills only when it returns
+        // non-zero.
+        let ok = unsafe { CredEnumerateW(filter.as_ptr(), 0, &mut count, &mut creds) };
+        if ok == 0 {
+            let code = last_error();
+            return if code == ERROR_NOT_FOUND { Ok(Vec::new()) } else { Err(code) };
+        }
+        // SAFETY: CredEnumerateW returned non-zero, so `creds` is an array
+        // of `count` credential pointers the API allocated as one block.
+        let names = unsafe { copy_names_and_free(creds, count) };
+        Ok(names.into_iter().filter(|n| n.starts_with(prefix)).collect())
+    }
+
+    /// Copies each generic entry's target name out, then frees the array.
+    ///
+    /// # Safety
+    /// `creds` must come from a successful CredEnumerateW with `count`
+    /// entries and not have been freed; each entry's TargetName is then a
+    /// NUL-terminated string (or null). The caller must not use `creds`
+    /// afterwards.
+    unsafe fn copy_names_and_free(creds: *mut *mut CREDENTIALW, count: u32) -> Vec<String> {
+        // SAFETY: the contract above; every name is copied out before
+        // CredFree, and nothing is touched after it.
+        unsafe {
+            let mut names = Vec::new();
+            if !creds.is_null() {
+                for &c in std::slice::from_raw_parts(creds, count as usize) {
+                    if c.is_null() || (*c).Type != CRED_TYPE_GENERIC || (*c).TargetName.is_null() {
+                        continue;
+                    }
+                    let t = (*c).TargetName;
+                    let mut len = 0;
+                    while *t.add(len) != 0 {
+                        len += 1;
+                    }
+                    names.push(String::from_utf16_lossy(std::slice::from_raw_parts(t, len)));
+                }
+                CredFree(creds as *const _);
+            }
+            names
         }
     }
 

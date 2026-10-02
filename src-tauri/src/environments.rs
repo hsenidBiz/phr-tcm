@@ -280,7 +280,20 @@ fn tidy(mut env: Environment) -> Environment {
 /// that id. Only the saved environment's database has to be known now:
 /// another one whose database has since gone is not this save's business.
 pub fn save_env(root: &Path, env: Environment, known_db_ids: &[String]) -> Result<EnvFile, String> {
+    save_env_with(root, env, || known_db_ids.to_vec())
+}
+
+/// `save_env` with the known database ids asked for UNDER the file's lock -
+/// what the commands use. A database removed a moment before (its removal
+/// holds this lock too, see `when_db_unused`) is then never written into an
+/// environment by a save that looked it up just before.
+pub fn save_env_with(
+    root: &Path,
+    env: Environment,
+    known_db_ids: impl FnOnce() -> Vec<String>,
+) -> Result<EnvFile, String> {
     let _held = lock();
+    let known_db_ids = known_db_ids();
     let mut file = load_or_init_locked(root, None)?;
     let mut env = tidy(env);
     if env.id.is_empty() {

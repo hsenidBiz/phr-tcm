@@ -62,22 +62,24 @@ export function DbCredentialsModal({
     };
   };
 
-  /** Runs one command, showing a refusal under the fields. */
+  /** Runs one command, showing a refusal under the fields - worded by
+   * `explain` when the refusal needs saying in context. */
   const run = async <T,>(
     kind: "test" | "save" | "reset",
     call: () => Promise<{ status: "ok"; data: T } | { status: "error"; error: string }>,
+    explain: (why: string) => string = (why) => why,
   ): Promise<T | null> => {
     setBusy(kind);
     setResult(null);
     try {
       const res = await call();
       if (res.status === "error") {
-        setResult({ ok: false, text: res.error });
+        setResult({ ok: false, text: explain(res.error) });
         return null;
       }
       return res.data;
     } catch (e) {
-      setResult({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setResult({ ok: false, text: explain(e instanceof Error ? e.message : String(e)) });
       return null;
     } finally {
       setBusy(null);
@@ -107,16 +109,24 @@ export function DbCredentialsModal({
         onClose();
         return;
       }
-      // A new name first: it is the part most likely to be refused (taken
-      // already), and a refusal then leaves the login as it was too.
+      // Two commands, in this order: the new name first, then the login.
+      // The name is the part most likely to be refused (taken already), and
+      // that refusal then leaves the login as it was too. They are not one
+      // transaction: if the name is saved and the login then refused, the
+      // new name stays with the old login - so the refusal says the rename
+      // went through, and the dialog stays open to fix the login.
       let shownAs = database.label;
+      let renamedNow = false;
       if (!shipped && label.trim() !== database.label) {
         const renamed = await run("save", () => commands.dbRenameCustom(database.id, label));
         if (!renamed) return;
         shownAs = renamed.label;
+        renamedNow = true;
         onSaved(renamed);
       }
-      const saved = await run("save", () => commands.saveDbCredentials(database.id, f));
+      const saved = await run("save", () => commands.saveDbCredentials(database.id, f), (why) =>
+        renamedNow ? `Renamed to ${shownAs}, but the login was not saved: ${why}` : why,
+      );
       if (!saved) return;
       toast.success(`Saved the login for ${shownAs}.`);
       onSaved(saved);

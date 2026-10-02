@@ -32,7 +32,7 @@ pub const NO_CONNECTION: &str =
 /// choice has been made, so NO_CONNECTION's "pick one" would point at the
 /// wrong control: what is missing is the login.
 pub const NO_LOGIN_SAVED: &str =
-    "no login is saved for this database yet - save one with Manage credentials under Company database on the AI Bridge tab";
+    "no login is saved for this database yet - save one with its Edit button under Company database on the AI Bridge tab";
 
 /// Said when the statement would write and the switch for that is off.
 /// Separate from the guard's read-only sentence: one says "this connection

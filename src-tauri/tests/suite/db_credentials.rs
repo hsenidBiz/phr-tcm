@@ -357,7 +357,10 @@ fn a_list_that_cannot_be_read_is_left_alone_and_hides_only_the_own_ones() {
     assert!(!is_known(&s, OWN_ID));
     assert!(is_known(&s, DB_PRESETS[0].id));
     assert_eq!(ids(&s).len(), DB_PRESETS.len(), "the shipped ones still show");
-    assert!(add_custom(&s, "Staging", &login("a")).unwrap_err().contains("not readable"));
+    // The sentence names no path and no parser error - those are logged.
+    let err = add_custom(&s, "Staging", &login("a")).unwrap_err();
+    assert_eq!(err, v2_lib::db::catalog::READ_FAILED);
+    assert!(!err.contains(&dir.path().display().to_string()) && !err.contains("expected"), "{err}");
     assert_eq!(list_text(&dir), "{ not json", "a broken list was replaced");
 }
 
@@ -406,4 +409,46 @@ fn a_view_of_an_own_database_never_carries_its_password() {
     add_custom(&s, "Staging", &own("h", None, "d", "u", Some("S3cret-XYZ"))).unwrap();
     let json = serde_json::to_string(&databases(&s)).unwrap();
     assert!(!json.contains("S3cret-XYZ") && !json.contains("Password="), "{json}");
+}
+
+/// The logins are found in the store too, not only through the list: with
+/// the list deleted, "Forget them" still takes every own database's login
+/// off the machine - and one that no list ever named.
+#[test]
+fn forget_all_clears_own_logins_even_with_the_list_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    let b = add_custom(&s, "QA box", &login("b")).unwrap();
+    s.put("tcm-v2/db/custom-0badc0de", "Server=h;Database=d;User Id=u;Password=p").unwrap();
+    std::fs::remove_file(dir.path().join("databases.json")).unwrap();
+    forget_all(&s).unwrap();
+    assert_eq!(s.targets("tcm-v2/db/").unwrap(), Vec::<String>::new(), "a login stayed behind");
+    // Every id found is retired, so none is handed out again.
+    let text = list_text(&dir);
+    for id in [&a.id, &b.id, &"custom-0badc0de".to_string()] {
+        assert!(text.contains(id.as_str()), "{id} not retired: {text}");
+    }
+    assert!(databases(&s).iter().all(|d| d.id == OWN_ID || d.shipped));
+    // Other logins in the same store are not the database list's to touch.
+    s.put("env-default-password:env-00000001", "pw").unwrap();
+    forget_all(&s).unwrap();
+    assert!(s.get("env-default-password:env-00000001").unwrap().is_some());
+}
+
+/// A list that cannot be saved takes the login it just stored back out, so
+/// a failed add leaves nothing in the vault - and says a plain sentence.
+#[test]
+fn an_add_whose_list_cannot_be_saved_leaves_no_login_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    // A file where the list's folder should be: the list reads as missing
+    // (the starting list), and cannot be written - after the login was.
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "not a folder").unwrap();
+    let list = blocker.join("databases.json");
+    let s = WithList { store: MemoryStore::default(), list: list.clone() };
+    let err = add_custom(&s, "Staging", &login("a")).unwrap_err();
+    assert_eq!(err, v2_lib::db::catalog::WRITE_FAILED);
+    assert!(!err.contains(&list.display().to_string()), "{err}");
+    assert_eq!(s.targets("tcm-v2/db/").unwrap(), Vec::<String>::new(), "the login stayed behind");
 }

@@ -171,15 +171,14 @@ export default function AiBridge() {
     queryFn: async () => (await commands.dbDatabases()) ?? [],
   });
   const selectedDb = databases.data?.find((d) => d.id === dbId) ?? null;
-  const [managing, setManaging] = useState(false);
-  // The person's own databases, listed under the picker so each can be
-  // edited or removed WITHOUT choosing it: choosing one also makes it the
-  // active environment's, and an environment that uses a database is
-  // exactly what refuses its removal.
-  const ownDbs = (databases.data ?? []).filter((d) => !d.shipped);
+  // Every database is listed under the picker - the one place a login is
+  // edited and one of your own is removed - so neither needs the database
+  // chosen first: choosing one also makes it the active environment's, and
+  // an environment that uses a database is exactly what refuses its removal.
+  const allDbs = databases.data ?? [];
   const [addingDb, setAddingDb] = useState(false);
   const [editingDbId, setEditingDbId] = useState<string | null>(null);
-  const editingDb = ownDbs.find((d) => d.id === editingDbId) ?? null;
+  const editingDb = allDbs.find((d) => d.id === editingDbId) ?? null;
   const [removingDb, setRemovingDb] = useState<string | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeProblem, setRemoveProblem] = useState<{ id: string; text: string } | null>(null);
@@ -758,39 +757,21 @@ export default function AiBridge() {
               onChange={chooseDb}
             />
           </label>
-          <div className="flex items-center justify-between gap-2">
-            <span className="min-w-0 truncate text-xs text-muted">
-              {selectedDb && (selectedDb.user ? `Signs in as ${selectedDb.user}` : "No login saved")}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!selectedDb}
-              onClick={() => setManaging(true)}
-            >
-              <IconEdit aria-hidden />
-              Manage credentials
-            </Button>
-          </div>
-          {managing && selectedDb && (
-            <DbCredentialsModal
-              database={selectedDb}
-              onClose={() => setManaging(false)}
-              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
-            />
-          )}
+          <p className="min-h-4 truncate text-xs text-muted">
+            {selectedDb && (selectedDb.user ? `Signs in as ${selectedDb.user}` : "No login saved")}
+          </p>
 
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted">Your databases</span>
+              <span className="text-xs font-medium text-muted">Databases</span>
               <Button size="sm" variant="outline" onClick={() => setAddingDb(true)}>
                 <IconAdd aria-hidden />
                 Add database
               </Button>
             </div>
-            {ownDbs.length > 0 && (
+            {allDbs.length > 0 && (
               <ul className="space-y-1">
-                {ownDbs.map((d) => (
+                {allDbs.map((d) => (
                   <li key={d.id} className="space-y-1 rounded-md border border-border/60 p-2">
                     <div className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
@@ -808,17 +789,21 @@ export default function AiBridge() {
                         <IconEdit aria-hidden />
                         Edit
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Remove ${d.label}`}
-                        onClick={() => {
-                          setRemoveProblem(null);
-                          setRemovingDb(d.id);
-                        }}
-                      >
-                        <IconRemove aria-hidden />
-                      </Button>
+                      {/* A shipped database is the app's, so only its login
+                          is the person's to change - it cannot be removed. */}
+                      {!d.shipped && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Remove ${d.label}`}
+                          onClick={() => {
+                            setRemoveProblem(null);
+                            setRemovingDb(d.id);
+                          }}
+                        >
+                          <IconRemove aria-hidden />
+                        </Button>
+                      )}
                     </div>
                     {removingDb === d.id && (
                       <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">

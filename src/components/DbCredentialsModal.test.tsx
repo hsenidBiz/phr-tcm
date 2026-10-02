@@ -328,3 +328,23 @@ test("an unchanged name is not sent again", async () => {
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   expect(renameDb).not.toHaveBeenCalled();
 });
+
+/// The rename and the login are two commands: when the name went through
+/// and the login did not, the refusal says so, and the dialog stays open.
+test("a login refused after a rename says the rename went through", async () => {
+  const renamed = { ...STAGING, label: "Staging EU" };
+  renameDb.mockResolvedValue({ status: "ok", data: renamed });
+  saveDb.mockResolvedValue({ status: "error", error: "Enter the password for the new server or database." });
+  const { onSaved, onClose } = open(STAGING);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Staging EU" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Server" }), { target: { value: "elsewhere" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  const status = await screen.findByRole("status");
+  expect(status).toHaveTextContent(
+    "Renamed to Staging EU, but the login was not saved: Enter the password for the new server or database.",
+  );
+  expect(status).toHaveClass("text-danger");
+  // The list hears about the new name; the dialog stays for the login.
+  expect(onSaved).toHaveBeenCalledWith(renamed);
+  expect(onClose).not.toHaveBeenCalled();
+});
