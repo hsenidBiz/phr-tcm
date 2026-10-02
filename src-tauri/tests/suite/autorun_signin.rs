@@ -181,8 +181,9 @@ async fn a_browser_that_fails_mid_restore_is_cleared_before_giving_up_but_keeps_
 #[test]
 fn preparing_a_sign_in_says_what_is_missing_and_where_to_add_it() {
     let dir = tempfile::tempdir().unwrap();
+    // No saved recipe and no site address: the built-in has nowhere to go.
     let no_recipe = prepare(dir.path(), "Acme", "Web", "admin").unwrap_err();
-    assert!(no_recipe.contains("sign-in recipe"), "{no_recipe}");
+    assert_eq!(no_recipe, v2_lib::autorun::recipe::NO_SITE_ADDRESS);
     save_recipe(dir.path(), "Acme", "Web", &recipe()).unwrap();
     let no_account = prepare(dir.path(), "Acme", "Web", "admin").unwrap_err();
     assert!(no_account.contains("\"admin\"") && no_account.contains("Accounts"), "{no_account}");

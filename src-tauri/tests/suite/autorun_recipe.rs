@@ -361,3 +361,106 @@ fn after_sign_in_is_validated_like_the_steps() {
     ]));
     assert!(why.contains("after_sign_in step 2") && why.contains("{{password}}"), "{why}");
 }
+
+// ---------------------------------------------------------------- the built-in recipe
+//
+// Owner ruling (2026-10-02): a project with no saved recipe signs in with
+// the one this app ships, at the active environment's site address. The
+// address never comes from the recipe.
+
+/// The recipe exactly as the owner approved it, with no address.
+fn approved_builtin() -> serde_json::Value {
+    json!({
+      "steps": [
+        { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 3000,
+          "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] },
+        { "kind": "fill", "selector": { "role": "textbox", "name": "Username" }, "value": "{{username}}" },
+        { "kind": "fill", "selector": { "css": "#txtpassword" }, "value": "{{password}}" },
+        { "kind": "click", "selector": { "role": "button", "name": "Login to Continue" } },
+        { "kind": "wait_for", "selector": { "css": "#sidebar-toggle-menu" }, "timeout_ms": 30000 },
+        { "kind": "when_visible", "selector": { "role": "button", "name": "Continue here" }, "within_ms": 3000,
+          "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
+      ],
+      "after_sign_in": [
+        { "kind": "when_visible", "selector": { "css": ".bootbox.modal.show .modal-footer button" }, "within_ms": 4000,
+          "then": [ { "kind": "click", "selector": { "css": ".bootbox.modal.show .modal-footer button" } } ] },
+        { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 5000,
+          "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
+      ],
+      "signed_in": { "css": "#sidebar-toggle-menu" },
+      "allowed_origins": [],
+      "session_minutes": 480
+    })
+}
+
+/// The active environment at `root` given `address` as its site address.
+fn set_site_address(root: &std::path::Path, address: &str) {
+    let mut env = v2_lib::environments::active(root).unwrap();
+    env.start_url = address.into();
+    let known = vec![env.db_id.clone()];
+    v2_lib::environments::save_env(root, env, &known).unwrap();
+}
+
+#[test]
+fn the_built_in_recipe_is_the_approved_one_and_carries_no_address() {
+    use v2_lib::autorun::recipe::{builtin_recipe, BUILTIN_RECIPE_JSON};
+    let r = builtin_recipe();
+    assert_eq!(r.start_url, "", "the address comes from the environment, never the recipe");
+    assert!(!BUILTIN_RECIPE_JSON.contains("start_url"), "{BUILTIN_RECIPE_JSON}");
+    assert!(!BUILTIN_RECIPE_JSON.contains("http"), "{BUILTIN_RECIPE_JSON}");
+    assert!(r.allowed_origins.is_empty());
+
+    let mut expected = approved_builtin();
+    expected["start_url"] = json!("");
+    assert_eq!(r, recipe(expected), "the shipped recipe is the approved one, step for step");
+}
+
+#[test]
+fn the_built_in_recipe_validates_once_an_address_is_filled() {
+    use v2_lib::autorun::recipe::builtin_recipe;
+    let mut r = builtin_recipe();
+    assert!(r.validate().is_err(), "no address yet");
+    r.start_url = "https://hr.example.internal/".into();
+    r.validate().unwrap();
+    // The login is filled in only in `steps`; `after_sign_in` holds none.
+    let after = serde_json::to_string(&r.after_sign_in).unwrap();
+    assert!(!has_placeholder(&after), "{after}");
+}
+
+#[test]
+fn with_no_saved_recipe_the_built_in_signs_in_at_the_environment_address() {
+    use v2_lib::autorun::recipe::{builtin_recipe, load_effective_recipe};
+    let dir = tempfile::tempdir().unwrap();
+    set_site_address(dir.path(), "https://people.example.org/");
+    let r = load_effective_recipe(dir.path(), "Acme", "Web").unwrap();
+    let mut expected = builtin_recipe();
+    expected.start_url = "https://people.example.org/".into();
+    assert_eq!(r, expected);
+    assert!(load_recipe(dir.path(), "Acme", "Web").unwrap().is_none(), "nothing is saved");
+}
+
+#[test]
+fn with_no_saved_recipe_and_no_address_the_sign_in_is_refused() {
+    use v2_lib::autorun::recipe::{load_effective_recipe, NO_SITE_ADDRESS};
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(NO_SITE_ADDRESS, "set the site address first - Auto Run, Setup, Site address");
+    assert_eq!(load_effective_recipe(dir.path(), "Acme", "Web").unwrap_err(), NO_SITE_ADDRESS);
+    let refused = v2_lib::autorun::signin::prepare(dir.path(), "Acme", "Web", "hr.sup").unwrap_err();
+    assert_eq!(refused, NO_SITE_ADDRESS, "the sign-in says the same, before any account is looked up");
+}
+
+#[test]
+fn a_saved_recipe_wins_over_the_built_in() {
+    use v2_lib::autorun::recipe::load_effective_recipe;
+    let dir = tempfile::tempdir().unwrap();
+    let saved = recipe(sample());
+    save_recipe(dir.path(), "Acme", "Web", &saved).unwrap();
+    // No environment address: the saved recipe exactly as it is.
+    assert_eq!(load_effective_recipe(dir.path(), "Acme", "Web").unwrap(), saved);
+    // With one: the saved recipe's steps, at the environment's address.
+    set_site_address(dir.path(), "https://people.example.org/");
+    let r = load_effective_recipe(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(r.start_url, "https://people.example.org/");
+    assert_eq!(r.steps, saved.steps);
+    assert_eq!(r.signed_in, saved.signed_in);
+}

@@ -97,7 +97,9 @@ pub async fn run_step_routed<D: Driver>(
     account: &mut Option<String>,
     route: Option<&Route>,
 ) -> Result<Vec<ActionOutcome>, String> {
-    let recipe = recipe::load_effective_recipe(root, organization, project)?;
+    // No recipe to run (none saved, no site address): navigation is open,
+    // as before the built-in existed; the sign-in itself is what refuses.
+    let recipe = recipe::load_effective_recipe_if_any(root, organization, project)?;
     let policy = policy_for(recipe.as_ref());
     // Read per step, like the recipe: a person may flip the switch between
     // two steps of a supervised run.

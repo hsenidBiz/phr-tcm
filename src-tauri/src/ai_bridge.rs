@@ -448,11 +448,11 @@ fn real_template_browsers(which: crate::browser::launch::Browser) -> crate::comm
 }
 
 /// The origin this project signs in at in the active environment - the
-/// environment's address, else the recipe's - or None without a recipe.
+/// environment's address, else the saved recipe's - or None when there is
+/// neither.
 fn recipe_origin(root: &std::path::Path, org: &str, project: &str) -> Option<String> {
     crate::autorun::recipe::load_effective_recipe(root, org, project)
         .ok()
-        .flatten()
         .and_then(|r| crate::autorun::recipe::origin_of(&r.start_url))
 }
 

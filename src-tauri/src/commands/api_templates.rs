@@ -10,7 +10,7 @@ use crate::api_templates::flow::Flow;
 use crate::api_templates::flow_store;
 use crate::api_templates::share::{self, TemplatesExportResult, TemplatesImportNote, TemplatesImportResult, TemplatesImportSkip};
 use crate::api_templates::store::{self, SavedTemplate};
-use crate::autorun::recipe::{load_effective_recipe, origin_of};
+use crate::autorun::recipe::{load_effective_recipe_if_any, origin_of};
 
 fn refuse_unless_offered() -> Result<(), String> {
     refuse_unless(crate::ai_tools::autorun_offered())
@@ -51,7 +51,7 @@ pub fn api_templates_overview(
 /// listed at all, the tab still gets its templates and an empty list of
 /// flows, and the reason goes to the log - flows must never break the tab.
 pub fn overview_at(root: &std::path::Path, organization: &str, project: &str) -> Result<TemplatesOverview, String> {
-    let origin = load_effective_recipe(root, organization, project)?.and_then(|r| origin_of(&r.start_url));
+    let origin = load_effective_recipe_if_any(root, organization, project)?.and_then(|r| origin_of(&r.start_url));
     let templates = store::list(root, organization, project)?;
     let flows = flow_store::list(root, organization, project).unwrap_or_else(|e| {
         crate::applog::warn(format!("api template flows could not be listed: {e}"));

@@ -149,7 +149,8 @@ async fn a_sign_in_for_an_unknown_account_fails_and_stops_the_rest_of_the_step()
 #[tokio::test]
 async fn a_sign_in_with_no_recipe_saved_fails_and_stops_the_rest_of_the_step() {
     let dir = tempfile::tempdir().unwrap();
-    // No recipe saved for this project.
+    // No recipe saved for this project, and no site address for the
+    // built-in one.
     save_accounts(dir.path(), &[account()]).unwrap();
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
     let mut acc: Option<String> = None;
@@ -168,7 +169,7 @@ async fn a_sign_in_with_no_recipe_saved_fails_and_stops_the_rest_of_the_step() {
     .await
     .unwrap();
     assert_eq!(out.len(), 2);
-    assert!(!out[0].ok && out[0].detail.contains("sign-in recipe"), "{:?}", out[0]);
+    assert!(!out[0].ok && out[0].detail.contains("set the site address first"), "{:?}", out[0]);
     assert!(!out[1].ok && out[1].detail.contains("not run"), "{:?}", out[1]);
     assert_eq!(acc, None);
     assert!(

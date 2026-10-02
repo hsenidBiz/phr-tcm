@@ -1,0 +1,21 @@
+{
+  "steps": [
+    { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 3000,
+      "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] },
+    { "kind": "fill", "selector": { "role": "textbox", "name": "Username" }, "value": "{{username}}" },
+    { "kind": "fill", "selector": { "css": "#txtpassword" }, "value": "{{password}}" },
+    { "kind": "click", "selector": { "role": "button", "name": "Login to Continue" } },
+    { "kind": "wait_for", "selector": { "css": "#sidebar-toggle-menu" }, "timeout_ms": 30000 },
+    { "kind": "when_visible", "selector": { "role": "button", "name": "Continue here" }, "within_ms": 3000,
+      "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
+  ],
+  "after_sign_in": [
+    { "kind": "when_visible", "selector": { "css": ".bootbox.modal.show .modal-footer button" }, "within_ms": 4000,
+      "then": [ { "kind": "click", "selector": { "css": ".bootbox.modal.show .modal-footer button" } } ] },
+    { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 5000,
+      "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
+  ],
+  "signed_in": { "css": "#sidebar-toggle-menu" },
+  "allowed_origins": [],
+  "session_minutes": 480
+}

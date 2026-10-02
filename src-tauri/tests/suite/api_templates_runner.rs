@@ -799,14 +799,15 @@ fn preflight_needs_replace_and_why_for_an_existing_id() {
     assert!(problems.iter().any(|p| p.contains("no account \"nobody\"")), "{problems:?}");
     assert!(problems.iter().any(|p| p == refused), "{problems:?}");
 
-    // A template that fails its own checks, and a project with no recipe.
+    // A template that fails its own checks, and a project with no recipe
+    // and no site address for the built-in one.
     let mut broken = template();
     broken.steps[0].path = "https://elsewhere.example/x".into();
     let mut req = request(broken, prove());
     req.project = "NoRecipe".into();
     let problems = preflight(root.path(), &req, None).unwrap_err();
     assert!(problems.iter().any(|p| p.contains("not a safe relative path")), "{problems:?}");
-    assert!(problems.iter().any(|p| p.contains("no sign-in recipe")), "{problems:?}");
+    assert!(problems.iter().any(|p| p.contains("set the site address first")), "{problems:?}");
 }
 
 /// The bridge's prove and run, end to end against the fake page: what is
