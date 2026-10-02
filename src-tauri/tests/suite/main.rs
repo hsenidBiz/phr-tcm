@@ -39,6 +39,7 @@ mod assigned_watch;
 mod audio;
 mod auth;
 mod autorun_accounts;
+mod autorun_api_checks;
 mod autorun_bridge;
 mod autorun_commands;
 mod autorun_edits;

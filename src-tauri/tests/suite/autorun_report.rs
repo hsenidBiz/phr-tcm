@@ -310,6 +310,18 @@ fn the_page_declares_a_policy_that_runs_nothing_and_loads_nothing() {
 }
 
 #[test]
+fn an_api_checks_address_is_reported_without_its_query_string() {
+    let watch: v2_lib::browser::actions::Action = serde_json::from_value(serde_json::json!({
+        "kind": "expect_response", "method": "post", "url_contains": "/hr/Cycle/Save?access_token=abc#top"
+    }))
+    .unwrap();
+    assert_eq!(action_words(&watch), "expect a POST request to /hr/Cycle/Save to answer 200");
+    let ask: v2_lib::browser::actions::Action =
+        serde_json::from_value(serde_json::json!({ "kind": "api_request", "path": "/api/me?token=abc#x" })).unwrap();
+    assert_eq!(action_words(&ask), "ask /api/me and expect 200");
+}
+
+#[test]
 fn a_navigate_address_is_reported_without_its_query_string() {
     let go: v2_lib::browser::actions::Action = serde_json::from_value(serde_json::json!({
         "kind": "navigate", "url": "https://app.example.test/login?token=s3cr3t-value&x=1#frag"

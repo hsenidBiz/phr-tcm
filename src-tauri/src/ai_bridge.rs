@@ -1430,7 +1430,9 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     };
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. `run_step` is still what carries it out, so a tried
-    // action behaves exactly as it will inside a script.
+    // action behaves exactly as it will inside a script - the runner's own
+    // kinds included: a tried `expect_response` takes its mark as the try
+    // starts, and checks a request the page makes while it waits.
     //
     // `{{username}}` and `{{password}}` are refused where a script is
     // SAVED, not here: a tried `fill` is not on its way into a file, and

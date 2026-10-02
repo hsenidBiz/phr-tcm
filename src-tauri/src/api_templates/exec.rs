@@ -364,7 +364,7 @@ fn compact(v: &Value) -> String {
 /// with an equal value; `actual` may carry extra keys. A nested object in
 /// `expected` recurses the same way (also partial). Fails on the first
 /// mismatching key encountered, in `expected`'s own key order.
-fn partial_match(expected: &Value, actual: &Value) -> Result<(), String> {
+pub(crate) fn partial_match(expected: &Value, actual: &Value) -> Result<(), String> {
     let Value::Object(exp_map) = expected else {
         return if expected == actual {
             Ok(())

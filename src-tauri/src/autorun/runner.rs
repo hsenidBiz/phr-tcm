@@ -7,6 +7,7 @@
 //! same way `autorun::store` and `autorun::signin` already are.
 
 use super::nav::{self, Route};
+use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
 use super::{store, StepScript};
@@ -101,6 +102,14 @@ pub async fn run_step_routed<D: Driver>(
     // Read per step, like the recipe: a person may flip the switch between
     // two steps of a supervised run.
     let nav_file = nav::load_nav(root, organization, project)?;
+    // Where the step began in the browser's network record: an
+    // `expect_response` looks only at requests that started after it. What
+    // the browser has already sent is read first, so a request the page
+    // made before this step is not taken for one of the step's own.
+    if step.actions.iter().any(|a| matches!(a, Action::ExpectResponse { .. })) {
+        api_checks::settle(d, timing).await;
+    }
+    let mark = d.net_mark();
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
     for action in &step.actions {
@@ -144,6 +153,8 @@ pub async fn run_step_routed<D: Driver>(
                 }
             },
             Action::Upload { selector, file } => upload(d, root, organization, project, action, selector, file, timing).await,
+            // Only the runner knows where the step began.
+            Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             other => execute_in(d, other, timing, &policy).await,
         };
         if !outcome.ok && !outcome.harness {

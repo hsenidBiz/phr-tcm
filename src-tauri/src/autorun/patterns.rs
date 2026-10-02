@@ -18,6 +18,7 @@
 //! writes its failures with (`browser::input`, `browser::expect`,
 //! `browser::actions`), never against a second copy of the wording.
 
+use super::api_checks as api;
 use super::failures::{is_failed, stop_reason};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseScript, LocalRun, StepRecord};
@@ -50,6 +51,9 @@ pub enum ErrorClass {
     LostFocus,
     NoOption,
     NoFileChooser,
+    /// A request the page made, or the answer to it, was not what the
+    /// case expected (`expect_response`).
+    Api,
     /// The script itself was refused before it reached the page.
     CannotRun,
     /// The browser connection, not the page. Never a pattern about the
@@ -83,6 +87,7 @@ impl ErrorClass {
             ErrorClass::LostFocus => "lost_focus",
             ErrorClass::NoOption => "no_option",
             ErrorClass::NoFileChooser => "no_file_chooser",
+            ErrorClass::Api => "api",
             ErrorClass::CannotRun => "cannot_run",
             ErrorClass::Browser => "browser",
             ErrorClass::Other => "other",
@@ -112,6 +117,7 @@ impl ErrorClass {
             ErrorClass::LostFocus => "lost the focus before typing".to_string(),
             ErrorClass::NoOption => "the list had no such option".to_string(),
             ErrorClass::NoFileChooser => "no file chooser opened".to_string(),
+            ErrorClass::Api => "the server was asked or answered differently".to_string(),
             ErrorClass::CannotRun => "the action could not run".to_string(),
             ErrorClass::Browser => "the browser stopped answering".to_string(),
             ErrorClass::Other => "failed another way".to_string(),
@@ -158,6 +164,11 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     if whole.starts_with(act::CANNOT_RUN) {
         return ErrorClass::CannotRun;
     }
+    // Before anything that reads a sentence's ending: an API check's
+    // failure can end with an excerpt of whatever the server answered.
+    if is_api_check(whole) {
+        return ErrorClass::Api;
+    }
     let t = tail(whole, target);
     if let Some(class) = by_start(t) {
         return class;
@@ -194,6 +205,26 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     // An upload's `<target> is disabled`, and any target-prefixed
     // sentence whose target could not be stripped (no script on disk).
     by_end(t).unwrap_or(ErrorClass::Other)
+}
+
+/// An `expect_response` failure (`autorun::api_checks`): one of its own
+/// sentences, read without the body excerpt that may follow it.
+fn is_api_check(whole: &str) -> bool {
+    if whole.starts_with(api::NO_REQUEST) || whole.starts_with(api::RESPONSE_TO) || whole.starts_with(api::BODY_GONE) {
+        return true;
+    }
+    // `<METHOD> /<path> <what happened>`.
+    let sentence = whole.split(api::BODY_BEGAN).next().unwrap_or(whole);
+    let Some((method, rest)) = sentence.split_once(' ') else {
+        return false;
+    };
+    !method.is_empty()
+        && method.chars().all(|c| c.is_ascii_uppercase())
+        && rest.starts_with('/')
+        && (rest.contains(api::NOT_FINISHED)
+            || rest.ends_with(api::CANCELLED)
+            || rest.contains(api::NET_FAILED)
+            || rest.contains(api::ANSWERED))
 }
 
 /// The reason words that a target-prefixed sentence starts with, once
