@@ -852,6 +852,9 @@ export default function AutoRun({
                 // second run of cases that were just decided.
                 setSelected(new Set());
                 void queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+                // A run that passes a marked step clears the mark on disk;
+                // the rows read each script through their own query.
+                void queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
                 // Straight into its review rather than a toast pointing at
                 // Past runs - every case is still unconfirmed at this point,
                 // so there is nothing useful to do with this run BUT review it.

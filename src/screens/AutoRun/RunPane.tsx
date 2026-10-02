@@ -333,6 +333,9 @@ export default function RunPane({
     // is logged on the Rust side and never stands in the way of the save.
     await commands.autoRunCountEvidence(org, project, id).catch(() => null);
     await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+    // Counting may have cleared a suspected-defect mark on a script; the
+    // case rows read each script through their own query.
+    await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
     return true;
   };
 
