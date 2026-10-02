@@ -451,3 +451,27 @@ fn an_unreadable_list_in_a_backup_is_skipped() {
     assert_eq!(databases(&ours).into_iter().filter(|d| !d.shipped).count(), 2);
     let _ = std::fs::remove_dir_all(&dst);
 }
+
+/// This machine's own list unreadable: the merge is skipped and logged,
+/// and the rest of the restore still completes - environments included -
+/// with the local list left exactly as it was.
+#[test]
+fn an_unreadable_local_list_skips_the_merge_and_the_restore_completes() {
+    let dst = tmpdir("dbs-local-bad");
+    std::fs::write(dst.join("databases.json"), "{ not json").unwrap();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let envs = r#"{"active":"env-0000000a","environments":[{"id":"env-0000000a","name":"Restored","start_url":"","allowed_origins":[],"db_id":"custom-1a2b3c4d","test_environment":false}]}"#;
+    let list = r#"{"databases":[{"id":"custom-1a2b3c4d","label":"Staging"}],"retired":[]}"#;
+    let files = vec![
+        BackupFile { path: "databases.json".into(), b64: b64.encode(list) },
+        BackupFile { path: "autorun/environments.json".into(), b64: b64.encode(envs) },
+        BackupFile { path: "cache.json".into(), b64: b64.encode(b"{}") },
+    ];
+    let restored = restore_files(&dst, &files).expect("the restore completes");
+    assert_eq!(restored, 2, "the two other files land; the list merge is skipped");
+    assert_eq!(std::fs::read_to_string(dst.join("databases.json")).unwrap(), "{ not json");
+    let env = v2_lib::environments::active(&dst.join("autorun")).unwrap();
+    assert_eq!((env.name.as_str(), env.db_id.as_str()), ("Restored", "custom-1a2b3c4d"));
+    assert!(dst.join("cache.json").exists());
+    let _ = std::fs::remove_dir_all(&dst);
+}

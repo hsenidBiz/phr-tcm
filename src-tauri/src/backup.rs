@@ -234,8 +234,16 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         }
         has_environments |= norm == "autorun/environments.json";
         if norm == "databases.json" {
-            crate::db::catalog::merge_backup(&target, &bytes)?;
-            restored += 1;
+            // This machine's own list unreadable (or unsaveable) skips the
+            // merge, as an unreadable list in the backup does: the rest of
+            // the restore - and the settings handed back after it - must not
+            // fail halfway over the one file it would never overwrite.
+            match crate::db::catalog::merge_backup(&target, &bytes) {
+                Ok(_) => restored += 1,
+                Err(e) => crate::applog::warn(format!(
+                    "Backup import: the list of databases was not merged, and this machine's list was left as it was: {e}"
+                )),
+            }
             continue;
         }
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
