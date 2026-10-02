@@ -1281,8 +1281,9 @@ fn active_environment_section(root: &std::path::Path, ctx: &BridgeContext) -> Op
 
 /// The environment's database as the app lists it (`DbDatabase`: label,
 /// server and database, never a password), or None when it names none the
-/// app knows - or no store is set up to look it up in, which only a context
-/// nobody set up lacks.
+/// app knows (the guide then says it is not set up any more, or that there
+/// is none when no id is set) - or no store is set up to look it up in,
+/// which only a context nobody set up lacks.
 fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environment) -> Option<crate::db::DbDatabase> {
     if env.db_id.trim().is_empty() {
         return None;

@@ -25,7 +25,7 @@ pub(crate) fn refuse_unless(offered: bool) -> Result<(), String> {
 
 /// Everything the tab needs to draw itself: the origin these templates run
 /// against - the active environment's address, else the sign-in recipe's
-/// (`None` when the project has no sign-in recipe yet) - and every saved
+/// (`None` when the project has no site address yet) - and every saved
 /// template with its run history, and every saved flow.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct TemplatesOverview {

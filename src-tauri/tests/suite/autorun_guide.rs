@@ -474,3 +474,19 @@ fn the_recipe_editors_placeholder_is_a_recipe_the_app_accepts() {
         .validate()
         .unwrap_or_else(|why| panic!("the recipe editor's example would be refused: {why}"));
 }
+
+/// The built-in recipe restricts navigation too: the guide must not tell an
+/// assistant that a project without its own recipe can go anywhere.
+#[test]
+fn the_guide_says_navigate_is_held_to_the_site_address_with_either_recipe() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "`navigate` is held to the site address and its allowed sites, whether the sign-in is the \
+             project's own recipe or the built-in one. Only with no site address and no saved recipe is it \
+             unrestricted."
+        ),
+        "{flat}"
+    );
+    assert!(!flat.contains("A project with no recipe saved yet has no such restriction"), "{flat}");
+}

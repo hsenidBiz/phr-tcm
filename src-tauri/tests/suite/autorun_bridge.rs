@@ -1711,3 +1711,21 @@ fn the_active_environment_says_when_it_has_no_database_or_address() {
     assert!(text.contains("It has no site address yet:"), "{text}");
     assert!(text.contains("any other project cannot sign in"), "{text}");
 }
+
+/// An environment whose database id names one the app no longer knows says
+/// so, rather than that it never had one.
+#[test]
+fn the_active_environment_says_when_its_database_is_gone() {
+    use v2_lib::autorun::guide::active_environment_section;
+    let env = v2_lib::environments::Environment {
+        id: "env-0000000b".into(),
+        name: "Scratch".into(),
+        start_url: "https://hr.example.internal/".into(),
+        allowed_origins: vec![],
+        db_id: "removed-db".into(),
+        test_environment: false,
+    };
+    let text = active_environment_section(&env, None);
+    assert!(text.contains("Its database is not set up any more."), "{text}");
+    assert!(!text.contains("It has no database set."), "{text}");
+}

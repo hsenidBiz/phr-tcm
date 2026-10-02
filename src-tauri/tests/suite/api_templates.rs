@@ -989,3 +989,19 @@ fn the_guide_says_required_is_what_validation_refuses_without() {
     assert!(text.contains("Check the code, do not guess"), "{text}");
     assert!(text.contains("An optional param (`required: false`) takes a `default`"), "{text}");
 }
+
+/// With no origin, the guide names the missing site address and where it
+/// is set - not a missing recipe, which the built-in one stands in for.
+#[test]
+fn the_guide_with_no_origin_asks_for_the_site_address() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "This project has no site address yet - the person sets it in Auto Run, Setup, Site address \
+             (or Edit environments on the AI Bridge tab). Nothing can be proven or run until it has one."
+        ),
+        "{flat}"
+    );
+    assert!(!flat.contains("no sign-in recipe yet"), "{flat}");
+}

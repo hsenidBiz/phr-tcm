@@ -246,10 +246,9 @@ changes. Do not write the login page's fields into a script at all: no
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
-Once this project has a sign-in recipe, `navigate` is held to its own
-origins (the recipe lists them); an address anywhere else fails and says
-so. A project with no recipe saved yet has no such restriction. This
-covers an authored `navigate` only: a link the page follows, or a
+`navigate` is held to the site address and its allowed sites, whether
+the sign-in is the project's own recipe or the built-in one. Only with no
+site address and no saved recipe is it unrestricted. This covers an authored `navigate` only: a link the page follows, or a
 redirect, can still leave those origins, so it is a guard against a
 mistyped address, not a sandbox.
 
@@ -659,7 +658,8 @@ reason.
 /// the name, the address, the database as a person reads it (its label and
 /// `<database> on <server>`) and the test flag - never an account, and
 /// never the database's user, password or connection string. `database`
-/// is the environment's, looked up by the caller; None says it has none.
+/// is the environment's, looked up by the caller: None with an id set says
+/// it is not set up any more, and None with no id says it has none.
 pub fn active_environment_section(
     env: &crate::environments::Environment,
     database: Option<&crate::db::DbDatabase>,
@@ -679,6 +679,8 @@ pub fn active_environment_section(
             format!(" Its database is \"{}\": {} on {}.", d.label, d.database, d.server)
         }
         Some(d) => format!(" Its database is \"{}\".", d.label),
+        // An id the app no longer knows: it had one, and it was removed.
+        None if !env.db_id.trim().is_empty() => " Its database is not set up any more.".to_string(),
         None => " It has no database set.".to_string(),
     };
     let passwords = if env.test_environment {

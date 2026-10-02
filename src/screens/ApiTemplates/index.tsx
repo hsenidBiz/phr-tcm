@@ -275,7 +275,7 @@ export default function ApiTemplates({
         {overview.data && (
           <span>
             Runs against{" "}
-            <span className="font-medium text-text">{origin ? hostOf(origin) : "no sign-in recipe yet"}</span>
+            <span className="font-medium text-text">{origin ? hostOf(origin) : "no site address yet"}</span>
           </span>
         )}
         <button

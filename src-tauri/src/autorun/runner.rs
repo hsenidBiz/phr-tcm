@@ -22,9 +22,10 @@ const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in before this action fail
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached after the sign-in";
 const AFTER_REFUSED_ADDRESS: &str = "not run: this step opened a page by address, which this project does not allow";
 
-/// Where an authored `navigate` may go for this project: everywhere, for a
-/// project with no recipe saved yet, or only the recipe's own origins once
-/// there is one.
+/// Where an authored `navigate` may go for this project: everywhere when
+/// there is no recipe to run (no saved recipe and no site address), else
+/// only the origins of the recipe that runs - the project's own, or the
+/// built-in one at the site address.
 pub fn policy_for(recipe: Option<&SignInRecipe>) -> Policy {
     match recipe {
         Some(r) => Policy::only(r.origins()),
