@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.6",
+    date: "2026-10-02",
+    items: [
+      "On the AI Bridge tab, the Company database card and its switch in the tool list are now called Database Read Access.",
+    ],
+  },
+  {
     version: "2.0.9-beta.5",
     date: "2026-10-02",
     items: [
