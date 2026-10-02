@@ -12,6 +12,15 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconReview } from "../../lib/actionIcons";
+import ResultFilterRow from "./ResultFilterRow";
+import {
+  RESULT_BUCKETS,
+  bucketTone,
+  countBuckets,
+  matchesFilter,
+  type ResultBucket,
+  type ResultFilter,
+} from "./verdicts";
 
 /** A case's own verdict, text-only - a lighter touch than the pressed-button
  * tone in verdicts.ts, which this plain row was never meant to borrow. */
@@ -55,6 +64,19 @@ export default function PastRuns({
   const runCount = runs.data?.length ?? 0;
   const [clearOpen, setClearOpen] = useState(false);
 
+  /** Which runs show: every one, or those with at least one case in a
+   * bucket - and inside each of those, only its cases in that bucket, the
+   * way the review dialog's list filters. A card's own counts always cover
+   * the whole run. */
+  const [filter, setFilter] = useState<ResultFilter>("All");
+  const allRuns = runs.data ?? [];
+  const runsWith: Record<ResultBucket, number> = { Passed: 0, Failed: 0, Blocked: 0, "Not run": 0 };
+  for (const run of allRuns) {
+    const counts = countBuckets(run.cases);
+    for (const b of RESULT_BUCKETS) if (counts[b] > 0) runsWith[b] += 1;
+  }
+  const shownRuns = allRuns.filter((run) => run.cases.some((c) => matchesFilter(c, filter)));
+
   /** Housekeeping: wipe every saved run and screenshot on this machine,
    * including runs already sent to Azure DevOps - the confirm dialog says
    * so before this ever runs. Shown wherever Auto Run is (dev, or
@@ -90,14 +112,19 @@ export default function PastRuns({
         Results are saved on this machine. Nothing goes to Azure DevOps unless you press Send to
         Azure DevOps on a run you have reviewed.
       </p>
-      {(runs.data?.length ?? 0) === 0 && (
-        <p className="text-xs text-muted">No runs on this machine yet.</p>
+      {runCount === 0 && <p className="text-xs text-muted">No runs on this machine yet.</p>}
+      {runCount > 0 && (
+        <ResultFilterRow value={filter} onChange={setFilter} total={runCount} counts={runsWith} />
+      )}
+      {runCount > 0 && shownRuns.length === 0 && (
+        <p className="text-xs text-muted">No run on this machine has a case with that result.</p>
       )}
       <div className="space-y-2">
-        {(runs.data ?? []).map((run) => {
+        {shownRuns.map((run) => {
           const unattended = run.mode === "unattended";
           const unconfirmed = run.cases.filter((c) => !c.verdict).length;
           const otherPbi = pbiId != null && run.pbi_id !== pbiId;
+          const counts = countBuckets(run.cases);
           return (
             <div key={run.id} className="space-y-1 rounded-md border border-border bg-surface p-2">
               <div className="flex items-center justify-between gap-2">
@@ -128,8 +155,16 @@ export default function PastRuns({
                   </div>
                 ) : null}
               </div>
+              {/* The whole run at a glance, whatever the filter shows. */}
+              <div role="group" aria-label="Results" className="flex flex-wrap gap-x-3 text-xs font-medium">
+                {RESULT_BUCKETS.filter((b) => counts[b] > 0).map((b) => (
+                  <span key={b} className={bucketTone[b]}>
+                    {counts[b]} {b.toLowerCase()}
+                  </span>
+                ))}
+              </div>
               <ul className="space-y-1">
-                {run.cases.map((c) => (
+                {run.cases.filter((c) => matchesFilter(c, filter)).map((c) => (
                   <li
                     key={`${run.id}-${c.case_id}`}
                     aria-label={`Run of ${c.title}`}

@@ -1,0 +1,20 @@
+{
+  "_comment": "Which result bucket a case falls in, for every verdict/proposed pair that matters. Read by BOTH the Rust test (tests/suite/autorun_report.rs, autorun::report::bucket) and the vitest one (src/screens/AutoRun/verdicts.test.ts, resultBucket) - so the run report and the Auto Run screen can never count a case differently. Add a row here, and both sides are held to it.",
+  "cases": [
+    { "verdict": "Passed", "proposed": "", "bucket": "Passed" },
+    { "verdict": "Failed", "proposed": "", "bucket": "Failed" },
+    { "verdict": "Blocked", "proposed": "", "bucket": "Blocked" },
+    { "verdict": "", "proposed": "Passed", "bucket": "Passed" },
+    { "verdict": "", "proposed": "Failed", "bucket": "Failed" },
+    { "verdict": "", "proposed": "Blocked", "bucket": "Blocked" },
+    { "verdict": "", "proposed": "", "bucket": "Not run" },
+    { "verdict": "Passed", "proposed": "Failed", "bucket": "Passed" },
+    { "verdict": "Failed", "proposed": "Passed", "bucket": "Failed" },
+    { "verdict": "Blocked", "proposed": "Passed", "bucket": "Blocked" },
+    { "verdict": "Passed", "proposed": "Blocked", "bucket": "Passed" },
+    { "verdict": "", "proposed": "Not run", "bucket": "Not run" },
+    { "verdict": "", "proposed": "passed", "bucket": "Not run" },
+    { "verdict": "Maybe", "proposed": "Passed", "bucket": "Not run" },
+    { "verdict": "NotApplicable", "proposed": "", "bucket": "Not run" }
+  ]
+}

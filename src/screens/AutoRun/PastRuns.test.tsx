@@ -5,7 +5,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import PastRuns from "./PastRuns";
 
@@ -75,4 +75,58 @@ test("a run names the environment it was made in, when it has one", async () => 
   // The older run, saved before environments existed, shows nothing extra.
   expect(screen.getAllByText("unattended")).toHaveLength(2);
   expect(screen.getAllByText("QA")).toHaveLength(1);
+});
+
+// Each run card counts its cases by result; the filter row shows only the
+// runs with at least one case in a bucket, and inside them only those cases.
+const MIXED = runOf({
+  id: "run-mixed",
+  cases: [
+    { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Passed" },
+    // Confirmed Failed over a Passed proposal: counts as Failed.
+    { case_id: 202, title: "Locked account", verdict: "Failed", note: "", proposed: "Passed" },
+    { case_id: 203, title: "Password reset", verdict: "", note: "", proposed: "" },
+  ],
+});
+const ALL_PASSED = runOf({
+  id: "run-green",
+  started_at: "1786000100000",
+  cases: [{ case_id: 301, title: "Logout", verdict: "Passed", note: "" }],
+});
+
+test("a run card shows its counts by result, coloured", async () => {
+  renderPastRuns([MIXED], 42);
+
+  const results = await screen.findByRole("group", { name: "Results" });
+  expect(within(results).getByText("1 passed")).toHaveClass("text-success");
+  expect(within(results).getByText("1 failed")).toHaveClass("text-danger");
+  expect(within(results).getByText("1 not run")).toHaveClass("text-faint");
+  // A bucket with nothing in it is left out.
+  expect(within(results).queryByText(/blocked/)).not.toBeInTheDocument();
+});
+
+test("the filter shows only runs with a case in that bucket, and only those cases", async () => {
+  renderPastRuns([MIXED, ALL_PASSED], 42);
+  const row = await screen.findByRole("group", { name: "Filter by result" });
+
+  // Counted in runs: both have a Passed case, only one a Failed one.
+  expect(within(row).getByRole("button", { name: "All (2)" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(row).getByRole("button", { name: "Passed (2)" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Failed (1)" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Blocked (0)" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Not run (1)" })).toBeInTheDocument();
+
+  fireEvent.click(within(row).getByRole("button", { name: "Failed (1)" }));
+  expect(screen.getByText("Locked account")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+  expect(screen.queryByText("Logout")).not.toBeInTheDocument();
+  // The card still counts its whole run.
+  expect(screen.getByText("1 passed")).toBeInTheDocument();
+
+  fireEvent.click(within(row).getByRole("button", { name: "Blocked (0)" }));
+  expect(screen.getByText("No run on this machine has a case with that result.")).toBeInTheDocument();
+
+  fireEvent.click(within(row).getByRole("button", { name: "All (2)" }));
+  expect(screen.getByText("Logout")).toBeInTheDocument();
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
 });

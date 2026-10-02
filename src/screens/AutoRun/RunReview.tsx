@@ -18,7 +18,9 @@ import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
+import ResultFilterRow from "./ResultFilterRow";
 import VerdictPicker from "./VerdictPicker";
+import { countBuckets, matchesFilter, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -142,6 +144,10 @@ export default function RunReview(props: {
       else next.add(caseId);
       return next;
     });
+
+  /** Which cases the list shows. Only the LIST: Accept every proposal,
+   * Save and Send always act on the whole run. */
+  const [filter, setFilter] = useState<ResultFilter>("All");
 
   const [shot, setShot] = useState<string | null>(null);
   const openShot = (name: string) =>
@@ -313,6 +319,10 @@ export default function RunReview(props: {
   const mismatch = pbiMismatch(run);
   const sendDisabled = dirty || confirmed === 0 || sending || mismatch;
   const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
+  // Counted off the cases as they stand on screen, so a verdict confirmed
+  // here moves its case to its new bucket at once.
+  const counts = countBuckets(run.cases);
+  const shown = run.cases.filter((c) => matchesFilter(c, filter));
 
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
@@ -320,8 +330,12 @@ export default function RunReview(props: {
         {when(run.started_at)} - {run.cases.length} case{run.cases.length === 1 ? "" : "s"}
       </h2>
 
+      <ResultFilterRow value={filter} onChange={setFilter} total={run.cases.length} counts={counts} />
+
+      {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
+
       <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
-        {run.cases.map((c) => {
+        {shown.map((c) => {
           const isExpanded = expanded.has(c.case_id);
           return (
             <li
@@ -474,6 +488,15 @@ export default function RunReview(props: {
                 </Button>
               )}
             </div>
+            {/* The filter narrows the list, never what the buttons act on -
+                said only while it could surprise, i.e. while some cases are
+                hidden. */}
+            {!readOnly && filter !== "All" && (
+              <p className="order-last w-full text-xs text-faint">
+                The filter only changes what is listed. Accept every proposal, Save review and Send act
+                on every case in this run.
+              </p>
+            )}
             <div className="flex flex-wrap items-center justify-end gap-2">
               {/* A refusal is an answer, not a toast - it stays on screen
                   until the next attempt changes it. */}
