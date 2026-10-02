@@ -71,11 +71,12 @@ export default function PastRuns({
   onReview: (runId: string) => void;
 }) {
   const queryClient = useQueryClient();
-  // The one subscriber to "autorun-runs" on the screen. "Clear results"
-  // lives here, beside the runs it clears, so it reads the count straight
-  // off this query - a second `useQuery(["autorun-runs"])` in the parent
-  // once shifted render timing enough to paint a run's case title here
-  // and the matching case row above at the same instant.
+  // "Clear results" lives here, beside the runs it clears, so it reads the
+  // count straight off this query. The screen's Past runs tab reads the
+  // same query for its count. That second subscriber once shifted render
+  // timing enough to paint a run's case title here and the matching case
+  // row at the same instant - harmless now that this list and the case
+  // rows are on different tabs, never shown together.
   const runs = useQuery({
     queryKey: ["autorun-runs"],
     queryFn: () => commands.autoRunListRuns(),

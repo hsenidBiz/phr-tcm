@@ -12,13 +12,25 @@ afterEach(() => {
 
 const PBI = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" };
 
-function renderAutoRun() {
+type TabName = "Test cases" | "Past runs" | "Setup";
+
+/** The screen's tab of that name, whatever count or warning it carries. */
+const tab = (name: TabName) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
+
+/** Renders the screen and opens one tab the way a person would. Clicking a
+ * tab before the readiness data has loaded is a choice the opening rule
+ * never overrides, so a test about the case list (most of this file) sees
+ * the case list whatever its mocks say about the setup. `null` leaves the
+ * opening rule to choose. */
+function renderAutoRun(open: TabName | null = "Test cases") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <AutoRun org="acme" project="Web" pbi={PBI} />
     </QueryClientProvider>,
   );
+  if (open) fireEvent.click(tab(open));
+  return Object.assign(view, { qc });
 }
 
 const cases = [
@@ -85,7 +97,8 @@ test("says plainly that nothing reaches Azure DevOps without pressing Send", asy
     if (cmd === "pbi_test_cases_full") return cases;
     if (cmd === "auto_run_load_script") return null;
   });
-  renderAutoRun();
+  // The note sits with the runs it describes.
+  renderAutoRun("Past runs");
   expect(
     await screen.findByText(/nothing goes to azure devops unless you press send to azure devops/i),
   ).toBeInTheDocument();
@@ -701,7 +714,7 @@ test("past runs list newest first with their verdicts", async () => {
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   expect(await screen.findByText("Locked account")).toBeInTheDocument();
   const rows = await screen.findAllByRole("listitem", { name: /run of/i });
@@ -735,7 +748,7 @@ test("runs are grouped by run, each labelled with its mode", async () => {
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   expect(await screen.findByText("unattended")).toBeInTheDocument();
   expect(screen.getByText("supervised")).toBeInTheDocument();
@@ -759,7 +772,7 @@ test("a supervised run shows no Review button", async () => {
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   await screen.findByText("Valid login");
   expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
@@ -797,7 +810,7 @@ test("an unattended run with unconfirmed cases offers Review, and pressing it op
       return a.runId === unattendedRun.id ? unattendedRun : null;
     }
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   expect(await screen.findByText("1 to review")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Review" }));
@@ -823,7 +836,7 @@ test("a fully confirmed unattended run offers Open review instead", async () => 
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   expect(await screen.findByRole("button", { name: "Open review" })).toBeInTheDocument();
   expect(screen.queryByText(/to review/)).not.toBeInTheDocument();
@@ -852,7 +865,7 @@ test("a sent run shows Sent instead of a review button", async () => {
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   expect(await screen.findByText("Sent")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
@@ -875,7 +888,7 @@ test("the old flat row content still renders inside its run's group", async () =
         },
       ];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   const row = (await screen.findByText("Valid login")).closest("li");
   if (!row) throw new Error("row for the case not found");
@@ -891,7 +904,7 @@ test("no past runs says so rather than showing an empty box", async () => {
     if (cmd === "auto_run_load_script") return null;
     if (cmd === "auto_run_list_runs") return [];
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
   expect(await screen.findByText(/no runs on this machine yet/i)).toBeInTheDocument();
 });
 
@@ -899,7 +912,10 @@ test("no past runs says so rather than showing an empty box", async () => {
 /// saving a run doesn't invalidate it, a freshly saved verdict is
 /// invisible until the whole screen is left and reopened - the mock
 /// below returns a DIFFERENT list after the save than before it, so
-/// this only passes if a refetch is actually forced.
+/// this only passes if a refetch is actually forced. The runs live on
+/// their own tab now, and opening it reads them afresh anyway - so the
+/// refetch is held by the tab's run count, which stays mounted the whole
+/// time the run happens on Test cases.
 test("a saved run appears in past runs without leaving the screen", async () => {
   let runsNow: unknown[] = [];
   mockIPC((cmd, args) => {
@@ -928,10 +944,12 @@ test("a saved run appears in past runs without leaving the screen", async () => 
     }
     if (cmd === "auto_run_close_browser") return null;
   });
-  renderAutoRun();
+  renderAutoRun("Past runs");
 
   await screen.findByText(/no runs on this machine yet/i);
+  await waitFor(() => expect(tab("Past runs")).toHaveAccessibleName("Past runs 0"));
 
+  fireEvent.click(tab("Test cases"));
   fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
@@ -939,6 +957,8 @@ test("a saved run appears in past runs without leaving the screen", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Failed" }));
   fireEvent.click(screen.getByRole("button", { name: "Save result" }));
 
+  await waitFor(() => expect(tab("Past runs")).toHaveAccessibleName("Past runs 1"));
+  fireEvent.click(tab("Past runs"));
   expect(await screen.findAllByRole("listitem", { name: /run of valid login/i })).toHaveLength(1);
 });
 
@@ -1146,4 +1166,239 @@ test("the unattended run dialog can show a picked case's written steps", async (
   const steps = await screen.findByRole("list", { name: "Steps of #202" });
   expect(within(steps).getByText(/Sign in/)).toBeInTheDocument();
   expect(within(steps).getByText(/A lockout message appears/)).toBeInTheDocument();
+});
+
+// ---- Tabs: Test cases, Past runs and Setup ----
+
+/** An environment with a site address of its own, using database "hr". */
+const envWith = (start_url: string) => ({
+  active: "qa",
+  environments: [
+    {
+      id: "qa",
+      name: "QA",
+      start_url,
+      allowed_origins: [],
+      db_id: "hr",
+      test_environment: false,
+      has_default_password: false,
+    },
+  ],
+});
+const ONE_ACCOUNT = [{ key: "a", label: "A", username: "u", password: "p" }];
+const HR_DB = {
+  id: "hr",
+  label: "QA HR",
+  shipped: true,
+  server: "sql01",
+  port: null,
+  database: "hrdb",
+  user: "reader",
+  trust_cert: false,
+  has_password: true,
+  overridden: false,
+};
+
+/** A project that is ready to run unless `extra` answers otherwise: a site
+ * address on the active environment, the built-in sign-in (no saved
+ * recipe) and one account. `extra` answering `undefined` falls through. */
+function mockReady(extra?: (cmd: string, args: unknown) => unknown) {
+  mockIPC((cmd, args) => {
+    const answer = extra?.(String(cmd), args);
+    if (answer !== undefined) return answer;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs") return [];
+    if (cmd === "env_list") return envWith("https://qa.example.com/");
+    if (cmd === "db_databases") return [HR_DB];
+    if (cmd === "auto_run_list_accounts") return ONE_ACCOUNT;
+    if (cmd === "auto_run_load_recipe") return null;
+    return null;
+  });
+}
+
+test("the three sections are one tab list, and nothing is chosen while the setup is still loading", async () => {
+  let answerAccounts: (v: unknown) => void = () => {};
+  mockReady((cmd) =>
+    cmd === "auto_run_list_accounts" ? new Promise((r) => (answerAccounts = r)) : undefined,
+  );
+  renderAutoRun(null);
+
+  const list = screen.getByRole("tablist", { name: "Auto Run sections" });
+  expect(within(list).getAllByRole("tab").map((t) => t.textContent?.replace(/\s*\d+$/, ""))).toEqual([
+    "Test cases",
+    "Past runs",
+    "Setup",
+  ]);
+  // Still loading is not "missing": no tab is picked, Setup least of all.
+  await screen.findByRole("tab", { name: /^Past runs 0/ });
+  for (const name of ["Test cases", "Past runs", "Setup"] as const) {
+    expect(tab(name)).toHaveAttribute("aria-selected", "false");
+  }
+  expect(tab("Setup")).not.toHaveAccessibleName(/needs attention/);
+
+  answerAccounts(ONE_ACCOUNT);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  // The case count rides on its tab.
+  expect(tab("Test cases")).toHaveAccessibleName("Test cases 2");
+});
+
+test("with no site address the screen opens on Setup, and the tab says it needs attention", async () => {
+  mockReady((cmd) => (cmd === "env_list" ? envWith("") : undefined));
+  renderAutoRun(null);
+
+  await waitFor(() => expect(tab("Setup")).toHaveAttribute("aria-selected", "true"));
+  expect(tab("Setup")).toHaveAccessibleName(/needs attention/);
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tabpanel", { name: /^Setup/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit site address" })).toBeInTheDocument();
+});
+
+test("with no accounts the screen opens on Setup", async () => {
+  mockReady((cmd) => (cmd === "auto_run_list_accounts" ? [] : undefined));
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Setup")).toHaveAttribute("aria-selected", "true"));
+  expect(tab("Setup")).toHaveAccessibleName(/needs attention/);
+});
+
+test("with a site address, a sign-in and an account the screen opens on Test cases", async () => {
+  mockReady();
+  renderAutoRun(null);
+
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+  expect(tab("Setup")).toHaveAccessibleName("Setup");
+  expect(await screen.findByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
+  // One panel at a time: neither the Setup rows nor the past runs are here.
+  expect(screen.queryByRole("button", { name: "Edit site address" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Filter by result" })).not.toBeInTheDocument();
+});
+
+/// A setup read that fails is shown on its row; it is not "missing", so it
+/// neither holds the screen on no tab at all nor sends it to Setup.
+test("a setup read that fails still lets the screen open", async () => {
+  mockReady((cmd) => {
+    if (cmd === "auto_run_list_accounts") throw new Error("disk read failed");
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+  expect(tab("Setup")).toHaveAccessibleName("Setup");
+});
+
+test("a tab the person picks while the setup loads is never overridden by the opening rule", async () => {
+  let answerAccounts: (v: unknown) => void = () => {};
+  mockReady((cmd) =>
+    cmd === "auto_run_list_accounts" ? new Promise((r) => (answerAccounts = r)) : undefined,
+  );
+  renderAutoRun(null);
+
+  fireEvent.click(tab("Past runs"));
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  // No accounts would open Setup - but the person has already chosen.
+  answerAccounts([]);
+  await waitFor(() => expect(tab("Setup")).toHaveAccessibleName(/needs attention/));
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Setup")).toHaveAttribute("aria-selected", "false");
+});
+
+test("the opening tab is decided once: setup that changes later does not move the person", async () => {
+  let accounts: unknown = ONE_ACCOUNT;
+  mockReady((cmd) => (cmd === "auto_run_list_accounts" ? accounts : undefined));
+  const { qc } = renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  // The last account removed (from the Accounts dialog, say).
+  accounts = [];
+  await qc.invalidateQueries({ queryKey: ["autorun-accounts"] });
+  await waitFor(() => expect(tab("Setup")).toHaveAccessibleName(/needs attention/));
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+});
+
+test("the arrow keys, Home and End move between the tabs", async () => {
+  mockReady();
+  renderAutoRun("Test cases");
+
+  fireEvent.keyDown(tab("Test cases"), { key: "ArrowRight" });
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Past runs")).toHaveFocus();
+  // Only the chosen tab is in the Tab order.
+  expect(tab("Past runs")).toHaveAttribute("tabindex", "0");
+  expect(tab("Test cases")).toHaveAttribute("tabindex", "-1");
+
+  fireEvent.keyDown(tab("Past runs"), { key: "End" });
+  expect(tab("Setup")).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(tab("Setup"), { key: "ArrowRight" });
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(tab("Test cases"), { key: "ArrowLeft" });
+  expect(tab("Setup")).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(tab("Setup"), { key: "Home" });
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+  expect(tab("Test cases")).toHaveFocus();
+});
+
+test("Past runs shows the past runs at full width, with their result filters", async () => {
+  // The filters show once there is a run to filter.
+  mockReady((cmd) => (cmd === "auto_run_list_runs" ? [unattendedFromReplay] : undefined));
+  renderAutoRun("Past runs");
+
+  const panel = screen.getByRole("tabpanel", { name: /^Past runs/ });
+  expect(await within(panel).findByRole("group", { name: "Filter by result" })).toBeInTheDocument();
+  expect(within(panel).getByRole("button", { name: "Clear results" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add script for #201" })).not.toBeInTheDocument();
+  // The xl two-column layout is gone.
+  expect(document.querySelector('[class*="xl:grid-cols-"]')).toBeNull();
+});
+
+test("closing a review lands on Past runs, even one an unattended run opened from Test cases", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 202 ? scriptFor202 : null;
+    }
+    if (cmd === "auto_run_replay") return unattendedFromReplay;
+    if (cmd === "auto_run_list_runs") return [unattendedFromReplay];
+    // A run that is not on this machine any more: the review's short form,
+    // with its own Close.
+    if (cmd === "auto_run_load_run") return null;
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  expect(await screen.findByText("This run is no longer on this machine.")).toBeInTheDocument();
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(tab("Past runs")).toHaveAttribute("aria-selected", "true"));
+  expect(await screen.findByRole("group", { name: "Filter by result" })).toBeInTheDocument();
+});
+
+test("Setup shows the environment and its database, all five rows, and the assistant's setup command", async () => {
+  mockReady();
+  renderAutoRun("Setup");
+
+  const panel = screen.getByRole("tabpanel", { name: /^Setup/ });
+  // Read-only here: the environment and its database change on AI Bridge.
+  expect(await within(panel).findByText("QA HR: hrdb on sql01")).toBeInTheDocument();
+  expect(within(panel).getByText(/AI Bridge tab/)).toBeInTheDocument();
+  for (const name of [
+    "Edit site address",
+    "Record sign-in",
+    "Edit sign-in recipe",
+    "Edit accounts",
+    "Edit areas",
+    "Manage test files",
+  ]) {
+    expect(within(panel).getByRole("button", { name })).toBeInTheDocument();
+  }
+  for (const name of ["Site address", "Sign-in", "Accounts", "Areas", "Test files"]) {
+    expect(within(panel).getByRole("group", { name })).toBeInTheDocument();
+  }
+  expect(within(panel).getByText(/\/tcm:setup/)).toBeInTheDocument();
+  expect(await within(panel).findByText("https://qa.example.com/")).toBeInTheDocument();
+  expect(within(panel).getByText("Built-in")).toBeInTheDocument();
 });
