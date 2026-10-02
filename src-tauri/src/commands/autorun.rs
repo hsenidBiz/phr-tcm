@@ -357,6 +357,69 @@ pub fn auto_run_load_run(app: tauri::AppHandle, run_id: String) -> Result<Option
     store::load_run(&root(&app)?, &run_id)
 }
 
+/// Said when a report is asked for a run this machine no longer has.
+pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
+
+/// Said when the report path is not one the save dialog would hand over.
+pub const REPORT_NOT_A_FULL_PATH: &str = "only a place picked with the save dialog can take the report";
+
+/// The pure half of [`auto_run_export_report`]: one run as a single HTML
+/// page (`autorun::report`), written atomically to `path`. "Is Auto Run
+/// offered here" is passed in, the way the Test files commands take it, so
+/// a locked build's refusal is testable. The scripts on this machine supply
+/// a failed action's words and a case's area; screenshots are read only
+/// through `store::load_shot`, which refuses any name outside the shots
+/// folder. Returns the file's name, for the toast - never its folder.
+pub fn export_report_at(
+    offered: bool,
+    root: &std::path::Path,
+    run_id: &str,
+    path: &std::path::Path,
+    ran_at: &str,
+) -> Result<String, String> {
+    crate::commands::api_templates::refuse_unless(offered)?;
+    if !path.is_absolute() {
+        return Err(REPORT_NOT_A_FULL_PATH.to_string());
+    }
+    let run = store::load_run(root, run_id)?.ok_or_else(|| REPORT_RUN_GONE.to_string())?;
+    let scripts: Vec<CaseScript> = run
+        .cases
+        .iter()
+        .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
+        .collect();
+    let html = crate::autorun::report::build(&run, &scripts, ran_at, &|name| store::load_shot(root, name));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "the report".to_string());
+    crate::ai_tools::atomic_write(path, &html).map_err(|e| {
+        crate::applog::warn(format!("auto run report {name} could not be written: {e}"));
+        format!("{name} could not be written - see Settings, Logs")
+    })?;
+    crate::applog::info(format!("auto run report for {run_id} written to {name}"));
+    Ok(name)
+}
+
+/// Writes one run's report to the file the person picked. `ran_at` is the
+/// run's start time as the webview shows it (the person's own locale);
+/// blank prints it in UTC instead.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_export_report(
+    app: tauri::AppHandle,
+    run_id: String,
+    path: String,
+    ran_at: String,
+) -> Result<String, String> {
+    export_report_at(
+        crate::ai_tools::autorun_offered(),
+        &root(&app)?,
+        &run_id,
+        std::path::Path::new(&path),
+        &ran_at,
+    )
+}
+
 /// A run id the frontend can stamp on a new session.
 #[tauri::command]
 #[specta::specta]

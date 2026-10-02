@@ -432,6 +432,12 @@ export const commands = {
 	 */
 	environment?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
+	/**
+	 *  Writes one run's report to the file the person picked. `ran_at` is the
+	 *  run's start time as the webview shows it (the person's own locale);
+	 *  blank prints it in UTC instead.
+	 */
+	autoRunExportReport: (runId: string, path: string, ranAt: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_export_report", { runId, path, ranAt })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
 	/**

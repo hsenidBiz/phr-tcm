@@ -53,6 +53,7 @@ mod autorun_recipe;
 mod autorun_record_signin;
 mod autorun_recorder;
 mod autorun_replay;
+mod autorun_report;
 mod autorun_runner;
 mod autorun_signin;
 mod autorun_store;

@@ -5,12 +5,18 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import PastRuns from "./PastRuns";
+import { toast } from "../../lib/toast";
+import PastRuns, { reportFileName } from "./PastRuns";
+
+const saveDialog = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
+vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
 afterEach(() => {
   clearMocks();
+  vi.clearAllMocks();
 });
 
 function runOf(overrides: Partial<Record<string, unknown>> = {}) {
@@ -25,10 +31,14 @@ function runOf(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function renderPastRuns(runs: unknown[], pbiId: number | null) {
-  mockIPC((cmd) => {
+function renderPastRuns(
+  runs: unknown[],
+  pbiId: number | null,
+  onCommand?: (cmd: string, args: unknown) => unknown,
+) {
+  mockIPC((cmd, args) => {
     if (cmd === "auto_run_list_runs") return runs;
-    return null;
+    return onCommand?.(cmd, args) ?? null;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onReview = vi.fn();
@@ -129,4 +139,56 @@ test("the filter shows only runs with a case in that bucket, and only those case
   fireEvent.click(within(row).getByRole("button", { name: "All (2)" }));
   expect(screen.getByText("Logout")).toBeInTheDocument();
   expect(screen.getByText("Valid login")).toBeInTheDocument();
+});
+
+// Report: one run as an HTML file, written by Rust where the person picks.
+test("Report saves the run to the picked file and says so", async () => {
+  saveDialog.mockResolvedValue("C:\Reports\auto-run-2026-08-06-1210.html");
+  const calls: unknown[] = [];
+  renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd, args) => {
+    if (cmd === "auto_run_export_report") {
+      calls.push(args);
+      return "auto-run-2026-08-06-1210.html";
+    }
+    return null;
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
+
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(saveDialog).toHaveBeenCalledWith({
+    defaultPath: reportFileName("1786000200000"),
+    filters: [{ name: "Web page", extensions: ["html"] }],
+  });
+  expect(calls[0]).toEqual({
+    runId: "run-1",
+    path: "C:\Reports\auto-run-2026-08-06-1210.html",
+    ranAt: new Date(1786000200000).toLocaleString(),
+  });
+  await waitFor(() =>
+    expect(toast.success).toHaveBeenCalledWith("Report saved as auto-run-2026-08-06-1210.html."),
+  );
+});
+
+test("a cancelled save dialog writes nothing and says nothing", async () => {
+  saveDialog.mockResolvedValue(null);
+  const calls: unknown[] = [];
+  renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd, args) => {
+    if (cmd === "auto_run_export_report") calls.push(args);
+    return null;
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
+
+  await waitFor(() => expect(saveDialog).toHaveBeenCalled());
+  // Give a would-be command call its chance to land.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(calls).toEqual([]);
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+test("the suggested file name is the run's local start time", () => {
+  const d = new Date(2026, 9, 2, 9, 5);
+  expect(reportFileName(String(d.getTime()))).toBe("auto-run-2026-10-02-0905.html");
 });

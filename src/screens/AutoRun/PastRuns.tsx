@@ -3,15 +3,16 @@
 // Send; until then, nothing here has reached Azure DevOps at all.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
-import { commands } from "../../bindings";
+import { commands, type LocalRun_Serialize } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
-import { IconCancel, IconClearResults, IconReview } from "../../lib/actionIcons";
+import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
@@ -37,6 +38,17 @@ function when(startedAt: string): string {
   if (!Number.isFinite(n) || n <= 0) return "unknown time";
   return new Date(n).toLocaleString();
 }
+
+/** The report's suggested file name: `auto-run-YYYY-MM-DD-HHmm.html`, from
+ * when the run started, in local time. */
+export function reportFileName(startedAt: string): string {
+  const n = Number(startedAt);
+  const d = Number.isFinite(n) && n > 0 ? new Date(n) : new Date();
+  const two = (x: number) => String(x).padStart(2, "0");
+  return `auto-run-${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.html`;
+}
+
+const HTML_FILTER = [{ name: "Web page", extensions: ["html"] }];
 
 export default function PastRuns({
   pbiId,
@@ -91,6 +103,21 @@ export default function PastRuns({
     onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
   });
 
+  /** One run as a single HTML page, written by Rust where the person picks.
+   * Cancelling the save dialog does nothing. The run's time goes as this
+   * screen shows it, so the report reads in the person's own locale. */
+  const exportReport = useMutation({
+    mutationFn: async (run: LocalRun_Serialize) => {
+      const path = await save({ defaultPath: reportFileName(run.started_at), filters: HTML_FILTER });
+      if (!path) return null;
+      return unwrapStr(commands.autoRunExportReport(run.id, path, when(run.started_at)));
+    },
+    onSuccess: (name) => {
+      if (name) toast.success(`Report saved as ${name}.`);
+    },
+    onError: (e) => toast.error(`Could not save the report: ${e.message}`),
+  });
+
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -127,8 +154,8 @@ export default function PastRuns({
           const counts = countBuckets(run.cases);
           return (
             <div key={run.id} className="space-y-1 rounded-md border border-border bg-surface p-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
                   <span>{when(run.started_at)}</span>
                   <Badge>{unattended ? "unattended" : "supervised"}</Badge>
                   {/* Absent on a run saved before environments existed. */}
@@ -136,24 +163,39 @@ export default function PastRuns({
                     <Badge title="The environment this run was made in">{run.environment}</Badge>
                   )}
                 </div>
-                {/* Reviewing only makes sense for an unattended run - a
-                    supervised one was decided by the person watching it in
-                    real time, so there is nothing here to propose again. */}
-                {run.published ? (
-                  <span className="text-xs font-medium text-faint">Sent</span>
-                ) : unattended && otherPbi ? (
-                  <span className="text-xs font-medium text-faint">for PBI #{run.pbi_id}</span>
-                ) : unattended ? (
-                  <div className="flex items-center gap-2">
-                    {unconfirmed > 0 && (
-                      <span className="text-xs text-muted">{unconfirmed} to review</span>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => onReview(run.id)}>
-                      <IconReview aria-hidden />
-                      {unconfirmed > 0 ? "Review" : "Open review"}
-                    </Button>
-                  </div>
-                ) : null}
+                <div className="flex items-center gap-2">
+                  {/* Reviewing only makes sense for an unattended run - a
+                      supervised one was decided by the person watching it in
+                      real time, so there is nothing here to propose again. */}
+                  {run.published ? (
+                    <span className="text-xs font-medium text-faint">Sent</span>
+                  ) : unattended && otherPbi ? (
+                    <span className="text-xs font-medium text-faint">for PBI #{run.pbi_id}</span>
+                  ) : unattended ? (
+                    <div className="flex items-center gap-2">
+                      {unconfirmed > 0 && (
+                        <span className="text-xs text-muted">{unconfirmed} to review</span>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => onReview(run.id)}>
+                        <IconReview aria-hidden />
+                        {unconfirmed > 0 ? "Review" : "Open review"}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {/* Any run, sent or not, supervised or not: a report is a
+                      copy to keep or pass on, and changes nothing. */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Save a report of the run from ${when(run.started_at)}`}
+                    title="Save this run as an HTML report"
+                    disabled={exportReport.isPending}
+                    onClick={() => exportReport.mutate(run)}
+                  >
+                    <IconExportReport aria-hidden />
+                    Report
+                  </Button>
+                </div>
               </div>
               {/* The whole run at a glance, whatever the filter shows. */}
               <div role="group" aria-label="Results" className="flex flex-wrap gap-x-3 text-xs font-medium">

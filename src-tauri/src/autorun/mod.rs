@@ -18,6 +18,7 @@ pub mod quirks;
 pub mod recipe;
 pub mod recorder;
 pub mod replay;
+pub mod report;
 pub mod runner;
 pub mod sessions;
 pub mod signin;
