@@ -370,7 +370,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_failures",
-            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The newest run that holds this test case." },
                 "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },
@@ -393,6 +393,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
                 "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
             }), &["id", "reason"]),
+        },
+        {
+            "name": "mark_autorun_suspected_defect",
+            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run for a reason other than a STOP line.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case whose script to mark." },
+                "step_number": { "type": "number", "description": "The step that failed because of the application." },
+                "note": { "type": "string", "description": "What the application did, against what the case expects; at most 300 characters." },
+            }), &["case_id", "step_number", "note"]),
         },
         {
             "name": "propose_accounts",
@@ -811,6 +820,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),

@@ -106,7 +106,7 @@ fn the_guide_teaches_the_api_checks_and_their_limits() {
     // Imported templates are labelled Unproven: only the proven ones are proof.
     assert!(section.contains("the ones marked proven"), "the guide must send the assistant to the PROVEN templates");
     assert!(!section.contains("were proven against this site"), "not every saved template is proven");
-    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     // A sign-in page or app shell answered 200 with no redirect passes a
     // status-only check: the guide has to say so and advise `json`.
     assert!(flat.contains("no redirect"), "the guide never says a 200 sign-in page without a redirect passes");
@@ -305,6 +305,67 @@ fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
     ] {
         assert!(g.contains(term), "the guide never mentions `{term}`");
     }
+}
+
+/// Every `STOP:` line `failures::stop_reason` can give is listed in the
+/// guide in its own words, and no count is given for them: a count went
+/// stale once already when the module-path line was added.
+#[test]
+fn the_guide_lists_every_stop_line_and_gives_no_count() {
+    let g = autorun_guide();
+    for line in [
+        "the sign-in failed - fix the account or the recipe in the app, not the script",
+        "the browser stopped answering - rerun before changing anything",
+        "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script",
+        "the person marked this case Blocked - a missing precondition is not a script defect",
+    ] {
+        assert!(g.contains(&format!("`STOP: {line}`")), "the guide never lists `STOP: {line}`");
+    }
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    for count in ["three of its lines", "none of those three", "three `stop:`", "the three stop"] {
+        assert!(!flat.contains(count), "the guide still counts its STOP lines: `{count}`");
+    }
+}
+
+/// What to do when the application, not the script, is wrong. The mark is
+/// the outcome for a failure the script cannot fix, so the guide has to say
+/// when to use it and what it is not.
+#[test]
+fn the_guide_teaches_marking_a_suspected_application_defect() {
+    let g = autorun_guide();
+    let repair = &g[g.find("## Repairing a script that failed").unwrap()..];
+    let start = repair.find("### When the application is wrong").expect("the subsection is missing");
+    let section = repair[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    assert!(section.contains("mark_autorun_suspected_defect"), "{flat}");
+    assert!(flat.contains("the script is not changed"), "{flat}");
+    assert!(flat.contains("not a repair"), "{flat}");
+    assert!(flat.contains("clears"), "{flat}");
+    assert!(flat.contains("unattended runs label a failure at that step"), "{flat}");
+    assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
+    assert!(flat.contains("refused when the failure is one of the `stop:` lines"), "{flat}");
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+}
+
+/// Which model does which part of the work is the assistant's own
+/// judgement; the guide gives tiers and examples, never a vendor or a rule.
+#[test]
+fn the_guide_leaves_the_choice_of_model_to_the_assistant() {
+    let g = autorun_guide();
+    let start = g.find("## Choosing a model for the work").expect("the section is missing");
+    let section = g[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    assert!(flat.contains("your own judgement"), "{flat}");
+    assert!(flat.contains("token"), "{flat}");
+    for tool in ["get_autorun_failures", "get_autorun_page", "probe_autorun_locator", "list_api_templates"] {
+        assert!(section.contains(tool), "the section never names `{tool}`");
+    }
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    for vendor in ["claude", "opus", "sonnet", "haiku", "gpt", "gemini", "anthropic", "openai"] {
+        assert!(!flat.contains(vendor), "the section names a vendor or model: {vendor}");
+    }
+    // Near the top: before the actions are taught.
+    assert!(start < g.find("## The actions").unwrap(), "the section belongs near the top");
 }
 
 /// A quirk cannot be worded as an instruction that loosens any rule this

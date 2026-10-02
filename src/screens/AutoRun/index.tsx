@@ -46,6 +46,7 @@ import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
+import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 
@@ -112,6 +113,8 @@ export default function AutoRun({
   });
 
   const [editing, setEditing] = useState<number | null>(null);
+  // The case whose suspected-defect Clear is waiting on Keep / Clear.
+  const [confirmingClear, setConfirmingClear] = useState<number | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [recordOpen, setRecordOpen] = useState(false);
@@ -282,10 +285,11 @@ export default function AutoRun({
   const row = (i: number) => {
     const c = rows[i];
     const ready = hasScript(i);
+    const defect = scripts[i]?.data?.suspected_defect;
     return (
       <li
         key={c.id}
-        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
       >
         {/* Only a scripted case can be run, so only a scripted case can be
             ticked - a checkbox that selects something unrunnable would
@@ -301,6 +305,13 @@ export default function AutoRun({
             rows do - a truncated title is exactly the part that tells two
             similar cases apart. */}
         <span className="min-w-0 flex-1 break-words text-text">{c.title}</span>
+        {defect && (
+          <SuspectedDefectBadge
+            caseId={c.id}
+            defect={defect}
+            onClear={() => setConfirmingClear(c.id)}
+          />
+        )}
         {/* No "Script ready" badge: the row says it with its buttons. A
             scripted case has a Run button, outlined in the success colour
             so a list reads at a glance as "these can run"; a case with no
@@ -329,6 +340,9 @@ export default function AutoRun({
             <IconRun aria-hidden />
             Run
           </Button>
+        )}
+        {defect && confirmingClear === c.id && (
+          <ClearConfirm caseId={c.id} onDone={() => setConfirmingClear(null)} />
         )}
       </li>
     );
@@ -838,6 +852,9 @@ export default function AutoRun({
                 // second run of cases that were just decided.
                 setSelected(new Set());
                 void queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+                // A run that passes a marked step clears the mark on disk;
+                // the rows read each script through their own query.
+                void queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
                 // Straight into its review rather than a toast pointing at
                 // Past runs - every case is still unconfirmed at this point,
                 // so there is nothing useful to do with this run BUT review it.

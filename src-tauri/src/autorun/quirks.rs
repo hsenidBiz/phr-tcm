@@ -668,7 +668,7 @@ pub fn source_for_repair(run: Option<&super::LocalRun>, ran: &CaseScript, case_i
 }
 
 /// Every action in the step ran and passed.
-fn passed(step: &StepRecord) -> bool {
+pub(super) fn passed(step: &StepRecord) -> bool {
     !step.outcomes.is_empty() && step.outcomes.iter().all(|o| o.ok)
 }
 
@@ -771,6 +771,11 @@ pub fn count_saved_run(root: &Path, org: &str, project: &str, run_id: &str, now_
         return Err(format!("run id {run_id:?} is not a safe filename"));
     }
     let run = super::store::load_run(root, run_id)?.ok_or_else(|| format!("no run {run_id} on this machine"))?;
+    // A mark whose step passed in this run is cleared, the run file left
+    // as it is: a person's run carries no machine reason to add to.
+    for case in &run.cases {
+        super::defects::clear_if_passed(root, case);
+    }
     Ok(record_run_evidence(root, org, project, &run.cases, now_ms))
 }
 

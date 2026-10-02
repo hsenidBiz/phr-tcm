@@ -77,9 +77,10 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // assistant calls on its own when the guide says so; a command per
     // tool made the picker a list of things nobody should have to know.
     // Auto Run is still in development: its tools are hidden and its
-    // commands are gone with them, so nothing in the picker points at it.
-    const TOOLS: [&str; 4] = [
-        "begin-test-case-writing", "optimize", "get-wiki-info", "page",
+    // command (`heal`) is left out with them wherever they are off, so
+    // nothing in the picker points at it.
+    const TOOLS: [&str; 5] = [
+        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "heal",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -598,6 +599,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
+            "mark_autorun_suspected_defect",
             "propose_accounts",
             "get_accounts",
             "get_api_template_guide",
@@ -676,6 +678,53 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "{name} switches off in a release build too"
         );
     }
+}
+
+/// `/tcm:heal` walks an assistant through failing Auto Run cases. It is an
+/// Auto Run command, so it is written only where the Auto Run tools are
+/// offered, and it names only tools the bridge really lists.
+#[test]
+fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
+    let c = COMMANDS.iter().find(|c| c.stem == "heal").expect("a heal command");
+    assert_eq!(c.tool, "get_autorun_failures");
+    assert_eq!(c.desc, "Diagnose and repair failing Auto Run cases, one at a time");
+    assert_eq!(c.hint, "[case ids, or blank for every failed case in the newest run]");
+
+    let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    assert!(
+        hidden.iter().all(|(p, _)| p.file_name().unwrap() != "heal.md"),
+        "heal must not be written where Auto Run is not offered"
+    );
+    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "heal.md"));
+
+    let body = c.body.join("\n");
+    let mcp = include_str!("../../src/mcp.rs");
+    for tool in [
+        "get_autorun_guide",
+        "get_autorun_failures",
+        "get_autorun_page",
+        "probe_autorun_locator",
+        "try_autorun_action",
+        "save_autorun_script",
+        "mark_autorun_suspected_defect",
+    ] {
+        assert!(body.contains(tool), "the heal routine never names `{tool}`");
+        assert!(
+            mcp.contains(&format!("\"name\": \"{tool}\"")),
+            "`{tool}` is not in the bridge's tool list"
+        );
+    }
+    assert!(!body.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("matched on its stable part with a non-exact name"), "{flat}");
+    assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
+    assert!(flat.contains("refused when the failure is one of the `STOP:` lines"), "{flat}");
+    assert!(flat.contains("is one of the `STOP:` lines is reported as it is"), "{flat}");
+    assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
+    assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
+    assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
 }
 
 /// A command renamed or dropped from `COMMANDS` (this branch trimmed 17

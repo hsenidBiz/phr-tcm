@@ -296,6 +296,7 @@ pub async fn route(
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
+        ("POST", "/autorun-defect") => autorun_defect(body),
         // The active environment's accounts: the assistant proposes logins
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
@@ -1588,6 +1589,54 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }
 }
 
+/// Mark a case as a suspected application defect: the script is right, the
+/// application did not do what the case expects. The newest run of the
+/// case decides whether the step really failed there (and not for a
+/// `STOP:` reason) - `defects::check_mark`. Answers with the stored mark.
+/// Never touches the script's actions, its repairs or its last repair.
+fn autorun_defect(body: &str) -> (u16, String) {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct MarkBody {
+        case_id: i32,
+        step_number: i32,
+        note: String,
+    }
+    let shape = "{ \"case_id\": 501, \"step_number\": 3, \"note\": \"what the application did, against what the case expects\" }";
+    let m: MarkBody = match serde_json::from_str(body) {
+        Ok(m) => m,
+        Err(e) => return (400, format!("that is not a mark: {e}. Expected {shape}.")),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let script = match crate::autorun::store::load_script(&root, m.case_id) {
+        Ok(s) => s,
+        Err(e) => return (500, e),
+    };
+    let run = crate::autorun::failures::latest_run(&root, Some(m.case_id));
+    let mark = match crate::autorun::defects::check_mark(
+        run.as_ref(),
+        script.as_ref(),
+        m.case_id,
+        m.step_number,
+        &m.note,
+        crate::autorun::sessions::now_ms(),
+    ) {
+        Ok(mark) => mark,
+        Err(why) => return (400, why),
+    };
+    if let Err(e) = crate::autorun::store::set_suspected_defect(&root, m.case_id, Some(mark.clone())) {
+        return (500, format!("could not save the mark: {e}"));
+    }
+    crate::applog::info(format!(
+        "AI marked case {} step {} as a suspected application defect",
+        m.case_id, mark.step_number
+    ));
+    (200, serde_json::to_string(&mark).unwrap_or_default())
+}
+
 /// What an assistant is told when its line brought a retired note back.
 fn reactivated_reply(id: &str, reason: Option<&str>) -> String {
     match reason {
@@ -2201,6 +2250,10 @@ async fn save_autorun_scripts(
     let mut prepared: Vec<crate::autorun::CaseScript> = Vec::with_capacity(scripts.len());
     let mut lines: Vec<String> = Vec::with_capacity(scripts.len());
     let mut repair_sources: Vec<crate::autorun::quirks::QuirkSource> = Vec::new();
+    // Cases whose repair changes the step their suspected-defect mark is
+    // on: the assistant has decided that step was the script's fault after
+    // all, so the mark goes once the save has landed.
+    let mut repaired_marks: Vec<(i32, i32)> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -2245,6 +2298,9 @@ async fn save_autorun_scripts(
                         script.case_id, e.steps
                     ));
                     script.last_repair = Some(why.to_string());
+                    if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
+                        repaired_marks.push((script.case_id, d.step_number));
+                    }
                     // Read now, while the script on disk is still the
                     // one that ran: its targets classify the failure.
                     if e.quirk.as_deref().is_some_and(|t| !t.trim().is_empty()) {
@@ -2339,6 +2395,24 @@ async fn save_autorun_scripts(
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
+    for (case_id, step) in &repaired_marks {
+        match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
+            Ok(true) => {
+                crate::applog::info(format!(
+                    "AI repair of case {case_id} step {step} cleared its suspected defect"
+                ));
+                report.push(format!(
+                    "case {case_id}: suspected defect at step {step} cleared - the step was repaired"
+                ));
+            }
+            // The mark moved or went since the repair was read: not ours
+            // to clear, and nothing to report.
+            Ok(false) => {}
+            Err(e) => report.push(format!(
+                "case {case_id}: the suspected defect at step {step} could not be cleared: {e}"
+            )),
+        }
+    }
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
     // so about, but it is not worth losing a good repair over.

@@ -201,6 +201,9 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -
     if let Some(s) = script {
         lines.push(format!("repairs so far: {} of {MAX_REPAIRS}", s.repairs));
     }
+    if let Some(m) = script.and_then(|s| s.suspected_defect.as_ref()) {
+        lines.push(format!("suspected defect at step {}: {}", m.step_number, m.note));
+    }
     if let Some(reason) = stop_reason(case) {
         lines.push(format!("STOP: {reason}"));
     }

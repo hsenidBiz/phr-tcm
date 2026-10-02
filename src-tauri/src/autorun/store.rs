@@ -1,6 +1,6 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
-use super::{CaseScript, LocalRun};
+use super::{CaseScript, LocalRun, SuspectedDefect};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -55,6 +55,25 @@ pub fn new_run_id() -> String {
     format!("run-{ms}")
 }
 
+/// Every write of a script file holds this: a bundle save copies the mark
+/// already on disk into what it writes, and `set_suspected_defect` reads,
+/// changes and writes one file - either landing between the other's read
+/// and write would lose a mark or bring back a cleared one.
+fn scripts_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The mark on the script already on disk for this case, if any. A file
+/// that is missing or unreadable has none: the save about to replace it is
+/// the only copy that will be left.
+fn mark_on_disk(root: &Path, case_id: i32) -> Option<SuspectedDefect> {
+    load_script(root, case_id).ok().flatten().and_then(|s| s.suspected_defect)
+}
+
+/// A raw write of one script, exactly as given - the mark included. The
+/// app's own save paths go through `save_scripts_atomically`, which keeps
+/// the mark on disk; this one is for setting up a store by hand.
 pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -106,7 +125,13 @@ impl std::error::Error for SaveScriptsError {}
 ///    ever sees a half-written case file - and by the time we reach it,
 ///    pass 2 has already ruled out the one failure mode this bundle
 ///    format can detect ahead of time.
+///
+/// Every entry is written with the suspected-defect mark the case's script
+/// already has on disk, whatever the entry itself carried: only
+/// `set_suspected_defect` changes a mark, so a stale copy from the editor
+/// or a file can neither drop one nor bring back one that was cleared.
 pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<(), SaveScriptsError> {
+    let _held = scripts_lock();
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
 
@@ -178,7 +203,21 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
                 }
             }
         }
-        let json = serde_json::to_string_pretty(sc).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+        // The disk's mark stays only while the script still has its step:
+        // a mark on a step that is gone could never label a failure or
+        // pass, so it would never clear itself.
+        let disk_mark = mark_on_disk(root, sc.case_id).filter(|m| {
+            let still_there = sc.steps.iter().any(|s| s.step_number == m.step_number);
+            if !still_there {
+                crate::applog::info(format!(
+                    "Auto Run: the suspected defect at step {} of case {} was dropped because a save removed that step",
+                    m.step_number, sc.case_id
+                ));
+            }
+            still_there
+        });
+        let kept = CaseScript { suspected_defect: disk_mark, ..sc.clone() };
+        let json = serde_json::to_string_pretty(&kept).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
         entries.push((dir.join(format!("case-{}.json", sc.case_id)), json));
     }
 
@@ -202,6 +241,68 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
             let _ = std::fs::remove_file(&tmp);
             return Err(SaveScriptsError::Io(e.to_string()));
         }
+    }
+    Ok(())
+}
+
+/// Set (`Some`) or remove (`None`) one case's suspected-defect mark, and
+/// nothing else: the script's steps, repairs and last repair are written
+/// back exactly as they were read. The one way a mark changes - the
+/// assistant's `mark_autorun_suspected_defect`, its repair of the marked
+/// step, and a person's Clear all come through here. Written to a `.tmp`
+/// sibling and renamed into place, like a bundle save. Refused for a case
+/// with no script on this machine.
+pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDefect>) -> Result<(), String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return Err(format!("case {case_id} has no script on this machine"));
+    };
+    if script.suspected_defect == mark {
+        return Ok(());
+    }
+    script.suspected_defect = mark;
+    write_script(root, &script)
+}
+
+/// Remove a case's mark, but only when the mark on disk is on
+/// `step_number`, and say whether it was removed. The check and the write
+/// happen together under the scripts lock, so a mark that moved to another
+/// step since the caller read it is left alone. `Ok(false)` when there is
+/// no mark or it is on another step; an error for a case with no script.
+pub fn clear_suspected_defect_at(root: &Path, case_id: i32, step_number: i32) -> Result<bool, String> {
+    clear_mark(root, case_id, Some(step_number))
+}
+
+/// A person's Clear: remove the case's mark whichever step it is on, and
+/// say whether there was one to remove.
+pub fn clear_suspected_defect_any(root: &Path, case_id: i32) -> Result<bool, String> {
+    clear_mark(root, case_id, None)
+}
+
+fn clear_mark(root: &Path, case_id: i32, step_number: Option<i32>) -> Result<bool, String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return Err(format!("case {case_id} has no script on this machine"));
+    };
+    match &script.suspected_defect {
+        Some(d) if step_number.is_none_or(|n| n == d.step_number) => {}
+        _ => return Ok(false),
+    }
+    script.suspected_defect = None;
+    write_script(root, &script)?;
+    Ok(true)
+}
+
+/// Write one script by a `.tmp` sibling and a rename. The caller holds the
+/// scripts lock.
+fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
+    let path = scripts_dir(root).join(format!("case-{}.json", script.case_id));
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
     }
     Ok(())
 }
@@ -414,6 +515,9 @@ pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {
 /// here uses, and there is no atomicity to preserve across independent
 /// per-case files the way there is for a script bundle.
 pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
+    // Under the scripts lock: a mark being set loads, then renames a new
+    // file into place, and a delete landing between would be undone.
+    let _held = scripts_lock();
     let dir = scripts_dir(root);
     let mut removed = 0usize;
     for id in case_ids {

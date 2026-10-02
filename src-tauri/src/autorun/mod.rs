@@ -8,6 +8,7 @@
 
 pub mod accounts;
 pub mod api_checks;
+pub mod defects;
 pub mod edits;
 pub mod failures;
 pub mod floor;
@@ -73,6 +74,27 @@ pub struct CaseScript {
     /// from the app always starts from a clean slate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_repair: Option<String>,
+    /// An assistant's finding that the script is right and the application
+    /// did not do what the case expects, at one step. Set only through
+    /// `store::set_suspected_defect` (the assistant's
+    /// `mark_autorun_suspected_defect`); every save keeps the one already
+    /// on disk and ignores whatever it was sent. Never changes `steps`,
+    /// `repairs` or `last_repair`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspected_defect: Option<SuspectedDefect>,
+}
+
+/// One case's suspected application defect: the step, and what the
+/// application did against what the case expects. One per case; a new
+/// mark replaces the old one.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct SuspectedDefect {
+    pub step_number: i32,
+    /// At most 300 characters, stored after the address and token scrub
+    /// API-check excerpts get (`defects::check_mark`).
+    pub note: String,
+    /// Epoch milliseconds as a string, like `LocalRun::started_at`.
+    pub marked_at: String,
 }
 
 impl CaseScript {

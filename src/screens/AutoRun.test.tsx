@@ -941,3 +941,187 @@ test("a saved run appears in past runs without leaving the screen", async () => 
 
   expect(await screen.findAllByRole("listitem", { name: /run of valid login/i })).toHaveLength(1);
 });
+
+/// A script an assistant marked as a suspected application defect shows it
+/// on the case row. The mark is a finding, not a change to the script, so
+/// the row only reports it and lets a person clear it.
+const defectScript = (mark: unknown) => ({
+  case_id: 201,
+  title: "Valid login",
+  steps: [{ step_number: 1, actions: [] }],
+  suspected_defect: mark,
+});
+const MARK = { step_number: 3, note: "The form never shows the lockout message", marked_at: "1786000000000" };
+
+test("a case with a suspected-defect mark shows a badge that names the step and the note", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? defectScript(MARK) : null;
+    }
+  });
+  renderAutoRun();
+
+  const badge = await screen.findByText("Suspected defect");
+  expect(badge).toHaveClass("text-warning");
+  expect(badge).toHaveAccessibleDescription(/step 3/i);
+  expect(badge).toHaveAccessibleDescription(/never shows the lockout message/);
+  expect(badge).toHaveAttribute("title", expect.stringContaining("step 3"));
+  expect(badge).toHaveAttribute("title", expect.stringContaining("lockout message"));
+  // Only the marked case carries one.
+  expect(screen.getAllByText("Suspected defect")).toHaveLength(1);
+});
+
+test("a case without a mark shows no badge and no Clear button", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? defectScript(null) : null;
+    }
+  });
+  renderAutoRun();
+
+  await screen.findByRole("button", { name: "Edit script for #201" });
+  expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /clear suspected defect/i })).not.toBeInTheDocument();
+});
+
+test("Clear asks first; confirming clears the mark and the badge goes away", async () => {
+  let mark: unknown = MARK;
+  const cleared: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? defectScript(mark) : null;
+    }
+    if (cmd === "auto_run_clear_suspected_defect") {
+      cleared.push((args as { caseId: number }).caseId);
+      mark = null;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  await screen.findByText("Suspected defect");
+  fireEvent.click(screen.getByRole("button", { name: "Clear suspected defect for #201" }));
+  // Nothing is cleared until it is confirmed.
+  expect(cleared).toEqual([]);
+  expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+  await waitFor(() => expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument());
+  expect(cleared).toEqual([201]);
+  expect(screen.queryByRole("button", { name: "Keep" })).not.toBeInTheDocument();
+});
+
+test("Keep leaves the mark and calls nothing", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? defectScript(MARK) : null;
+    }
+    if (cmd === "auto_run_clear_suspected_defect") calls.push(cmd);
+  });
+  renderAutoRun();
+
+  await screen.findByText("Suspected defect");
+  fireEvent.click(screen.getByRole("button", { name: "Clear suspected defect for #201" }));
+  fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+
+  expect(screen.queryByRole("button", { name: "Keep" })).not.toBeInTheDocument();
+  expect(screen.getByText("Suspected defect")).toBeInTheDocument();
+  expect(calls).toEqual([]);
+});
+
+test("a failed Clear says why inline and keeps the badge", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? defectScript(MARK) : null;
+    }
+    if (cmd === "auto_run_clear_suspected_defect") throw "Could not write the script file.";
+  });
+  renderAutoRun();
+
+  await screen.findByText("Suspected defect");
+  fireEvent.click(screen.getByRole("button", { name: "Clear suspected defect for #201" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+  const problem = await screen.findByRole("status");
+  expect(problem).toHaveTextContent("Could not write the script file.");
+  expect(problem).toHaveClass("text-danger");
+  expect(screen.getByText("Suspected defect")).toBeInTheDocument();
+});
+
+/// A run that passes the marked step clears the mark on disk, and the run's
+/// own reason says so. The rows read the script through their own queries,
+/// so a finished run has to make them read it again - otherwise the row
+/// keeps saying "Suspected defect" beside a run that says it was cleared.
+test("a finished unattended run refreshes the rows, so a mark it cleared stops showing", async () => {
+  let ran = false;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      if (a.caseId === 201) return scriptFor201;
+      if (a.caseId === 202) return { ...scriptFor202, suspected_defect: ran ? null : MARK };
+      return null;
+    }
+    if (cmd === "auto_run_replay") {
+      ran = true;
+      return unattendedFromReplay;
+    }
+    // The review it lands in never loads, so nothing but the finished
+    // run itself can make the rows read their scripts again.
+    if (cmd === "auto_run_load_run") return new Promise(() => {});
+  });
+  renderAutoRun();
+
+  await screen.findByText("Suspected defect");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  await waitFor(() => expect(ran).toBe(true));
+
+  await waitFor(() => expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument());
+});
+
+test("a saved supervised run refreshes the rows, so a mark it cleared stops showing", async () => {
+  let counted = false;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      if (a.caseId === 201) return { ...scriptFor201, suspected_defect: counted ? null : MARK };
+      return null;
+    }
+    if (cmd === "auto_run_new_id") return "run-1786000000000";
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_save_run") return null;
+    if (cmd === "auto_run_count_evidence") {
+      counted = true;
+      return null;
+    }
+    if (cmd === "auto_run_close_browser") return null;
+  });
+  renderAutoRun();
+
+  await screen.findByText("Suspected defect");
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
+  await screen.findByText("page contains Dashboard");
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+
+  await waitFor(() => expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument());
+});
