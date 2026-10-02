@@ -135,11 +135,16 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     } else {
         environments::load_or_init(root, None)?.environments.into_iter().find(|e| e.id == env.id)
     };
+    let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
     let sites_moved = before.as_ref().is_some_and(|b| sites(&b.allowed_origins) != sites(&env.allowed_origins));
     if !address_moved && !sites_moved {
+        let id = env.id.clone();
         let file = environments::save_env_with(root, env, || known_db_ids(store))?;
         crate::applog::info(format!("Environments: saved ({} environment(s))", file.environments.len()));
+        if unmarked {
+            strip_proposed_passwords(root, &id);
+        }
         return Ok(view(store, file));
     }
     // Held across the check and the write, exactly as a switch holds them
@@ -167,12 +172,31 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     }
     drop(run_slot);
     drop(slot);
+    if unmarked {
+        strip_proposed_passwords(root, &id);
+    }
     crate::applog::info(format!(
         "Environments: saved ({} environment(s)), one with a new {}",
         file.environments.len(),
         if address_moved { "website address" } else { "list of allowed sites" }
     ));
     Ok(view(store, file))
+}
+
+/// An environment no longer marked as a test environment keeps no proposed
+/// password on disk (nor, then, in the next backup). The environment is
+/// saved already, so a strip that fails is logged, not fatal: a password
+/// left behind is still never used or reported outside a test environment.
+fn strip_proposed_passwords(root: &Path, id: &str) {
+    match environments::strip_proposed_passwords(root, id) {
+        Ok(0) => {}
+        Ok(n) => crate::applog::info(format!(
+            "Environments: dropped {n} proposed password(s) from an environment no longer marked as a test environment"
+        )),
+        Err(e) => crate::applog::warn(format!(
+            "Environments: the proposed passwords of an environment no longer marked as a test environment stayed behind: {e}"
+        )),
+    }
 }
 
 /// Removes the environment's files and its default password. A password
@@ -261,9 +285,25 @@ impl std::fmt::Debug for AccountInput {
 pub const NO_DEFAULT_PASSWORD: &str = "no default password set - type one";
 
 /// The active environment's proposed accounts, as the webview may see
-/// them: whether each carries a password, never the password.
+/// them: whether each carries a password, never the password. Outside a
+/// test environment none counts as having one (see `usable_proposals`).
 pub fn proposals_with(root: &Path) -> Result<Vec<environments::ProposedAccount>, String> {
-    Ok(environments::load_proposals(root, &environments::active_id(root)?)?.iter().map(|p| p.view()).collect())
+    let env = environments::active(root)?;
+    Ok(usable_proposals(root, &env)?.iter().map(|p| p.view()).collect())
+}
+
+/// One environment's proposals, with every stored password dropped unless
+/// the environment is marked as a test environment now. Unmarking strips
+/// them from the file; this covers one left behind by a strip that failed
+/// or by a restored backup.
+fn usable_proposals(root: &Path, env: &Environment) -> Result<Vec<environments::StoredProposal>, String> {
+    let mut list = environments::load_proposals(root, &env.id)?;
+    if !env.test_environment {
+        for p in &mut list {
+            p.password = None;
+        }
+    }
+    Ok(list)
 }
 
 /// Drop the active environment's whole proposal, with any password it held.
@@ -289,9 +329,10 @@ pub fn add_proposals_with(
     replace: Vec<String>,
 ) -> Result<Vec<String>, String> {
     use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
-    let env_id = environments::active_id(root)?;
+    let env = environments::active(root)?;
+    let env_id = env.id.clone();
     let mut accounts = load_accounts_for(root, &env_id)?;
-    let proposed = environments::load_proposals(root, &env_id)?;
+    let proposed = usable_proposals(root, &env)?;
     let mut default: Option<Option<String>> = None;
     let mut seen = std::collections::HashSet::new();
     let mut ready: Vec<Account> = vec![];

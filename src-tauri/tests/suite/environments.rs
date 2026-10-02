@@ -828,7 +828,8 @@ mod accounts_for_the_assistant {
     use v2_lib::ai_bridge::{route, BridgeContext};
     use v2_lib::autorun::accounts::{load_accounts, save_accounts, Account};
     use v2_lib::commands::environments::{
-        add_proposals_with, dismiss_proposals_with, proposals_with, set_default_password_with, AccountInput,
+        add_proposals_with, dismiss_proposals_with, proposals_with, save_with, set_default_password_with, AccountInput,
+        EnvInput,
     };
     use v2_lib::db::credentials::MemoryStore;
     use v2_lib::environments::{
@@ -1069,6 +1070,7 @@ mod accounts_for_the_assistant {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         load_or_init(root, Some("dev-read")).unwrap();
+        mark_test_environment(root);
         seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1")), ("hr.emp", Some("Db-Pw-2")), ("hr.adm", None)]);
         let store = MemoryStore::default();
 
@@ -1094,6 +1096,7 @@ mod accounts_for_the_assistant {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         load_or_init(root, Some("dev-read")).unwrap();
+        mark_test_environment(root);
         seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1"))]);
         let store = MemoryStore::default();
 
@@ -1109,6 +1112,7 @@ mod accounts_for_the_assistant {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         load_or_init(root, Some("dev-read")).unwrap();
+        mark_test_environment(root);
         save_accounts(root, &[acct("hr.sup", "sup-old")]).unwrap();
         seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1"))]);
         let store = MemoryStore::default();
@@ -1267,5 +1271,98 @@ mod accounts_for_the_assistant {
         assert!(add_proposals_with(root, &store, vec![pick("Bad Key", "u", "p")], vec![]).is_err());
         assert!(add_proposals_with(root, &store, vec![pick("hr.x", " ", "p")], vec![]).is_err());
         assert_eq!(load_accounts(root).unwrap().len(), 2);
+    }
+
+    // ---- Review fixes: nothing echoes a password; the mark takes them away
+
+    #[tokio::test]
+    async fn a_password_that_does_not_parse_is_never_echoed() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        let mut p = proposal("hr.sup", "sup1");
+        p["password"] = json!(4815162342u64);
+        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": [p] }).to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(!out.contains("4815162342"), "{out}");
+        assert!(
+            out.contains("each account needs a key, a label and a username as text, and a password as text when one is given"),
+            "{out}"
+        );
+        assert!(proposals_text(root).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_proposals_file_is_never_echoed_or_logged() {
+        let _log = crate::serial::log_tail();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        let path = proposals_path_for(root, &active_id(root).unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"[{"key":"hr.sup","label":"x","username":"u","password":98765432}]"#).unwrap();
+
+        let err = proposals_with(root).unwrap_err();
+        assert!(!err.contains("98765432"), "{err}");
+        let err = add_proposals_with(root, &MemoryStore::default(), vec![pick("hr.sup", "u", "")], vec![]).unwrap_err();
+        assert!(!err.contains("98765432"), "{err}");
+        let tail = v2_lib::applog::recent(500);
+        assert!(tail.iter().any(|l| l.message.contains("proposed accounts")), "the cause is on record: {tail:?}");
+        assert!(tail.iter().all(|l| !l.message.contains("98765432")), "{tail:?}");
+    }
+
+    fn input_for(root: &Path, test_environment: bool) -> EnvInput {
+        let e = list(root).into_iter().next().unwrap();
+        EnvInput {
+            id: e.id,
+            name: e.name,
+            start_url: e.start_url,
+            allowed_origins: e.allowed_origins,
+            db_id: e.db_id,
+            test_environment,
+        }
+    }
+
+    #[tokio::test]
+    async fn unmarking_a_test_environment_strips_its_proposed_passwords() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        let store = MemoryStore::default();
+        save_with(root, &store, input_for(root, true)).await.unwrap();
+        seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1")), ("hr.emp", None)]);
+        assert!(proposals_text(root).contains("Db-Pw-1"));
+
+        // Saved again still marked: nothing is touched.
+        save_with(root, &store, input_for(root, true)).await.unwrap();
+        assert!(proposals_text(root).contains("Db-Pw-1"));
+
+        save_with(root, &store, input_for(root, false)).await.unwrap();
+        let text = proposals_text(root);
+        assert!(!text.contains("Db-Pw-1"), "{text}");
+        let view = proposals_with(root).unwrap();
+        assert_eq!(view.iter().map(|p| (p.key.as_str(), p.has_password)).collect::<Vec<_>>(), [("hr.sup", false), ("hr.emp", false)]);
+
+        // And the add after it does not have one to use.
+        let err = add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec![]).unwrap_err();
+        assert!(err.contains("no default password set - type one"), "{err}");
+    }
+
+    /// A password left in the file (a strip that failed, a restored backup)
+    /// is not used, or reported, outside a test environment.
+    #[test]
+    fn a_stored_password_counts_only_in_a_test_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1"))]);
+        let store = MemoryStore::default();
+        set_default_password_with(root, &store, &active_id(root).unwrap(), "Default-Pw1").unwrap();
+
+        assert!(!proposals_with(root).unwrap()[0].has_password);
+        assert!(add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec![]).unwrap().is_empty());
+        assert_eq!(load_accounts(root).unwrap()[0].password, "Default-Pw1");
     }
 }

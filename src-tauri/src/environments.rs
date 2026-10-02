@@ -476,6 +476,10 @@ pub fn validate_proposals(list: &[StoredProposal]) -> Result<(), String> {
     Ok(())
 }
 
+/// Said when the proposals file cannot be parsed.
+pub const PROPOSALS_UNREADABLE: &str =
+    "the proposed accounts are not readable - dismiss them, or ask the assistant to propose them again";
+
 /// One environment's proposed accounts as kept, passwords included - for
 /// Rust only. The webview gets `StoredProposal::view` of each.
 pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<StoredProposal>, String> {
@@ -485,11 +489,38 @@ pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<StoredProposal>, 
     match std::fs::read_to_string(proposals_path_for(root, env_id)) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
-            serde_json::from_str(s).map_err(|e| format!("the proposed accounts are not readable: {e}"))
+            // Neither the answer nor the log carries the parser's words,
+            // which can quote a value - and a value here can be a password.
+            serde_json::from_str(s).map_err(|e| {
+                crate::applog::warn(format!(
+                    "Environments: the proposed accounts file did not parse ({:?} at line {}, column {})",
+                    e.classify(),
+                    e.line(),
+                    e.column()
+                ));
+                PROPOSALS_UNREADABLE.to_string()
+            })
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
         Err(e) => Err(format!("the proposed accounts could not be read: {e}")),
     }
+}
+
+/// Drop every password from one environment's proposal, keeping the
+/// logins - for when the environment stops being a test environment.
+/// Returns how many were dropped.
+pub fn strip_proposed_passwords(root: &Path, env_id: &str) -> Result<usize, String> {
+    let mut list = load_proposals(root, env_id)?;
+    let mut dropped = 0;
+    for p in &mut list {
+        if p.password.take().is_some() {
+            dropped += 1;
+        }
+    }
+    if dropped > 0 {
+        save_proposals(root, env_id, &list)?;
+    }
+    Ok(dropped)
 }
 
 /// Replace one environment's proposal with `list`, validated first. An

@@ -1687,6 +1687,10 @@ fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
 
 // ------------------------------------------------- the environment's accounts
 
+/// Said for a proposal whose accounts do not have the expected shape -
+/// in place of the parser's own words, which can quote a password.
+pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and a username as text, and a password as text when one is given - and no other field";
+
 /// `POST /accounts-propose`: the assistant's proposed logins for the active
 /// environment, REPLACING whatever it proposed before, passwords included.
 /// Each may carry the password the assistant read in the same database
@@ -1714,11 +1718,11 @@ fn accounts_propose(body: &str) -> (u16, String) {
         Err(refused) => return refused,
     };
     let raw = json_arg(Some(&raw)).unwrap_or(raw);
+    // No parser text in the answer: serde's would quote a value it could
+    // not read, and the value may be a password.
     let list: Vec<Proposal> = match serde_json::from_value(raw) {
         Ok(l) => l,
-        Err(e) => {
-            return (400, format!("\"accounts\" is a list of {{ key, label, username, role?, password? }}: {e}"))
-        }
+        Err(_) => return (400, format!("{PROPOSAL_SHAPE_REFUSED}. Expected {shape}.")),
     };
     if list.is_empty() {
         return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
