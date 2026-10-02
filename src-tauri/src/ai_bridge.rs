@@ -2396,8 +2396,8 @@ async fn save_autorun_scripts(
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     for (case_id, step) in &repaired_marks {
-        match crate::autorun::store::set_suspected_defect(&root, *case_id, None) {
-            Ok(()) => {
+        match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
+            Ok(true) => {
                 crate::applog::info(format!(
                     "AI repair of case {case_id} step {step} cleared its suspected defect"
                 ));
@@ -2405,6 +2405,9 @@ async fn save_autorun_scripts(
                     "case {case_id}: suspected defect at step {step} cleared - the step was repaired"
                 ));
             }
+            // The mark moved or went since the repair was read: not ours
+            // to clear, and nothing to report.
+            Ok(false) => {}
             Err(e) => report.push(format!(
                 "case {case_id}: the suspected defect at step {step} could not be cleared: {e}"
             )),

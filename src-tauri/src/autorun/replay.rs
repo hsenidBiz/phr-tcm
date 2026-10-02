@@ -459,7 +459,7 @@ pub async fn run_cases<B: Browsers>(
         // A marked step that passed this time: the mark goes, and the
         // case's own record says so. Bookkeeping - it never fails the run.
         if let Some(step_number) = super::defects::clear_if_passed(root, &record) {
-            record.reason = format!("{} {}", record.reason, super::defects::cleared_sentence(step_number));
+            record.reason = super::defects::append_cleared(&record.reason, step_number);
         }
         let proposed = record.proposed.clone();
         run.cases.push(record);

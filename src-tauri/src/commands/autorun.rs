@@ -286,8 +286,9 @@ pub fn auto_run_clear_suspected_defect(app: tauri::AppHandle, case_id: i32) -> R
 /// The pure half of [`auto_run_clear_suspected_defect`], so a test can
 /// reach it without an `AppHandle`. A case with no mark is left as it is.
 pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<(), String> {
-    store::set_suspected_defect(root, case_id, None)?;
-    crate::applog::info(format!("Auto Run: the suspected defect on case {case_id} was cleared from the app"));
+    if store::clear_suspected_defect_any(root, case_id)? {
+        crate::applog::info(format!("Auto Run: the suspected defect on case {case_id} was cleared from the app"));
+    }
     Ok(())
 }
 

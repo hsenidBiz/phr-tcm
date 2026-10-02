@@ -11,13 +11,16 @@ use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{autorun_guard_for, route, BridgeContext};
 use crate::common;
 use std::sync::atomic::AtomicBool;
-use v2_lib::autorun::defects::{check_mark, passed};
+use v2_lib::autorun::defects::{append_cleared, check_mark, passed};
 use v2_lib::autorun::failures::describe_failures;
 use v2_lib::autorun::publish::comment_for;
 use v2_lib::autorun::replay::{propose, run_selection, Browsers};
 use v2_lib::browser::timing::Timing;
 use v2_lib::autorun::quirks::{count_saved_run, source_from_run};
-use v2_lib::autorun::store::{load_script, save_run, save_script, save_scripts_atomically, set_root, set_suspected_defect};
+use v2_lib::autorun::store::{
+    clear_scripts, clear_suspected_defect_at, load_script, save_run, save_script, save_scripts_atomically, set_root,
+    set_suspected_defect,
+};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, SuspectedDefect};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::commands::autorun::{clear_suspected_defect, save_script_from_editor};
@@ -318,6 +321,84 @@ fn the_editor_save_keeps_the_mark() {
     assert_eq!(saved.suspected_defect, Some(mark(3, "on disk")));
 }
 
+/// M5: a save that removes the marked step drops the mark (it could never
+/// label or pass again); one that keeps the step keeps it.
+#[test]
+fn a_save_that_removes_the_marked_step_drops_the_mark_and_one_that_keeps_it_keeps_it() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &script(501)).unwrap();
+    set_suspected_defect(dir.path(), 501, Some(mark(3, "on disk"))).unwrap();
+
+    // The editor deletes step 3 (the marked one).
+    let mut without = script(501);
+    without.steps.retain(|s| s.step_number != 3);
+    save_script_from_editor(dir.path(), "acme", "Web", without.clone()).unwrap();
+    let saved = load_script(dir.path(), 501).unwrap().unwrap();
+    assert_eq!(saved.steps.len(), 2, "the save itself landed");
+    assert_eq!(saved.suspected_defect, None);
+    assert!(raw(dir.path(), 501).get("suspected_defect").is_none());
+
+    // A save that keeps the marked step keeps the mark (and so does a
+    // bundle save that deletes some other step).
+    save_script(dir.path(), &script(502)).unwrap();
+    set_suspected_defect(dir.path(), 502, Some(mark(3, "on disk"))).unwrap();
+    let mut other = script(502);
+    other.steps.retain(|s| s.step_number != 1);
+    save_scripts_atomically(dir.path(), std::slice::from_ref(&other)).unwrap();
+    assert_eq!(load_script(dir.path(), 502).unwrap().unwrap().suspected_defect, Some(mark(3, "on disk")));
+}
+
+/// M2: a compare-and-clear. It clears only the mark that is on that step.
+#[test]
+fn clearing_a_step_removes_only_a_mark_that_is_on_that_step() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &script(501)).unwrap();
+    let before = raw(dir.path(), 501);
+
+    // No mark at all: nothing to clear.
+    assert_eq!(clear_suspected_defect_at(dir.path(), 501, 3), Ok(false));
+
+    // A mark on that step goes, and nothing else changes.
+    set_suspected_defect(dir.path(), 501, Some(mark(3, "on disk"))).unwrap();
+    assert_eq!(clear_suspected_defect_at(dir.path(), 501, 3), Ok(true));
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().suspected_defect, None);
+    assert_eq!(raw(dir.path(), 501), before);
+
+    // A mark that moved to another step between the read and the clear
+    // survives, and the clear says it did nothing.
+    set_suspected_defect(dir.path(), 501, Some(mark(1, "moved"))).unwrap();
+    assert_eq!(clear_suspected_defect_at(dir.path(), 501, 3), Ok(false));
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().suspected_defect, Some(mark(1, "moved")));
+
+    // A case with no script is an error, like a set.
+    assert!(clear_suspected_defect_at(dir.path(), 999, 3).is_err());
+}
+
+/// M1: deleting scripts and setting a mark never leave a deleted script
+/// behind. The race is narrow, so this hammers it; the lock is what makes
+/// it pass every time.
+#[test]
+fn clearing_scripts_never_lets_a_racing_mark_bring_one_back() {
+    let dir = TempDir::new();
+    for round in 0..200 {
+        save_script(dir.path(), &script(501)).unwrap();
+        let root = dir.path().to_path_buf();
+        let setter = std::thread::spawn({
+            let root = root.clone();
+            move || {
+                let _ = set_suspected_defect(&root, 501, Some(mark(3, "racing")));
+            }
+        });
+        let clearer = std::thread::spawn({
+            let root = root.clone();
+            move || clear_scripts(&root, &[501]).unwrap()
+        });
+        setter.join().unwrap();
+        clearer.join().unwrap();
+        assert!(load_script(dir.path(), 501).unwrap().is_none(), "round {round}: a deleted script came back");
+    }
+}
+
 /// The pure half of `auto_run_clear_suspected_defect`: the person's Clear.
 #[test]
 fn clearing_from_the_app_removes_the_mark_and_nothing_else() {
@@ -604,15 +685,28 @@ async fn an_unattended_run_that_passes_the_marked_step_clears_the_mark_and_says_
     let run = unattended(dir.path(), &sc).await;
     let rec = &run.cases[0];
     assert_eq!(rec.proposed, "Passed");
-    assert!(
-        rec.reason.ends_with(" The suspected defect at step 3 did not happen this time - the mark was cleared."),
-        "{}",
-        rec.reason
+    assert_eq!(
+        rec.reason,
+        "every action of 3 steps passed. The suspected defect at step 3 did not happen this time - the mark was cleared."
     );
-    assert!(rec.reason.starts_with("every action of 3 steps passed"), "{}", rec.reason);
     let stored = load_script(dir.path(), 1).unwrap().unwrap();
     assert_eq!(stored.suspected_defect, None);
     assert_eq!(stored.steps, sc.steps, "the script's actions are untouched");
+}
+
+/// The cleared sentence joins the reason as a sentence of its own: after a
+/// full stop when the reason has none, after a space when it already ends
+/// in one, and alone when there is no reason.
+#[test]
+fn the_cleared_sentence_is_joined_to_the_reason_as_its_own_sentence() {
+    let cleared = "The suspected defect at step 3 did not happen this time - the mark was cleared.";
+    assert_eq!(append_cleared("every action passed", 3), format!("every action passed. {cleared}"));
+    for end in [".", "!", "?"] {
+        assert_eq!(append_cleared(&format!("all good{end}"), 3), format!("all good{end} {cleared}"));
+    }
+    assert_eq!(append_cleared("all good. ", 3), format!("all good. {cleared}"));
+    assert_eq!(append_cleared("", 3), cleared);
+    assert_eq!(append_cleared("  ", 3), cleared);
 }
 
 #[tokio::test]

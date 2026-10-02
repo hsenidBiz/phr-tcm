@@ -501,14 +501,15 @@ each failed action as its own JSON, says what the page actually did, and
 points at the picture when there is one. Fix what it describes, not what
 you assume broke.
 
-Three of its lines are final, and mean the script must not be touched at
+Its `STOP:` lines are final, and mean the script must not be touched at
 all:
 
 - `STOP: the sign-in failed - fix the account or the recipe in the app, not the script`
 - `STOP: the browser stopped answering - rerun before changing anything`
+- `STOP: the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script`
 - `STOP: the person marked this case Blocked - a missing precondition is not a script defect`
 
-None of those three is a script defect.
+None of those is a script defect.
 
 Saving a change to a script that already exists is a repair, and it
 needs a declaration alongside the plain "scripts" list "Saving it" above
@@ -626,7 +627,7 @@ plain sentence about what you saw, and leave the script alone.
 
 - The script is not changed. A mark is not a repair: it does not count
   toward the repair cap and it never edits a step.
-- Later runs label a failure at that step as a suspected application
+- Unattended runs label a failure at that step as a suspected application
   defect and carry your note, so the person reviewing sees it as one. The
   case still fails; it is only labelled.
 - A recorded pass of that step clears the mark, and so does a repair that

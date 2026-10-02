@@ -370,7 +370,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_failures",
-            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The newest run that holds this test case." },
                 "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },

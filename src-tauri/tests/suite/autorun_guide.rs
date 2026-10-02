@@ -307,6 +307,26 @@ fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
     }
 }
 
+/// Every `STOP:` line `failures::stop_reason` can give is listed in the
+/// guide in its own words, and no count is given for them: a count went
+/// stale once already when the module-path line was added.
+#[test]
+fn the_guide_lists_every_stop_line_and_gives_no_count() {
+    let g = autorun_guide();
+    for line in [
+        "the sign-in failed - fix the account or the recipe in the app, not the script",
+        "the browser stopped answering - rerun before changing anything",
+        "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script",
+        "the person marked this case Blocked - a missing precondition is not a script defect",
+    ] {
+        assert!(g.contains(&format!("`STOP: {line}`")), "the guide never lists `STOP: {line}`");
+    }
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    for count in ["three of its lines", "none of those three", "three `stop:`", "the three stop"] {
+        assert!(!flat.contains(count), "the guide still counts its STOP lines: `{count}`");
+    }
+}
+
 /// What to do when the application, not the script, is wrong. The mark is
 /// the outcome for a failure the script cannot fix, so the guide has to say
 /// when to use it and what it is not.
@@ -321,6 +341,7 @@ fn the_guide_teaches_marking_a_suspected_application_defect() {
     assert!(flat.contains("the script is not changed"), "{flat}");
     assert!(flat.contains("not a repair"), "{flat}");
     assert!(flat.contains("clears"), "{flat}");
+    assert!(flat.contains("unattended runs label a failure at that step"), "{flat}");
     assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
     assert!(flat.contains("refused when the failure is one of the `stop:` lines"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");

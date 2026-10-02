@@ -86,6 +86,21 @@ pub fn cleared_sentence(step_number: i32) -> String {
     format!("The suspected defect at step {step_number} did not happen this time - the mark was cleared.")
 }
 
+/// `reason` with the cleared sentence after it, as a sentence of its own:
+/// after a full stop when the reason does not end in `.`, `!` or `?`, after
+/// a space when it does, and alone when the reason is empty.
+pub fn append_cleared(reason: &str, step_number: i32) -> String {
+    let sentence = cleared_sentence(step_number);
+    let reason = reason.trim_end();
+    if reason.is_empty() {
+        sentence
+    } else if reason.ends_with(['.', '!', '?']) {
+        format!("{reason} {sentence}")
+    } else {
+        format!("{reason}. {sentence}")
+    }
+}
+
 /// Whether the marked step ran in `steps` and every one of its outcomes
 /// passed - the same pass `quirks` counts as a confirmation. False when the
 /// script has no mark, when the run stopped before the step, or when any of
@@ -117,14 +132,17 @@ pub fn clear_if_passed(root: &Path, case: &CaseRecord) -> Option<i32> {
         return None;
     }
     let step_number = script.suspected_defect.as_ref()?.step_number;
-    match store::set_suspected_defect(root, case.case_id, None) {
-        Ok(()) => {
+    match store::clear_suspected_defect_at(root, case.case_id, step_number) {
+        Ok(true) => {
             crate::applog::info(format!(
                 "Auto Run: the suspected defect at step {step_number} of case {} did not happen in this run and was cleared",
                 case.case_id
             ));
             Some(step_number)
         }
+        // The mark moved or went between the read and the clear: someone
+        // else's change, left as it is, and the run says nothing of it.
+        Ok(false) => None,
         Err(e) => {
             crate::applog::warn(format!(
                 "Auto Run: the suspected defect at step {step_number} of case {} could not be cleared: {e}",

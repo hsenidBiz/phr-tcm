@@ -307,7 +307,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "",
             "1. Call `get_autorun_failures` for the case ids above, or for every failed case",
             "   in the newest run when none are given.",
-            "2. A case whose failure is one of the three `STOP:` lines is reported as it is",
+            "2. A case whose failure is one of the `STOP:` lines is reported as it is",
             "   and not touched.",
             "3. Take one case at a time. Ask the person to bring the open Auto Run browser to",
             "   the failing step, then look with `get_autorun_page` and",
