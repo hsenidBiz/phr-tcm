@@ -162,6 +162,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     dialogs: Vec<String>,
     /// What the page did, for a failure to explain itself (`page_log`).
     page_log: super::page_log::PageLog,
+    /// Every request the page made, for a step that checks one
+    /// (`net_record`). Fed before the page log, which claims these events.
+    net_record: super::net_record::NetRecord,
     /// When the wait loop that owns this connection runs out of time. See
     /// `set_deadline`.
     deadline: Option<Instant>,
@@ -210,6 +213,7 @@ impl<T: Transport> Cdp<T> {
             events: VecDeque::new(),
             dialogs: vec![],
             page_log: Default::default(),
+            net_record: Default::default(),
             deadline: None,
         }
     }
@@ -308,6 +312,9 @@ impl<T: Transport> Cdp<T> {
                 .map_err(CdpError::Transport)?;
             return Ok(());
         }
+        // The record sees every event first and never claims one, so the
+        // page log below is fed exactly as before.
+        self.net_record.observe(&ev);
         // Network and console events go to the page log, never into the
         // buffer: a page volunteers thousands, and they would push out the
         // load event a navigation is about to wait for.
@@ -339,6 +346,9 @@ impl<T: Transport> Cdp<T> {
             let raw = self.next_frame().await?;
             if let Some(ev) = event_of(&raw) {
                 if ev.method == method {
+                    // Handed straight to the caller, so it skips `on_event`:
+                    // the record must still hear of it.
+                    self.net_record.observe(&ev);
                     return Ok(ev);
                 }
                 self.on_event(ev).await?;
@@ -348,6 +358,8 @@ impl<T: Transport> Cdp<T> {
 
     /// Drop buffered events. Called before a navigation, so the load event
     /// waited for afterwards is that navigation's and not an older one.
+    /// The network record is left alone: a step's requests survive a
+    /// navigation or an upload made in that same step.
     pub fn forget_events(&mut self) {
         self.events.clear();
     }
@@ -361,6 +373,17 @@ impl<T: Transport> Cdp<T> {
     /// (`page_log::PageLog::report`). Empty unless `page_log::watch` ran.
     pub fn page_log(&self) -> Vec<String> {
         self.page_log.report()
+    }
+
+    /// Where the network record stands now (`NetRecord::mark`).
+    pub fn net_mark(&self) -> u64 {
+        self.net_record.mark()
+    }
+
+    /// The requests started since `mark`, oldest first (`NetRecord::since`).
+    /// Empty unless `page_log::watch` switched the Network domain on.
+    pub fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
+        self.net_record.since(mark)
     }
 
     /// Run an expression in the page and return the raw DevTools result.
@@ -405,6 +428,17 @@ pub trait Driver {
     fn page_log(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Where the network record stands (`Cdp::net_mark`). A driver that
+    /// keeps no record (a test's fake) is always at the start of an empty
+    /// one.
+    fn net_mark(&self) -> u64 {
+        0
+    }
+    /// The requests started since `mark` (`Cdp::net_since`). None for a
+    /// driver that keeps no record.
+    fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
+        Vec::new()
+    }
     /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
     /// every path out.
     fn set_deadline(&mut self, deadline: Option<Instant>);
@@ -437,6 +471,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn page_log(&self) -> Vec<String> {
         Cdp::page_log(self)
+    }
+    fn net_mark(&self) -> u64 {
+        Cdp::net_mark(self)
+    }
+    fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
+        Cdp::net_since(self, mark)
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         Cdp::set_deadline(self, deadline)

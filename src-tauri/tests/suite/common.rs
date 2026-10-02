@@ -15,6 +15,7 @@ use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
+use v2_lib::browser::net_record::{NetEntry, NetRecord};
 use v2_lib::browser::timing::Timing;
 
 type Handler =
@@ -45,6 +46,11 @@ pub struct ScriptedDriver {
     /// What `page_log` reports - the lines a real page's requests and
     /// console would have given.
     pub page_log: Vec<String>,
+    /// A network record fed from the events this driver emits after a
+    /// call, as a real browser's is (`with_net_record`). While it is on,
+    /// `Network.*` events go to it and not to `events`, as they do in
+    /// `Cdp`. `None` keeps the trait's defaults: no record at all.
+    pub net: Option<NetRecord>,
 }
 
 impl ScriptedDriver {
@@ -63,7 +69,14 @@ impl ScriptedDriver {
             deadlines: vec![],
             closed_when_drained: false,
             page_log: vec![],
+            net: None,
         }
+    }
+
+    /// Keep a network record of the events this driver emits.
+    pub fn with_net_record(mut self) -> Self {
+        self.net = Some(NetRecord::default());
+        self
     }
 
     pub fn methods(&self) -> Vec<String> {
@@ -102,7 +115,15 @@ impl Driver for ScriptedDriver {
                 fired.push(ev.clone());
             }
         }
-        self.events.extend(fired);
+        for ev in fired {
+            if let Some(net) = self.net.as_mut() {
+                net.observe(&ev);
+                if ev.method.starts_with("Network.") {
+                    continue;
+                }
+            }
+            self.events.push_back(ev);
+        }
         (self.handler)(method, &params)
     }
 
@@ -124,6 +145,14 @@ impl Driver for ScriptedDriver {
 
     fn page_log(&self) -> Vec<String> {
         self.page_log.clone()
+    }
+
+    fn net_mark(&self) -> u64 {
+        self.net.as_ref().map_or(0, NetRecord::mark)
+    }
+
+    fn net_since(&self, mark: u64) -> Vec<NetEntry> {
+        self.net.as_ref().map_or_else(Vec::new, |n| n.since(mark))
     }
 
     fn set_deadline(&mut self, deadline: Option<Instant>) {

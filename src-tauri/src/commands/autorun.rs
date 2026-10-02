@@ -97,7 +97,7 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
     let browser = launch_in(which)?;
     // The browser needs a moment to bind its port before it will answer.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-    let cdp = match Cdp::connect(browser.port).await {
+    let mut cdp = match Cdp::connect(browser.port).await {
         Ok(cdp) => cdp,
         Err(e) => {
             // Connect failed after the process was already spawned and its
@@ -110,6 +110,13 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
             return Err(e);
         }
     };
+    // Network and console events on from the start, as an unattended run's
+    // browser has them: a step that checks a request reads the network
+    // record, and a failure can say what the page was doing. Losing them is
+    // no reason not to open the browser.
+    if let Err(e) = crate::browser::page_log::watch(&mut cdp).await {
+        crate::applog::warn(format!("auto-run: the page log could not be switched on: {e}"));
+    }
     *slot = Some(Session { browser, cdp, account: None });
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())

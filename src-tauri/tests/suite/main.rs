@@ -92,6 +92,7 @@ mod intake;
 mod markdown;
 mod mcp;
 mod mentions;
+mod net_record;
 mod note_server;
 mod optimize;
 mod permissions;
