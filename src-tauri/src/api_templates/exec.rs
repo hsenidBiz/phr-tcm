@@ -321,13 +321,8 @@ pub fn build_request(
         ));
     }
 
-    let mut pairs = Vec::with_capacity(step.query.len());
-    for (k, v) in &step.query {
-        let key = percent_encode_segment(&substitute_str(k, vars));
-        let value = percent_encode_segment(&substitute_str(v, vars));
-        pairs.push(format!("{key}={value}"));
-    }
-    let url = if pairs.is_empty() { path } else { format!("{path}?{}", pairs.join("&")) };
+    let query = encode_pairs(step.query.iter().map(|(k, v)| (substitute_str(k, vars), substitute_str(v, vars))));
+    let url = if query.is_empty() { path } else { format!("{path}?{query}") };
 
     let body = if let Some(json) = &step.json {
         Body::Json { value: substitute(json, vars) }
@@ -355,6 +350,24 @@ pub fn build_request(
     Ok(BuiltRequest { method: step.method, url, body })
 }
 
+/// A query map as a query string: each key and value percent-encoded as a
+/// single segment (`percent_encode_segment`), the pairs in the map's order
+/// joined with `&`. Empty for an empty map; the caller adds the `?`.
+pub fn encode_query(q: &BTreeMap<String, String>) -> String {
+    encode_pairs(q.iter())
+}
+
+/// `encode_query` over pairs in the order given - how `build_request`
+/// encodes a step's query once its placeholders are filled in, keeping the
+/// step's own key order.
+fn encode_pairs<K: AsRef<str>, V: AsRef<str>>(pairs: impl IntoIterator<Item = (K, V)>) -> String {
+    pairs
+        .into_iter()
+        .map(|(k, v)| format!("{}={}", percent_encode_segment(k.as_ref()), percent_encode_segment(v.as_ref())))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// Compact JSON text for an error message (`273`, `true`, `"x"`, ...).
 fn compact(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_default()
@@ -365,24 +378,49 @@ fn compact(v: &Value) -> String {
 /// `expected` recurses the same way (also partial). Fails on the first
 /// mismatching key encountered, in `expected`'s own key order.
 pub(crate) fn partial_match(expected: &Value, actual: &Value) -> Result<(), String> {
+    partial_match_shown(expected, actual, &|_, v| compact(v))
+}
+
+/// `partial_match`, with every value of the ANSWER a failure quotes written
+/// by `show`, which is also given the keys that value sits under
+/// (outermost first) - how a check that must never quote a secret hides
+/// one. The match itself is always against the real values; the expected
+/// side is quoted as written.
+pub(crate) fn partial_match_shown(
+    expected: &Value,
+    actual: &Value,
+    show: &dyn Fn(&[&str], &Value) -> String,
+) -> Result<(), String> {
+    match_under(expected, actual, &mut Vec::new(), show)
+}
+
+fn match_under<'a>(
+    expected: &'a Value,
+    actual: &Value,
+    keys: &mut Vec<&'a str>,
+    show: &dyn Fn(&[&str], &Value) -> String,
+) -> Result<(), String> {
     let Value::Object(exp_map) = expected else {
         return if expected == actual {
             Ok(())
         } else {
-            Err(format!("expected {}, got {}", compact(expected), compact(actual)))
+            Err(format!("expected {}, got {}", compact(expected), show(keys, actual)))
         };
     };
     for (k, exp_v) in exp_map {
-        match actual.get(k) {
-            None => return Err(format!("expected {k} = {}, got nothing", compact(exp_v))),
-            Some(act_v) => {
-                if exp_v.is_object() {
-                    partial_match(exp_v, act_v)?;
-                } else if exp_v != act_v {
-                    return Err(format!("expected {k} = {}, got {}", compact(exp_v), compact(act_v)));
-                }
-            }
-        }
+        let Some(act_v) = actual.get(k) else {
+            return Err(format!("expected {k} = {}, got nothing", compact(exp_v)));
+        };
+        keys.push(k);
+        let judged = if exp_v.is_object() {
+            match_under(exp_v, act_v, keys, show)
+        } else if exp_v != act_v {
+            Err(format!("expected {k} = {}, got {}", compact(exp_v), show(keys, act_v)))
+        } else {
+            Ok(())
+        };
+        keys.pop();
+        judged?;
     }
     Ok(())
 }

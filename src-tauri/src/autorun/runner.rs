@@ -155,6 +155,7 @@ pub async fn run_step_routed<D: Driver>(
             Action::Upload { selector, file } => upload(d, root, organization, project, action, selector, file, timing).await,
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
+            Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
             other => execute_in(d, other, timing, &policy).await,
         };
         if !outcome.ok && !outcome.harness {

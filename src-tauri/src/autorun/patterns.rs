@@ -207,10 +207,15 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     by_end(t).unwrap_or(ErrorClass::Other)
 }
 
-/// An `expect_response` failure (`autorun::api_checks`): one of its own
-/// sentences, read without the body excerpt that may follow it.
+/// An `expect_response` or `api_request` failure (`autorun::api_checks`):
+/// one of its own sentences, read without the body excerpt that may follow
+/// it.
 fn is_api_check(whole: &str) -> bool {
-    if whole.starts_with(api::NO_REQUEST) || whole.starts_with(api::RESPONSE_TO) || whole.starts_with(api::BODY_GONE) {
+    if whole.starts_with(api::NO_REQUEST)
+        || whole.starts_with(api::RESPONSE_TO)
+        || whole.starts_with(api::BODY_GONE)
+        || whole.starts_with(api::BODY_UNREADABLE)
+    {
         return true;
     }
     // `<METHOD> /<path> <what happened>`.
@@ -224,7 +229,8 @@ fn is_api_check(whole: &str) -> bool {
         && (rest.contains(api::NOT_FINISHED)
             || rest.ends_with(api::CANCELLED)
             || rest.contains(api::NET_FAILED)
-            || rest.contains(api::ANSWERED))
+            || rest.contains(api::ANSWERED)
+            || rest.contains(api::REDIRECTED))
 }
 
 /// The reason words that a target-prefixed sentence starts with, once

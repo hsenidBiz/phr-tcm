@@ -6,12 +6,14 @@
 
 use crate::common::{quick, ScriptedDriver};
 use serde_json::{json, Value};
-use v2_lib::autorun::api_checks::{expect_response, judge, pick, Pick};
+use std::collections::BTreeMap;
+use v2_lib::api_templates::exec::encode_query;
+use v2_lib::autorun::api_checks::{api_request, expect_response, judge, pick, Pick, GET_FN};
 use v2_lib::autorun::patterns::{classify, ErrorClass};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::runner::run_step;
 use v2_lib::autorun::StepScript;
-use v2_lib::browser::actions::{Action, ActionOutcome, BROWSER_SILENT};
+use v2_lib::browser::actions::{Action, ActionOutcome, ApiExpect, BROWSER_SILENT};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::net_record::{NetEntry, NetState};
 use v2_lib::browser::timing::Timing;
@@ -529,5 +531,281 @@ fn a_sign_in_recipe_cannot_check_the_api() {
         let inside = json!([{ "kind": "when_visible", "selector": { "css": "#x" }, "within_ms": 100, "then": [a] }]);
         let err = recipe_with(json!([fill.clone()]), inside).validate().unwrap_err();
         assert_eq!(err, format!("after_sign_in step 1: {want}"));
+    }
+}
+
+// ------------------------------------------------------------ api_request
+
+fn api(path: &str, query: &[(&str, &str)], status: u16, json: Option<Value>) -> Action {
+    Action::ApiRequest {
+        path: path.to_string(),
+        query: query.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        expect: ApiExpect { status, json },
+    }
+}
+
+/// A page whose in-page GET answers `answer` (as `GET_FN` would return it).
+fn page_answering(answer: Value) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, _| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": answer.clone() } })),
+        _ => Ok(json!({})),
+    })
+}
+
+fn got(status: u16, text: &str) -> Value {
+    json!({ "status": status, "contentType": "application/json", "finalPath": "/hr/api/cycles/42?include=rules",
+            "redirected": false, "text": text })
+}
+
+async fn ask(d: &mut ScriptedDriver, a: &Action) -> ActionOutcome {
+    api_request(d, a, &short()).await
+}
+
+#[test]
+fn encode_query_is_the_api_templates_own_encoding() {
+    let q: BTreeMap<String, String> =
+        [("q", "a b&c"), ("include", "rules"), ("x/y", "1=2")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    assert_eq!(encode_query(&q), "include=rules&q=a%20b%26c&x%2Fy=1%3D2");
+    assert_eq!(encode_query(&BTreeMap::new()), "");
+}
+
+#[tokio::test]
+async fn an_api_request_sends_the_path_and_query_from_the_page_and_passes() {
+    let mut d = page_answering(got(200, r#"{"name":"Q4 Cycle","id":42,"rules":[]}"#));
+    let a = api("/hr/api/cycles/42", &[("include", "rules"), ("q", "a b")], 200, Some(json!({ "name": "Q4 Cycle" })));
+    let out = ask(&mut d, &a).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "GET /hr/api/cycles/42 answered 200");
+    let calls = d.calls_to("Runtime.callFunctionOn");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["objectId"], "doc");
+    assert_eq!(calls[0]["functionDeclaration"], GET_FN);
+    assert_eq!(calls[0]["arguments"][0]["value"], "/hr/api/cycles/42?include=rules&q=a%20b");
+    assert_eq!(calls[0]["arguments"][1]["value"], 400, "the run's action timing");
+    for want in ["fetch(url", "credentials: \"same-origin\"", "Accept: \"application/json\"", "signal"] {
+        assert!(GET_FN.contains(want), "{want}");
+    }
+    assert!(!GET_FN.contains("method:"), "GET only");
+
+    // No query: just the path.
+    let mut d = page_answering(got(200, "{}"));
+    assert!(ask(&mut d, &api("/hr/api/me", &[], 200, None)).await.ok);
+    assert_eq!(d.calls_to("Runtime.callFunctionOn")[0]["arguments"][0]["value"], "/hr/api/me");
+}
+
+#[tokio::test]
+async fn an_api_request_says_each_failure_in_its_own_sentence() {
+    let path = "/hr/api/cycles/42";
+    let mut d = page_answering(got(404, r#"{"error":"no such cycle"}"#));
+    let out = ask(&mut d, &api(path, &[], 200, None)).await;
+    assert!(!out.ok && !out.harness);
+    assert_eq!(out.detail, "GET /hr/api/cycles/42 answered 404, expected 200 - the response began: {\"error\":\"no such cycle\"}");
+
+    let mut d = page_answering(got(200, r#"{"name":"Q3 Cycle"}"#));
+    let out = ask(&mut d, &api(path, &[], 200, Some(json!({ "name": "Q4 Cycle" })))).await;
+    assert_eq!(
+        out.detail,
+        "the response to GET /hr/api/cycles/42: expected name = \"Q4 Cycle\", got \"Q3 Cycle\" - the response began: {\"name\":\"Q3 Cycle\"}"
+    );
+
+    let mut d = page_answering(got(200, "<html><title>Oops</title></html>"));
+    let out = ask(&mut d, &api(path, &[], 200, Some(json!({ "name": "Q4 Cycle" })))).await;
+    assert_eq!(
+        out.detail,
+        "the response to GET /hr/api/cycles/42 was not JSON - the response began: <html><title>Oops</title></html>"
+    );
+
+    let mut d = page_answering(json!({ "error": "timeout" }));
+    let out = ask(&mut d, &api(path, &[("k", "v")], 200, None)).await;
+    assert!(!out.ok && !out.harness);
+    assert_eq!(out.detail, "GET /hr/api/cycles/42 failed: timeout");
+}
+
+#[tokio::test]
+async fn an_api_request_redirected_to_the_sign_in_page_fails_naming_where() {
+    // Review focus 3: an expired session answers 200 - with the sign-in page.
+    let mut d = page_answering(json!({
+        "status": 200, "contentType": "text/html", "redirected": true,
+        "finalPath": "/Account/Login?ReturnUrl=%2Fhr%2Fapi%2Fcycles%2F42%3Faccess_token%3Dabc",
+        "text": "<html><title>Sign in</title></html>"
+    }));
+    let out = ask(&mut d, &api("/hr/api/cycles/42", &[("access_token", "abc")], 200, None)).await;
+    assert!(!out.ok && !out.harness);
+    assert!(out.detail.starts_with("GET /hr/api/cycles/42 was redirected to /Account/Login"), "{}", out.detail);
+    assert!(!out.detail.contains("ReturnUrl") && !out.detail.contains("abc"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn an_unsafe_or_query_carrying_path_is_refused_before_anything_is_sent() {
+    for p in ["https://evil.example/x", "//evil.example/x", "/a/../b", "api/x", "/x?access_token=abc", "/x#abc"] {
+        let mut d = page_answering(got(200, "{}"));
+        let out = ask(&mut d, &api(p, &[], 200, None)).await;
+        assert!(!out.ok, "{p}");
+        assert!(out.detail.starts_with("this action cannot run: "), "{}", out.detail);
+        assert!(!out.detail.contains("abc"), "{}", out.detail);
+        assert!(d.calls.is_empty(), "{p}: {:?}", d.calls);
+    }
+}
+
+#[tokio::test]
+async fn no_api_request_outcome_carries_the_query_string_or_host() {
+    // Review focus 4.
+    let q = [("access_token", "abc123")];
+    let path = "/hr/api/cycles/42";
+    let mut details = vec![];
+    for (answer, json) in [
+        (got(200, "{}"), None),
+        (got(500, "{}"), None),
+        (got(200, r#"{"ok":false}"#), Some(json!({ "ok": true }))),
+        (got(200, "<html>"), Some(json!({ "ok": true }))),
+        (json!({ "error": "TypeError: Failed to fetch https://hr.example/hr/api/cycles/42?access_token=abc123" }), None),
+        (json!({ "error": "Failed to parse URL from /hr/api/cycles/42?access_token=abc123" }), None),
+        (json!({ "status": 200, "redirected": true, "finalPath": "/Account/Login?ReturnUrl=x&access_token=abc123", "text": "" }), None),
+        (json!({ "nothing": true }), None),
+    ] {
+        let mut d = page_answering(answer);
+        details.push(ask(&mut d, &api(path, &q, 200, json)).await.detail);
+    }
+    assert_eq!(details[0], "GET /hr/api/cycles/42 answered 200");
+    for detail in &details {
+        assert!(!detail.contains("access_token") && !detail.contains("abc123") && !detail.contains("hr.example"), "{detail}");
+    }
+}
+
+#[tokio::test]
+async fn an_api_request_whose_browser_stops_answering_is_a_harness_failure() {
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, None)).await;
+    assert!(out.harness, "{out:?}");
+    assert!(out.detail.starts_with(BROWSER_SILENT), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn the_runner_carries_out_an_api_request() {
+    let mut d = page_answering(got(200, r#"{"name":"Q4 Cycle"}"#));
+    let out = run(&mut d, vec![api("/hr/api/cycles/42", &[], 200, Some(json!({ "name": "Q4 Cycle" })))]).await;
+    assert_eq!(out.len(), 1);
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, "GET /hr/api/cycles/42 answered 200");
+}
+
+// ------------------------------------------------- redaction and the caps
+
+#[tokio::test]
+async fn secrets_in_a_json_body_never_reach_an_api_request_outcome() {
+    let body = r#"{"access_token":"abc","user":{"name":"kim","password":"p"},"Session_Id":"s1","ok":false}"#;
+    for want in [
+        json!({ "ok": true }),
+        json!({ "access_token": "zzz" }),
+        json!({ "user": { "password": "x" } }),
+        json!({ "user": "kim" }),
+    ] {
+        let mut d = page_answering(got(200, body));
+        let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(want.clone()))).await;
+        assert!(!out.ok);
+        for secret in ["\"abc\"", "\"p\"", "s1"] {
+            assert!(!out.detail.contains(secret), "{want}: {}", out.detail);
+        }
+        assert!(out.detail.contains("[redacted]"), "{}", out.detail);
+    }
+    let mut d = page_answering(got(500, body));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, None)).await;
+    assert!(out.detail.contains("\"name\":\"kim\""), "the rest still shows: {}", out.detail);
+    assert!(!out.detail.contains("\"abc\"") && !out.detail.contains("\"p\""), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn secrets_in_a_json_body_never_reach_an_expect_response_outcome() {
+    let body = r#"{"access_token":"abc","user":{"password":"p"},"success":false}"#;
+    for want in [json!({ "success": true }), json!({ "user": { "password": "x" } }), json!({ "user": 1 })] {
+        let mut d = browser(move || Ok(json!({ "body": body, "base64Encoded": false })));
+        on_first_look(&mut d, save_finished(200));
+        let out = check(&mut d, &expect(None, "/Save", 200, Some(want.clone()), None)).await;
+        assert!(!out.ok);
+        assert!(!out.detail.contains("\"abc\"") && !out.detail.contains("\"p\""), "{want}: {}", out.detail);
+        assert!(out.detail.contains("[redacted]"), "{}", out.detail);
+    }
+    // A secret that matches is still a match.
+    let mut d = browser(move || Ok(json!({ "body": body, "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(200));
+    let out = check(&mut d, &expect(None, "/Save", 200, Some(json!({ "access_token": "abc" })), None)).await;
+    assert!(out.ok, "{out:?}");
+}
+
+#[tokio::test]
+async fn a_cut_off_json_body_still_has_its_secrets_hidden() {
+    // Over 64 KB: no longer parses, so the plain-text pass hides them.
+    let big = format!(r#"{{"sessionToken":"abc","pad":"{}"}}"#, "x".repeat(70_000));
+    let mut d = page_answering(json!({ "status": 200, "redirected": false, "finalPath": "/hr/api/me",
+        "text": big.chars().take(65_536).collect::<String>(), "over": true }));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "ok": true })))).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with("the response to GET /hr/api/me was over 64 KB"), "{}", out.detail);
+    assert!(!out.detail.contains("abc"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_body_over_64_kb_says_so_for_both_kinds() {
+    let big = format!(r#"{{"ok":true,"pad":"{}"}}"#, "x".repeat(70_000));
+    let shown = big.clone();
+    let mut d = browser(move || Ok(json!({ "body": shown.clone(), "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(200));
+    let out = check(&mut d, &expect(None, "/Save", 200, Some(json!({ "ok": true })), None)).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with("the response to POST /hr/pmsv10/PerformanceCycle/Save was over 64 KB"), "{}", out.detail);
+
+    let mut d = page_answering(json!({ "status": 200, "redirected": false, "finalPath": "/hr/api/me",
+        "text": big.chars().take(65_536).collect::<String>(), "over": true }));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "ok": true })))).await;
+    assert!(out.detail.starts_with("the response to GET /hr/api/me was over 64 KB"), "{}", out.detail);
+    // Without a JSON check the size does not matter.
+    let mut d = page_answering(json!({ "status": 200, "redirected": false, "finalPath": "/hr/api/me",
+        "text": "x", "over": true }));
+    assert!(ask(&mut d, &api("/hr/api/me", &[], 200, None)).await.ok);
+    assert!(GET_FN.contains("65536"));
+}
+
+#[tokio::test]
+async fn a_body_that_cannot_be_decoded_says_it_could_not_be_read() {
+    let mut d = browser(|| Ok(json!({ "body": "not base64 !!", "base64Encoded": true })));
+    on_first_look(&mut d, save_finished(200));
+    let out = check(&mut d, &expect(None, "/Save", 200, Some(json!({ "ok": true })), None)).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert_eq!(out.detail, "the response body could not be read");
+}
+
+// ----------------------------------------------------------- validation
+
+#[test]
+fn an_api_request_path_carries_no_query_or_fragment() {
+    let err = |p: &str| api(p, &[], 200, None).validate().unwrap_err();
+    let want = "api_request path \"/api/x\" must not contain ? or # - put the query in \"query\"";
+    assert_eq!(err("/api/x?access_token=abc"), want);
+    assert_eq!(err("/api/x#frag"), want);
+    assert_eq!(err("/api/x?"), want);
+}
+
+#[test]
+fn url_contains_is_never_a_full_address() {
+    for u in ["https://hr.example/hr/Save", "http://x/y", "HTTPS://X"] {
+        assert_eq!(
+            expect(None, u, 200, None, None).validate().unwrap_err(),
+            "url_contains is a path fragment, not a full address",
+        );
+    }
+    assert!(expect(None, "/hr/Save?handler=x", 200, None, None).validate().is_ok());
+}
+
+#[test]
+fn the_new_sentences_are_in_the_api_class() {
+    for detail in [
+        "GET /hr/api/me was redirected to /Account/Login",
+        "GET /hr/api/me was redirected to /Account/Login - the response began: <html>",
+        "GET /hr/api/me failed: timeout",
+        "the response to GET /hr/api/me was over 64 KB - the response began: {\"a\"",
+        "the response body could not be read",
+    ] {
+        assert_eq!(classify(detail, None), ErrorClass::Api, "{detail}");
     }
 }

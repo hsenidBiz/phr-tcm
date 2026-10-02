@@ -1,5 +1,7 @@
 //! `expect_response`: did the page, during this script step, ask its
-//! server the thing the case expects - and was it answered right?
+//! server the thing the case expects - and was it answered right? And
+//! `api_request`: the page asks its own site a GET question (`GET_FN`), and
+//! the answer is judged the same way.
 //!
 //! Carried out by the runner, which takes the step's mark in the browser's
 //! network record (`browser::net_record`) before the step's first action;
@@ -11,17 +13,22 @@
 //! Every sentence names the request by its method and PATH only: the
 //! record keeps the query string for matching, and nothing here copies it
 //! out - an address can carry a token there. A body is read only for a
-//! JSON check, and only an excerpt of it, tokens scrubbed, goes into a
-//! failure.
+//! JSON check, and only an excerpt of it goes into a failure - with every
+//! value under a key named like a secret hidden (`shown_body`) and
+//! anti-forgery tokens scrubbed. A field mismatch hides the same values.
 
-use crate::api_templates::exec::{excerpt, partial_match, scrub_tokens};
+use crate::api_templates::exec::{encode_query, excerpt, partial_match_shown, scrub_tokens};
+use crate::api_templates::runner::FETCH_GRACE;
 use crate::autorun::report::without_query;
 use crate::browser::actions::{harness, harness_timeout, Action, ActionOutcome, CANNOT_RUN};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::net_record::{NetEntry, NetState};
+use crate::browser::page;
 use crate::browser::timing::Timing;
 use base64::Engine;
+use regex::Regex;
 use serde_json::{json, Value};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 // The words these checks fail in - read back by `autorun::patterns`.
@@ -41,6 +48,15 @@ pub const ANSWERED: &str = " answered ";
 pub const RESPONSE_TO: &str = "the response to ";
 /// A body Chrome no longer holds.
 pub const BODY_GONE: &str = "the response body was no longer available";
+/// A body Chrome gave back in a form that could not be decoded.
+pub const BODY_UNREADABLE: &str = "the response body could not be read";
+/// `the response to <METHOD> <path> was over 64 KB`: too long to judge.
+pub const OVER_CAP: &str = " was over 64 KB";
+/// `GET <path> was redirected to <path>` - an `api_request` answered by
+/// another page (an ended session's sign-in page, typically).
+pub const REDIRECTED: &str = " was redirected to ";
+/// What a secret's value is shown as.
+pub const REDACTED: &str = "[redacted]";
 /// Between a failure's sentence and the excerpt of the body it read.
 pub const BODY_BEGAN: &str = " - the response began: ";
 
@@ -49,6 +65,129 @@ pub const BODY_BEGAN: &str = " - the response began: ";
 const ABORTED: &str = "net::ERR_ABORTED";
 /// At most this much of a body is judged - the API templates' own cap.
 const MAX_BODY_CHARS: usize = 65_536;
+
+/// The in-page GET an `api_request` sends: `fetch` by the page itself, so
+/// the browser attaches the site's cookies; no anti-forgery token (a GET
+/// does not need one). Aborted after `limitMs`. At most 64 KB of the body
+/// comes back, with `over` saying there was more; `finalPath` is the path
+/// and query the answer came from (the query is never shown). A request
+/// that did not complete comes back as `{ error }`, never a throw. The
+/// API templates' `FETCH_FN` is the pattern.
+pub const GET_FN: &str = r#"async function (url, limitMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), limitMs || 30000);
+  try {
+    const r = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" }, signal: ctrl.signal });
+    const whole = await r.text();
+    const at = new URL(r.url || url, location.href);
+    return { status: r.status, contentType: r.headers.get("content-type"), finalPath: at.pathname + at.search,
+             redirected: r.redirected, text: whole.slice(0, 65536), over: whole.length > 65536 };
+  } catch (e) {
+    return { error: e && e.name === "AbortError" ? "timeout" : String(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}"#;
+
+/// A response body as a check holds it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Body {
+    /// The whole body, at most 64 KB.
+    Text(String),
+    /// Its first 64 KB: there was more, so it is not judged as JSON.
+    Over(String),
+    /// Chrome no longer holds it.
+    Gone,
+    /// Chrome gave it back, but it could not be decoded.
+    Unreadable,
+}
+
+impl Body {
+    /// `text` as a body, `Over` when it is longer than the cap.
+    fn capped(text: String) -> Body {
+        if text.chars().count() > MAX_BODY_CHARS {
+            Body::Over(text.chars().take(MAX_BODY_CHARS).collect())
+        } else {
+            Body::Text(text)
+        }
+    }
+
+    /// What there is to show of it.
+    fn text(&self) -> Option<&str> {
+        match self {
+            Body::Text(t) | Body::Over(t) => Some(t),
+            Body::Gone | Body::Unreadable => None,
+        }
+    }
+}
+
+/// The words a key holding a secret is named with - any part of the name,
+/// in any case: `access_token`, `Password`, `sessionId`, `Set-Cookie`.
+const SECRET_WORDS: [&str; 6] = ["token", "password", "secret", "authorization", "cookie", "session"];
+
+fn secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    SECRET_WORDS.iter().any(|w| key.contains(w))
+}
+
+/// `v` with the value of every key named like a secret replaced by
+/// `REDACTED`, at any depth.
+fn redact(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, x)| {
+                    let x = if secret_key(k) { Value::String(REDACTED.to_string()) } else { redact(x) };
+                    (k.clone(), x)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(redact).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A JSON member named like a secret, and its value (a string - perhaps
+/// cut off - or a bare scalar), in text that does not parse: a body cut at
+/// the cap, or JSON inside a page.
+static SECRET_MEMBER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)("[^"\\]*(?:token|password|secret|authorization|cookie|session)[^"\\]*"\s*:\s*)(?:"(?:[^"\\]|\\.)*"?|[^,{}\[\]\s"]+)"#,
+    )
+    .unwrap()
+});
+
+/// What a failure may quote of a body, for both kinds of check: a JSON body
+/// with every value under a key named like a secret hidden (text that does
+/// not parse gets the same, member by member), anti-forgery tokens
+/// scrubbed, then the 500-character excerpt.
+pub fn shown_body(body: &str) -> String {
+    let hidden = match serde_json::from_str::<Value>(body) {
+        Ok(v) => serde_json::to_string(&redact(&v)).unwrap_or_default(),
+        Err(_) => SECRET_MEMBER.replace_all(body, format!("${{1}}\"{REDACTED}\"")).into_owned(),
+    };
+    excerpt(&scrub_tokens(&hidden, None))
+}
+
+/// A value of the answer as a field mismatch quotes it: hidden whole when
+/// any key it sits under is named like a secret, and hidden within.
+fn show_answer(keys: &[&str], v: &Value) -> String {
+    if keys.iter().any(|k| secret_key(k)) {
+        format!("\"{REDACTED}\"")
+    } else {
+        serde_json::to_string(&redact(v)).unwrap_or_default()
+    }
+}
+
+/// A failure's sentence, and the excerpt of the body when there is one.
+fn failed_showing(why: String, body: Option<&str>) -> ActionOutcome {
+    let shown = body.map(shown_body).unwrap_or_default();
+    if shown.is_empty() {
+        ActionOutcome::failed(why)
+    } else {
+        ActionOutcome::failed(format!("{why}{BODY_BEGAN}{shown}"))
+    }
+}
 
 /// Which of the step's requests an `expect_response` is about.
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +261,14 @@ fn not_finished(e: &NetEntry, waited_ms: u64) -> String {
 /// when one was read; it is needed only when `json` asks for fields.
 /// Pure: the sentences, with no excerpt (the caller adds that).
 pub fn judge(entry: &NetEntry, status: u16, json: Option<&Value>, body: Option<&str>) -> Result<(), String> {
+    let body = match body {
+        Some(text) => Body::Text(text.to_string()),
+        None => Body::Gone,
+    };
+    judge_body(entry, status, json, &body)
+}
+
+fn judge_body(entry: &NetEntry, status: u16, json: Option<&Value>, body: &Body) -> Result<(), String> {
     let who = named(entry);
     match &entry.state {
         NetState::Failed(why) if why.trim() == ABORTED => return Err(format!("{who}{CANCELLED}")),
@@ -129,18 +276,30 @@ pub fn judge(entry: &NetEntry, status: u16, json: Option<&Value>, body: Option<&
         NetState::Pending => return Err(format!("{who} had not finished")),
         NetState::Finished => {}
     }
-    match entry.status {
+    judge_answer(&who, entry.status, status, json, body)
+}
+
+/// The answer's status, then (with `json`) its body as a partial match -
+/// shared by both kinds of check. `who` is `<METHOD> <path>`.
+fn judge_answer(who: &str, got: Option<u16>, status: u16, json: Option<&Value>, body: &Body) -> Result<(), String> {
+    match got {
         Some(got) if got == status => {}
         Some(got) => return Err(format!("{who}{ANSWERED}{got}, expected {status}")),
         None => return Err(format!("{who}{ANSWERED}without a status, expected {status}")),
     }
     let Some(expected) = json else { return Ok(()) };
-    let Some(body) = body else { return Err(BODY_GONE.to_string()) };
-    let Ok(actual) = serde_json::from_str::<Value>(body) else {
+    let text = match body {
+        Body::Text(text) => text,
+        Body::Over(_) => return Err(format!("{RESPONSE_TO}{who}{OVER_CAP}")),
+        Body::Gone => return Err(BODY_GONE.to_string()),
+        Body::Unreadable => return Err(BODY_UNREADABLE.to_string()),
+    };
+    let Ok(actual) = serde_json::from_str::<Value>(text) else {
         return Err(format!("{RESPONSE_TO}{who} was not JSON"));
     };
-    // The mismatch can quote the answer's own values.
-    partial_match(expected, &actual).map_err(|why| format!("{RESPONSE_TO}{who}: {}", scrub_tokens(&why, None)))
+    // The mismatch quotes the answer's own values: secrets hidden first.
+    partial_match_shown(expected, &actual, &show_answer)
+        .map_err(|why| format!("{RESPONSE_TO}{who}: {}", scrub_tokens(&why, None)))
 }
 
 /// Read what is waiting from the browser, so a request the page sent
@@ -179,24 +338,96 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
         Ok(e) => e,
         Err(out) => return out,
     };
+    // Read only for a JSON check; otherwise never looked at.
     let body = match (json, &entry.state) {
         (Some(_), NetState::Finished) => match body_of(d, &entry.id).await {
             Ok(b) => b,
             Err(out) => return out,
         },
-        _ => None,
+        _ => Body::Gone,
     };
-    match judge(&entry, *status, json.as_ref(), body.as_deref()) {
+    match judge_body(&entry, *status, json.as_ref(), &body) {
         Ok(()) => ActionOutcome::passed(format!("{}{ANSWERED}{status}", named(&entry))),
-        Err(why) => {
-            let shown = body.as_deref().map(|b| excerpt(&scrub_tokens(b, None))).unwrap_or_default();
-            if shown.is_empty() {
-                ActionOutcome::failed(why)
-            } else {
-                ActionOutcome::failed(format!("{why}{BODY_BEGAN}{shown}"))
-            }
+        Err(why) => failed_showing(why, body.text()),
+    }
+}
+
+/// Carry out an `api_request`: the page sends the GET itself (`GET_FN`,
+/// on a fresh handle on the document), within the run's action timing,
+/// and the answer is judged as an `expect_response`'s is. An answer from
+/// another page - an ended session's sign-in page answers 200 too - fails,
+/// naming that page's path.
+pub async fn api_request<D: Driver>(d: &mut D, a: &Action, timing: &Timing) -> ActionOutcome {
+    let Action::ApiRequest { path, query, expect } = a else {
+        return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an api_request"));
+    };
+    // The path again (safe, on this site, no query of its own), before
+    // anything is sent.
+    if let Err(why) = a.validate() {
+        return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
+    }
+    let who = format!("GET {path}");
+    let query = encode_query(query);
+    let url = if query.is_empty() { path.clone() } else { format!("{path}?{query}") };
+    let doc = match page::document(d).await {
+        Ok(h) => h,
+        Err(CdpError::Protocol { .. }) => return ActionOutcome::failed(format!("{who}{NET_FAILED}the page could not send it")),
+        Err(e) => return harness(e),
+    };
+    // The page aborts its own request at the limit; the DevTools call
+    // waits a little longer, so it is the page that says so.
+    let args = [Value::String(url.clone()), Value::from(timing.action_ms)];
+    let limit = Duration::from_millis(timing.action_ms) + FETCH_GRACE;
+    let got = match page::call_value_within(d, &doc, GET_FN, &args, limit).await {
+        Ok(v) => v,
+        // Whatever the page threw may quote the address: not repeated.
+        Err(CdpError::Protocol { .. }) => return ActionOutcome::failed(format!("{who}{NET_FAILED}the page could not send it")),
+        Err(e) => return harness(e),
+    };
+    if let Some(err) = got.get("error") {
+        let err = match err {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        return ActionOutcome::failed(format!("{who}{NET_FAILED}{}", fetch_error(&err, &url, path)));
+    }
+    let Some(status) = got["status"].as_u64().and_then(|s| u16::try_from(s).ok()) else {
+        return ActionOutcome::failed(format!("{who}{NET_FAILED}the page gave no answer"));
+    };
+    let text = got["text"].as_str().unwrap_or("").to_string();
+    if got["redirected"].as_bool() == Some(true) {
+        let landed = path_only(got["finalPath"].as_str().unwrap_or(""));
+        if landed != path.as_str() {
+            let to = if landed.is_empty() { "another page" } else { landed };
+            return failed_showing(format!("{who}{REDIRECTED}{to}"), Some(&text));
         }
     }
+    let body = if got["over"].as_bool() == Some(true) { Body::Over(text) } else { Body::Text(text) };
+    match judge_answer(&who, Some(status), expect.status, expect.json.as_ref(), &body) {
+        Ok(()) => ActionOutcome::passed(format!("{who}{ANSWERED}{status}")),
+        Err(why) => failed_showing(why, body.text()),
+    }
+}
+
+/// An address's path: no scheme or host, no query or fragment.
+fn path_only(address: &str) -> &str {
+    let rest = match address.find("://") {
+        Some(i) => {
+            let after = &address[i + 3..];
+            after.find('/').map_or("", |j| &after[j..])
+        }
+        None => address,
+    };
+    without_query(rest)
+}
+
+/// The page's reason a GET did not complete, safe to keep: the address it
+/// sent named by its path, and any other address in it cut to its path -
+/// the browser's words can quote the whole address, query and all.
+fn fetch_error(err: &str, url: &str, path: &str) -> String {
+    let named = err.replace(url, path);
+    let words: Vec<&str> = named.split_whitespace().map(path_only).filter(|w| !w.is_empty()).collect();
+    excerpt(&scrub_tokens(&words.join(" "), None))
 }
 
 /// Look until a matching request has finished or failed. A failed match
@@ -246,23 +477,24 @@ async fn watch<D: Driver>(
     }
 }
 
-/// The response body, as text, cut to `MAX_BODY_CHARS`. `Ok(None)` when
-/// Chrome no longer holds it (it refuses the request); a browser that does
-/// not answer at all is a harness failure.
-async fn body_of<D: Driver>(d: &mut D, request_id: &str) -> Result<Option<String>, ActionOutcome> {
+/// The response body, as text, `Over` past `MAX_BODY_CHARS`. `Gone` when
+/// Chrome no longer holds it (it refuses the request), `Unreadable` when
+/// its base64 does not decode; a browser that does not answer at all is a
+/// harness failure.
+async fn body_of<D: Driver>(d: &mut D, request_id: &str) -> Result<Body, ActionOutcome> {
     let got = match d.call("Network.getResponseBody", json!({ "requestId": request_id })).await {
         Ok(v) => v,
-        Err(CdpError::Protocol { .. }) => return Ok(None),
+        Err(CdpError::Protocol { .. }) => return Ok(Body::Gone),
         Err(e) => return Err(harness(e)),
     };
-    let Some(raw) = got["body"].as_str() else { return Ok(None) };
+    let Some(raw) = got["body"].as_str() else { return Ok(Body::Gone) };
     let text = if got["base64Encoded"].as_bool() == Some(true) {
         match base64::engine::general_purpose::STANDARD.decode(raw) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(_) => return Ok(None),
+            Err(_) => return Ok(Body::Unreadable),
         }
     } else {
         raw.to_string()
     };
-    Ok(Some(text.chars().take(MAX_BODY_CHARS).collect()))
+    Ok(Body::capped(text))
 }

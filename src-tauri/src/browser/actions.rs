@@ -337,6 +337,10 @@ impl Action {
                 if url_contains.trim().is_empty() {
                     return Err("expect_response needs url_contains".to_string());
                 }
+                // The record holds no host: a whole address could never match.
+                if url_contains.contains("://") {
+                    return Err("url_contains is a path fragment, not a full address".to_string());
+                }
                 if let Some(m) = method {
                     if !HTTP_METHODS.iter().any(|k| k.eq_ignore_ascii_case(m.trim())) {
                         return Err(format!("expect_response method \"{m}\" is not an HTTP method"));
@@ -345,6 +349,14 @@ impl Action {
                 check_status(*status)
             }
             Action::ApiRequest { path, expect, .. } => {
+                // The query goes only through `query`. Only what comes
+                // before the `?` is repeated: what follows can be a token.
+                if let Some(i) = path.find(['?', '#']) {
+                    return Err(format!(
+                        "api_request path \"{}\" must not contain ? or # - put the query in \"query\"",
+                        &path[..i]
+                    ));
+                }
                 if !crate::api_templates::is_safe_relative_path(path) {
                     return Err(format!("api_request path \"{path}\" is not a safe path on this site"));
                 }
