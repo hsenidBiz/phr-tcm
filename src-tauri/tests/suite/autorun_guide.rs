@@ -72,6 +72,47 @@ fn the_guide_teaches_locators_and_forbids_pauses() {
     }
 }
 
+/// The two API checks have limits an assistant cannot guess: what each one
+/// can look at, what it assumes when a field is left out, and where its
+/// facts may come from. The guide must say all of it, and must send the
+/// assistant to the proven API templates as REFERENCE only.
+#[test]
+fn the_guide_teaches_the_api_checks_and_their_limits() {
+    let g = autorun_guide();
+    assert!(g.contains("## Checking the API"), "the guide has no API section");
+    let section = g.split_once("## Checking the API").unwrap().1;
+    let section = section.split("\n## ").next().unwrap();
+    for term in [
+        "expect_response",
+        "api_request",
+        "GET only",
+        "since the step began",
+        "url_contains",
+        "/PerformanceCycle/Save",
+        "never a full address",
+        "status",
+        "200",
+        "only the fields you list",
+        "list_api_templates",
+        "reference only",
+        "never run a template from a script",
+        "expected result",
+    ] {
+        assert!(section.contains(term), "the API section never says {term:?}");
+    }
+    // A host never matches and is refused: the assistant has to know why.
+    assert!(section.contains("host"), "the API section never mentions the host");
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    // Every example line in the section is a real action, so a copied one runs.
+    let mut seen = 0;
+    for line in section.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
+        let action: Action = serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("{line}: {e}"));
+        action.validate().unwrap_or_else(|e| panic!("{line} is refused: {e}"));
+        seen += 1;
+    }
+    assert!(seen >= 2, "the API section should show both kinds as examples");
+}
+
 /// The assistant can read code, so the guide has to say what code is and
 /// is not allowed to decide. Reading an implementation to learn WHERE a
 /// button is is fine; reading it to learn what SHOULD happen turns the

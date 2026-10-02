@@ -322,7 +322,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands, how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -427,7 +427,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - and the project's flows, each with its stages and the templates on them - and its Test files (names and sizes), the only files a step's `files` may name. Check here before building a template - the one you need may already exist.",
+            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - and the project's flows, each with its stages and the templates on them - and its Test files (names and sizes), the only files a step's `files` may name. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script).",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {

@@ -1479,3 +1479,114 @@ async fn the_page_log_names_a_failed_request_and_a_console_error_from_a_real_bro
     assert!(failed.ends_with(&format!("GET http://127.0.0.1:{port}/hr/pmsv10/menu")), "{failed}");
     assert!(!lines.iter().any(|l| l.contains("secret")), "{lines:?}");
 }
+
+/// The two API checks against a real page and a real server. The page
+/// POSTs with `fetch` when a button is clicked; the server answers JSON.
+/// `expect_response` has to see that request (and only a request made
+/// during its own step), pass on the right status and fields, and fail on
+/// a wrong status or a wrong field. `api_request` has to make the page
+/// send a GET whose query arrives encoded, and judge the answer the same
+/// way. What is checked is what the SERVER saw and answered, never what
+/// Rust believes it sent.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn api_checks_read_the_requests_a_real_page_makes() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<button id="save" onclick="fetch('/PerformanceCycle/Save?token=hunter2', { method: 'POST' }).then(r => r.text()).then(t => { document.getElementById('out').textContent = t; })">Save</button>
+<p id="out"></p>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    // The thread ends with the test process; the listener has no other owner.
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else { continue };
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let line = head.lines().next().unwrap_or("").to_string();
+            log.lock().unwrap().push(line.clone());
+            let (kind, body) = if line.starts_with("POST /PerformanceCycle/Save") {
+                ("application/json", r#"{"success":true,"id":7}"#.to_string())
+            } else if line.starts_with("GET /api/cycles/42") {
+                let include = line.split("include=").nth(1).and_then(|r| r.split([' ', '&']).next()).unwrap_or("none");
+                ("application/json", format!(r#"{{"name":"Q4 Cycle","include":"{include}","extra":1}}"#))
+            } else if line.starts_with("GET / ") {
+                ("text/html; charset=utf-8", PAGE.to_string())
+            } else {
+                let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                continue;
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let mut step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
+        step_number: number,
+        actions: actions.into_iter().map(action_of).collect(),
+        unchecked: None,
+    };
+    let click = json!({ "kind": "click", "selector": { "css": "#save" } });
+
+    // The click and its check share a step: right status, right fields.
+    let right = step(1, vec![
+        click.clone(),
+        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/performancecycle/save", "json": { "success": true } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &right, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(!out[1].detail.contains("hunter2"), "the query string reached the outcome: {}", out[1].detail);
+    let echoed = page::eval_value(&mut live.cdp, "document.getElementById('out').textContent").await.unwrap();
+    assert_eq!(echoed.as_str(), Some(r#"{"success":true,"id":7}"#), "the page never made the request");
+
+    // A wrong status and a wrong field both fail, naming the method and path.
+    let wrong = step(2, vec![
+        click.clone(),
+        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "status": 500 }),
+        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "json": { "success": false } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    refused(out[1].clone(), "answered 200, expected 500");
+    refused(out[2].clone(), "success");
+    for o in &out[1..] {
+        assert!(!o.detail.contains("hunter2") && !o.detail.contains("127.0.0.1"), "{}", o.detail);
+    }
+
+    // The earlier steps' requests are not this step's: nothing was sent here.
+    let none = step(3, vec![json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "timeout_ms": 600 })]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &none, &timing(), &mut account).await.unwrap();
+    refused(out[0].clone(), "no request matching");
+
+    // api_request: the page sends the GET, the query arrives encoded, and
+    // the answer is judged by status and by the fields listed.
+    let ask = step(4, vec![
+        json!({ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" },
+                "expect": { "status": 200, "json": { "name": "Q4 Cycle", "include": "rules" } } }),
+        json!({ "kind": "api_request", "path": "/api/cycles/42", "expect": { "json": { "name": "Q1 Cycle" } } }),
+        json!({ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 404 } }),
+        json!({ "kind": "api_request", "path": "/api/missing" }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &ask, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    refused(out[1].clone(), "GET /api/cycles/42");
+    refused(out[2].clone(), "answered 200, expected 404");
+    refused(out[3].clone(), "answered 404, expected 200");
+    assert!(
+        seen.lock().unwrap().iter().any(|l| l.starts_with("GET /api/cycles/42?include=rules ")),
+        "the server never saw the encoded query: {:?}",
+        seen.lock().unwrap()
+    );
+}
