@@ -10,7 +10,6 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import { commands, type PbiHit } from "../../bindings";
-import { Badge } from "../../components/ui/badge";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
@@ -22,6 +21,7 @@ import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/env
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
+  IconAdd,
   IconCancel,
   IconClearScripts,
   IconEdit,
@@ -156,9 +156,9 @@ export default function AutoRun({
   const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
-   * assistant's whole-PBI output imports in one go. Every badge is
-   * invalidated afterwards, or the rows would keep saying "No script"
-   * for the cases that just gained one.
+   * assistant's whole-PBI output imports in one go. Every script
+   * query is invalidated afterwards, or the rows would keep offering "Add
+   * script" and no Run for the cases that just gained one.
    *
    * The path goes to Rust rather than reading the file here and sending
    * its contents: `readFileB64` + `atob` decodes to a latin-1 binary
@@ -238,7 +238,7 @@ export default function AutoRun({
   /** Development-only housekeeping: wipe the saved scripts for every case
    * currently listed for this PBI. A missing script for one of them is not
    * an error - `store::clear_scripts` skips it - so this always hands over
-   * the full list rather than just the ones the badges say are scripted. */
+   * the full list rather than just the ones the rows show as scripted. */
   const clearScripts = useMutation({
     mutationFn: () => unwrapStr(commands.autoRunClearScripts(rows.map((c) => c.id))),
     onSuccess: async (removed) => {
@@ -301,30 +301,28 @@ export default function AutoRun({
             rows do - a truncated title is exactly the part that tells two
             similar cases apart. */}
         <span className="min-w-0 flex-1 break-words text-text">{c.title}</span>
-        {ready ? (
-          <Badge className="shrink-0 bg-success/15 text-success">Script ready</Badge>
-        ) : (
-          <Badge className="shrink-0 bg-surface-2 text-faint">No script</Badge>
-        )}
-        {/* Script and Run are a pair of equals on every row: the same
-            size and weight, so a list of twenty is not twenty bright
-            buttons. The one primary action on the screen is running the
-            selection, in the dock. */}
+        {/* No "Script ready" badge: the row says it with its buttons. A
+            scripted case has a Run button, outlined in the success colour
+            so a list reads at a glance as "these can run"; a case with no
+            script has no Run button, and its script button says Add.
+            Both stay outline buttons of one size, so a list of twenty is
+            not twenty bright buttons - the one primary action on the
+            screen is running the selection, in the dock. */}
         <Button
           size="sm"
           variant="outline"
           className="shrink-0"
-          aria-label={`Edit script for #${c.id}`}
+          aria-label={`${ready ? "Edit" : "Add"} script for #${c.id}`}
           onClick={() => setEditing(c.id)}
         >
-          <IconEdit aria-hidden />
-          Script
+          {ready ? <IconEdit aria-hidden /> : <IconAdd aria-hidden />}
+          {ready ? "Script" : "Add script"}
         </Button>
         {ready && (
           <Button
             size="sm"
             variant="outline"
-            className="shrink-0"
+            className="shrink-0 border-success text-success hover:border-success hover:bg-success/10 hover:text-success"
             aria-label={`Run #${c.id}`}
             onClick={() => setRunning([c.id])}
           >

@@ -47,7 +47,10 @@ const cases = [
 ];
 
 /// Most cases have no script, and that is the normal state - the screen
-/// has to say which are drivable rather than looking broken.
+/// has to say which are drivable rather than looking broken. It says it with
+/// the row's buttons, not a badge: a scripted case has a Run button outlined
+/// in the success colour; an unscripted one has none, and its script button
+/// says Add.
 test("lists the PBI's cases and marks which ones have a script", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -63,8 +66,14 @@ test("lists the PBI's cases and marks which ones have a script", async () => {
 
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Locked account")).toBeInTheDocument();
-  expect(await screen.findByText("Script ready")).toBeInTheDocument();
-  expect(screen.getByText("No script")).toBeInTheDocument();
+  const run = await screen.findByRole("button", { name: "Run #201" });
+  expect(run).toHaveClass("border-success");
+  expect(screen.getByRole("button", { name: "Edit script for #201" })).toHaveTextContent("Script");
+  expect(screen.getByRole("button", { name: "Add script for #202" })).toHaveTextContent("Add script");
+  expect(screen.queryByRole("button", { name: "Run #202" })).not.toBeInTheDocument();
+  // The badges are gone.
+  expect(screen.queryByText("Script ready")).not.toBeInTheDocument();
+  expect(screen.queryByText("No script")).not.toBeInTheDocument();
 });
 
 /// The whole feature is local until the person presses Send. Saying so on
@@ -115,7 +124,7 @@ test("importing scripts sends the picked file's path, and the badge updates", as
 
   const row = (await screen.findByText("Valid login")).closest("li");
   if (!row) throw new Error("row for case #201 not found");
-  expect(within(row).getByText("No script")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Import scripts" }));
 
@@ -187,7 +196,7 @@ test("the script editor refuses invalid JSON instead of saving it", async () => 
   });
   renderAutoRun();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
   const box = await screen.findByLabelText("Action script JSON");
   fireEvent.change(box, { target: { value: "{ not json" } });
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
@@ -209,7 +218,7 @@ test("a valid script is saved for that case id", async () => {
   });
   renderAutoRun();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
   const box = await screen.findByLabelText("Action script JSON");
   fireEvent.change(box, {
     target: {
@@ -226,14 +235,15 @@ test("a valid script is saved for that case id", async () => {
   expect(script.steps).toHaveLength(1);
 });
 
-/// The list's badge and Run button are driven by the SAME `["autorun-script",
-/// caseId]` query the editor reads. A save that never invalidates that key
-/// leaves both stuck on "No script" until the person leaves the section and
+/// The row's script button and Run button are driven by the SAME
+/// `["autorun-script", caseId]` query the editor reads. A save that never
+/// invalidates that key leaves both stuck on "Add script" and no Run until
+/// the person leaves the section and
 /// comes back - the case they just scripted can't be run. `scriptFor201`
 /// starts null and only becomes non-null once the save handler below fires,
 /// so this fails without the invalidation (the query would keep serving its
 /// cached `null` forever, `refetchOnWindowFocus` being off).
-test("saving a script invalidates its query so the badge and Run button update in place", async () => {
+test("saving a script invalidates its query so the script and Run buttons update in place", async () => {
   let scriptFor201: unknown = null;
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -253,10 +263,9 @@ test("saving a script invalidates its query so the badge and Run button update i
   });
   renderAutoRun();
 
-  const editButton = await screen.findByRole("button", { name: "Edit script for #201" });
+  const editButton = await screen.findByRole("button", { name: "Add script for #201" });
   const row = editButton.closest("li");
   if (!row) throw new Error("row for case #201 not found");
-  expect(within(row).getByText("No script")).toBeInTheDocument();
   expect(within(row).queryByRole("button", { name: "Run #201" })).not.toBeInTheDocument();
 
   fireEvent.click(editButton);
@@ -270,8 +279,10 @@ test("saving a script invalidates its query so the badge and Run button update i
   });
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
 
-  await waitFor(() => expect(within(row).getByText("Script ready")).toBeInTheDocument());
-  expect(within(row).getByRole("button", { name: "Run #201" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(within(row).getByRole("button", { name: "Edit script for #201" })).toBeInTheDocument(),
+  );
+  expect(within(row).getByRole("button", { name: "Run #201" })).toHaveClass("border-success");
 });
 
 /// A case that already has a saved script has never had its load-and-prefill
@@ -315,7 +326,7 @@ test("refuses to save while the existing script is still loading", async () => {
   });
   renderAutoRun();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
   const saveButton = await screen.findByRole("button", { name: "Save script" });
   expect(saveButton).toBeDisabled();
 
@@ -341,7 +352,7 @@ test("refuses to save when the existing script fails to load", async () => {
   });
   renderAutoRun();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
   const saveButton = await screen.findByRole("button", { name: "Save script" });
   await waitFor(() => expect(saveButton).toBeDisabled());
 
