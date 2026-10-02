@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "../components/ui/button";
 import { CASE_ITEMS, WORK_ITEMS } from "../components/Sidebar";
 import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
+import { titleBarPx } from "../lib/titleBar";
 import {
   TOUR_STEPS,
   tourAwaitedWhere,
@@ -258,13 +259,17 @@ export default function UiTour({
       ? (() => {
           const vw = window.innerWidth;
           const vh = window.innerHeight;
+          // The window's title bar is never swallowed: like every dialog
+          // (lib/titleBar), the tour leaves it draggable and its window
+          // buttons working, so the pieces start below it.
+          const tb = titleBarPx();
           // Clamp the ring into the viewport BEFORE cutting the four
           // pieces from it. An anchor taller or wider than the window -
           // what `scrollIntoView({block:"center"})` gives a section that
           // does not fit - would otherwise push `bottom`/`right` past the
           // edge of the screen, leaving the hole unbounded on that side.
-          const top = Math.min(Math.max(0, rect.top - pad), vh);
-          const bottom = Math.min(Math.max(0, rect.bottom + pad), vh);
+          const top = Math.min(Math.max(tb, rect.top - pad), vh);
+          const bottom = Math.min(Math.max(tb, rect.bottom + pad), vh);
           const left = Math.min(Math.max(0, rect.left - pad), vw);
           const right = Math.min(Math.max(0, rect.right + pad), vw);
           const height = Math.max(0, bottom - top);
@@ -274,16 +279,16 @@ export default function UiTour({
           // behind it. The plain full-viewport sheet (same as every other
           // stop) is the safe fallback.
           if (width * height > (vw * vh) / 2) {
-            return [{ top: 0, left: 0, right: 0, bottom: 0 }];
+            return [{ top: tb, left: 0, right: 0, bottom: 0 }];
           }
           return [
-            { top: 0, left: 0, right: 0, height: top },
+            { top: tb, left: 0, right: 0, height: top - tb },
             { top: bottom, left: 0, right: 0, bottom: 0 },
             { top, left: 0, width: left, height },
             { top, left: right, right: 0, height },
           ];
         })()
-      : [{ top: 0, left: 0, right: 0, bottom: 0 }];
+      : [{ top: titleBarPx(), left: 0, right: 0, bottom: 0 }];
 
   return createPortal(
     <div

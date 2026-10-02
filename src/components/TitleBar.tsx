@@ -1,5 +1,6 @@
 import { Minus, Square, X } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect } from "react";
+import { TITLE_BAR_HEIGHT, TITLE_BAR_VAR } from "../lib/titleBar";
 import BetaPill from "./BetaPill";
 import EnvironmentPill from "./EnvironmentPill";
 import FlaskLogo from "./FlaskLogo";
@@ -25,10 +26,24 @@ export default function TitleBar({
     return getCurrentWindow();
   }, []);
 
+  // While the bar is on screen, every full-window overlay starts below it
+  // (lib/titleBar), so a dialog leaves the window draggable and its
+  // minimise / maximise / close buttons working. A layout effect, so the
+  // value is in place before the first paint of anything that reads it.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty(TITLE_BAR_VAR, TITLE_BAR_HEIGHT);
+    return () => {
+      root.style.removeProperty(TITLE_BAR_VAR);
+    };
+  }, []);
+
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 shrink-0 select-none items-center gap-2 border-b border-border bg-surface pl-3"
+      data-title-bar
+      style={{ height: TITLE_BAR_HEIGHT }}
+      className="flex shrink-0 select-none items-center gap-2 border-b border-border bg-surface pl-3"
     >
       <span className="pointer-events-none flex items-center gap-2 text-accent-fill">
         <FlaskLogo size={15} />

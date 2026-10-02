@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/button";
 import { useFocusTrap } from "../../components/ui/focusTrap";
 import { Textarea } from "../../components/ui/input";
 import { IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
+import { belowTitleBar } from "../../lib/titleBar";
 
 /** A small dialog for reading (and editing) one case's local comment,
  * opened from the row's Comment chip - no need to expand the whole case. */
@@ -54,6 +55,8 @@ export default function CommentModal({
       aria-modal="true"
       aria-label={`Comment for #${c.id}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      // Below the window's title bar, like every dialog (lib/titleBar).
+      style={belowTitleBar}
     >
       <div
         ref={panel}

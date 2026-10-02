@@ -24,6 +24,7 @@ import { Skeleton } from "./ui/skeleton";
 import CommentsPanel from "./CommentsPanel";
 import HistoryPanel from "./HistoryPanel";
 import { IconCancel, IconConfirm } from "../lib/actionIcons";
+import { belowTitleBar } from "../lib/titleBar";
 
 type Draft = {
   title: string;
@@ -323,15 +324,18 @@ export default function WorkItemDrawer({
       aria-modal="true"
       aria-label={`Work item ${itemId}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:px-10 md:py-6"
+      // Below the window's title bar, like every dialog (lib/titleBar).
+      style={belowTitleBar}
     >
       <div
         ref={panel}
         tabIndex={-1}
         className="modal-in flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl focus:outline-none"
       >
-        {/* The modal covers the window's title-bar drag region, so its own
-            header doubles as one - drag it to move the window (buttons and
-            the title text opt out so they stay clickable/selectable). */}
+        {/* The window's title bar stays draggable above this overlay, and
+            this header doubles as a drag region too - drag it to move the
+            window (buttons and the title text opt out so they stay
+            clickable/selectable). */}
         <header
           data-tauri-drag-region
           className="flex select-none items-center justify-between border-b border-border px-5 py-3"

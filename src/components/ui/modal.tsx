@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, type Rea
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
 import { leaveExitGhost } from "../../lib/exitGhost";
+import { belowTitleBar } from "../../lib/titleBar";
 import { useFocusTrap } from "./focusTrap";
 
 /**
@@ -10,7 +11,11 @@ import { useFocusTrap } from "./focusTrap";
  * otherwise trap a `position: fixed` overlay inside that (scrollable)
  * region instead of the viewport - the backdrop covered only the screen
  * area and the panel centered within it, so a tall list pushed the modal
- * off-screen. Rendering at <body> makes `fixed inset-0` the whole viewport.
+ * off-screen. Rendering at <body> makes `fixed inset-0` the whole viewport -
+ * less the custom title bar, which the backdrop starts below
+ * (`belowTitleBar`), so the window can still be dragged, minimised,
+ * maximised or closed while a dialog is open. The panel centres in what is
+ * left.
  * Escape closes; backdrop click closes; clicks inside the panel don't.
  *
  * Focus is TRAPPED here and restored on close, via `useFocusTrap` - see
@@ -111,6 +116,7 @@ export function Modal({
       <div
         ref={backdrop}
         className="t-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        style={belowTitleBar}
         onClick={onClose}
       >
         <div
