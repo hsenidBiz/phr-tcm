@@ -190,8 +190,8 @@ fn the_commands_land_in_their_own_namespace() {
 fn merge_entry_creates_key_and_entry_on_empty_object() {
     let out = merge_entry("{}", "mcpServers", &tcm_server("C:/app/v2.exe")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["mcpServers"]["tcm-testcases"]["command"], "C:/app/v2.exe");
-    assert_eq!(v["mcpServers"]["tcm-testcases"]["args"][0], "--mcp");
+    assert_eq!(v["mcpServers"]["tcm"]["command"], "C:/app/v2.exe");
+    assert_eq!(v["mcpServers"]["tcm"]["args"][0], "--mcp");
 }
 
 #[test]
@@ -205,21 +205,21 @@ fn merge_entry_preserves_unrelated_servers() {
     let out = merge_entry(existing, "mcpServers", &tcm_server("C:/app/v2.exe")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["mcpServers"]["other-server"]["command"], "other.exe");
-    assert_eq!(v["mcpServers"]["tcm-testcases"]["command"], "C:/app/v2.exe");
+    assert_eq!(v["mcpServers"]["tcm"]["command"], "C:/app/v2.exe");
     assert_eq!(v["someOtherTopLevelField"], true);
 }
 
 #[test]
-fn merge_entry_replaces_existing_tcm_testcases_entry() {
+fn merge_entry_replaces_our_existing_entry() {
     let existing = r#"{
         "mcpServers": {
-            "tcm-testcases": { "command": "stale/old.exe", "args": ["--old-flag"] }
+            "tcm": { "command": "stale/old.exe", "args": ["--old-flag"] }
         }
     }"#;
     let out = merge_entry(existing, "mcpServers", &tcm_server("C:/app/v2.exe")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["mcpServers"]["tcm-testcases"]["command"], "C:/app/v2.exe");
-    assert_eq!(v["mcpServers"]["tcm-testcases"]["args"][0], "--mcp");
+    assert_eq!(v["mcpServers"]["tcm"]["command"], "C:/app/v2.exe");
+    assert_eq!(v["mcpServers"]["tcm"]["args"][0], "--mcp");
     // Only one entry under the key - no duplicate/stale leftover.
     assert_eq!(v["mcpServers"].as_object().unwrap().len(), 1);
 }
@@ -230,12 +230,12 @@ fn remove_entry_deletes_ours_and_preserves_everything_else() {
         "otherTopLevel": true,
         "mcpServers": {
             "someone-else": { "command": "x.exe" },
-            "tcm-testcases": { "command": "C:/app/v2.exe", "args": ["--mcp"] }
+            "tcm": { "command": "C:/app/v2.exe", "args": ["--mcp"] }
         }
     }"#;
     let out = remove_entry(existing, "mcpServers", TCM_SERVER).unwrap().expect("entry was present");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert!(v["mcpServers"].get("tcm-testcases").is_none());
+    assert!(v["mcpServers"].get("tcm").is_none());
     assert_eq!(v["mcpServers"]["someone-else"]["command"], "x.exe");
     assert_eq!(v["otherTopLevel"], true);
 }
@@ -284,7 +284,7 @@ fn fake_layout() -> (TempDir, TempDir) {
     std::fs::create_dir_all(home.path().join(".claude")).unwrap();
     std::fs::write(
         home.path().join(".claude.json"),
-        r#"{"mcpServers": {"tcm-testcases": {"command": "x", "args": ["--mcp"]}}}"#,
+        r#"{"mcpServers": {"tcm": {"command": "x", "args": ["--mcp"]}}}"#,
     )
     .unwrap();
 
@@ -314,7 +314,7 @@ fn detect_finds_installed_and_registered_states() {
 
     let cc = by_id("claude-code");
     assert!(cc.installed, "claude-code: .claude dir should mark it installed");
-    assert_eq!(cc.registered_servers, vec![TCM_SERVER], "claude-code: .claude.json already has tcm-testcases");
+    assert_eq!(cc.registered_servers, vec![TCM_SERVER], "claude-code: .claude.json already has ours");
 
     let cd = by_id("claude-desktop");
     assert!(cd.installed, "claude-desktop: appdata/Claude dir present marks it installed");
@@ -419,7 +419,7 @@ fn detect_reports_each_managed_server_separately() {
         dir.path().join(".cursor").join("mcp.json"),
         serde_json::json!({
             "mcpServers": {
-                "tcm-testcases": { "command": "v2.exe" },
+                "tcm": { "command": "v2.exe" },
                 "somebody-elses": { "command": "other.exe" }
             }
         })
@@ -462,7 +462,7 @@ fn project_configs_sit_in_the_repo_for_the_tools_that_have_them() {
 /// config - a user-scope entry must not make the repo look registered.
 #[test]
 fn detect_reads_the_repo_config_when_a_working_dir_is_given() {
-    let (home, appdata) = fake_layout(); // ~/.claude.json carries tcm-testcases globally
+    let (home, appdata) = fake_layout(); // ~/.claude.json carries ours globally
     let repo = TempDir::new();
     std::fs::write(
         repo.path().join(".mcp.json"),
@@ -492,7 +492,7 @@ fn detect_reads_the_repo_config_when_a_working_dir_is_given() {
 /// appear as `registered_servers`, which is what "Registered ✓" means.
 #[test]
 fn a_repo_row_reports_the_leftover_global_entry_separately() {
-    let (home, appdata) = fake_layout(); // ~/.claude.json carries tcm-testcases globally
+    let (home, appdata) = fake_layout(); // ~/.claude.json carries ours globally
     let repo = TempDir::new();
     std::fs::write(repo.path().join(".mcp.json"), r#"{"mcpServers": {}}"#).unwrap();
     let home_str = home.path().to_string_lossy().to_string();
@@ -886,14 +886,14 @@ fn mcp_add_puts_the_name_before_the_env_pairs() {
 #[test]
 fn mcp_add_without_env_is_name_then_command() {
     let server = McpServer {
-        name: "tcm-testcases".to_string(),
+        name: "tcm".to_string(),
         command: "v2.exe".to_string(),
         args: vec!["--mcp".to_string()],
         env: Default::default(),
     };
     assert_eq!(
         mcp_add_args(&server, "user"),
-        vec!["mcp", "add", "--scope", "user", "tcm-testcases", "--", "v2.exe", "--mcp"]
+        vec!["mcp", "add", "--scope", "user", "tcm", "--", "v2.exe", "--mcp"]
     );
 }
 
@@ -903,7 +903,7 @@ fn mcp_add_without_env_is_name_then_command() {
 #[test]
 fn a_repo_registration_asks_for_project_scope() {
     let server = McpServer {
-        name: "tcm-testcases".to_string(),
+        name: "tcm".to_string(),
         command: "v2.exe".to_string(),
         args: vec!["--mcp".to_string()],
         env: Default::default(),
@@ -953,7 +953,7 @@ fn cmd_metacharacters_in_an_env_value_reach_the_cli_literally() {
 #[test]
 fn the_cli_is_run_directly_not_through_cmd() {
     let server = McpServer {
-        name: "tcm-testcases".into(),
+        name: "tcm".into(),
         command: "v2.exe".into(),
         args: vec!["--mcp".into()],
         env: Default::default(),
@@ -978,7 +978,7 @@ fn removing_the_legacy_db_server_takes_only_its_entry() {
         &cursor,
         serde_json::json!({
             "mcpServers": {
-                "tcm-testcases": { "command": "v2.exe", "args": ["--mcp"] },
+                "tcm": { "command": "v2.exe", "args": ["--mcp"] },
                 "phr-db-mcp": { "command": "db.exe", "env": { "CONNECTION_STRING": "Server=db;Password=p" } },
                 "somebody-elses": { "command": "other.exe" }
             },
@@ -994,7 +994,7 @@ fn removing_the_legacy_db_server_takes_only_its_entry() {
         serde_json::json!({
             "servers": {
                 "phr-db-mcp": { "type": "stdio", "command": "db.exe" },
-                "tcm-testcases": { "type": "stdio", "command": "v2.exe" }
+                "tcm": { "type": "stdio", "command": "v2.exe" }
             }
         })
         .to_string(),
@@ -1032,7 +1032,7 @@ fn removing_the_legacy_db_server_where_there_is_none_is_a_no_op() {
 
     let cursor = repo.path().join(".cursor").join("mcp.json");
     std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
-    let only_ours = r#"{"mcpServers":{"tcm-testcases":{"command":"v2.exe"}}}"#;
+    let only_ours = r#"{"mcpServers":{"tcm":{"command":"v2.exe"}}}"#;
     std::fs::write(&cursor, only_ours).unwrap();
     remove_legacy_db_server_now("cursor", Some(root.as_str()), false).unwrap();
     assert_eq!(std::fs::read_to_string(&cursor).unwrap(), only_ours, "a file without it is left as it was");
@@ -1079,17 +1079,384 @@ fn switching_on_and_off_leaves_a_fresh_claude_file_empty_and_refuses_one_it_cann
 #[test]
 fn the_cursor_entry_goes_in_and_out_of_its_allowlist() {
     use v2_lib::ai_tools::{set_cursor_allow, CURSOR_DB_QUERY_ENTRY as ENTRY};
-    assert_eq!(ENTRY, "tcm-testcases:db_query");
+    assert_eq!(ENTRY, "tcm:db_query");
     let theirs = r#"{"mcpAllowlist":["github:list_issues"],"terminalAllowlist":["git status"]}"#;
     let on = set_cursor_allow(theirs, ENTRY, true).unwrap().unwrap();
     let v: serde_json::Value = serde_json::from_str(&on).unwrap();
     assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues", ENTRY]));
     assert_eq!(v["terminalAllowlist"], serde_json::json!(["git status"]));
     // Cursor matches case-insensitively, so a differently-cased copy counts.
-    assert_eq!(set_cursor_allow(r#"{"mcpAllowlist":["TCM-TestCases:DB_Query"]}"#, ENTRY, true).unwrap(), None);
+    assert_eq!(set_cursor_allow(r#"{"mcpAllowlist":["TCM:DB_Query"]}"#, ENTRY, true).unwrap(), None);
     let off = set_cursor_allow(&on, ENTRY, false).unwrap().unwrap();
     let v: serde_json::Value = serde_json::from_str(&off).unwrap();
     assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues"]));
-    let emptied = set_cursor_allow(r#"{"mcpAllowlist":["tcm-testcases:db_query"]}"#, ENTRY, false).unwrap().unwrap();
+    let emptied = set_cursor_allow(r#"{"mcpAllowlist":["tcm:db_query"]}"#, ENTRY, false).unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&emptied).unwrap(), serde_json::json!({}));
+}
+
+// ------------------------------------------- the server's old name, `tcm-testcases`
+
+use v2_lib::ai_tools::{
+    config_carries, legacy_command_path, migrate_claude_permissions, migrate_cursor_permissions,
+    remove_legacy_command, superseded_by, LEGACY_TCM_SERVER, MANAGED_SERVERS,
+};
+use v2_lib::commands::ai_tools::{carry_over_rules_in, retire_superseded_claude};
+
+#[test]
+fn the_server_is_tcm_and_its_old_name_is_still_managed() {
+    assert_eq!(TCM_SERVER, "tcm");
+    assert_eq!(LEGACY_TCM_SERVER, "tcm-testcases");
+    assert!(MANAGED_SERVERS.contains(&TCM_SERVER));
+    assert!(MANAGED_SERVERS.contains(&LEGACY_TCM_SERVER), "detection must still report the old entry");
+    assert!(MANAGED_SERVERS.contains(&LEGACY_DB_SERVER));
+    assert_eq!(superseded_by(TCM_SERVER), &[LEGACY_TCM_SERVER]);
+    assert!(superseded_by("another-server").is_empty());
+}
+
+/// Registering writes `tcm` and takes `tcm-testcases` out of the same
+/// config, so nobody ends up with both - and nothing else in it moves.
+#[test]
+fn registering_replaces_the_old_name_in_the_same_config() {
+    for key in ["mcpServers", "servers"] {
+        let existing = serde_json::json!({
+            "theirSetting": 1,
+            key: {
+                "somebody-elses": { "command": "other.exe" },
+                "tcm-testcases": { "command": "old/v2.exe", "args": ["--mcp"] },
+                "phr-db-mcp": { "command": "db.exe" }
+            }
+        })
+        .to_string();
+        let out = merge_entry(&existing, key, &tcm_server("C:/app/v2.exe")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v[key][TCM_SERVER]["command"], "C:/app/v2.exe", "{key}: {v}");
+        assert!(v[key].get(LEGACY_TCM_SERVER).is_none(), "{key}: {v}");
+        assert_eq!(v[key]["somebody-elses"]["command"], "other.exe");
+        assert_eq!(v[key][LEGACY_DB_SERVER]["command"], "db.exe", "not this function's to remove");
+        assert_eq!(v["theirSetting"], 1);
+        assert_eq!(v[key].as_object().unwrap().len(), 3, "{key}: {v}");
+    }
+}
+
+/// Only our own server supersedes anything: registering somebody else's
+/// leaves an old `tcm-testcases` entry where it is.
+#[test]
+fn another_servers_registration_leaves_the_old_name_alone() {
+    let existing = r#"{"mcpServers":{"tcm-testcases":{"command":"old/v2.exe"}}}"#;
+    let out = merge_entry(existing, "mcpServers", &env_server()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["mcpServers"][LEGACY_TCM_SERVER]["command"], "old/v2.exe");
+}
+
+/// A config holding only the old name is reported with exactly that name,
+/// not as ours - the AI Bridge tab reads it as needing an update, and its
+/// Register button is what updates it.
+#[test]
+fn a_config_with_only_the_old_name_reads_as_needing_an_update() {
+    let repo = TempDir::new();
+    std::fs::write(
+        repo.path().join(".mcp.json"),
+        r#"{"mcpServers": {"tcm-testcases": {"command": "old/v2.exe"}, "somebody-elses": {"command": "x"}}}"#,
+    )
+    .unwrap();
+    let root = repo.path().to_string_lossy().to_string();
+    let tools = detect_in("", "", &|_| false, Some(root.as_str()));
+    let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
+    assert_eq!(cc.registered_servers, vec![LEGACY_TCM_SERVER], "{cc:?}");
+    assert!(!cc.registered_servers.iter().any(|s| s == TCM_SERVER), "{cc:?}");
+    assert!(config_carries(&repo.path().join(".mcp.json"), "mcpServers", LEGACY_TCM_SERVER));
+    assert!(!config_carries(&repo.path().join(".mcp.json"), "mcpServers", TCM_SERVER));
+    assert!(!config_carries(&repo.path().join("missing.json"), "mcpServers", LEGACY_TCM_SERVER));
+}
+
+/// The single top-level command an earlier version wrote was named after
+/// the server's OLD name - the cleanup must keep looking for that file.
+#[test]
+fn the_old_top_level_command_is_still_cleaned_up() {
+    let path = legacy_command_path("C:/Users/Sam").display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(path, "C:/Users/Sam/.claude/commands/tcm-testcases.md");
+
+    let home = TempDir::new();
+    let home_str = home.path().to_string_lossy().to_string();
+    let file = legacy_command_path(&home_str);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, format!("---\nname: x\n---\n\n{COMMAND_MARKER}\n")).unwrap();
+    remove_legacy_command(&home_str);
+    assert!(!file.exists(), "ours is removed");
+
+    // Somebody's own file of that name is not ours.
+    std::fs::write(&file, "my own notes").unwrap();
+    remove_legacy_command(&home_str);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "my own notes");
+    // Nothing there: nothing to do, and no error.
+    std::fs::remove_file(&file).unwrap();
+    remove_legacy_command(&home_str);
+}
+
+// --- Claude Code: the CLI path takes the old name out of the same scope
+
+/// A `.cmd` that appends the arguments and directory it ran in to `log`,
+/// then exits with `code`.
+#[cfg(windows)]
+fn cli_probe(dir: &std::path::Path, log: &std::path::Path, code: u8) -> std::path::PathBuf {
+    let probe = dir.join(format!("claude-probe-{code}.cmd"));
+    std::fs::write(
+        &probe,
+        format!("@echo off\r\n>>\"{}\" echo(%*^|%CD%\r\nexit /b {code}\r\n", log.display()),
+    )
+    .unwrap();
+    probe
+}
+
+#[cfg(windows)]
+#[test]
+fn the_cli_removes_the_old_name_in_the_scope_just_registered() {
+    let bin = TempDir::new();
+    let repo = TempDir::new();
+    let log = bin.path().join("calls.txt");
+    let probe = cli_probe(bin.path(), &log, 0);
+    let config = repo.path().join(".mcp.json");
+    std::fs::write(&config, r#"{"mcpServers":{"tcm":{"command":"v2.exe"},"tcm-testcases":{"command":"old.exe"}}}"#)
+        .unwrap();
+
+    retire_superseded_claude(Some(&probe), TCM_SERVER, "project", Some(repo.path()), &config).unwrap();
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    assert_eq!(lines.len(), 1, "{calls}");
+    let (args, cwd) = lines[0].split_once('|').unwrap();
+    assert_eq!(args.trim(), "mcp remove --scope project tcm-testcases");
+    assert_eq!(
+        std::path::Path::new(cwd.trim()).canonicalize().unwrap(),
+        repo.path().canonicalize().unwrap(),
+        "project scope is keyed on the directory the CLI runs in"
+    );
+}
+
+/// No CLI, or a CLI that fails: the old name comes out of the scope's own
+/// config file, and nothing else in it moves.
+#[cfg(windows)]
+#[test]
+fn without_a_working_cli_the_old_name_leaves_the_config_file() {
+    let bin = TempDir::new();
+    let log = bin.path().join("calls.txt");
+    let failing = cli_probe(bin.path(), &log, 1);
+    for cli in [None, Some(failing.as_path())] {
+        let repo = TempDir::new();
+        let config = repo.path().join(".mcp.json");
+        std::fs::write(
+            &config,
+            r#"{"other":true,"mcpServers":{"tcm":{"command":"v2.exe"},"tcm-testcases":{"command":"old.exe"},"theirs":{"command":"t.exe"}}}"#,
+        )
+        .unwrap();
+        retire_superseded_claude(cli, TCM_SERVER, "project", Some(repo.path()), &config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert!(v["mcpServers"].get(LEGACY_TCM_SERVER).is_none(), "{cli:?}: {v}");
+        assert_eq!(v["mcpServers"][TCM_SERVER]["command"], "v2.exe");
+        assert_eq!(v["mcpServers"]["theirs"]["command"], "t.exe");
+        assert_eq!(v["other"], true);
+    }
+}
+
+/// A scope that never carried the old name runs nothing at all.
+#[cfg(windows)]
+#[test]
+fn a_scope_without_the_old_name_runs_nothing() {
+    let bin = TempDir::new();
+    let repo = TempDir::new();
+    let log = bin.path().join("calls.txt");
+    let probe = cli_probe(bin.path(), &log, 0);
+    let config = repo.path().join(".mcp.json");
+    let only_ours = r#"{"mcpServers":{"tcm":{"command":"v2.exe"}}}"#;
+    std::fs::write(&config, only_ours).unwrap();
+    retire_superseded_claude(Some(&probe), TCM_SERVER, "project", Some(repo.path()), &config).unwrap();
+    retire_superseded_claude(Some(&probe), TCM_SERVER, "user", None, &repo.path().join("absent.json")).unwrap();
+    assert!(!log.exists(), "the CLI was run for nothing");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), only_ours);
+}
+
+// --- permission rules
+
+/// The database switch's rule under the old name is the same setting: it
+/// reads as on, and is rewritten to the new name where it stood.
+#[test]
+fn the_old_database_rule_counts_as_on_and_is_rewritten() {
+    use v2_lib::ai_tools::{set_claude_allow, CLAUDE_DB_QUERY_RULE as RULE};
+    assert_eq!(RULE, "mcp__tcm__db_query");
+    let old = r#"{"model":"opus","permissions":{"allow":["Bash(git status)","mcp__tcm-testcases__db_query","Read(*)"],"deny":["mcp__tcm-testcases__get_tags"]}}"#;
+
+    let on = set_claude_allow(old, RULE, true).unwrap().expect("rewritten");
+    let v: serde_json::Value = serde_json::from_str(&on).unwrap();
+    assert_eq!(v["permissions"]["allow"], serde_json::json!(["Bash(git status)", RULE, "Read(*)"]));
+    assert_eq!(v["permissions"]["deny"], serde_json::json!(["mcp__tcm-testcases__get_tags"]), "only the switch's own rule");
+    assert_eq!(v["model"], "opus");
+    assert_eq!(set_claude_allow(&on, RULE, true).unwrap(), None, "already on");
+
+    // Both names present: one rule, in the new name, where the new one stood.
+    let both = r#"{"permissions":{"allow":["mcp__tcm__db_query","mcp__tcm-testcases__db_query"]}}"#;
+    let v: serde_json::Value = serde_json::from_str(&set_claude_allow(both, RULE, true).unwrap().unwrap()).unwrap();
+    assert_eq!(v["permissions"]["allow"], serde_json::json!([RULE]));
+
+    // Off takes the old one out too.
+    let off = set_claude_allow(r#"{"permissions":{"allow":["mcp__tcm-testcases__db_query"]}}"#, RULE, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&off).unwrap(), serde_json::json!({}));
+}
+
+#[test]
+fn the_old_cursor_entry_counts_as_on_and_is_rewritten() {
+    use v2_lib::ai_tools::{set_cursor_allow, CURSOR_DB_QUERY_ENTRY as ENTRY};
+    let old = r#"{"mcpAllowlist":["github:list_issues","TCM-TestCases:DB_Query"],"x":1}"#;
+    let on = set_cursor_allow(old, ENTRY, true).unwrap().expect("rewritten");
+    let v: serde_json::Value = serde_json::from_str(&on).unwrap();
+    assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues", ENTRY]));
+    assert_eq!(v["x"], 1);
+    assert_eq!(set_cursor_allow(&on, ENTRY, true).unwrap(), None);
+    let off = set_cursor_allow(r#"{"mcpAllowlist":["tcm-testcases:db_query"]}"#, ENTRY, false).unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&off).unwrap(), serde_json::json!({}));
+}
+
+/// Every "always allow" (and deny / ask) for the old name carries over to
+/// the new one: same place in the list, never twice, and nothing else in
+/// the file moves.
+#[test]
+fn the_old_names_permission_rules_carry_over() {
+    let before = r#"{
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "mcp__tcm-testcases__get_test_cases",
+      "mcp__tcm__validate_cases",
+      "mcp__tcm-testcases__validate_cases",
+      "mcp__tcm-testcases-other__x",
+      "mcp__tcm-testcases",
+      "mcp__github__list_issues"
+    ],
+    "deny": ["mcp__tcm-testcases__db_query", "Read(.env)"],
+    "ask": ["mcp__tcm-testcases__run_api_template"],
+    "defaultMode": "acceptEdits"
+  },
+  "env": { "A": "1" }
+}"#;
+    let after = migrate_claude_permissions(before).unwrap().expect("a change");
+    let v: serde_json::Value = serde_json::from_str(&after).unwrap();
+    assert_eq!(
+        v["permissions"]["allow"],
+        serde_json::json!([
+            "Bash(git status)",
+            "mcp__tcm__get_test_cases",
+            "mcp__tcm__validate_cases",
+            "mcp__tcm-testcases-other__x",
+            "mcp__tcm",
+            "mcp__github__list_issues"
+        ])
+    );
+    assert_eq!(v["permissions"]["deny"], serde_json::json!(["mcp__tcm__db_query", "Read(.env)"]));
+    assert_eq!(v["permissions"]["ask"], serde_json::json!(["mcp__tcm__run_api_template"]));
+    assert_eq!(v["permissions"]["defaultMode"], "acceptEdits");
+    assert_eq!(v["model"], "opus");
+    assert_eq!(v["env"], serde_json::json!({ "A": "1" }));
+    // Key order is the file's own.
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["model", "permissions", "env"]);
+
+    // Idempotent: a second run has nothing to do.
+    assert_eq!(migrate_claude_permissions(&after).unwrap(), None);
+    // Nothing of ours, or nothing at all: nothing to write.
+    assert_eq!(migrate_claude_permissions(r#"{"permissions":{"allow":["Bash(ls)"]}}"#).unwrap(), None);
+    assert_eq!(migrate_claude_permissions("").unwrap(), None);
+    assert_eq!(migrate_claude_permissions(r#"{"model":"opus"}"#).unwrap(), None);
+    // The person's own file, unreadable: refused, never replaced.
+    assert!(migrate_claude_permissions("{ not json").is_err());
+    assert!(migrate_claude_permissions("[1]").is_err());
+}
+
+/// The file step: a missing settings file stays missing, a file with
+/// nothing of ours is not rewritten, and one with old rules is.
+#[test]
+fn carrying_over_rewrites_only_a_file_that_needs_it() {
+    let dir = TempDir::new();
+    let missing = dir.path().join(".claude").join("settings.local.json");
+    carry_over_rules_in(&missing, migrate_claude_permissions).unwrap();
+    assert!(!missing.exists());
+    assert!(!missing.parent().unwrap().exists(), "nothing is created to rename nothing");
+
+    let untouched = dir.path().join("theirs.json");
+    let text = "{\"permissions\":{\"allow\":[\"Bash(ls)\"]}}";
+    std::fs::write(&untouched, text).unwrap();
+    carry_over_rules_in(&untouched, migrate_claude_permissions).unwrap();
+    assert_eq!(std::fs::read_to_string(&untouched).unwrap(), text, "byte for byte");
+
+    let old = dir.path().join("settings.json");
+    std::fs::write(&old, r#"{"permissions":{"allow":["mcp__tcm-testcases__get_tags"]}}"#).unwrap();
+    carry_over_rules_in(&old, migrate_claude_permissions).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&old).unwrap()).unwrap();
+    assert_eq!(v["permissions"]["allow"], serde_json::json!(["mcp__tcm__get_tags"]));
+
+    // Cursor's file, the same way.
+    let cursor = dir.path().join("permissions.json");
+    std::fs::write(&cursor, r#"{"mcpAllowlist":["tcm-testcases:get_tags"]}"#).unwrap();
+    carry_over_rules_in(&cursor, migrate_cursor_permissions).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(v["mcpAllowlist"], serde_json::json!(["tcm:get_tags"]));
+}
+
+/// Every Cursor allowlist entry for the old name carries over: same place,
+/// never twice (Cursor compares case-insensitively, so neither does this),
+/// nothing else touched, and a second run has nothing to do.
+#[test]
+fn the_old_names_cursor_allowlist_carries_over() {
+    let before = r#"{
+  "terminalAllowlist": ["git status"],
+  "mcpAllowlist": [
+    "github:list_issues",
+    "tcm-testcases:get_test_cases",
+    "TCM:Validate_Cases",
+    "TCM-TestCases:validate_cases",
+    "tcm-testcases-other:x",
+    "tcm-testcases:*"
+  ],
+  "theirs": { "a": 1 }
+}"#;
+    let after = migrate_cursor_permissions(before).unwrap().expect("a change");
+    let v: serde_json::Value = serde_json::from_str(&after).unwrap();
+    assert_eq!(
+        v["mcpAllowlist"],
+        serde_json::json!([
+            "github:list_issues",
+            "tcm:get_test_cases",
+            "TCM:Validate_Cases",
+            "tcm-testcases-other:x",
+            "tcm:*"
+        ])
+    );
+    assert_eq!(v["terminalAllowlist"], serde_json::json!(["git status"]));
+    assert_eq!(v["theirs"], serde_json::json!({ "a": 1 }));
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["terminalAllowlist", "mcpAllowlist", "theirs"]);
+
+    assert_eq!(migrate_cursor_permissions(&after).unwrap(), None, "idempotent");
+    assert_eq!(migrate_cursor_permissions(r#"{"mcpAllowlist":["github:x"]}"#).unwrap(), None);
+    assert_eq!(migrate_cursor_permissions("").unwrap(), None);
+    assert_eq!(migrate_cursor_permissions(r#"{"mcpAllowlist":"odd"}"#).unwrap(), None);
+    assert!(migrate_cursor_permissions("{ not json").is_err());
+    assert!(migrate_cursor_permissions("[1]").is_err());
+}
+
+/// A config holding BOTH names (say a teammate on an older version added
+/// the old one back) reports both, so the tab can flag the duplicate.
+#[test]
+fn a_config_with_both_names_reports_both() {
+    let repo = TempDir::new();
+    std::fs::write(
+        repo.path().join(".mcp.json"),
+        r#"{"mcpServers": {"tcm": {"command": "v2.exe"}, "tcm-testcases": {"command": "old.exe"}}}"#,
+    )
+    .unwrap();
+    let root = repo.path().to_string_lossy().to_string();
+    let tools = detect_in("", "", &|_| false, Some(root.as_str()));
+    let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
+    assert_eq!(cc.registered_servers, vec![TCM_SERVER, LEGACY_TCM_SERVER], "{cc:?}");
 }

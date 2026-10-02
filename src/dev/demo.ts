@@ -1150,7 +1150,7 @@ export const CAPTURE_AI_TOOLS: DetectedTool[] = [
     id: "claude-code",
     name: "Claude Code",
     installed: true,
-    registered_servers: ["tcm-testcases"],
+    registered_servers: ["tcm"],
     scope: "project",
     global_registered_servers: [],
   },
@@ -1160,7 +1160,7 @@ export const CAPTURE_AI_TOOLS: DetectedTool[] = [
     installed: true,
     registered_servers: [],
     scope: "project",
-    global_registered_servers: ["tcm-testcases"],
+    global_registered_servers: ["tcm"],
   },
 ];
 
