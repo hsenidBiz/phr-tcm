@@ -1015,7 +1015,8 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
 }
 
 /// `propose_accounts` forwards its arguments whole; `get_accounts` is a
-/// plain read. Neither takes a password.
+/// plain read. A proposal may carry each login's password from the same
+/// database lookup - optional, and never a hash.
 #[test]
 fn the_account_tools_reach_their_routes() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
@@ -1024,7 +1025,11 @@ fn the_account_tools_reach_their_routes() {
     let propose = tools.iter().find(|t| t["name"] == "propose_accounts").unwrap();
     assert_eq!(propose["inputSchema"]["required"], serde_json::json!(["accounts"]));
     let item = &propose["inputSchema"]["properties"]["accounts"]["items"];
-    assert!(item["properties"].get("password").is_none(), "{item}");
+    assert_eq!(item["properties"]["password"]["type"], "string", "{item}");
+    assert_eq!(item["properties"]["password"]["maxLength"], 256, "{item}");
+    let description = propose["description"].as_str().unwrap();
+    assert!(description.contains("never a hash"), "{description}");
+    assert!(description.contains("test environment"), "{description}");
     assert_eq!(item["required"], serde_json::json!(["key", "label", "username"]));
 
     let calls = std::cell::RefCell::new(vec![]);

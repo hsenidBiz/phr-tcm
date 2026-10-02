@@ -87,7 +87,7 @@ test("each field carries a visible label for when the row stacks, and keeps its 
 
 // ---- Proposed by the assistant -------------------------------------------
 
-type Proposal = { key: string; label: string; username: string; role?: string | null };
+type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean };
 type Saved = { key: string; label: string; username: string; password: string };
 
 const PROPOSED: Proposal[] = [
@@ -310,4 +310,51 @@ test("a typed proposal password is masked, and shown only with Show passwords", 
   expect(pw.type).toBe("password");
   fireEvent.click(screen.getByRole("checkbox", { name: "Show passwords" }));
   expect((screen.getByLabelText("Password for proposed hr.admin") as HTMLInputElement).type).toBe("text");
+});
+
+// ---- A password the assistant read from the database ----------------------
+
+const FROM_DB: Proposal[] = [
+  { key: "hr.admin", label: "HR Admin", username: "kim", role: "admin", has_password: true },
+  { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false },
+];
+
+test("a proposal with a database password says so, and its field can still override it", async () => {
+  mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  expect(screen.getAllByText("Password from the database")).toHaveLength(1);
+  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveAttribute(
+    "placeholder",
+    "Leave blank to use the database password",
+  );
+  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveValue("");
+  // The one without keeps today's prompt.
+  expect(screen.getByLabelText("Password for proposed hr.sup")).toHaveAttribute("placeholder", "default password");
+});
+
+test("Add selected with the field blank sends no password, and the account comes in", async () => {
+  const m = mountWithProposals({ proposals: FROM_DB, hasDefault: false });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  m.state.accounts = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "set-in-rust" }];
+  m.state.proposals = [FROM_DB[1]];
+  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+
+  await waitFor(() => expect(m.adds).toHaveLength(1));
+  expect(m.adds[0]).toEqual({
+    picks: [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "" }],
+    replace: [],
+  });
+  expect(await screen.findByLabelText("Key for account 1")).toHaveValue("hr.admin");
+  await waitFor(() => expect(screen.queryByText("Password from the database")).not.toBeInTheDocument());
+});
+
+test("a password typed over a database one is the one sent", async () => {
+  const m = mountWithProposals({ proposals: FROM_DB });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "typed-over" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  await waitFor(() => expect(m.adds).toHaveLength(1));
+  expect(m.adds[0].picks).toEqual([{ key: "hr.admin", label: "HR Admin", username: "kim", password: "typed-over" }]);
 });

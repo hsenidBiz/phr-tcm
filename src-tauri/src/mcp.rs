@@ -405,7 +405,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "propose_accounts",
-            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role? }; NEVER a password: the person picks which to add and gives each its password in the app. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
+            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role?, password? }. Include each account's password from the same database lookup that found its login, because every account's password can be different - but never a hash: a value that is clearly a hash or an encrypted blob is left out, and you say so. A proposal that carries any password is refused unless the environment is marked as a test environment. The person picks which to add in the app, and can type another password over a proposed one. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
             "inputSchema": schema(serde_json::json!({
                 "accounts": {
                     "type": "array",
@@ -417,6 +417,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                             "label": { "type": "string", "description": "What a person reads, e.g. HR supervisor." },
                             "username": { "type": "string", "description": "The login name." },
                             "role": { "type": "string", "description": "Optional: the role or permission set the login has." },
+                            "password": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Optional: the login's password from the same database lookup, never a hash. Only for an environment marked as a test environment." },
                         },
                         "required": ["key", "label", "username"],
                         "additionalProperties": false,

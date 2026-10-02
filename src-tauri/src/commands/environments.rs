@@ -135,11 +135,16 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     } else {
         environments::load_or_init(root, None)?.environments.into_iter().find(|e| e.id == env.id)
     };
+    let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
     let sites_moved = before.as_ref().is_some_and(|b| sites(&b.allowed_origins) != sites(&env.allowed_origins));
     if !address_moved && !sites_moved {
+        let id = env.id.clone();
         let file = environments::save_env_with(root, env, || known_db_ids(store))?;
         crate::applog::info(format!("Environments: saved ({} environment(s))", file.environments.len()));
+        if unmarked {
+            strip_proposed_passwords(root, &id);
+        }
         return Ok(view(store, file));
     }
     // Held across the check and the write, exactly as a switch holds them
@@ -167,12 +172,31 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     }
     drop(run_slot);
     drop(slot);
+    if unmarked {
+        strip_proposed_passwords(root, &id);
+    }
     crate::applog::info(format!(
         "Environments: saved ({} environment(s)), one with a new {}",
         file.environments.len(),
         if address_moved { "website address" } else { "list of allowed sites" }
     ));
     Ok(view(store, file))
+}
+
+/// An environment no longer marked as a test environment keeps no proposed
+/// password on disk (nor, then, in the next backup). The environment is
+/// saved already, so a strip that fails is logged, not fatal: a password
+/// left behind is still never used or reported outside a test environment.
+fn strip_proposed_passwords(root: &Path, id: &str) {
+    match environments::strip_proposed_passwords(root, id) {
+        Ok(0) => {}
+        Ok(n) => crate::applog::info(format!(
+            "Environments: dropped {n} proposed password(s) from an environment no longer marked as a test environment"
+        )),
+        Err(e) => crate::applog::warn(format!(
+            "Environments: the proposed passwords of an environment no longer marked as a test environment stayed behind: {e}"
+        )),
+    }
 }
 
 /// Removes the environment's files and its default password. A password
@@ -234,7 +258,8 @@ pub fn clear_default_password_with(root: &Path, store: &dyn SecretStore, id: &st
 }
 
 /// One proposed account a person picked to add. `password` is what they
-/// typed; empty means "use the environment's default password".
+/// typed; empty means "use the password the assistant proposed with it, or
+/// else the environment's default password".
 #[derive(Clone, serde::Deserialize, specta::Type)]
 pub struct AccountInput {
     pub key: String,
@@ -259,12 +284,29 @@ impl std::fmt::Debug for AccountInput {
 /// default password.
 pub const NO_DEFAULT_PASSWORD: &str = "no default password set - type one";
 
-/// The active environment's proposed accounts.
+/// The active environment's proposed accounts, as the webview may see
+/// them: whether each carries a password, never the password. Outside a
+/// test environment none counts as having one (see `usable_proposals`).
 pub fn proposals_with(root: &Path) -> Result<Vec<environments::ProposedAccount>, String> {
-    environments::load_proposals(root, &environments::active_id(root)?)
+    let env = environments::active(root)?;
+    Ok(usable_proposals(root, &env)?.iter().map(|p| p.view()).collect())
 }
 
-/// Drop the active environment's whole proposal.
+/// One environment's proposals, with every stored password dropped unless
+/// the environment is marked as a test environment now. Unmarking strips
+/// them from the file; this covers one left behind by a strip that failed
+/// or by a restored backup.
+fn usable_proposals(root: &Path, env: &Environment) -> Result<Vec<environments::StoredProposal>, String> {
+    let mut list = environments::load_proposals(root, &env.id)?;
+    if !env.test_environment {
+        for p in &mut list {
+            p.password = None;
+        }
+    }
+    Ok(list)
+}
+
+/// Drop the active environment's whole proposal, with any password it held.
 pub fn dismiss_proposals_with(root: &Path) -> Result<(), String> {
     environments::save_proposals(root, &environments::active_id(root)?, &[])
 }
@@ -272,11 +314,14 @@ pub fn dismiss_proposals_with(root: &Path) -> Result<(), String> {
 /// Add the picked proposals to the active environment's accounts.
 ///
 /// Every pick is checked first - a usable key used once, a username, and a
-/// password (typed, or the environment's default) - and one that fails
-/// refuses the whole call with nothing written. A pick whose key is
-/// already an account is written only when `replace` names it; otherwise
-/// it is left as it is and its key returned, for the person to confirm.
-/// What was added leaves the proposal.
+/// password - and one that fails refuses the whole call with nothing
+/// written. The password is the one typed; else the one the assistant
+/// proposed with that same key and username (it moves from the proposals
+/// file into the account, never through the webview); else the
+/// environment's default. A pick whose key is already an account is
+/// written only when `replace` names it; otherwise it is left as it is and
+/// its key returned, for the person to confirm. What was added leaves the
+/// proposal, its password with it.
 pub fn add_proposals_with(
     root: &Path,
     store: &dyn SecretStore,
@@ -284,8 +329,10 @@ pub fn add_proposals_with(
     replace: Vec<String>,
 ) -> Result<Vec<String>, String> {
     use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
-    let env_id = environments::active_id(root)?;
+    let env = environments::active(root)?;
+    let env_id = env.id.clone();
     let mut accounts = load_accounts_for(root, &env_id)?;
+    let proposed = usable_proposals(root, &env)?;
     let mut default: Option<Option<String>> = None;
     let mut seen = std::collections::HashSet::new();
     let mut ready: Vec<Account> = vec![];
@@ -308,7 +355,15 @@ pub fn add_proposals_with(
             confirm.push(key);
             continue;
         }
-        let password = if p.password.is_empty() {
+        let from_proposal = proposed
+            .iter()
+            .find(|q| q.key == key && q.username.trim() == username)
+            .and_then(|q| q.password.clone());
+        let password = if !p.password.is_empty() {
+            p.password
+        } else if let Some(pw) = from_proposal {
+            pw
+        } else {
             if default.is_none() {
                 let found = store
                     .get(&environments::password_target(&env_id))
@@ -319,8 +374,6 @@ pub fn add_proposals_with(
                 Some(d) => d,
                 None => return Err(format!("\"{key}\": {NO_DEFAULT_PASSWORD}")),
             }
-        } else {
-            p.password
         };
         let label = match p.label.trim() {
             "" => key.clone(),

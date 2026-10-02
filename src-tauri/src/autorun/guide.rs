@@ -273,12 +273,20 @@ environment, so a key that exists in one may not exist in another.
   and in seed scripts and specs. Then call `propose_accounts` with a key,
   a label and a username for each, and a role when you know it. The tools
   only read: never write to the database to create or change a user.
+- Every account's password can be different, so take each account's
+  password from the same lookup and put it in the proposal, but
+  never a hash: if the stored value is clearly a hash or an encrypted
+  value, leave that password out and say so. Passwords can only be proposed for an
+  environment marked as a test environment; otherwise propose the logins
+  without them.
 - A proposal is only a suggestion. The person sees it in Auto Run, under
-  Accounts, ticks the ones they want and adds them. Each call replaces
-  your previous proposal for the environment.
-- A password comes from the environment's default password or from the
-  person, so never invent a password, and never put one in a proposal. If
-  a case needs an account you cannot find, say so and ask which one to use.
+  Accounts, ticks the ones they want and adds them, and can type another
+  password over a proposed one. Each call replaces your previous proposal
+  for the environment.
+- A password comes from the database, from the person or from the
+  environment's default password, so never invent a password, and never
+  copy a password into a script or a template. If a case needs an account
+  you cannot find, say so and ask which one to use.
 
 ## Every expected result is checked
 
