@@ -9,8 +9,14 @@
 
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{autorun_guard_for, route, BridgeContext};
-use v2_lib::autorun::defects::check_mark;
-use v2_lib::autorun::quirks::source_from_run;
+use crate::common;
+use std::sync::atomic::AtomicBool;
+use v2_lib::autorun::defects::{check_mark, passed};
+use v2_lib::autorun::failures::describe_failures;
+use v2_lib::autorun::publish::comment_for;
+use v2_lib::autorun::replay::{propose, run_selection, Browsers};
+use v2_lib::browser::timing::Timing;
+use v2_lib::autorun::quirks::{count_saved_run, source_from_run};
 use v2_lib::autorun::store::{load_script, save_run, save_script, save_scripts_atomically, set_root, set_suspected_defect};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, SuspectedDefect};
 use v2_lib::browser::actions::ActionOutcome;
@@ -470,4 +476,221 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(saved.suspected_defect, None);
     assert_eq!(saved.repairs, 2, "two repairs, the mark's removal no extra one");
+}
+
+// ------------------------------------------------------------- in runs
+
+const MARK_NOTE: &str = "saving answers Error 500";
+
+/// `script(case_id)` carrying a mark on step 3.
+fn marked_script(case_id: i32) -> CaseScript {
+    let mut sc = script(case_id);
+    sc.suspected_defect = Some(mark(3, MARK_NOTE));
+    sc
+}
+
+fn ok_step(n: i32) -> StepRecord {
+    step(n, vec![ActionOutcome::passed("ok")])
+}
+
+fn bad_step(n: i32, why: &str) -> StepRecord {
+    step(n, vec![ActionOutcome::failed(why)])
+}
+
+#[test]
+fn a_failure_at_the_marked_step_is_labelled_and_keeps_the_usual_sentence() {
+    let steps = vec![ok_step(1), ok_step(2), bad_step(3, "the toast said Error 500")];
+    let got = propose(&marked_script(501), &steps, None, false);
+    assert_eq!(got.verdict, "Failed");
+    assert_eq!(
+        got.reason,
+        "Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500"
+    );
+    // An unmarked script gives the ordinary sentence.
+    let plain = propose(&script(501), &steps, None, false);
+    assert_eq!((plain.verdict, plain.reason.as_str()), ("Failed", "step 3: the toast said Error 500"));
+}
+
+#[test]
+fn a_failure_at_another_step_is_an_ordinary_failure() {
+    let steps = vec![ok_step(1), bad_step(2, "button \"Edit\" not found")];
+    let got = propose(&marked_script(501), &steps, None, false);
+    assert_eq!((got.verdict, got.reason.as_str()), ("Failed", "step 2: button \"Edit\" not found"));
+}
+
+#[test]
+fn a_blocked_case_is_not_labelled() {
+    let mut harness = ActionOutcome::failed("gone");
+    harness.harness = true;
+    let steps = vec![ok_step(1), ok_step(2), step(3, vec![harness])];
+    let got = propose(&marked_script(501), &steps, None, false);
+    assert_eq!(got.verdict, "Blocked");
+    assert!(!got.reason.contains("Suspected"), "{}", got.reason);
+}
+
+#[test]
+fn the_marked_step_passed_only_when_it_ran_and_every_outcome_passed() {
+    let sc = marked_script(501);
+    assert!(passed(&sc, &[ok_step(1), ok_step(2), ok_step(3)]));
+    assert!(!passed(&sc, &[ok_step(1), ok_step(2)]), "never reached");
+    assert!(!passed(&sc, &[ok_step(1), ok_step(2), bad_step(3, "x")]));
+    assert!(
+        !passed(&sc, &[step(3, vec![ActionOutcome::passed("ok"), ActionOutcome::failed("x")])]),
+        "one failed outcome in the step"
+    );
+    assert!(!passed(&sc, &[step(3, vec![])]), "no outcomes is not a pass");
+    assert!(!passed(&script(501), &[ok_step(3)]), "no mark, nothing to clear");
+}
+
+struct Fake(std::collections::VecDeque<common::ScriptedDriver>);
+
+impl Browsers for Fake {
+    type D = common::ScriptedDriver;
+    async fn open(&mut self) -> Result<Self::D, String> {
+        self.0.pop_front().ok_or_else(|| "no browser".to_string())
+    }
+    async fn close(&mut self, _d: Self::D) {}
+}
+
+/// A page where a `check_text` passes only for the value "yes".
+fn checking_driver() -> common::ScriptedDriver {
+    common::ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => {
+            Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+        }
+        "Runtime.callFunctionOn" => {
+            let arg = params["arguments"][0]["value"].as_str().unwrap_or("");
+            Ok(serde_json::json!({ "result": { "value": arg == "yes" } }))
+        }
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+/// Case 1: three `check_text` steps whose values say whether each passes.
+fn checks(values: [&str; 3]) -> CaseScript {
+    serde_json::from_value(serde_json::json!({
+        "case_id": 1,
+        "title": "case 1",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": values[0] }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": values[1] }] },
+            { "step_number": 3, "actions": [{ "kind": "check_text", "value": values[2] }] }
+        ]
+    }))
+    .unwrap()
+}
+
+/// Saves `sc` with its mark (the mark only lands through the store), then
+/// runs case 1 unattended on `checking_driver`.
+async fn unattended(root: &std::path::Path, sc: &CaseScript) -> LocalRun {
+    save_script(root, sc).unwrap();
+    set_suspected_defect(root, sc.case_id, sc.suspected_defect.clone()).unwrap();
+    let mut browsers = Fake([checking_driver()].into());
+    let mut run = run_of("run-x", "1700000000000", vec![]);
+    let quick = Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0 };
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(sc.case_id, sc.title.clone())], &quick, &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    run
+}
+
+#[tokio::test]
+async fn an_unattended_run_that_passes_the_marked_step_clears_the_mark_and_says_so() {
+    let dir = TempDir::new();
+    let mut sc = checks(["yes", "yes", "yes"]);
+    sc.suspected_defect = Some(mark(3, MARK_NOTE));
+    let run = unattended(dir.path(), &sc).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Passed");
+    assert!(
+        rec.reason.ends_with(" The suspected defect at step 3 did not happen this time - the mark was cleared."),
+        "{}",
+        rec.reason
+    );
+    assert!(rec.reason.starts_with("every action of 3 steps passed"), "{}", rec.reason);
+    let stored = load_script(dir.path(), 1).unwrap().unwrap();
+    assert_eq!(stored.suspected_defect, None);
+    assert_eq!(stored.steps, sc.steps, "the script's actions are untouched");
+}
+
+#[tokio::test]
+async fn an_unattended_run_that_fails_the_marked_step_keeps_the_mark_and_labels_the_failure() {
+    let dir = TempDir::new();
+    let mut sc = checks(["yes", "yes", "no"]);
+    sc.suspected_defect = Some(mark(3, MARK_NOTE));
+    let run = unattended(dir.path(), &sc).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Failed");
+    assert!(
+        rec.reason.starts_with("Suspected application defect at step 3: saving answers Error 500 - step 3: "),
+        "{}",
+        rec.reason
+    );
+    assert!(!rec.reason.contains("was cleared"), "{}", rec.reason);
+    assert_eq!(load_script(dir.path(), 1).unwrap().unwrap().suspected_defect, Some(mark(3, MARK_NOTE)));
+}
+
+#[tokio::test]
+async fn an_unattended_run_that_stops_before_the_marked_step_keeps_the_mark() {
+    let dir = TempDir::new();
+    let mut sc = checks(["yes", "no", "yes"]);
+    sc.suspected_defect = Some(mark(3, MARK_NOTE));
+    let run = unattended(dir.path(), &sc).await;
+    let rec = &run.cases[0];
+    assert!(rec.reason.starts_with("step 2: "), "{}", rec.reason);
+    assert!(!rec.reason.contains("was cleared"), "{}", rec.reason);
+    assert_eq!(load_script(dir.path(), 1).unwrap().unwrap().suspected_defect, Some(mark(3, MARK_NOTE)));
+}
+
+#[test]
+fn counting_a_supervised_run_that_passed_the_marked_step_clears_the_mark_and_leaves_the_run_alone() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &script(501)).unwrap();
+    set_suspected_defect(dir.path(), 501, Some(mark(3, MARK_NOTE))).unwrap();
+    let mut case = failed_at_3(501);
+    case.steps[2] = ok_step(3);
+    case.proposed = String::new();
+    case.reason = String::new();
+    let mut run = run_of("run-60", "60", vec![case]);
+    run.mode = "supervised".into();
+    save_run(dir.path(), &run).unwrap();
+    let file = dir.path().join("runs").join("run-60.json");
+    let before = std::fs::read(&file).unwrap();
+
+    count_saved_run(dir.path(), "Acme", "Web", "run-60", 5).unwrap();
+
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().suspected_defect, None);
+    assert_eq!(std::fs::read(&file).unwrap(), before, "a person's run carries no machine reason");
+}
+
+#[test]
+fn counting_a_supervised_run_that_failed_the_marked_step_keeps_the_mark() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &script(501)).unwrap();
+    set_suspected_defect(dir.path(), 501, Some(mark(3, MARK_NOTE))).unwrap();
+    save_run(dir.path(), &run_of("run-61", "61", vec![failed_at_3(501)])).unwrap();
+    count_saved_run(dir.path(), "Acme", "Web", "run-61", 5).unwrap();
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().suspected_defect, Some(mark(3, MARK_NOTE)));
+}
+
+#[test]
+fn the_failures_text_names_the_mark_and_a_clean_case_has_no_such_line() {
+    let run = run_of("run-70", "70", vec![failed_at_3(501), failed_at_3(502)]);
+    let text = describe_failures(&run, &[marked_script(501), script(502)]);
+    let (first, second) = text.split_once("## Case 502").expect("both cases listed");
+    assert!(first.contains("suspected defect at step 3: saving answers Error 500"), "{first}");
+    assert!(!second.contains("suspected defect"), "{second}");
+}
+
+#[test]
+fn the_result_comment_carries_the_defect_reason() {
+    let mut case = failed_at_3(501);
+    case.reason =
+        "Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500".into();
+    assert_eq!(
+        comment_for(&case),
+        "Auto Run: Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500"
+    );
 }

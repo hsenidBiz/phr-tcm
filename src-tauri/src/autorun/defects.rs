@@ -7,7 +7,9 @@
 //! set at all, and makes its note safe to keep. A mark is not a repair: it
 //! never changes the script's actions and never counts toward the cap.
 
-use super::{failures, quirks, CaseScript, LocalRun, SuspectedDefect};
+use std::path::Path;
+
+use super::{failures, quirks, store, CaseRecord, CaseScript, LocalRun, StepRecord, SuspectedDefect};
 
 /// The longest note a mark keeps, in characters.
 pub const MAX_NOTE: usize = 300;
@@ -71,4 +73,64 @@ pub fn check_mark(
         return Err(LONG_NOTE.to_string());
     }
     Ok(SuspectedDefect { step_number, note: scrub_note(trimmed), marked_at: now_ms.to_string() })
+}
+
+/// The label a failure at the marked step carries in front of the usual
+/// sentence: `Suspected application defect at step 3: <note>`.
+pub fn label(mark: &SuspectedDefect) -> String {
+    format!("Suspected application defect at step {}: {}", mark.step_number, mark.note)
+}
+
+/// What an unattended case's reason gains when its pass cleared the mark.
+pub fn cleared_sentence(step_number: i32) -> String {
+    format!("The suspected defect at step {step_number} did not happen this time - the mark was cleared.")
+}
+
+/// Whether the marked step ran in `steps` and every one of its outcomes
+/// passed - the same pass `quirks` counts as a confirmation. False when the
+/// script has no mark, when the run stopped before the step, or when any of
+/// its actions failed or did not run.
+pub fn passed(script: &CaseScript, steps: &[StepRecord]) -> bool {
+    let Some(mark) = &script.suspected_defect else { return false };
+    steps.iter().find(|s| s.step_number == mark.step_number).is_some_and(quirks::passed)
+}
+
+/// After a recorded run: if the case's script is marked and the run passed
+/// the marked step, removes the mark and answers with its step number.
+///
+/// Never fails a run. A script that cannot be read, or a mark that cannot
+/// be written, is logged and the mark is left as it was (None). The log
+/// names the case and the step only, never the note.
+pub fn clear_if_passed(root: &Path, case: &CaseRecord) -> Option<i32> {
+    let script = match store::load_script(root, case.case_id) {
+        Ok(Some(s)) => s,
+        Ok(None) => return None,
+        Err(e) => {
+            crate::applog::warn(format!(
+                "Auto Run: the script of case {} was not read to check its suspected defect: {e}",
+                case.case_id
+            ));
+            return None;
+        }
+    };
+    if !passed(&script, &case.steps) {
+        return None;
+    }
+    let step_number = script.suspected_defect.as_ref()?.step_number;
+    match store::set_suspected_defect(root, case.case_id, None) {
+        Ok(()) => {
+            crate::applog::info(format!(
+                "Auto Run: the suspected defect at step {step_number} of case {} did not happen in this run and was cleared",
+                case.case_id
+            ));
+            Some(step_number)
+        }
+        Err(e) => {
+            crate::applog::warn(format!(
+                "Auto Run: the suspected defect at step {step_number} of case {} could not be cleared: {e}",
+                case.case_id
+            ));
+            None
+        }
+    }
 }

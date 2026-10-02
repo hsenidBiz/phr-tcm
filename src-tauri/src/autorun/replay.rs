@@ -136,7 +136,14 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
         return Proposal { verdict: "Blocked", reason: why };
     }
     if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok) {
-        return Proposal { verdict: "Failed", reason: format!("step {n}: {}", o.detail) };
+        let usual = format!("step {n}: {}", o.detail);
+        // The case's script says this step's failure is the application's:
+        // say so in front of what the page showed.
+        let reason = match &script.suspected_defect {
+            Some(mark) if mark.step_number == n => format!("{} - {usual}", super::defects::label(mark)),
+            _ => usual,
+        };
+        return Proposal { verdict: "Failed", reason };
     }
     if stopped {
         return Proposal { verdict: "", reason: "stopped before it finished".into() };
@@ -448,6 +455,12 @@ pub async fn run_cases<B: Browsers>(
                 }
             }
         };
+        let mut record = record;
+        // A marked step that passed this time: the mark goes, and the
+        // case's own record says so. Bookkeeping - it never fails the run.
+        if let Some(step_number) = super::defects::clear_if_passed(root, &record) {
+            record.reason = format!("{} {}", record.reason, super::defects::cleared_sentence(step_number));
+        }
         let proposed = record.proposed.clone();
         run.cases.push(record);
         if let Err(e) = store::save_run(root, run) {
