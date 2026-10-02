@@ -142,8 +142,10 @@ test("the filter shows only runs with a case in that bucket, and only those case
 });
 
 // Report: one run as an HTML file, written by Rust where the person picks.
+/** A Windows path as the save dialog hands it over - real backslashes. */
+const PICKED = "C:\\Reports\\auto-run-2026-08-06-1210.html";
 test("Report saves the run to the picked file and says so", async () => {
-  saveDialog.mockResolvedValue("C:\Reports\auto-run-2026-08-06-1210.html");
+  saveDialog.mockResolvedValue(PICKED);
   const calls: unknown[] = [];
   renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd, args) => {
     if (cmd === "auto_run_export_report") {
@@ -162,7 +164,7 @@ test("Report saves the run to the picked file and says so", async () => {
   });
   expect(calls[0]).toEqual({
     runId: "run-1",
-    path: "C:\Reports\auto-run-2026-08-06-1210.html",
+    path: PICKED,
     ranAt: new Date(1786000200000).toLocaleString(),
   });
   await waitFor(() =>
@@ -191,4 +193,15 @@ test("a cancelled save dialog writes nothing and says nothing", async () => {
 test("the suggested file name is the run's local start time", () => {
   const d = new Date(2026, 9, 2, 9, 5);
   expect(reportFileName(String(d.getTime()))).toBe("auto-run-2026-10-02-0905.html");
+});
+
+test("Past runs' filter buttons say they count runs, not cases", async () => {
+  renderPastRuns([MIXED, ALL_PASSED], 42);
+  const row = await screen.findByRole("group", { name: "Filter by result" });
+  expect(within(row).getByRole("button", { name: "Failed (1)" })).toHaveAttribute("title", "Runs with a failed case");
+  expect(within(row).getByRole("button", { name: "Not run (1)" })).toHaveAttribute(
+    "title",
+    "Runs with a case that was not run",
+  );
+  expect(within(row).getByRole("button", { name: "All (2)" })).toHaveAttribute("title", "Every run on this machine");
 });

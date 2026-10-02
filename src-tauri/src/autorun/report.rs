@@ -75,7 +75,7 @@ pub fn step_label(step_number: i32) -> String {
 /// script typed, and may be anything; the field it went into is enough.
 pub fn action_words(action: &Action) -> String {
     match action {
-        Action::Navigate { url } => format!("go to {url}"),
+        Action::Navigate { url } => format!("go to {}", without_query(url)),
         Action::Click { selector } => format!("click {}", selector.describe()),
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
@@ -97,6 +97,15 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
+    }
+}
+
+/// An address without its query string or fragment: a script's URL can
+/// carry a token there, and the report is a file people pass around.
+pub fn without_query(url: &str) -> &str {
+    match url.find(['?', '#']) {
+        Some(i) => &url[..i],
+        None => url,
     }
 }
 
@@ -292,6 +301,9 @@ fn web_link(url: &str) -> String {
     }
 }
 
+/// The page's Content-Security-Policy.
+pub const CSP: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline'";
+
 const STYLE: &str = "body{font-family:Segoe UI,Arial,sans-serif;color:#1f2328;background:#ffffff;margin:24px;font-size:14px;line-height:1.45}\
 h1{font-size:22px;margin:0 0 12px}h2{font-size:17px;margin:24px 0 8px;border-bottom:1px solid #d0d7de;padding-bottom:4px}\
 h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0 0 8px}\
@@ -320,6 +332,10 @@ pub fn build(
 
     let mut h = String::new();
     h.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    // Defence in depth: everything below is escaped and nothing is fetched,
+    // but should either ever slip, the page still may run no script and
+    // load nothing beyond its own embedded pictures and inline style.
+    h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
     h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
     h.push_str(&format!("<style>{STYLE}</style></head><body>"));

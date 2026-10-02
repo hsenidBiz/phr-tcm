@@ -50,6 +50,14 @@ export function reportFileName(startedAt: string): string {
 
 const HTML_FILTER = [{ name: "Web page", extensions: ["html"] }];
 
+/** What a Past runs filter button counts: runs, not cases - the review
+ * dialog's row, which looks the same, counts cases. */
+function runsTitle(f: ResultFilter): string {
+  if (f === "All") return "Every run on this machine";
+  if (f === "Not run") return "Runs with a case that was not run";
+  return `Runs with a ${f.toLowerCase()} case`;
+}
+
 export default function PastRuns({
   pbiId,
   onReview,
@@ -141,7 +149,13 @@ export default function PastRuns({
       </p>
       {runCount === 0 && <p className="text-xs text-muted">No runs on this machine yet.</p>}
       {runCount > 0 && (
-        <ResultFilterRow value={filter} onChange={setFilter} total={runCount} counts={runsWith} />
+        <ResultFilterRow
+          value={filter}
+          onChange={setFilter}
+          total={runCount}
+          counts={runsWith}
+          titleFor={runsTitle}
+        />
       )}
       {runCount > 0 && shownRuns.length === 0 && (
         <p className="text-xs text-muted">No run on this machine has a case with that result.</p>

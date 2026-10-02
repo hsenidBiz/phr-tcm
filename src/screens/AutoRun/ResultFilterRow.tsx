@@ -11,6 +11,7 @@ export default function ResultFilterRow({
   onChange,
   total,
   counts,
+  titleFor,
 }: {
   value: ResultFilter;
   onChange: (f: ResultFilter) => void;
@@ -18,6 +19,9 @@ export default function ResultFilterRow({
   total: number;
   /** What each bucket shows. */
   counts: Record<ResultBucket, number>;
+  /** A tooltip per button, when the counts are not of what the list shows
+   * one-to-one (Past runs counts runs, not cases). */
+  titleFor?: (f: ResultFilter) => string;
 }) {
   const options: ResultFilter[] = ["All", ...RESULT_BUCKETS];
   return (
@@ -27,6 +31,7 @@ export default function ResultFilterRow({
           key={f}
           type="button"
           aria-pressed={value === f}
+          title={titleFor?.(f)}
           className={cn(
             "rounded-full px-2 py-0.5 text-[11px] transition-colors",
             value === f ? "bg-accent-soft text-accent" : "text-faint hover:bg-surface-2 hover:text-text",

@@ -4,10 +4,10 @@
 //! a failure, and nothing outside the shots folder is ever read into it.
 
 use base64::Engine;
-use v2_lib::autorun::report::{bucket, build, counts, BUCKETS};
+use v2_lib::autorun::report::{action_words, bucket, build, counts, BUCKETS, CSP};
 use v2_lib::autorun::store::{load_shot, save_run, save_script};
 use v2_lib::autorun::{CaseScript, LocalRun};
-use v2_lib::commands::autorun::{export_report_at, REPORT_NOT_A_FULL_PATH, REPORT_RUN_GONE};
+use v2_lib::commands::autorun::{export_report_at, REPORT_NOT_A_FULL_PATH, REPORT_NOT_HTML, REPORT_RUN_GONE};
 
 struct TempDir(std::path::PathBuf);
 
@@ -300,4 +300,50 @@ fn export_says_so_for_a_run_that_is_gone_or_a_path_that_is_not_full() {
     // An id that is not a filename is refused before the disk is touched.
     assert!(export_report_at(true, &root, "../run-1", &out, "x").is_err());
     assert!(!out.exists());
+}
+
+#[test]
+fn the_page_declares_a_policy_that_runs_nothing_and_loads_nothing() {
+    let html = build(&run_of(SHOT), &[], "x", &no_shots);
+    assert_eq!(CSP, "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+    assert!(html.contains(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">")));
+}
+
+#[test]
+fn a_navigate_address_is_reported_without_its_query_string() {
+    let go: v2_lib::browser::actions::Action = serde_json::from_value(serde_json::json!({
+        "kind": "navigate", "url": "https://app.example.test/login?token=s3cr3t-value&x=1#frag"
+    }))
+    .unwrap();
+    assert_eq!(action_words(&go), "go to https://app.example.test/login");
+
+    // And in the page, when that navigate is what stopped the case.
+    let mut run = run_of(SHOT);
+    run.cases[0].steps[2].outcomes[0].detail = "the page did not finish loading".to_string();
+    let script: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 201, "title": "Valid login",
+        "steps": [{ "step_number": 2, "actions": [
+            { "kind": "navigate", "url": "https://app.example.test/login?token=s3cr3t-value" }
+        ] }]
+    }))
+    .unwrap();
+    let html = build(&run, &[script], "x", &no_shots);
+    assert!(html.contains("<dd>go to https://app.example.test/login</dd>"));
+    assert!(!html.contains("s3cr3t-value"));
+}
+
+#[test]
+fn export_refuses_a_file_that_is_not_html() {
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    save_run(&root, &run_of(SHOT)).unwrap();
+    for name in ["report.txt", "report", "report.html.exe", "settings.json"] {
+        let out = dir.path().join(name);
+        assert_eq!(export_report_at(true, &root, "run-1786000200000", &out, "x").unwrap_err(), REPORT_NOT_HTML, "{name}");
+        assert!(!out.exists());
+    }
+    // Either spelling, any case, is a report.
+    for name in ["a.htm", "b.HTML"] {
+        assert!(export_report_at(true, &root, "run-1786000200000", &dir.path().join(name), "x").is_ok(), "{name}");
+    }
 }

@@ -348,18 +348,19 @@ export default function AutoRun({
 
   return (
     <>
-      {/* Two columns on a wide window, the way Settings lays out: the left
-          is everything you set up and run from (header, Setup, Test cases),
-          the right is what came of it (Past runs). The left track stops at
-          48rem - the case rows read no better wider - and gives way first, so
-          at the lg boundary the right keeps its 20rem floor and the case
-          list still has room for a title beside its two buttons. Below lg it
-          is one column in the old order. Normal page flow: Settings' columns
+      {/* Two columns on a wide window, in Settings' pattern: the left is
+          everything you set up and run from (header, Setup, Test cases), the
+          right is what came of it (Past runs). From xl, not Settings' lg: at
+          lg with the sidebar expanded the case list would be left about
+          420px for a checkbox, id, title and two buttons. The left track
+          stops at 48rem - the case rows read no better wider - and gives way
+          first, so the right keeps its 20rem floor. Below xl it is one
+          column in the old order. Normal page flow: Settings' columns
           do not scroll on their own, so neither do these, and the page's own
           bottom padding keeps the floating dock clear of the last run. In
           the DOM the left column comes first, so a screen reader meets the
           setup before the results. */}
-      <div className="grid max-w-3xl gap-6 lg:max-w-none lg:grid-cols-[minmax(0,48rem)_minmax(20rem,1fr)] lg:items-start">
+      <div className="grid max-w-3xl gap-6 xl:max-w-none xl:grid-cols-[minmax(0,48rem)_minmax(20rem,1fr)] xl:items-start">
         <div className="min-w-0 space-y-4">
           {/* The same header line API Templates opens with: where this screen's
               runs go, at a glance, before anything else. */}

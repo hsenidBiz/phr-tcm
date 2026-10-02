@@ -664,6 +664,7 @@ test("the setup and case list sit in one column and Past runs in another, left f
   expect(leftColumn).toContainElement(cases);
   expect(rightColumn).not.toContainElement(setup);
   expect(leftColumn.compareDocumentPosition(rightColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  // The grid is what becomes two columns at the lg breakpoint.
-  expect(leftColumn.parentElement!.className).toMatch(/lg:grid-cols-/);
+  // The grid is what becomes two columns, from the xl breakpoint.
+  expect(leftColumn.parentElement!.className).toMatch(/ xl:grid-cols-/);
+  expect(leftColumn.parentElement!.className).not.toMatch(/lg:grid-cols-/);
 });

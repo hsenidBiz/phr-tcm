@@ -744,3 +744,29 @@ test("Send sends every confirmed case, not only the ones the filter shows", asyn
   await waitFor(() => expect(publishCalls).toHaveLength(1));
   expect(publishCalls[0].cases.map((c) => c.case_id)).toEqual([1, 2]);
 });
+
+// Review's own flow: filter to Failed, find a false failure, mark it Passed
+// - and keep its card to check it and write the note. The counts move at
+// once; the list only when a filter is picked again.
+test("a case re-bucketed under a filter stays listed, with its note field and focus", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed/i);
+
+  fireEvent.click(filterButton(/^Failed/));
+  const passed = within(caseCard(201)).getByRole("button", { name: "Passed" });
+  passed.focus();
+  fireEvent.click(passed);
+
+  expect(caseCard(201)).toBeInTheDocument();
+  expect(within(caseCard(201)).getByLabelText("Note for #201")).toBeInTheDocument();
+  expect(document.activeElement).toBe(passed);
+  expect(filterButton(/^Failed \(0\)$/)).toBeInTheDocument();
+  expect(filterButton(/^Passed \(2\)$/)).toBeInTheDocument();
+  expect(screen.queryByText("No case in this run matches that filter.")).not.toBeInTheDocument();
+
+  // Picking the filter again re-reads it: #201 is no longer Failed.
+  fireEvent.click(filterButton(/^Passed/));
+  fireEvent.click(filterButton(/^Failed/));
+  expect(screen.queryByRole("listitem", { name: /#201/ })).not.toBeInTheDocument();
+  expect(screen.getByText("No case in this run matches that filter.")).toBeInTheDocument();
+});

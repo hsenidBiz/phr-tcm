@@ -435,7 +435,9 @@ export const commands = {
 	/**
 	 *  Writes one run's report to the file the person picked. `ran_at` is the
 	 *  run's start time as the webview shows it (the person's own locale);
-	 *  blank prints it in UTC instead.
+	 *  blank prints it in UTC instead. Async, with the work on a blocking
+	 *  thread: encoding a run's pictures and writing the file must not hold
+	 *  the main thread, which would freeze the window while it runs.
 	 */
 	autoRunExportReport: (runId: string, path: string, ranAt: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_export_report", { runId, path, ranAt })),
 	/**  A run id the frontend can stamp on a new session. */

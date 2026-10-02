@@ -148,6 +148,19 @@ export default function RunReview(props: {
   /** Which cases the list shows. Only the LIST: Accept every proposal,
    * Save and Send always act on the whole run. */
   const [filter, setFilter] = useState<ResultFilter>("All");
+  /** The cases the filter matched WHEN IT WAS PICKED, by id; `null` under
+   * All. Frozen on purpose: a reviewer filtering to Failed who marks a
+   * false failure Passed must keep that card - to check it, to write its
+   * note - rather than have it vanish (taking keyboard focus with it) the
+   * moment its bucket changes. The counts stay live; the list follows them
+   * only when a filter is picked again. */
+  const [visibleIds, setVisibleIds] = useState<Set<number> | null>(null);
+  const pickFilter = (f: ResultFilter) => {
+    setFilter(f);
+    setVisibleIds(
+      f === "All" || !run ? null : new Set(run.cases.filter((c) => matchesFilter(c, f)).map((c) => c.case_id)),
+    );
+  };
 
   const [shot, setShot] = useState<string | null>(null);
   const openShot = (name: string) =>
@@ -322,7 +335,7 @@ export default function RunReview(props: {
   // Counted off the cases as they stand on screen, so a verdict confirmed
   // here moves its case to its new bucket at once.
   const counts = countBuckets(run.cases);
-  const shown = run.cases.filter((c) => matchesFilter(c, filter));
+  const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
 
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
@@ -330,7 +343,7 @@ export default function RunReview(props: {
         {when(run.started_at)} - {run.cases.length} case{run.cases.length === 1 ? "" : "s"}
       </h2>
 
-      <ResultFilterRow value={filter} onChange={setFilter} total={run.cases.length} counts={counts} />
+      <ResultFilterRow value={filter} onChange={pickFilter} total={run.cases.length} counts={counts} />
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
@@ -553,7 +566,9 @@ export default function RunReview(props: {
       )}
 
       {shot && (
-        <Modal onClose={() => setShot(null)} className="max-h-[90vh] max-w-5xl overflow-auto p-3">
+        // max-h-full, not a vh: the backdrop starts below the title bar, so
+        // 90vh of the window no longer fits inside it.
+        <Modal onClose={() => setShot(null)} className="max-h-full max-w-5xl overflow-auto p-3">
           <img src={shot} alt="Screenshot of the step" className="max-w-full" />
         </Modal>
       )}

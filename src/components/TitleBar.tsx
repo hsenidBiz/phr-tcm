@@ -6,7 +6,8 @@ import EnvironmentPill from "./EnvironmentPill";
 import FlaskLogo from "./FlaskLogo";
 
 /** v1-style custom title bar: drag region, flask mark, dynamic title,
- * min/max/close. Rendered on frameless windows (main + runner). `beta`
+ * min/max/close. Rendered by the main window only - the runner window
+ * draws its own drag header. `beta`
  * puts the Beta pill after the title, so a beta build says so on every
  * screen. `environment` is the active environment's name, passed only when
  * there is more than one. */
