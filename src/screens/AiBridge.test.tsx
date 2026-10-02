@@ -180,6 +180,9 @@ test("capture mode hides every mention of the Auto Run tools, and the API templa
   ).not.toBeInTheDocument();  // The risk-tiered writing guide is offered exactly where Auto Run is too.
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "Risk-tiered test design (trial)" })).not.toBeInTheDocument();
+  // Environments exist for Auto Run, so their card goes with it.
+  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Environment" })).not.toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
