@@ -656,11 +656,30 @@ reason.
 /// and whether `get_accounts` will include its passwords. Appended by the
 /// routes (`ai_bridge`) after the constant, because it is read from disk
 /// at the moment of the call and the constant cannot go stale on it. Only
-/// the name, the address and the test flag - never an account.
-pub fn active_environment_section(env: &crate::environments::Environment) -> String {
-    let address = match crate::autorun::recipe::origin_of(&env.start_url) {
-        Some(origin) => format!(" It signs in at {origin}."),
-        None => String::new(),
+/// the name, the address, the database as a person reads it (its label and
+/// `<database> on <server>`) and the test flag - never an account, and
+/// never the database's user, password or connection string. `database`
+/// is the environment's, looked up by the caller; None says it has none.
+pub fn active_environment_section(
+    env: &crate::environments::Environment,
+    database: Option<&crate::db::DbDatabase>,
+) -> String {
+    let address = if env.start_url.trim().is_empty() {
+        " It has no site address yet: a project with its own saved sign-in recipe signs in at that \
+         recipe's address, and any other project cannot sign in."
+            .to_string()
+    } else {
+        match crate::autorun::recipe::origin_of(&env.start_url) {
+            Some(origin) => format!(" It signs in at {origin}."),
+            None => String::new(),
+        }
+    };
+    let db = match database {
+        Some(d) if !d.database.is_empty() && !d.server.is_empty() => {
+            format!(" Its database is \"{}\": {} on {}.", d.label, d.database, d.server)
+        }
+        Some(d) => format!(" Its database is \"{}\".", d.label),
+        None => " It has no database set.".to_string(),
     };
     let passwords = if env.test_environment {
         "It is marked as a test environment, so `get_accounts` includes passwords."
@@ -668,7 +687,7 @@ pub fn active_environment_section(env: &crate::environments::Environment) -> Str
         "It is not marked as a test environment, so `get_accounts` leaves passwords out."
     };
     format!(
-        "## The active environment\n\nThe active environment is \"{}\".{address} {passwords}\n",
+        "## The active environment\n\nThe active environment is \"{}\".{address}{db} {passwords}\n",
         env.name
     )
 }

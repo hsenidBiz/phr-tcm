@@ -302,6 +302,8 @@ pub async fn route(
         // passwords included only in an environment marked as a test one.
         ("POST", "/accounts-propose") => accounts_propose(body),
         ("GET", "/accounts") => accounts_read(ctx),
+        // The project's Test files, by name and size: what a case uploads.
+        ("GET", "/autorun-test-files") => autorun_test_files(ctx),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -497,6 +499,30 @@ fn project_test_files(root: &std::path::Path, ctx: &BridgeContext) -> Vec<crate:
         return Vec::new();
     }
     crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_default()
+}
+
+/// Said by `list_test_files` with no project open: Test files belong to one.
+const TEST_FILES_NEED_A_PROJECT: &str = "open a project in the app first - Test files belong to a project";
+
+/// `GET /autorun-test-files`: this project's Test files, each by name and
+/// human size and nothing else - never a path or a date.
+fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
+        return (409, TEST_FILES_NEED_A_PROJECT.to_string());
+    }
+    let files = match crate::test_files::list(&crate::test_files::folder(&root, &ctx.org, &ctx.project)) {
+        Ok(f) => f,
+        Err(e) => return (500, e),
+    };
+    let rows: Vec<serde_json::Value> = files
+        .into_iter()
+        .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
+        .collect();
+    (200, serde_json::json!({ "test_files": rows }).to_string())
 }
 
 /// Every saved template for this project, as a summary: what it is, what
@@ -1240,14 +1266,29 @@ fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
 /// The active environment's live guide section, or None when the list
 /// cannot be read (said in the log; a guide without it still teaches the
 /// format).
-fn active_environment_section(root: &std::path::Path) -> Option<String> {
+fn active_environment_section(root: &std::path::Path, ctx: &BridgeContext) -> Option<String> {
     match crate::environments::active(root) {
-        Ok(env) => Some(crate::autorun::guide::active_environment_section(&env)),
+        Ok(env) => {
+            let database = environment_database(ctx, &env);
+            Some(crate::autorun::guide::active_environment_section(&env, database.as_ref()))
+        }
         Err(e) => {
             crate::applog::warn(&format!("Guide: the active environment could not be read: {e}"));
             None
         }
     }
+}
+
+/// The environment's database as the app lists it (`DbDatabase`: label,
+/// server and database, never a password), or None when it names none the
+/// app knows - or no store is set up to look it up in, which only a context
+/// nobody set up lacks.
+fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environment) -> Option<crate::db::DbDatabase> {
+    if env.db_id.trim().is_empty() {
+        return None;
+    }
+    let store = ctx.db_secrets.as_deref()?;
+    crate::db::credentials::databases(store).into_iter().find(|d| d.id == env.db_id)
 }
 
 /// The guide's own text, plus this project's sections when it has any: the
@@ -1262,7 +1303,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
     };
     // The environment is the app's, not a project's: named even with no
     // project open.
-    if let Some(section) = active_environment_section(&root) {
+    if let Some(section) = active_environment_section(&root, ctx) {
         out.push('\n');
         out.push_str(&section);
     }

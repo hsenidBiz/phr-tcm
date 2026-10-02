@@ -87,6 +87,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "The active environment's account keys and usernames - with passwords only in a test environment.",
   },
   {
+    name: "list_test_files",
+    label: "List test files",
+    summary: "This project's Test files a case can upload, by name and size.",
+  },
+  {
     name: "get_api_template_guide",
     label: "API template guide",
     summary: "The template format, the authoring workflow, and this project's account keys and address.",
@@ -172,6 +177,7 @@ export const DEV_ONLY_TOOLS = [
   "mark_autorun_suspected_defect",
   "propose_accounts",
   "get_accounts",
+  "list_test_files",
   "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
@@ -249,6 +255,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "mark_autorun_suspected_defect",
     "propose_accounts",
     "get_accounts",
+    "list_test_files",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
