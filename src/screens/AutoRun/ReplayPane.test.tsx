@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function renderPane(
-  cases: { id: number; title: string }[],
+  cases: { id: number; title: string; steps?: { action: string; expected: string }[] }[],
   overrides: { onClose?: () => void; onFinished?: (runId: string) => void } = {},
 ) {
   const onClose = overrides.onClose ?? vi.fn();
@@ -363,4 +363,358 @@ test("an account removed since it was picked falls back to each script's own, si
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0]).toEqual(expect.objectContaining({ account: null }));
   expect(screen.queryByText(/not on this machine/)).not.toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------
+// The dialog shows each case's written steps, live.
+// ---------------------------------------------------------------------------
+
+const STEPS = [
+  { action: "Open the leave form", expected: "The form shows" },
+  { action: "Pick a date", expected: "The date is accepted" },
+  { action: "Submit it", expected: "A receipt shows" },
+];
+
+type StepCase = { id: number; title: string; steps?: { action: string; expected: string }[] };
+
+const CASES: StepCase[] = [
+  { id: 1, title: "Case A", steps: STEPS },
+  { id: 2, title: "Case B", steps: STEPS },
+  { id: 3, title: "Case C", steps: STEPS },
+];
+
+/** A fake `matchMedia` for the window-height query: `set` flips the answer
+ * and fires `change` on every listener, as a resize across 900px would. */
+function mockTallWindow(initial: boolean) {
+  const real = window.matchMedia;
+  let matches = initial;
+  const listeners = new Set<() => void>();
+  window.matchMedia = ((query: string) => ({
+    get matches() {
+      return matches;
+    },
+    media: query,
+    onchange: null,
+    addListener: (l: () => void) => listeners.add(l),
+    removeListener: (l: () => void) => listeners.delete(l),
+    addEventListener: (_t: string, l: () => void) => listeners.add(l),
+    removeEventListener: (_t: string, l: () => void) => listeners.delete(l),
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return {
+    set(next: boolean) {
+      matches = next;
+      act(() => listeners.forEach((l) => l()));
+    },
+    restore() {
+      window.matchMedia = real;
+    },
+  };
+}
+
+type RunFile = { cases: unknown[] } | null;
+
+/** Open the pane on `cases` and press Start; `loadRun` answers
+ * `auto_run_load_run` (a throw is a failed load). */
+async function startRun(cases: StepCase[], loadRun: () => RunFile = () => null) {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_replay") return new Promise(() => {});
+      if (cmd === "auto_run_load_run") return loadRun();
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane(cases);
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  const { emit } = await import("@tauri-apps/api/event");
+  return (overrides: Partial<Record<string, unknown>>) =>
+    act(async () => {
+      await emit("replay-progress", progress({ total: cases.length, steps: 3, ...overrides }));
+    });
+}
+
+const toggle = (id: number, shown: boolean) =>
+  screen.getByRole("button", { name: `${shown ? "Hide" : "Show"} steps for #${id}` });
+const stepsOf = (id: number) => screen.queryByRole("list", { name: `Steps of #${id}` });
+
+test("the running case opens by itself, locked, with the current step marked", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES);
+
+    await send({ phase: "opening" });
+    const t = toggle(1, true);
+    expect(t).toHaveAttribute("aria-expanded", "true");
+    expect(t).toBeDisabled();
+    expect(t).toHaveAttribute("title", "Open while it runs");
+    expect(document.getElementById(t.getAttribute("aria-controls")!)).toContainElement(stepsOf(1));
+    // The phase line sits above the steps, before step 1 has started.
+    const open = screen.getByText("Case A").closest("li")!;
+    expect(within(open).getAllByText("Opening the browser")).toHaveLength(2);
+    expect(within(stepsOf(1)!).queryByText("Checking now")).not.toBeInTheDocument();
+
+    await send({ phase: "step", step_number: 2 });
+    const items = within(stepsOf(1)!).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]).not.toHaveAttribute("aria-current");
+    expect(within(items[0]).getByText("Done")).toBeInTheDocument();
+    expect(items[1]).toHaveAttribute("aria-current", "step");
+    expect(within(items[1]).getByText("Checking now")).toBeInTheDocument();
+    expect(within(items[1]).getByText(/Pick a date/)).toBeInTheDocument();
+    expect(items[2]).not.toHaveAttribute("aria-current");
+    expect(within(items[2]).queryByText("Done")).not.toBeInTheDocument();
+    expect(within(items[2]).queryByText("Checking now")).not.toBeInTheDocument();
+
+    // Other rows stay shut: only the running case opens in a short window.
+    expect(toggle(2, false)).toHaveAttribute("aria-expanded", "false");
+    expect(stepsOf(2)).not.toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("the next case's first event closes the finished one and opens the new one", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES);
+    await send({ phase: "step", step_number: 1 });
+    expect(stepsOf(1)).toBeInTheDocument();
+
+    await send({ phase: "done", step_number: 3, proposed: "Passed" });
+    expect(toggle(1, false)).toHaveAttribute("aria-expanded", "false");
+    expect(stepsOf(1)).not.toBeInTheDocument();
+
+    await send({ index: 1, case_id: 2, title: "Case B", phase: "opening" });
+    expect(toggle(2, true)).toBeDisabled();
+    expect(stepsOf(2)).toBeInTheDocument();
+    expect(stepsOf(1)).not.toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("any row that is not running opens and closes by hand", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES);
+    await send({ phase: "step", step_number: 1 });
+
+    // A future case.
+    fireEvent.click(toggle(3, false));
+    expect(toggle(3, true)).toHaveAttribute("aria-expanded", "true");
+    expect(toggle(3, true)).toBeEnabled();
+    expect(within(stepsOf(3)!).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(stepsOf(3)!).queryByText("Checking now")).not.toBeInTheDocument();
+    fireEvent.click(toggle(3, true));
+    expect(toggle(3, false)).toHaveAttribute("aria-expanded", "false");
+    expect(stepsOf(3)).not.toBeInTheDocument();
+
+    // A finished case reopens and closes the same way.
+    await send({ phase: "done", proposed: "Passed" });
+    fireEvent.click(toggle(1, false));
+    expect(stepsOf(1)).toBeInTheDocument();
+    fireEvent.click(toggle(1, true));
+    expect(stepsOf(1)).not.toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("a finished case shows Passed, Failed with its detail, and Not reached", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES, () => ({
+      id: "run-9",
+      cases: [
+        {
+          case_id: 1,
+          title: "Case A",
+          steps: [
+            { step_number: 1, outcomes: [{ ok: true, detail: "ok" }, { ok: true, detail: "ok" }] },
+            {
+              step_number: 2,
+              outcomes: [
+                { ok: true, detail: "ok" },
+                { ok: false, detail: "No element matched #date" },
+                { ok: false, detail: "second failure" },
+              ],
+            },
+          ],
+        },
+      ],
+    }));
+    await send({ phase: "step", step_number: 1 });
+    await send({ phase: "done", proposed: "Failed" });
+
+    fireEvent.click(toggle(1, false));
+    const items = within(stepsOf(1)!).getAllByRole("listitem");
+    expect(within(items[0]).getByText("Passed")).toBeInTheDocument();
+    expect(within(items[1]).getByText("Failed")).toBeInTheDocument();
+    expect(within(items[1]).getByText("No element matched #date")).toBeInTheDocument();
+    expect(within(items[1]).queryByText("second failure")).not.toBeInTheDocument();
+    expect(within(items[2]).getByText("Not reached")).toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("a run file that cannot be read leaves a finished case on its status line", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES, () => {
+      // eslint-disable-next-line no-throw-literal
+      throw "no such run";
+    });
+    await send({ phase: "step", step_number: 1 });
+    await send({ phase: "done", proposed: "Passed" });
+
+    fireEvent.click(toggle(1, false));
+    const items = within(stepsOf(1)!).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(screen.queryByText("Passed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not reached")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByText("Case A").closest("li")!).getByText("Proposed: Passed"),
+    ).toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("a case with no written steps keeps to its status line", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun([{ id: 1, title: "Case A" }]);
+    await send({ phase: "step", step_number: 2 });
+    const li = screen.getByText("Case A").closest("li")!;
+    expect(within(li).getAllByText("Step 2 of 3")).toHaveLength(1);
+    expect(within(li).queryByRole("list")).not.toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("a tall window also opens the next case, and only the running one is locked", async () => {
+  const mq = mockTallWindow(true);
+  try {
+    const send = await startRun(CASES);
+    await send({ phase: "step", step_number: 1 });
+
+    expect(stepsOf(1)).toBeInTheDocument();
+    expect(stepsOf(2)).toBeInTheDocument();
+    expect(stepsOf(3)).not.toBeInTheDocument();
+    expect(toggle(1, true)).toBeDisabled();
+    expect(toggle(2, true)).toBeEnabled();
+    // The next case's steps are plain: nothing is checked there yet.
+    expect(within(stepsOf(2)!).queryByText("Checking now")).not.toBeInTheDocument();
+
+    // The person can close it ...
+    fireEvent.click(toggle(2, true));
+    expect(stepsOf(2)).not.toBeInTheDocument();
+    // ... and it stays closed when the window changes size.
+    mq.set(false);
+    mq.set(true);
+    expect(stepsOf(2)).not.toBeInTheDocument();
+
+    // Until it is the case running: then it opens, locked, and the case
+    // after it opens too, while the finished one folds.
+    await send({ phase: "done", proposed: "Passed" });
+    await send({ index: 1, case_id: 2, title: "Case B", phase: "opening" });
+    expect(stepsOf(1)).not.toBeInTheDocument();
+    expect(stepsOf(2)).toBeInTheDocument();
+    expect(toggle(2, true)).toBeDisabled();
+    expect(stepsOf(3)).toBeInTheDocument();
+    expect(toggle(3, true)).toBeEnabled();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("a short window opens only the running case, and a resize switches between the two", async () => {
+  const mq = mockTallWindow(false);
+  try {
+    const send = await startRun(CASES);
+    await send({ phase: "step", step_number: 1 });
+    expect(stepsOf(1)).toBeInTheDocument();
+    expect(stepsOf(2)).not.toBeInTheDocument();
+
+    mq.set(true);
+    expect(stepsOf(1)).toBeInTheDocument();
+    expect(stepsOf(2)).toBeInTheDocument();
+
+    mq.set(false);
+    expect(stepsOf(1)).toBeInTheDocument();
+    expect(stepsOf(2)).not.toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
+});
+
+test("the list follows the running case until the person scrolls it, then offers Follow the run", async () => {
+  const mq = mockTallWindow(false);
+  const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  try {
+    const send = await startRun(CASES);
+    expect(scroll).not.toHaveBeenCalled();
+
+    await send({ phase: "opening" });
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+    expect(scroll.mock.contexts[0]).toBe(screen.getByText("Case A").closest("li"));
+    expect(screen.queryByRole("button", { name: "Follow the run" })).not.toBeInTheDocument();
+
+    // More events for the SAME case do not scroll again.
+    await send({ phase: "step", step_number: 1 });
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // The person takes the wheel: the next case does not pull the list.
+    fireEvent.wheel(screen.getByRole("list", { name: "Cases in this run" }));
+    expect(await screen.findByRole("button", { name: "Follow the run" })).toBeInTheDocument();
+    await send({ phase: "done", proposed: "Passed" });
+    await send({ index: 1, case_id: 2, title: "Case B", phase: "opening" });
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // Follow the run scrolls to the case running now and resumes.
+    fireEvent.click(screen.getByRole("button", { name: "Follow the run" }));
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(screen.getByText("Case B").closest("li"));
+    expect(screen.queryByRole("button", { name: "Follow the run" })).not.toBeInTheDocument();
+
+    await send({ index: 2, case_id: 3, title: "Case C", phase: "opening" });
+    expect(scroll).toHaveBeenCalledTimes(3);
+    expect(scroll.mock.contexts[2]).toBe(screen.getByText("Case C").closest("li"));
+  } finally {
+    mq.restore();
+  }
+});
+
+test("scrolling the list by keyboard or touch also pauses following, but a plain scroll does not", async () => {
+  const mq = mockTallWindow(false);
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  try {
+    const send = await startRun(CASES);
+    await send({ phase: "opening" });
+    const list = screen.getByRole("list", { name: "Cases in this run" });
+
+    // A scroll event alone is what scrollIntoView itself causes.
+    fireEvent.scroll(list);
+    expect(screen.queryByRole("button", { name: "Follow the run" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(list, { key: "PageDown" });
+    expect(screen.getByRole("button", { name: "Follow the run" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Follow the run" }));
+    expect(screen.queryByRole("button", { name: "Follow the run" })).not.toBeInTheDocument();
+
+    fireEvent.touchMove(list);
+    expect(screen.getByRole("button", { name: "Follow the run" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Follow the run" }));
+
+    // Dragging the scrollbar: a press on the list itself, then it scrolls.
+    fireEvent.pointerDown(list);
+    fireEvent.scroll(list);
+    expect(screen.getByRole("button", { name: "Follow the run" })).toBeInTheDocument();
+  } finally {
+    mq.restore();
+  }
 });

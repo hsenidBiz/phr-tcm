@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { EASE, type FoldMotion } from "../ui/collapse";
 import { reducedMotion } from "../../lib/exitGhost";
 import { parseEasing } from "../../lib/cubicBezier";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import { driftFrames, planClose, planOpen, type TileMove, type TileTiming } from "./tileSchedule";
 
 /**
@@ -58,23 +59,6 @@ const TIMING: TileTiming = {
 /** Where the moving cards render: under everything in one column, or at
  * the foot of the left or the right column of the wide layout. */
 export type TilePlacement = "single" | "left" | "right";
-
-function useMediaQuery(query: string): boolean {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const mq = window.matchMedia?.(query);
-      if (!mq) return () => {};
-      if (mq.addEventListener) {
-        mq.addEventListener("change", onChange);
-        return () => mq.removeEventListener("change", onChange);
-      }
-      mq.addListener?.(onChange);
-      return () => mq.removeListener?.(onChange);
-    },
-    [query],
-  );
-  return useSyncExternalStore(subscribe, () => window.matchMedia?.(query).matches ?? false);
-}
 
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 

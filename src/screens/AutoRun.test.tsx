@@ -1125,3 +1125,25 @@ test("a saved supervised run refreshes the rows, so a mark it cleared stops show
 
   await waitFor(() => expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument());
 });
+
+/// The unattended run dialog shows each picked case's written steps - the
+/// same steps the script editor lists, handed over by this screen.
+test("the unattended run dialog can show a picked case's written steps", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return scriptFor202;
+    if (cmd === "auto_run_replay") return new Promise(() => {});
+    return null;
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Show steps for #202" }));
+  const steps = await screen.findByRole("list", { name: "Steps of #202" });
+  expect(within(steps).getByText(/Sign in/)).toBeInTheDocument();
+  expect(within(steps).getByText(/A lockout message appears/)).toBeInTheDocument();
+});
