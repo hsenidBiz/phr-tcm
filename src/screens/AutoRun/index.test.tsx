@@ -72,6 +72,12 @@ function openTab(name: "Test cases" | "Past runs" | "Setup") {
   fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
 }
 
+/** Opens the Test cases tab's More menu and returns one of its items. */
+function moreItem(name: "Import scripts" | "Clear scripts") {
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  return screen.getByRole("menuitem", { name });
+}
+
 /** Renders the screen on its Test cases tab. The mocks here set nothing up,
  * so the opening rule alone would choose Setup; a tab clicked before the
  * setup has loaded is the person's choice, which the rule never overrides.
@@ -309,7 +315,7 @@ test("Clear scripts and Clear results are disabled when there is nothing to clea
   renderScreen();
   await screen.findByText("Alpha check");
 
-  expect(screen.getByRole("button", { name: "Clear scripts" })).toBeDisabled();
+  expect(moreItem("Clear scripts")).toBeDisabled();
   openTab("Past runs");
   expect(await screen.findByRole("button", { name: "Clear results" })).toBeDisabled();
 });
@@ -323,7 +329,7 @@ test("Clear scripts opens its confirm with the exact sentence; Cancel calls noth
   renderScreen();
   await screen.findByText("Alpha check");
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  fireEvent.click(moreItem("Clear scripts"));
   expect(
     await screen.findByText(
       "This removes the scripts of the 2 cases listed for this PBI from this machine. Nothing in Azure DevOps changes.",
@@ -348,7 +354,7 @@ test("confirming Clear scripts calls the command, toasts the count and refreshes
   renderScreen();
   await screen.findByText("Alpha check");
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  fireEvent.click(moreItem("Clear scripts"));
   fireEvent.click(await screen.findByRole("button", { name: "Clear 1 script" }));
 
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 script removed."));
@@ -515,6 +521,8 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
+  // The strip on Test cases says there is no address yet.
+  expect(await screen.findByText("no site set yet")).toBeInTheDocument();
   openTab("Setup");
 
   expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
@@ -527,7 +535,6 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(await within(row("Areas")).findByText("None recorded yet")).toBeInTheDocument();
   expect(within(row("Areas")).queryByText("Loading…")).not.toBeInTheDocument();
   expect(within(row("Areas")).getByRole("button", { name: "Edit areas" })).toBeEnabled();
-  expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
   // The address is the environment's, so it is set here with or without a
   // saved recipe - the built-in sign-in needs nothing else.
@@ -543,19 +550,27 @@ test("with no saved recipe the built-in signs in at the environment's address", 
   );
   renderScreen();
   await screen.findByText("Alpha check");
+  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
   openTab("Setup");
   expect(await within(row("Site address")).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
-  expect(screen.getByText("QA - qa.example.com")).toBeInTheDocument();
   // Recording or editing saves the project's own recipe, which replaces it.
   expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeEnabled();
   expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeEnabled();
 });
 
-test("the Setup card and the header line read a project that is set up", async () => {
+test("the Setup card and the readiness strip read a project that is set up", async () => {
   mockSetUp();
   renderScreen();
   await screen.findByText("Alpha check");
+
+  // The strip on Test cases: the host the runs go to, and the counts.
+  expect(await screen.findByText("hr.example.internal")).toBeInTheDocument();
+  expect(await screen.findByText("2 accounts")).toBeInTheDocument();
+  expect(await screen.findByText("1 area")).toBeInTheDocument();
+  // The old header line's project name is gone.
+  expect(screen.queryByText("proj")).not.toBeInTheDocument();
+
   openTab("Setup");
 
   const site = row("Site address");
@@ -568,18 +583,13 @@ test("the Setup card and the header line read a project that is set up", async (
   // One wording for the same count, in the row and in the header.
   expect(await within(row("Areas")).findByText("1 area recorded")).toBeInTheDocument();
 
-  // The header line: project, the host the runs go to, and the counts.
-  expect(screen.getByText("proj")).toBeInTheDocument();
-  expect(screen.getByText("hr.example.internal")).toBeInTheDocument();
-  expect(screen.getByText("2 accounts")).toBeInTheDocument();
-  expect(screen.getByText("1 area")).toBeInTheDocument();
 });
 
-test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the header", async () => {
+test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the readiness strip", async () => {
   const saves = mockSetUp(envList(""));
   renderScreen();
   await screen.findByText("Alpha check");
-  // No address of its own yet: the header shows the recipe's host.
+  // No address of its own yet: the strip shows the recipe's host.
   expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
   openTab("Setup");
@@ -606,9 +616,10 @@ test("saving a new site address writes it to the active environment, not the rec
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Site address" })).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
-  expect(within(row("Site address")).getByText("https://people.example.org/")).toBeInTheDocument();
+  expect(await within(row("Site address")).findByText("https://people.example.org/")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("+2 allowed sites")).toBeInTheDocument();
+  openTab("Test cases");
+  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
 });
 
 test("the selection's actions live in the shared dock, in place and as an aria-hidden floating copy", async () => {
@@ -642,15 +653,17 @@ test("the selection's actions live in the shared dock, in place and as an aria-h
   await waitFor(() => expect(document.querySelector("[data-sticky-action]")).toBeNull());
 });
 
-test("Clear results lives in the Past runs section, and Clear scripts with the test cases", async () => {
+test("Clear results lives in the Past runs section, and Clear scripts and Import scripts in the test cases' More menu", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
 
   const testCases = screen.getByRole("heading", { name: /^Test cases/ }).closest("section")!;
-  expect(within(testCases).getByRole("button", { name: "Clear scripts" })).toBeInTheDocument();
-  expect(within(testCases).getByRole("button", { name: "Import scripts" })).toBeInTheDocument();
+  expect(within(testCases).getByRole("button", { name: "More" })).toBeInTheDocument();
+  expect(moreItem("Clear scripts")).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeInTheDocument();
   expect(within(testCases).queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Clear results" })).not.toBeInTheDocument();
 
   openTab("Past runs");
   const pastRuns = (await screen.findByRole("heading", { name: "Past runs" })).closest("section")!;

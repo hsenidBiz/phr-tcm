@@ -1,9 +1,21 @@
 import { ChevronDown } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/cn";
 
-export type MoreAction = { label: string; onSelect: () => void };
+export type MoreAction = {
+  label: string;
+  onSelect: () => void;
+  /** A line under the label saying what the action does. Read as the
+   * item's description, so its name stays just the label. */
+  description?: string;
+  /** Kept in the list but not pressable - a menu that loses an item reads
+   * differently each time it opens. */
+  disabled?: boolean;
+  /** Destructive: it turns the danger colour on hover only, the way the
+   * screens' own Clear buttons do. */
+  danger?: boolean;
+};
 
 /** How long the pointer may be between the trigger and the menu before a
  * hover-opened menu closes - the gap it crosses is a few pixels, and a
@@ -43,6 +55,7 @@ export default function MoreActionsMenu({
   disabled?: boolean;
   text?: string;
 }) {
+  const descIds = useId();
   const [open, setOpen] = useState<null | "hover" | "click">(null);
   // True for the few frames the list spends shrinking away after a close.
   const [closing, setClosing] = useState(false);
@@ -178,7 +191,7 @@ export default function MoreActionsMenu({
           e.stopPropagation();
           if (disabled) return;
           show("click");
-          window.setTimeout(() => menu.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus(), 0);
+          window.setTimeout(() => menu.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus(), 0);
         }}
       >
         {text}
@@ -208,7 +221,7 @@ export default function MoreActionsMenu({
             onMouseDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               e.stopPropagation();
-              const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? [])];
+              const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not(:disabled)") ?? [])];
               const at = items.indexOf(document.activeElement as HTMLButtonElement);
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -220,19 +233,37 @@ export default function MoreActionsMenu({
               }
             }}
           >
-            {actions.map((a) => (
+            {actions.map((a, i) => (
               <button
                 key={a.label}
                 type="button"
                 role="menuitem"
-                className="block w-full whitespace-nowrap rounded px-3 py-1.5 text-left text-xs font-medium text-text transition-colors hover:bg-accent-soft hover:text-accent focus-visible:bg-accent-soft focus-visible:text-accent focus-visible:outline-none"
+                disabled={a.disabled}
+                // The name is the label alone; the description rides along
+                // as the item's description.
+                aria-label={a.description ? a.label : undefined}
+                aria-describedby={a.description ? `${descIds}-${i}` : undefined}
+                className={cn(
+                  "block w-full rounded px-3 py-1.5 text-left text-xs font-medium text-text transition-colors focus-visible:outline-none",
+                  a.danger
+                    ? "hover:bg-danger/10 hover:text-danger focus-visible:bg-danger/10 focus-visible:text-danger"
+                    : "hover:bg-accent-soft hover:text-accent focus-visible:bg-accent-soft focus-visible:text-accent",
+                  a.description ? "" : "whitespace-nowrap",
+                  a.disabled && "pointer-events-none opacity-50",
+                )}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (a.disabled) return;
                   close();
                   a.onSelect();
                 }}
               >
                 {a.label}
+                {a.description && (
+                  <span id={`${descIds}-${i}`} className="mt-0.5 block max-w-56 text-[11px] font-normal text-faint">
+                    {a.description}
+                  </span>
+                )}
               </button>
             ))}
           </div>,

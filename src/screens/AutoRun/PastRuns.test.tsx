@@ -6,9 +6,17 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
 import PastRuns, { reportFileName } from "./PastRuns";
+import type { ResultFilter } from "./verdicts";
+
+/** The screen holds the filter; this stands in for it. */
+function WithFilter({ pbiId, onReview }: { pbiId: number | null; onReview: (id: string) => void }) {
+  const [filter, setFilter] = useState<ResultFilter>("All");
+  return <PastRuns pbiId={pbiId} onReview={onReview} filter={filter} onFilterChange={setFilter} />;
+}
 
 const saveDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
@@ -44,7 +52,7 @@ function renderPastRuns(
   const onReview = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <PastRuns pbiId={pbiId} onReview={onReview} />
+      <WithFilter pbiId={pbiId} onReview={onReview} />
     </QueryClientProvider>,
   );
   return { onReview };

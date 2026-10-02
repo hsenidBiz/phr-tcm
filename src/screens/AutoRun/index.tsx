@@ -19,6 +19,7 @@ import {
 } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
+import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
@@ -34,7 +35,6 @@ import {
   IconCancel,
   IconClearScripts,
   IconEdit,
-  IconImport,
   IconModulePaths,
   IconRecipe,
   IconRecord,
@@ -50,12 +50,14 @@ import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
+import ReadinessStrip from "./ReadinessStrip";
 import RecordSignInDialog from "./RecordSignInDialog";
 import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
+import type { ResultFilter } from "./verdicts";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness, type AutoRunTab } from "./useAutoRunReadiness";
@@ -121,12 +123,16 @@ export default function AutoRun({
   });
 
   // One script lookup per case, so the list can say which are drivable.
+  // `combine` hands back just each script, and TanStack keeps the array the
+  // same object while no script has changed - the readiness check below
+  // reads it, and would otherwise redo its work on every render.
   const scripts = useQueries({
     queries: (cases.data ?? []).map((c) => ({
       queryKey: ["autorun-script", c.id],
       queryFn: () => unwrapStr(commands.autoRunLoadScript(c.id)),
       retry: false,
     })),
+    combine: (results) => results.map((q) => q.data),
   });
 
   const [editing, setEditing] = useState<number | null>(null);
@@ -193,21 +199,26 @@ export default function AutoRun({
     if (site.start_url) return site.start_url;
     return envs.isError ? undefined : "";
   })();
+  const testFileNames = useMemo(
+    () => (testFiles.isSuccess ? (testFiles.data ?? []).map((f) => f.name) : null),
+    [testFiles.isSuccess, testFiles.data],
+  );
+  // No project, no sign-in: the recipe is a project's. A recipe that could
+  // not be read is unknown, and its row says why.
+  const signIn: "saved" | "builtin" | "none" | null = !setupReady
+    ? "none"
+    : recipe.isSuccess
+      ? saved
+        ? "saved"
+        : "builtin"
+      : null;
   const readiness = useAutoRunReadiness({
     siteUrl: knownSiteUrl,
-    // No project, no sign-in: the recipe is a project's. A recipe that could
-    // not be read is unknown, and its row says why.
-    signIn: !setupReady
-      ? "none"
-      : recipe.isSuccess
-        ? saved
-          ? "saved"
-          : "builtin"
-        : null,
+    signIn,
     accountCount,
     areaCount,
-    scripts: scripts.map((q) => q.data),
-    testFileNames: testFiles.isSuccess ? (testFiles.data ?? []).map((f) => f.name) : null,
+    scripts,
+    testFileNames,
   });
 
   /** Which tab shows. `null` until the screen has decided, once: Setup when
@@ -216,6 +227,9 @@ export default function AutoRun({
    * so setup that changes later (the last account removed, say) never
    * pulls anyone off the tab they are on. */
   const [tab, setTab] = useState<AutoRunTab | null>(null);
+  /** Past runs' result filter. Here rather than in the panel, which is not
+   * mounted while another tab shows - the choice outlives it. */
+  const [runsFilter, setRunsFilter] = useState<ResultFilter>("All");
   /** Every essential read has answered, or failed. A failed read is shown
    * on its Setup row and is never "missing" (see `useAutoRunReadiness`), so
    * the screen still opens - on what it does know. */
@@ -235,9 +249,21 @@ export default function AutoRun({
 
   const tabIds = useId();
   const tabRefs = useRef<Partial<Record<AutoRunTab, HTMLButtonElement | null>>>({});
+  /** Set when a closing review sends the person to Past runs: the button
+   * they pressed to open it is gone by then (the run that opened it was
+   * on Test cases), so focus would fall to the page. */
+  const [focusRunsTab, setFocusRunsTab] = useState(false);
+  useEffect(() => {
+    if (!focusRunsTab) return;
+    tabRefs.current.runs?.focus();
+    setFocusRunsTab(false);
+  }, [focusRunsTab]);
   /** Arrow keys move between the tabs (wrapping), Home and End go to the
    * ends - and the chosen tab takes the focus, as a tab list's should. */
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    // Alt+Left is the browser's "back" (and Ctrl/Meta+Arrow are other
+    // shortcuts' too): a tab list only answers the bare keys.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const last = TABS.length - 1;
     const next =
       e.key === "ArrowRight"
@@ -362,7 +388,7 @@ export default function AutoRun({
       ),
     [rows],
   );
-  const hasScript = (i: number) => Boolean(scripts[i]?.data);
+  const hasScript = (i: number) => Boolean(scripts[i]);
   /** Only scripted cases can be run, so only they can be ticked. */
   const runnableIn = (indices: number[]) =>
     indices.filter(hasScript).map((i) => rows[i].id);
@@ -414,7 +440,7 @@ export default function AutoRun({
   const row = (i: number) => {
     const c = rows[i];
     const ready = hasScript(i);
-    const defect = scripts[i]?.data?.suspected_defect;
+    const defect = scripts[i]?.suspected_defect;
     return (
       <li
         key={c.id}
@@ -494,25 +520,6 @@ export default function AutoRun({
           padding keeps the floating dock clear of the last row. */}
       <div className="max-w-3xl space-y-4">
         <div className="min-w-0 space-y-4">
-          {/* The same header line API Templates opens with: where this screen's
-              runs go, at a glance, before anything else. */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
-            <span>
-              Project <span className="font-medium text-text">{project || "none picked"}</span>
-            </span>
-            {recipe.isSuccess && (
-              <span>
-                {activeEnv ? "Environment" : "Runs against"}{" "}
-                <span className="font-medium text-text">
-                  {activeEnv && `${activeEnv.name} - `}
-                  {site.start_url ? siteHost(site.start_url) : "no site set yet"}
-                </span>
-              </span>
-            )}
-            {accountCount != null && <span>{plural(accountCount, "account")}</span>}
-            {areaCount != null && <span>{plural(areaCount, "area")}</span>}
-          </div>
-
           {/* The Templates/Flows tab pattern from API Templates, with the
               keyboard a tab list owes: only the chosen tab is in the Tab
               order (the first, before the screen has chosen), and the arrow
@@ -761,16 +768,22 @@ export default function AutoRun({
                   Test cases
                   {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
                 </h2>
+                {/* Where runs go and whether the setup is in place, in one line.
+                    Only once the three things a run cannot go without are
+                    known, so a slow read never shows as a warning. */}
+                {readiness.loaded && (
+                  <ReadinessStrip
+                    envName={activeEnv?.name ?? null}
+                    siteHost={site.start_url ? siteHost(site.start_url) : null}
+                    signIn={signIn}
+                    accountCount={accountCount}
+                    areaCount={areaCount}
+                    testFileCount={testFileCount}
+                    missingTestFiles={readiness.missingTestFiles}
+                    onOpenSetup={() => setTab("setup")}
+                  />
+                )}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={importScripts.isPending}
-                    onClick={() => importScripts.mutate()}
-                  >
-                    <IconImport aria-hidden />
-                    Import scripts
-                  </Button>
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
                     <Checkbox
                       checked={grouped}
@@ -786,26 +799,32 @@ export default function AutoRun({
                     />
                     Group by title
                   </label>
-                  {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
-                      whole tab is gated in one place (`autoRunVisible` in
-                      lib/extras.ts), so no further gating belongs here. Disabled
-                      rather than hidden: a button that vanishes the moment it would
-                      do nothing invites "where did it go", where greyed-out with
-                      nothing to do reads as exactly that. Danger only on hover, the
-                      way the import queue's Remove reads: destructive, but
-                      secondary, and it still asks first. */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="ml-auto hover:border-danger hover:bg-danger/10 hover:text-danger"
-                    disabled={!rows.some((_, i) => hasScript(i))}
-                    onClick={() => setClearScriptsOpen(true)}
-                  >
-                    <IconClearScripts aria-hidden />
-                    Clear scripts
-                  </Button>
+                  {/* The rare actions. Clear scripts is housekeeping shown wherever
+                      Auto Run is (dev, or unlocked) - the whole tab is gated in one
+                      place (`autoRunVisible` in lib/extras.ts), so no further gating
+                      belongs here. Disabled rather than hidden: an item that vanishes
+                      the moment it would do nothing invites "where did it go". Danger
+                      only on hover, and it still asks first. */}
+                  <span className="ml-auto">
+                    <MoreActionsMenu
+                      label="More"
+                      actions={[
+                        {
+                          label: "Import scripts",
+                          description: "One JSON file can carry every case in this PBI.",
+                          disabled: importScripts.isPending,
+                          onSelect: () => importScripts.mutate(),
+                        },
+                        {
+                          label: "Clear scripts",
+                          danger: true,
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setClearScriptsOpen(true),
+                        },
+                      ]}
+                    />
+                  </span>
                 </div>
-                <p className="text-xs text-faint">One JSON file can carry every case in this PBI.</p>
 
                 {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
@@ -908,7 +927,14 @@ export default function AutoRun({
               </section>
             )}
 
-            {shown === "runs" && <PastRuns pbiId={pbi.id} onReview={setReviewing} />}
+            {shown === "runs" && (
+              <PastRuns
+                pbiId={pbi.id}
+                onReview={setReviewing}
+                filter={runsFilter}
+                onFilterChange={setRunsFilter}
+              />
+            )}
           </div>
         )}
       </div>
@@ -1061,6 +1087,7 @@ export default function AutoRun({
           )}
           onClose={() => {
             setReviewing(null);
+            setFocusRunsTab(true);
             // Wherever the review opened from - Past runs, or a finished
             // unattended run over Test cases - the run now lives in Past runs.
             setTab("runs");

@@ -115,3 +115,35 @@ test("closing plays a short shrink: hidden and unclickable at once, gone after i
   });
   expect(screen.getByRole("menu")).not.toHaveClass("is-closing");
 });
+
+/// An action can explain itself in a line under its label, be unavailable, or
+/// be destructive - Auto Run's More menu uses all three. The description is
+/// read as the item's description, not folded into its name.
+test("an action can carry a description, be disabled, and read as dangerous", () => {
+  const picked: string[] = [];
+  render(
+    <MoreActionsMenu
+      label="More"
+      actions={[
+        { label: "Import", description: "One file can carry every case.", onSelect: () => picked.push("Import") },
+        { label: "Clear", disabled: true, danger: true, onSelect: () => picked.push("Clear") },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+
+  const imp = screen.getByRole("menuitem", { name: "Import" });
+  expect(imp).toHaveAccessibleDescription("One file can carry every case.");
+  expect(screen.getByText("One file can carry every case.")).toBeInTheDocument();
+
+  const clear = screen.getByRole("menuitem", { name: "Clear" });
+  expect(clear).toBeDisabled();
+  expect(clear).toHaveClass("hover:text-danger");
+  fireEvent.click(clear);
+  expect(picked).toEqual([]);
+  // A disabled item stays in the list, so the menu reads the same each time.
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+
+  fireEvent.click(imp);
+  expect(picked).toEqual(["Import"]);
+});

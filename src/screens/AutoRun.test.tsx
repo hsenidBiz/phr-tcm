@@ -33,6 +33,12 @@ function renderAutoRun(open: TabName | null = "Test cases") {
   return Object.assign(view, { qc });
 }
 
+/** Picks an action from the Test cases tab's More menu, as a person would. */
+function chooseFromMore(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 const cases = [
   {
     id: 201,
@@ -139,7 +145,7 @@ test("importing scripts sends the picked file's path, and the badge updates", as
   if (!row) throw new Error("row for case #201 not found");
   expect(within(row).getByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Import scripts" }));
+  chooseFromMore("Import scripts");
 
   await waitFor(() => expect(receivedArgs).not.toBeNull());
   expect(receivedArgs).toEqual({ organization: "acme", project: "Web", path: "C:\\scripts.json" });
@@ -160,7 +166,8 @@ test("a large import's toast names a few ids and counts the rest", async () => {
   renderAutoRun();
   render(<Toaster />);
 
-  fireEvent.click(await screen.findByRole("button", { name: "Import scripts" }));
+  await screen.findByText("Valid login");
+  chooseFromMore("Import scripts");
 
   expect(await screen.findByText(/imported 14 scripts/i)).toBeInTheDocument();
   expect(screen.getByText(/and 4 more/i)).toBeInTheDocument();
@@ -185,11 +192,13 @@ test("a rejected import call shows an error toast and re-enables the button", as
   renderAutoRun();
   render(<Toaster />);
 
-  const importButton = await screen.findByRole("button", { name: "Import scripts" });
-  fireEvent.click(importButton);
+  await screen.findByText("Valid login");
+  chooseFromMore("Import scripts");
 
-  await waitFor(() => expect(importButton).not.toBeDisabled());
   expect(await screen.findByText(/could not import that file/i)).toBeInTheDocument();
+  // Reopened, the item is pressable again.
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeEnabled();
 });
 
 /// The script is authored as JSON for now - an assistant will generate
@@ -1401,4 +1410,187 @@ test("Setup shows the environment and its database, all five rows, and the assis
   expect(within(panel).getByText(/\/tcm:setup/)).toBeInTheDocument();
   expect(await within(panel).findByText("https://qa.example.com/")).toBeInTheDocument();
   expect(within(panel).getByText("Built-in")).toBeInTheDocument();
+});
+
+// ---- Readiness strip and the More menu on the Test cases tab ----
+
+const uploadScript = (caseId: number, file: string) => ({
+  case_id: caseId,
+  title: "s",
+  steps: [{ step_number: 1, actions: [{ kind: "upload", selector: { css: "#f" }, file }] }],
+});
+
+test("Test cases opens with a readiness strip that replaces the old header line", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? uploadScript(201, "cv.txt") : null;
+    }
+    if (cmd === "test_files_list") return [{ name: "appraisal.pdf", size: 1, modified: "1" }];
+    if (cmd === "auto_run_load_nav") {
+      return { direct_urls: true, modules: [{ module: "Leave", clicks: [], arrived: "", recorded: "" }] };
+    }
+    return undefined;
+  });
+  renderAutoRun(null);
+
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(within(strip).getByText("QA - qa.example.com")).toBeInTheDocument();
+  expect(within(strip).getByText("Built-in")).toBeInTheDocument();
+  expect(within(strip).getByText("1 account")).toBeInTheDocument();
+  expect(await within(strip).findByText("1 area")).toBeInTheDocument();
+  // The script uploads cv.txt, which the Test files folder does not hold.
+  expect(await within(strip).findByText("1 test file missing")).toBeInTheDocument();
+  // The old line's "Project <name>" is gone.
+  expect(screen.queryByText("Web")).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Project\b/)).not.toBeInTheDocument();
+});
+
+test("a file the scripts upload that is in the Test files folder is not missing", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? uploadScript(201, "CV.txt") : null;
+    }
+    if (cmd === "test_files_list") return [{ name: "cv.txt", size: 1, modified: "1" }];
+    return undefined;
+  });
+  renderAutoRun(null);
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(await within(strip).findByText("1 test file")).toBeInTheDocument();
+  expect(within(strip).queryByText(/missing/)).not.toBeInTheDocument();
+});
+
+test("Open setup in the strip selects the Setup tab", async () => {
+  mockReady();
+  renderAutoRun(null);
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  fireEvent.click(within(strip).getByRole("button", { name: "Open setup" }));
+  expect(tab("Setup")).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+});
+
+test("the strip belongs to Test cases alone", async () => {
+  mockReady();
+  renderAutoRun("Past runs");
+  await screen.findByRole("tabpanel", { name: /^Past runs/ });
+  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+  fireEvent.click(tab("Setup"));
+  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+});
+
+test("More holds Import scripts, with its description, and Clear scripts; Group by title stays outside", async () => {
+  mockReady();
+  renderAutoRun("Test cases");
+  await screen.findByText("Valid login");
+
+  // Nothing rare sits on the toolbar.
+  expect(screen.queryByRole("button", { name: "Import scripts" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Clear scripts" })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Group by title" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  const menu = screen.getByRole("menu", { name: "More" });
+  const imp = within(menu).getByRole("menuitem", { name: "Import scripts" });
+  expect(imp).toHaveAccessibleDescription("One JSON file can carry every case in this PBI.");
+  expect(within(menu).getByRole("menuitem", { name: "Clear scripts" })).toBeInTheDocument();
+  // Group by title is not in the menu.
+  expect(within(menu).queryByText("Group by title")).not.toBeInTheDocument();
+});
+
+test("Clear scripts in More is disabled with no script, and still asks first when there is one", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 202 ? scriptFor202 : null;
+    }
+    return undefined;
+  });
+  renderAutoRun("Test cases");
+  await screen.findByRole("button", { name: "Run #202" });
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  const clear = screen.getByRole("menuitem", { name: "Clear scripts" });
+  expect(clear).toBeEnabled();
+  fireEvent.click(clear);
+  // The menu closes, and the existing confirm opens.
+  expect(await screen.findByRole("heading", { name: "Clear scripts?" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Clear 2 scripts" })).toBeInTheDocument();
+});
+
+test("Clear scripts in More is disabled when no case has a script", async () => {
+  mockReady();
+  renderAutoRun("Test cases");
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  expect(screen.getByRole("menuitem", { name: "Clear scripts" })).toBeDisabled();
+});
+
+// ---- Follow-ups from the tabs review ----
+
+test("closing a review puts focus on the Past runs tab, not on the body", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 202 ? scriptFor202 : null;
+    }
+    if (cmd === "auto_run_replay") return unattendedFromReplay;
+    if (cmd === "auto_run_list_runs") return [unattendedFromReplay];
+    if (cmd === "auto_run_load_run") return null;
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  await screen.findByText("This run is no longer on this machine.");
+
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(tab("Past runs")).toHaveAttribute("aria-selected", "true"));
+  await waitFor(() => expect(tab("Past runs")).toHaveFocus());
+});
+
+test("arrow keys pressed with Alt, Ctrl or Meta are left alone, so Alt+Left still means back", async () => {
+  mockReady();
+  renderAutoRun("Test cases");
+  for (const mod of [{ altKey: true }, { ctrlKey: true }, { metaKey: true }]) {
+    for (const key of ["ArrowLeft", "ArrowRight", "Home", "End"]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mod });
+      tab("Test cases").dispatchEvent(event);
+      // Not handled: the browser's own shortcut still runs, and no tab moves.
+      expect(event.defaultPrevented).toBe(false);
+    }
+  }
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+  // A plain arrow still moves.
+  fireEvent.keyDown(tab("Test cases"), { key: "ArrowRight" });
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+});
+
+test("the Past runs result filter survives switching tabs and back", async () => {
+  const failedRun = {
+    id: "run-f",
+    pbi_id: 42,
+    started_at: "1786000100000",
+    mode: "supervised",
+    cases: [{ case_id: 201, title: "Valid login", verdict: "Failed", note: "", proposed: null }],
+  };
+  const passedRun = {
+    id: "run-p",
+    pbi_id: 42,
+    started_at: "1786000200000",
+    mode: "supervised",
+    cases: [{ case_id: 202, title: "Locked account", verdict: "Passed", note: "", proposed: null }],
+  };
+  mockReady((cmd) => (cmd === "auto_run_list_runs" ? [failedRun, passedRun] : undefined));
+  renderAutoRun("Past runs");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Failed (1)" }));
+  expect(screen.getByRole("button", { name: "Failed (1)" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByText("Locked account")).not.toBeInTheDocument();
+
+  fireEvent.click(tab("Test cases"));
+  await screen.findByText("Valid login");
+  fireEvent.click(tab("Past runs"));
+
+  expect(await screen.findByRole("button", { name: "Failed (1)" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "All (2)" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByText("Locked account")).not.toBeInTheDocument();
 });
