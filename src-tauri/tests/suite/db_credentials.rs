@@ -187,3 +187,223 @@ fn a_port_after_the_server_name_and_in_the_port_box_is_refused() {
     save(&s, OWN_ID, &own("h,1433", None, "d", "u", Some("pw"))).unwrap();
     assert!(resolve(&s, OWN_ID).unwrap().unwrap().starts_with("Server=h,1433;"));
 }
+
+// ------------------------------------------------- a person's own databases
+//
+// The list naming them is a file; these run it in a temp dir beside a
+// `MemoryStore`, so neither the real vault nor the real app data is touched.
+
+fn listed(dir: &tempfile::TempDir) -> WithList<MemoryStore> {
+    WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") }
+}
+
+fn login(user: &str) -> DbCredentialsForm {
+    own("db.example", Some(1444), "Hr", user, Some("pw-9"))
+}
+
+fn ids(s: &dyn SecretStore) -> Vec<String> {
+    databases(s).into_iter().map(|d| d.id).collect()
+}
+
+fn list_text(dir: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(dir.path().join("databases.json")).unwrap_or_default()
+}
+
+/// Before any list exists, `own` is on it with the name it always had and
+/// the login it already holds - so an environment or a saved choice that
+/// names `own` means what it meant. Reading writes nothing.
+#[test]
+fn the_list_starts_with_own_and_keeps_its_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    s.put("tcm-v2/db/own", "Server=old-host;Database=Old;User Id=me;Password=pw").unwrap();
+    let own_db = databases(&s).into_iter().find(|d| d.id == OWN_ID).expect("own is listed");
+    assert_eq!(own_db.label, "Your own database");
+    assert_eq!(own_db.server, "old-host");
+    assert!(own_db.has_password && !own_db.shipped);
+    assert_eq!(resolve(&s, OWN_ID).unwrap().as_deref(), Some("Server=old-host;Database=Old;User Id=me;Password=pw"));
+    assert!(is_known(&s, OWN_ID));
+    assert!(!dir.path().join("databases.json").exists(), "a read wrote the list");
+}
+
+#[test]
+fn shipped_come_first_then_the_own_ones_in_the_order_they_were_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    let b = add_custom(&s, "QA box", &login("b")).unwrap();
+    let mut want: Vec<String> = DB_PRESETS.iter().map(|p| p.id.to_string()).collect();
+    want.extend([OWN_ID.to_string(), a.id.clone(), b.id.clone()]);
+    assert_eq!(ids(&s), want);
+    let labels: Vec<String> = databases(&s).into_iter().skip(DB_PRESETS.len()).map(|d| d.label).collect();
+    assert_eq!(labels, ["Your own database", "Staging", "QA box"]);
+}
+
+#[test]
+fn an_added_database_gets_a_fresh_id_its_own_login_and_is_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let d = add_custom(&s, "  Staging  ", &login("someone")).unwrap();
+    let hex = d.id.strip_prefix("custom-").expect("a custom id");
+    assert!(hex.len() == 8 && hex.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)), "{}", d.id);
+    assert_eq!(d.label, "Staging");
+    assert_eq!((d.user.as_str(), d.server.as_str(), d.port, d.database.as_str()), ("someone", "db.example", Some(1444), "Hr"));
+    assert!(d.has_password && !d.shipped);
+    assert!(is_known(&s, &d.id));
+    assert_eq!(
+        resolve(&s, &d.id).unwrap().as_deref(),
+        Some("Server=db.example,1444;Database=Hr;User Id=someone;Password=pw-9")
+    );
+    // The list names it and holds no secret.
+    let text = list_text(&dir);
+    assert!(text.contains(&d.id) && text.contains("Staging"));
+    assert!(!text.contains("pw-9") && !text.contains("db.example"), "{text}");
+    // Saving and testing work on it like on `own`.
+    save(&s, &d.id, &own("db.example", Some(1444), "Hr", "other", None)).unwrap();
+    assert!(resolve(&s, &d.id).unwrap().unwrap().contains("User Id=other;Password=pw-9"));
+    assert_eq!(reset(&s, &d.id).unwrap_err(), "Only a shipped database has a default to go back to.");
+}
+
+#[test]
+fn an_add_needs_a_name_and_a_whole_login_and_adds_nothing_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    assert_eq!(add_custom(&s, "   ", &login("u")).unwrap_err(), "Enter a name for the database.");
+    assert_eq!(add_custom(&s, &"x".repeat(81), &login("u")).unwrap_err(), "Keep the name to 80 characters or fewer.");
+    assert!(add_custom(&s, &"x".repeat(80), &login("u")).is_ok());
+    assert_eq!(add_custom(&s, "Nopw", &own("h", None, "d", "u", None)).unwrap_err(), "Enter a password.");
+    assert_eq!(add_custom(&s, "Nouser", &own("h", None, "d", " ", Some("p"))).unwrap_err(), "Enter the user name.");
+    assert_eq!(ids(&s).len(), DB_PRESETS.len() + 2, "only the good add landed");
+}
+
+#[test]
+fn names_are_unique_ignoring_case_shipped_names_included() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    assert_eq!(add_custom(&s, "STAGING", &login("b")).unwrap_err(), "A database named \"STAGING\" already exists.");
+    assert_eq!(
+        add_custom(&s, "your own DATABASE", &login("b")).unwrap_err(),
+        "A database named \"your own DATABASE\" already exists."
+    );
+    let shipped = DB_PRESETS[0].label.to_uppercase();
+    assert_eq!(add_custom(&s, &shipped, &login("b")).unwrap_err(), format!("A database named \"{shipped}\" already exists."));
+    // Renaming to its own name in another case is no clash with itself.
+    assert_eq!(rename_custom(&s, &a.id, "staging").unwrap().label, "staging");
+    assert!(rename_custom(&s, &a.id, "Your own database").is_err());
+}
+
+#[test]
+fn a_rename_keeps_the_id_and_the_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    let renamed = rename_custom(&s, &a.id, "Staging 2").unwrap();
+    assert_eq!((renamed.id.as_str(), renamed.label.as_str(), renamed.user.as_str()), (a.id.as_str(), "Staging 2", "a"));
+    assert_eq!(databases(&s).last().unwrap().label, "Staging 2");
+    assert_eq!(rename_custom(&s, OWN_ID, "Mine").unwrap().label, "Mine");
+    assert_eq!(rename_custom(&s, DB_PRESETS[0].id, "Mine 2").unwrap_err(), "A shipped database keeps its name.");
+    assert_eq!(rename_custom(&s, "custom-00000000", "x").unwrap_err(), "That database is not one the app knows.");
+    assert_eq!(rename_custom(&s, &a.id, "").unwrap_err(), "Enter a name for the database.");
+}
+
+#[test]
+fn a_removal_takes_the_login_and_the_name_and_the_id_is_never_handed_out_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    remove_custom(&s, &a.id).unwrap();
+    assert_eq!(s.get(&format!("tcm-v2/db/{}", a.id)).unwrap(), None, "the secret stayed behind");
+    assert!(!is_known(&s, &a.id));
+    assert!(!ids(&s).contains(&a.id));
+    assert_eq!(resolve(&s, &a.id).unwrap_err(), "That database is not one the app knows.");
+    assert!(save(&s, &a.id, &login("x")).is_err(), "a removed database took a login");
+    // Its name is free again, its id is not.
+    let b = add_custom(&s, "Staging", &login("b")).unwrap();
+    assert_ne!(b.id, a.id);
+    assert!(list_text(&dir).contains(&a.id), "the removed id is not kept as retired");
+    // `own` can go too, secret and all.
+    s.put("tcm-v2/db/own", "Server=h;Database=d;User Id=u;Password=p").unwrap();
+    remove_custom(&s, OWN_ID).unwrap();
+    assert_eq!(s.get("tcm-v2/db/own").unwrap(), None);
+    assert!(!is_known(&s, OWN_ID));
+}
+
+#[test]
+fn a_shipped_database_cannot_be_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    for p in DB_PRESETS {
+        assert_eq!(remove_custom(&s, p.id).unwrap_err(), "A shipped database can't be removed.");
+        assert!(is_known(&s, p.id));
+    }
+    assert_eq!(remove_custom(&s, "custom-00000000").unwrap_err(), "That database is not one the app knows.");
+}
+
+#[test]
+fn a_store_with_nowhere_to_keep_the_list_has_own_and_refuses_changes() {
+    let s = MemoryStore::default();
+    assert!(is_known(&s, OWN_ID));
+    assert_eq!(add_custom(&s, "Staging", &login("a")).unwrap_err(), "There is nowhere to keep a list of databases.");
+    assert!(s.get("tcm-v2/db/custom-00000000").unwrap().is_none());
+    assert_eq!(ids(&s).len(), DB_PRESETS.len() + 1);
+}
+
+#[test]
+fn a_list_that_cannot_be_read_is_left_alone_and_hides_only_the_own_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    std::fs::write(dir.path().join("databases.json"), "{ not json").unwrap();
+    assert!(!is_known(&s, OWN_ID));
+    assert!(is_known(&s, DB_PRESETS[0].id));
+    assert_eq!(ids(&s).len(), DB_PRESETS.len(), "the shipped ones still show");
+    assert!(add_custom(&s, "Staging", &login("a")).unwrap_err().contains("not readable"));
+    assert_eq!(list_text(&dir), "{ not json", "a broken list was replaced");
+}
+
+/// Sign-out of another account wipes every own database's login and the
+/// list itself: what is left is how a fresh install starts.
+#[test]
+fn forget_all_clears_every_own_login_and_the_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let a = add_custom(&s, "Staging", &login("a")).unwrap();
+    let b = add_custom(&s, "QA box", &login("b")).unwrap();
+    save(&s, OWN_ID, &login("me")).unwrap();
+    save(&s, DB_PRESETS[0].id, &form("x", Some("y"))).unwrap();
+    forget_all(&s).unwrap();
+    for id in [&a.id, &b.id] {
+        assert_eq!(s.get(&format!("tcm-v2/db/{id}")).unwrap(), None, "{id}'s login stayed");
+        assert!(!is_known(&s, id));
+    }
+    assert_eq!(resolve(&s, OWN_ID).unwrap(), None);
+    let mut want: Vec<String> = DB_PRESETS.iter().map(|p| p.id.to_string()).collect();
+    want.push(OWN_ID.to_string());
+    assert_eq!(ids(&s), want);
+    assert!(databases(&s).iter().all(|d| !d.customised));
+    // Forgotten ids are retired too.
+    let c = add_custom(&s, "Staging", &login("c")).unwrap();
+    assert!(c.id != a.id && c.id != b.id);
+}
+
+/// The write rule is the connection's user - nothing about a database
+/// being one of the person's own, or what it is called, changes that.
+#[test]
+fn the_write_rule_is_still_the_user_of_an_own_database() {
+    use v2_lib::db::{access_for, Access};
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    let dev = add_custom(&s, "Dev writes", &login("app_DevLogin")).unwrap();
+    let reader = add_custom(&s, "Staging devlogin", &login("reader")).unwrap();
+    assert_eq!(access_for(&resolve(&s, &dev.id).unwrap().unwrap()), Access::DevWrites);
+    assert_eq!(access_for(&resolve(&s, &reader.id).unwrap().unwrap()), Access::ReadOnly);
+}
+
+#[test]
+fn a_view_of_an_own_database_never_carries_its_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = listed(&dir);
+    add_custom(&s, "Staging", &own("h", None, "d", "u", Some("S3cret-XYZ"))).unwrap();
+    let json = serde_json::to_string(&databases(&s)).unwrap();
+    assert!(!json.contains("S3cret-XYZ") && !json.contains("Password="), "{json}");
+}

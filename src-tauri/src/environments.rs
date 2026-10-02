@@ -301,6 +301,28 @@ pub fn save_env(root: &Path, env: Environment, known_db_ids: &[String]) -> Resul
     Ok(file)
 }
 
+/// Runs `f` only while no environment uses the database `db_id`, holding
+/// the file's lock throughout so no save can start using it halfway. When
+/// one does, answers `refuse` of the names of every environment using it,
+/// and `f` never runs. No file yet means no environment uses anything, and
+/// none is made.
+pub fn when_db_unused<T>(
+    root: &Path,
+    db_id: &str,
+    refuse: impl FnOnce(&[String]) -> String,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _held = lock();
+    let users: Vec<String> = read(root)?
+        .map(|file| file.environments.into_iter().filter(|e| e.db_id == db_id).map(|e| e.name).collect())
+        .unwrap_or_default();
+    if users.is_empty() {
+        f()
+    } else {
+        Err(refuse(&users))
+    }
+}
+
 /// Remove an environment and its local files: accounts, saved sessions and
 /// proposals. Refused for the last one and the active one.
 pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {

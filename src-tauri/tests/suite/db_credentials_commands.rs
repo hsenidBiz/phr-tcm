@@ -79,8 +79,84 @@ fn legacy_import_of_something_that_is_not_a_connection_stores_nothing() {
 
 #[test]
 fn only_own_and_the_shipped_ids_are_known() {
-    assert!(is_known(OWN_ID));
-    assert!(DB_PRESETS.iter().all(|p| is_known(p.id)));
-    assert!(!is_known("a-preset-since-removed"));
-    assert!(!is_known(""));
+    let s = MemoryStore::default();
+    assert!(is_known(&s, OWN_ID));
+    assert!(DB_PRESETS.iter().all(|p| is_known(&s, p.id)));
+    assert!(!is_known(&s, "a-preset-since-removed"));
+    assert!(!is_known(&s, ""));
+}
+
+/// Removing one of the person's own databases asks the environments first:
+/// one that still uses it would be left pointing at nothing.
+#[test]
+fn a_database_an_environment_uses_cannot_be_removed() {
+    use v2_lib::commands::ai_tools::remove_custom_with;
+    use v2_lib::environments::{load_or_init, save_env};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("autorun");
+    let s = WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") };
+    let form = DbCredentialsForm { server: "h".into(), port: None, database: "d".into(), user: "u".into(), password: Some("p".into()), trust_cert: false };
+    let staging = add_custom(&s, "Staging", &form).unwrap();
+    let known: Vec<String> = databases(&s).into_iter().map(|d| d.id).collect();
+
+    let mut default = load_or_init(&root, Some(&staging.id)).unwrap().environments.remove(0);
+    let qa = v2_lib::environments::Environment {
+        id: String::new(),
+        name: "QA".into(),
+        start_url: String::new(),
+        allowed_origins: vec![],
+        db_id: staging.id.clone(),
+        test_environment: false,
+    };
+    let mut qa = save_env(&root, qa, &known).unwrap().environments.into_iter().find(|e| e.name == "QA").unwrap();
+
+    assert_eq!(
+        remove_custom_with(&root, &s, &staging.id).unwrap_err(),
+        "\"Staging\" is used by the environments \"Default\", \"QA\" - pick another database for them first"
+    );
+    qa.db_id = DB_PRESETS[0].id.into();
+    save_env(&root, qa, &known).unwrap();
+    assert_eq!(
+        remove_custom_with(&root, &s, &staging.id).unwrap_err(),
+        "\"Staging\" is used by the environment \"Default\" - pick another database for it first"
+    );
+    // Refused means untouched: the login and the name are still there.
+    assert!(is_known(&s, &staging.id));
+    assert!(s.get(&format!("tcm-v2/db/{}", staging.id)).unwrap().is_some());
+
+    default.db_id = DB_PRESETS[0].id.into();
+    save_env(&root, default, &known).unwrap();
+    remove_custom_with(&root, &s, &staging.id).unwrap();
+    assert!(!is_known(&s, &staging.id));
+    assert!(s.get(&format!("tcm-v2/db/{}", staging.id)).unwrap().is_none());
+}
+
+/// With no environments yet, nothing uses anything - and asking makes none.
+#[test]
+fn a_removal_before_any_environment_exists_makes_none() {
+    use v2_lib::commands::ai_tools::remove_custom_with;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("autorun");
+    let s = WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") };
+    remove_custom_with(&root, &s, OWN_ID).unwrap();
+    assert!(!is_known(&s, OWN_ID));
+    assert!(!root.join("environments.json").exists());
+    assert_eq!(
+        remove_custom_with(&root, &s, DB_PRESETS[0].id).unwrap_err(),
+        "A shipped database can't be removed."
+    );
+}
+
+/// A connection string an old version kept still lands in `own` after
+/// `own` was removed: it comes back on the list to hold it.
+#[test]
+fn legacy_import_brings_own_back_when_it_was_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") };
+    remove_custom(&s, OWN_ID).unwrap();
+    assert!(!is_known(&s, OWN_ID));
+    assert_eq!(import_legacy(&s, "Server=x;Database=y;User Id=u;Password=p").unwrap(), OWN_ID);
+    assert!(is_known(&s, OWN_ID));
+    let own = databases(&s).into_iter().find(|d| d.id == OWN_ID).unwrap();
+    assert_eq!((own.label.as_str(), own.server.as_str()), ("Your own database", "x"));
 }

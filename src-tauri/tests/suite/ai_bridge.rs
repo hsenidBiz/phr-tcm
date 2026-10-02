@@ -2011,6 +2011,41 @@ mod db_tests {
         }
     }
 
+    /// One of the person's own databases is known for as long as the list
+    /// names it: Debug shows its id, and once it is removed the routes say
+    /// nothing is chosen - never a login of some other database.
+    #[tokio::test]
+    async fn an_own_database_is_known_until_it_is_removed() {
+        use v2_lib::db::credentials::{add_custom, remove_custom, WithList};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") });
+        let form = DbCredentialsForm {
+            server: "own-host".into(),
+            port: None,
+            database: "own-db".into(),
+            user: "me".into(),
+            password: Some("pw-Zq9".into()),
+            trust_cert: false,
+        };
+        let id = add_custom(&*store, "Staging", &form).unwrap().id;
+        let shown = format!("{:?}", with_store(&id, false, store.clone()));
+        assert!(shown.contains(&id) && !shown.contains("pw-Zq9"), "{shown}");
+        // A store whose list does not name it does not know it.
+        assert!(format!("{:?}", with_connection(&id, false)).contains("(unknown)"));
+
+        remove_custom(&*store, &id).unwrap();
+        let c = with_store(&id, false, store.clone());
+        assert!(format!("{c:?}").contains("(unknown)"));
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NO_CONNECTION, "{path}");
+        }
+    }
+
     /// The id comes from the webview, which could send anything - a whole
     /// connection string included. Debug shows a known id and nothing else.
     #[test]

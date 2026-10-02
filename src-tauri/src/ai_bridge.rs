@@ -73,7 +73,11 @@ impl std::fmt::Debug for BridgeContext {
             .field(
                 "db_id",
                 &self.db_id.as_deref().map(|id| {
-                    if crate::db::credentials::is_known(id) { id } else { "(unknown)" }
+                    let known = self
+                        .db_secrets
+                        .as_deref()
+                        .is_some_and(|store| crate::db::credentials::is_known(store, id));
+                    if known { id } else { "(unknown)" }
                 }),
             )
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
@@ -1773,13 +1777,13 @@ fn db_ready(
     // An id this build does not know - one saved for a preset a later
     // release removed - is nothing chosen too: the person's next step is
     // the same, pick a database.
+    let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
     let id = ctx
         .db_id
         .as_deref()
         .map(str::trim)
-        .filter(|id| crate::db::credentials::is_known(id))
+        .filter(|id| crate::db::credentials::is_known(store, id))
         .ok_or_else(nothing_chosen)?;
-    let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
     // Resolved now, not when the context was pushed: a login saved since
     // is the one this call signs in with. `own` with nothing saved HAS been
     // chosen, so it gets its own sentence - "pick one" would send the person

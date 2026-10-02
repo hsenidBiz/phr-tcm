@@ -10,6 +10,7 @@
 //! `batch::compose` wraps them in their transaction.
 
 pub mod batch;
+pub mod catalog;
 pub mod credentials;
 pub mod guard;
 pub mod query;
@@ -17,7 +18,7 @@ pub mod schema;
 pub mod sqlcmd;
 
 pub use credentials::{
-    CredentialManager, DbCredentialsForm, DbDatabase, DbSecrets, MemoryStore, SecretStore, OWN_ID,
+    CredentialManager, DbCredentialsForm, DbDatabase, DbSecrets, MemoryStore, SecretStore, WithList, OWN_ID,
 };
 pub use batch::{BatchStatement, Ended, MAX_BATCH_STATEMENTS};
 pub use guard::{
