@@ -245,6 +245,17 @@ export default function AiBridge() {
   };
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
+  const registerButton = (id: string) => (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={register.isPending && register.variables === id}
+      onClick={() => register.mutate(id)}
+    >
+      <IconRegister aria-hidden />
+      {register.isPending && register.variables === id ? "Registering" : "Register"}
+    </Button>
+  );
 
   // Earlier versions could register a separate database server beside ours;
   // the app's own database tools replaced it. A tool that still carries that
@@ -483,6 +494,16 @@ export default function AiBridge() {
                   {(t.registered_servers ?? []).includes(TCM_SERVER) ? (
                     <span className="flex items-center gap-2">
                       <span className="text-xs text-success">Registered ✓</span>
+                      {/* The old name beside the current one - say a teammate
+                          on an older version added it back - offers every
+                          tool twice. Nothing is removed on a scan: Register
+                          replaces it, so the label comes with that button. */}
+                      {(t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) && (
+                        <>
+                          <span className="text-xs text-warning">Needs updating</span>
+                          {registerButton(t.id)}
+                        </>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -503,17 +524,7 @@ export default function AiBridge() {
                       {(t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) && (
                         <span className="text-xs text-warning">Needs updating</span>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={register.isPending && register.variables === t.id}
-                        onClick={() => register.mutate(t.id)}
-                      >
-                        <IconRegister aria-hidden />
-                        {register.isPending && register.variables === t.id
-                          ? "Registering"
-                          : "Register"}
-                      </Button>
+                      {registerButton(t.id)}
                     </span>
                   )}
                 </div>

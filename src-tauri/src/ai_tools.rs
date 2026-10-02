@@ -819,6 +819,56 @@ fn legacy_cursor_entry(entry: &str) -> Option<String> {
         .map(|tool| format!("{LEGACY_TCM_SERVER}:{tool}"))
 }
 
+/// A Cursor `permissions.json`'s text with every `mcpAllowlist` entry for
+/// the server's OLD name (`tcm-testcases:<tool>`) carried over to the
+/// current one (`tcm:<tool>`) - the Cursor half of
+/// `migrate_claude_permissions`. Cursor compares entries case-insensitively,
+/// so this does too: the prefix matches in any case, and an entry whose new
+/// form the list already holds in any case is dropped rather than written
+/// twice. Same position, nothing else touched, `None` when there is
+/// nothing to carry over; a file that is not a JSON object is refused.
+pub fn migrate_cursor_permissions(permissions: &str) -> Result<Option<String>, String> {
+    if permissions.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut root: serde_json::Value =
+        serde_json::from_str(permissions).map_err(|e| format!("could not read the permissions file: {e}"))?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "the permissions file is not a JSON object".to_string())?;
+    let Some(list) = obj.get_mut("mcpAllowlist").and_then(|a| a.as_array_mut()) else {
+        return Ok(None);
+    };
+    let old_prefix = format!("{LEGACY_TCM_SERVER}:");
+    let renamed = |v: &serde_json::Value| -> Option<String> {
+        let s = v.as_str()?;
+        let head = s.get(..old_prefix.len())?;
+        head.eq_ignore_ascii_case(&old_prefix)
+            .then(|| format!("{TCM_SERVER}:{}", &s[old_prefix.len()..]))
+    };
+    let held = |l: &[serde_json::Value], e: &str| {
+        l.iter().any(|x| x.as_str().is_some_and(|x| x.eq_ignore_ascii_case(e)))
+    };
+    let original = std::mem::take(list);
+    let mut changed = false;
+    for v in &original {
+        let Some(new) = renamed(v) else {
+            list.push(v.clone());
+            continue;
+        };
+        changed = true;
+        if !held(&original, &new) && !held(list, &new) {
+            list.push(serde_json::Value::String(new));
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize permissions: {e}"))
+}
+
 /// A Cursor `permissions.json`'s text with `entry` in `mcpAllowlist` (`on`)
 /// or out of it, nothing else touched. `None` when nothing would change.
 /// Same rules as `set_claude_allow`: an unreadable file is refused, never

@@ -11,7 +11,8 @@ use tauri::State;
 
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
-    legacy_command_path, merge_entry, migrate_claude_permissions, project_command_dir,
+    legacy_command_path, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
+    project_command_dir,
     remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
     tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_QUERY_RULE, CURSOR_DB_QUERY_ENTRY,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
@@ -146,6 +147,9 @@ struct AllowFile {
     user: fn() -> PathBuf,
     merge: fn(&str, &str, bool) -> Result<Option<String>, String>,
     entry: &'static str,
+    /// Carries the server's old-name entries in this file over to its
+    /// current name (`ai_tools::migrate_*_permissions`).
+    migrate: fn(&str) -> Result<Option<String>, String>,
 }
 
 /// Claude Code: `settings.local.json` in the repository, which Claude Code
@@ -157,6 +161,7 @@ const CLAUDE_ALLOW: AllowFile = AllowFile {
     user: || PathBuf::from(home_dir()).join(".claude").join("settings.json"),
     merge: set_claude_allow,
     entry: CLAUDE_DB_QUERY_RULE,
+    migrate: migrate_claude_permissions,
 };
 
 /// Cursor: `permissions.json` beside its `mcp.json`, in the repository or
@@ -166,6 +171,7 @@ const CURSOR_ALLOW: AllowFile = AllowFile {
     user: || PathBuf::from(home_dir()).join(".cursor").join("permissions.json"),
     merge: set_cursor_allow,
     entry: CURSOR_DB_QUERY_ENTRY,
+    migrate: migrate_cursor_permissions,
 };
 
 /// The tools whose "always allow" for one tool is a file the app can
@@ -215,34 +221,37 @@ fn write_allow(file: &AllowFile, path: &std::path::Path, on: bool) -> Result<(),
     atomic_write(path, &updated)
 }
 
-/// Carry the server's old-name permission rules over to its current name
-/// in the Claude Code settings files the database switch writes - the
+/// Carry the server's old-name permission entries over to its current
+/// name in the tool's allow files the database switch writes - the
 /// repository's (when registering into one) and the machine's - and in no
-/// other file. Best-effort: the registration has already worked, and a
-/// rule left under the old name only means one more "Allow this tool?".
-fn carry_over_claude_rules(root: Option<&str>) {
+/// other file. Best-effort: the registration has already worked, and an
+/// entry left under the old name only means one more "Allow this tool?".
+fn carry_over_rules(file: &AllowFile, root: Option<&str>) {
     let mut paths = Vec::new();
     if let Some(r) = root {
-        paths.push((CLAUDE_ALLOW.project)(r));
+        paths.push((file.project)(r));
     }
-    paths.push((CLAUDE_ALLOW.user)());
+    paths.push((file.user)());
     for path in paths {
-        if let Err(e) = carry_over_claude_rules_in(&path) {
+        if let Err(e) = carry_over_rules_in(&path, file.migrate) {
             crate::applog::warn(format!("could not carry the old permission rules over: {e}"));
         }
     }
 }
 
-/// `migrate_claude_permissions` for one file. A missing file stays
-/// missing, and a file with nothing to carry over is not rewritten. Public
-/// for `tests/suite/ai_tools.rs`.
-pub fn carry_over_claude_rules_in(path: &std::path::Path) -> Result<(), String> {
+/// `migrate` for one file. A missing file stays missing, and a file with
+/// nothing to carry over is not rewritten. Public for
+/// `tests/suite/ai_tools.rs`.
+pub fn carry_over_rules_in(
+    path: &std::path::Path,
+    migrate: fn(&str) -> Result<Option<String>, String>,
+) -> Result<(), String> {
     let existing = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("could not read {}: {e}", path.display())),
     };
-    match migrate_claude_permissions(&existing).map_err(|e| format!("{}: {e}", path.display()))? {
+    match migrate(&existing).map_err(|e| format!("{}: {e}", path.display()))? {
         Some(updated) => atomic_write(path, &updated),
         None => Ok(()),
     }
@@ -483,7 +492,7 @@ fn register_server(
             register_claude_code_global(server)?;
             retire_superseded_claude_now(&server.name, "user", None);
             if server.name == TCM_SERVER {
-                carry_over_claude_rules(None);
+                carry_over_rules(&CLAUDE_ALLOW, None);
                 if let Err(e) = write_commands_in(&command_dir(&home_dir()), disabled) {
                     crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
                 }
@@ -493,7 +502,7 @@ fn register_server(
         register_claude_code_in(r, server)?;
         retire_superseded_claude_now(&server.name, "project", Some(r));
         if server.name == TCM_SERVER {
-            carry_over_claude_rules(Some(r));
+            carry_over_rules(&CLAUDE_ALLOW, Some(r));
             // Best-effort, and deliberately after the server is in: a
             // command pointing at tools that are not registered would be
             // worse than no command. A failure here does not undo a
@@ -510,6 +519,11 @@ fn register_server(
     // same config.
     let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
     merge_into_file(&config_path, key, server)?;
+    if server.name == TCM_SERVER {
+        if let Some(file) = allow_file(spec.id) {
+            carry_over_rules(file, root);
+        }
+    }
     if let Some(r) = root {
         retire_global_with_superseded(spec, &server.name, r);
     }

@@ -274,6 +274,51 @@ test("a tool registered under the old name reads as needing an update", async ()
   await waitFor(() => expect(registeredId).toBe("claude-code"));
 });
 
+// Both names in one config offer every tool twice. A scan removes nothing:
+// the row stays registered, says it needs updating, and Register fixes it.
+test("a tool registered under both names is flagged as needing an update", async () => {
+  let registeredId: unknown;
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    calls.push(String(cmd));
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm", "tcm-testcases"], scope: "project",
+          global_registered_servers: [],
+        },
+      ];
+    if (cmd === "register_ai_tool") {
+      registeredId = (args as { id: string }).id;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Registered ✓")).toBeInTheDocument();
+  expect(screen.getByText("Needs updating")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Unregister" })).toBeInTheDocument();
+  expect(calls).not.toContain("register_ai_tool");
+  expect(calls).not.toContain("unregister_ai_tool");
+  fireEvent.click(screen.getByRole("button", { name: "Register" }));
+  await waitFor(() => expect(registeredId).toBe("claude-code"));
+});
+
+test("a tool registered only under the current name is not flagged", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm"], scope: "project" }];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Registered ✓")).toBeInTheDocument();
+  expect(screen.queryByText("Needs updating")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+});
+
 test("a global copy under the old name is offered for retiring too", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };

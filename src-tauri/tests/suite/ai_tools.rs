@@ -1097,10 +1097,10 @@ fn the_cursor_entry_goes_in_and_out_of_its_allowlist() {
 // ------------------------------------------- the server's old name, `tcm-testcases`
 
 use v2_lib::ai_tools::{
-    config_carries, legacy_command_path, migrate_claude_permissions, remove_legacy_command, superseded_by,
-    LEGACY_TCM_SERVER, MANAGED_SERVERS,
+    config_carries, legacy_command_path, migrate_claude_permissions, migrate_cursor_permissions,
+    remove_legacy_command, superseded_by, LEGACY_TCM_SERVER, MANAGED_SERVERS,
 };
-use v2_lib::commands::ai_tools::{carry_over_claude_rules_in, retire_superseded_claude};
+use v2_lib::commands::ai_tools::{carry_over_rules_in, retire_superseded_claude};
 
 #[test]
 fn the_server_is_tcm_and_its_old_name_is_still_managed() {
@@ -1379,19 +1379,84 @@ fn the_old_names_permission_rules_carry_over() {
 fn carrying_over_rewrites_only_a_file_that_needs_it() {
     let dir = TempDir::new();
     let missing = dir.path().join(".claude").join("settings.local.json");
-    carry_over_claude_rules_in(&missing).unwrap();
+    carry_over_rules_in(&missing, migrate_claude_permissions).unwrap();
     assert!(!missing.exists());
     assert!(!missing.parent().unwrap().exists(), "nothing is created to rename nothing");
 
     let untouched = dir.path().join("theirs.json");
     let text = "{\"permissions\":{\"allow\":[\"Bash(ls)\"]}}";
     std::fs::write(&untouched, text).unwrap();
-    carry_over_claude_rules_in(&untouched).unwrap();
+    carry_over_rules_in(&untouched, migrate_claude_permissions).unwrap();
     assert_eq!(std::fs::read_to_string(&untouched).unwrap(), text, "byte for byte");
 
     let old = dir.path().join("settings.json");
     std::fs::write(&old, r#"{"permissions":{"allow":["mcp__tcm-testcases__get_tags"]}}"#).unwrap();
-    carry_over_claude_rules_in(&old).unwrap();
+    carry_over_rules_in(&old, migrate_claude_permissions).unwrap();
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&old).unwrap()).unwrap();
     assert_eq!(v["permissions"]["allow"], serde_json::json!(["mcp__tcm__get_tags"]));
+
+    // Cursor's file, the same way.
+    let cursor = dir.path().join("permissions.json");
+    std::fs::write(&cursor, r#"{"mcpAllowlist":["tcm-testcases:get_tags"]}"#).unwrap();
+    carry_over_rules_in(&cursor, migrate_cursor_permissions).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(v["mcpAllowlist"], serde_json::json!(["tcm:get_tags"]));
+}
+
+/// Every Cursor allowlist entry for the old name carries over: same place,
+/// never twice (Cursor compares case-insensitively, so neither does this),
+/// nothing else touched, and a second run has nothing to do.
+#[test]
+fn the_old_names_cursor_allowlist_carries_over() {
+    let before = r#"{
+  "terminalAllowlist": ["git status"],
+  "mcpAllowlist": [
+    "github:list_issues",
+    "tcm-testcases:get_test_cases",
+    "TCM:Validate_Cases",
+    "TCM-TestCases:validate_cases",
+    "tcm-testcases-other:x",
+    "tcm-testcases:*"
+  ],
+  "theirs": { "a": 1 }
+}"#;
+    let after = migrate_cursor_permissions(before).unwrap().expect("a change");
+    let v: serde_json::Value = serde_json::from_str(&after).unwrap();
+    assert_eq!(
+        v["mcpAllowlist"],
+        serde_json::json!([
+            "github:list_issues",
+            "tcm:get_test_cases",
+            "TCM:Validate_Cases",
+            "tcm-testcases-other:x",
+            "tcm:*"
+        ])
+    );
+    assert_eq!(v["terminalAllowlist"], serde_json::json!(["git status"]));
+    assert_eq!(v["theirs"], serde_json::json!({ "a": 1 }));
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["terminalAllowlist", "mcpAllowlist", "theirs"]);
+
+    assert_eq!(migrate_cursor_permissions(&after).unwrap(), None, "idempotent");
+    assert_eq!(migrate_cursor_permissions(r#"{"mcpAllowlist":["github:x"]}"#).unwrap(), None);
+    assert_eq!(migrate_cursor_permissions("").unwrap(), None);
+    assert_eq!(migrate_cursor_permissions(r#"{"mcpAllowlist":"odd"}"#).unwrap(), None);
+    assert!(migrate_cursor_permissions("{ not json").is_err());
+    assert!(migrate_cursor_permissions("[1]").is_err());
+}
+
+/// A config holding BOTH names (say a teammate on an older version added
+/// the old one back) reports both, so the tab can flag the duplicate.
+#[test]
+fn a_config_with_both_names_reports_both() {
+    let repo = TempDir::new();
+    std::fs::write(
+        repo.path().join(".mcp.json"),
+        r#"{"mcpServers": {"tcm": {"command": "v2.exe"}, "tcm-testcases": {"command": "old.exe"}}}"#,
+    )
+    .unwrap();
+    let root = repo.path().to_string_lossy().to_string();
+    let tools = detect_in("", "", &|_| false, Some(root.as_str()));
+    let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
+    assert_eq!(cc.registered_servers, vec![TCM_SERVER, LEGACY_TCM_SERVER], "{cc:?}");
 }
