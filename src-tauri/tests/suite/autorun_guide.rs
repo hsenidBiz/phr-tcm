@@ -38,6 +38,8 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None },
+        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default() },
     ];
     let emitted: Vec<String> = samples
         .iter()

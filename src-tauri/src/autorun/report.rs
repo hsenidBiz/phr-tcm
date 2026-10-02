@@ -97,6 +97,13 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
+        Action::ExpectResponse { method, url_contains, status, .. } => {
+            let which = method.as_deref().map(|m| format!("{} ", m.trim().to_ascii_uppercase())).unwrap_or_default();
+            format!("expect a {which}request to {} to answer {status}", without_query(url_contains))
+        }
+        Action::ApiRequest { path, expect, .. } => {
+            format!("ask {} and expect {}", without_query(path), expect.status)
+        }
     }
 }
 

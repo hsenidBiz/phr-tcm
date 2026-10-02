@@ -310,6 +310,13 @@ pub fn action_target(action: &Action) -> Option<String> {
         Action::CheckText { .. } => Some("the page text".to_string()),
         Action::CheckUrl { .. } => Some("the page address".to_string()),
         Action::SignIn { .. } => None,
+        // An address fragment or a path: its query string can carry a
+        // token, so it is dropped here as a navigation's is.
+        Action::ExpectResponse { url_contains: address, .. } | Action::ApiRequest { path: address, .. } => {
+            let address = address.trim();
+            let end = address.find(['?', '#']).unwrap_or(address.len());
+            Some(address[..end].to_string())
+        }
     }
 }
 

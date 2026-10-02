@@ -1358,6 +1358,10 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         Action::Navigate { url } => url.clone(),
         Action::CheckUrl { contains } => contains.clone(),
         Action::CheckText { .. } | Action::SignIn { .. } => String::new(),
+        // Never a query string: a fragment or a path can carry a token there.
+        Action::ExpectResponse { url_contains: address, .. } | Action::ApiRequest { path: address, .. } => {
+            crate::autorun::report::without_query(address.trim()).to_string()
+        }
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }

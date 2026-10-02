@@ -1040,12 +1040,12 @@ export type ActionOutcome_Serialize = {
 	screenshot?: string | null,
 };
 
-export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; url?: never; value?: never } | 
+export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url_contains?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | 
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Put a file from the project's Test files into the page: into the
  *  file input `selector` names, or through the file chooser that
@@ -1053,14 +1053,27 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  *  runner finds the file (it knows the project) and hands this driver
  *  its path - see `upload_in`.
  */
-({ kind: "upload"; selector: Target_Deserialize; file: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never };
+({ kind: "upload"; selector: Target_Deserialize; file: string }) & { account?: never; contains?: never; equals?: never; expect?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Check a request the page made since this script step began: that
+ *  one matching `url_contains` (and `method`, when given) finished,
+ *  answered `status`, and, with `json`, carried those fields. Carried
+ *  out by the runner, which alone holds the network record.
+ */
+({ kind: "expect_response"; method?: string | null; url_contains: string; status?: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; name?: never; path?: never; query?: never; selector?: never; url?: never; value?: never } | 
+/**
+ *  Ask the current site a GET question, sent by the page itself, and
+ *  check the answer. `path` is a path on the page's own site, never an
+ *  address. Carried out by the runner.
+ */
+({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect?: ApiExpect_Deserialize }) & { account?: never; contains?: never; equals?: never; file?: never; json?: never; method?: never; name?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
 
-export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; file?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; file?: never; url?: never; value?: never } | 
+export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url_contains?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; expect?: never; file?: never; json?: never; method?: never; path?: never; query?: never; status?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; file?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | 
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; expect?: never; file?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Put a file from the project's Test files into the page: into the
  *  file input `selector` names, or through the file chooser that
@@ -1068,7 +1081,20 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  *  runner finds the file (it knows the project) and hands this driver
  *  its path - see `upload_in`.
  */
-({ kind: "upload"; selector: Target_Serialize; file: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never };
+({ kind: "upload"; selector: Target_Serialize; file: string }) & { account?: never; contains?: never; equals?: never; expect?: never; json?: never; method?: never; name?: never; path?: never; query?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Check a request the page made since this script step began: that
+ *  one matching `url_contains` (and `method`, when given) finished,
+ *  answered `status`, and, with `json`, carried those fields. Carried
+ *  out by the runner, which alone holds the network record.
+ */
+({ kind: "expect_response"; method?: string | null; url_contains: string; status: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; name?: never; path?: never; query?: never; selector?: never; url?: never; value?: never } | 
+/**
+ *  Ask the current site a GET question, sent by the page itself, and
+ *  check the answer. `path` is a path on the page's own site, never an
+ *  address. Carried out by the runner.
+ */
+({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect: ApiExpect_Serialize }) & { account?: never; contains?: never; equals?: never; file?: never; json?: never; method?: never; name?: never; selector?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -1079,6 +1105,30 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 
 export type Antiforgery = {
 	page: string,
+};
+
+/**
+ *  What an `api_request` expects back. Mirrors the API templates'
+ *  `Expect` (status, then a partial JSON match).
+ */
+export type ApiExpect = ApiExpect_Serialize | ApiExpect_Deserialize;
+
+/**
+ *  What an `api_request` expects back. Mirrors the API templates'
+ *  `Expect` (status, then a partial JSON match).
+ */
+export type ApiExpect_Deserialize = {
+	status?: number,
+	json?: unknown | null,
+};
+
+/**
+ *  What an `api_request` expects back. Mirrors the API templates'
+ *  `Expect` (status, then a partial JSON match).
+ */
+export type ApiExpect_Serialize = {
+	status: number,
+	json?: unknown | null,
 };
 
 export type ApiTemplate = ApiTemplate_Serialize | ApiTemplate_Deserialize;

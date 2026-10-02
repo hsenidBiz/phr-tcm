@@ -29,6 +29,8 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_attribute",
     "sign_in",
     "upload",
+    "expect_response",
+    "api_request",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -78,6 +80,8 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page, right now?
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
+- `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
+- `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 
 There is nothing else. An action of any other kind is rejected.
 

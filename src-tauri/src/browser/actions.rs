@@ -11,8 +11,13 @@ use super::input::{self, Blocked};
 use super::locator::{resolve, Target};
 use super::page;
 use super::timing::Timing;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
+
+fn ok_status() -> u16 {
+    200
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -67,6 +72,64 @@ pub enum Action {
     /// runner finds the file (it knows the project) and hands this driver
     /// its path - see `upload_in`.
     Upload { selector: Target, file: String },
+    /// Check a request the page made since this script step began: that
+    /// one matching `url_contains` (and `method`, when given) finished,
+    /// answered `status`, and, with `json`, carried those fields. Carried
+    /// out by the runner, which alone holds the network record.
+    ExpectResponse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<String>,
+        url_contains: String,
+        #[serde(default = "ok_status")]
+        status: u16,
+        // See `ApiExpect::json` for why the TypeScript type is overridden.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[specta(type = Option<specta_typescript::Unknown>)]
+        json: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// Ask the current site a GET question, sent by the page itself, and
+    /// check the answer. `path` is a path on the page's own site, never an
+    /// address. Carried out by the runner.
+    ApiRequest {
+        path: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        query: BTreeMap<String, String>,
+        #[serde(default)]
+        expect: ApiExpect,
+    },
+}
+
+/// What an `api_request` expects back. Mirrors the API templates'
+/// `Expect` (status, then a partial JSON match).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ApiExpect {
+    #[serde(default = "ok_status")]
+    pub status: u16,
+    // `serde_json::Value`'s specta mapping pulls in `serde_json::Number`'s
+    // i64/u64 variants, which the TypeScript exporter refuses to emit
+    // (precision loss) - the same override, and reason, as
+    // `api_templates::Expect::json`. The wire format is still real JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<specta_typescript::Unknown>)]
+    pub json: Option<Value>,
+}
+
+impl Default for ApiExpect {
+    fn default() -> Self {
+        ApiExpect { status: 200, json: None }
+    }
+}
+
+const HTTP_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+fn check_status(status: u16) -> Result<(), String> {
+    if (100..=599).contains(&status) {
+        Ok(())
+    } else {
+        Err(format!("status {status} is not an HTTP status"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -270,6 +333,23 @@ impl Action {
                 Err(format!("upload: {}", crate::test_files::bad_name(file)))
             }
             Action::Upload { selector, .. } => selector.validate(),
+            Action::ExpectResponse { method, url_contains, status, .. } => {
+                if url_contains.trim().is_empty() {
+                    return Err("expect_response needs url_contains".to_string());
+                }
+                if let Some(m) = method {
+                    if !HTTP_METHODS.iter().any(|k| k.eq_ignore_ascii_case(m.trim())) {
+                        return Err(format!("expect_response method \"{m}\" is not an HTTP method"));
+                    }
+                }
+                check_status(*status)
+            }
+            Action::ApiRequest { path, expect, .. } => {
+                if !crate::api_templates::is_safe_relative_path(path) {
+                    return Err(format!("api_request path \"{path}\" is not a safe path on this site"));
+                }
+                check_status(expect.status)
+            }
         }
     }
 
@@ -285,6 +365,8 @@ impl Action {
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
+                | Action::ExpectResponse { .. }
+                | Action::ApiRequest { .. }
         )
     }
 }
@@ -535,6 +617,10 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         // The same for `upload`: only the runner knows the project, and so
         // where its Test files are. It calls `upload_in` with the path.
         Action::Upload { .. } => ActionOutcome::failed("upload is carried out by the runner"),
+        // The runner holds the network record and runs the page's own
+        // requests; this driver has neither.
+        Action::ExpectResponse { .. } => ActionOutcome::failed("expect_response is carried out by the runner"),
+        Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
     }
 }
 
