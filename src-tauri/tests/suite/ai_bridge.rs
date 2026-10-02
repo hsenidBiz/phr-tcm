@@ -1972,6 +1972,9 @@ mod db_tests {
         fn remove(&self, _: &str) -> Result<(), String> {
             Ok(())
         }
+        fn targets(&self, _: &str) -> Result<Vec<String>, String> {
+            Ok(vec![])
+        }
     }
 
     // ---------------------------------------------------------- the routes
@@ -2011,6 +2014,64 @@ mod db_tests {
         }
     }
 
+    /// The route reads a custom id's own login - not another database's:
+    /// one saved without a password is refused on that missing key.
+    #[tokio::test]
+    async fn the_routes_read_the_login_saved_for_a_custom_id() {
+        use v2_lib::db::credentials::{add_custom, WithList};
+        let dir = tempfile::tempdir().unwrap();
+        let store = WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") };
+        let form = DbCredentialsForm {
+            server: "own-host".into(),
+            port: None,
+            database: "own-db".into(),
+            user: "me".into(),
+            password: Some("pw".into()),
+            trust_cert: false,
+        };
+        let id = add_custom(&store, "Staging", &form).unwrap().id;
+        store.put(&format!("tcm-v2/db/{id}"), "Server=own-host;Database=own-db;User Id=me").unwrap();
+        let c = with_store(&id, false, Arc::new(store));
+        let (status, said) = route(&c, None, "POST", "/db-query", r#"{"sql":"SELECT 1"}"#, "1.0.0").await;
+        assert_eq!(status, 409, "{said}");
+        assert!(said.contains("Password="), "{said}");
+    }
+
+    /// One of the person's own databases is known for as long as the list
+    /// names it: Debug shows its id, and once it is removed the routes say
+    /// nothing is chosen - never a login of some other database.
+    #[tokio::test]
+    async fn an_own_database_is_known_until_it_is_removed() {
+        use v2_lib::db::credentials::{add_custom, remove_custom, WithList};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(WithList { store: MemoryStore::default(), list: dir.path().join("databases.json") });
+        let form = DbCredentialsForm {
+            server: "own-host".into(),
+            port: None,
+            database: "own-db".into(),
+            user: "me".into(),
+            password: Some("pw-Zq9".into()),
+            trust_cert: false,
+        };
+        let id = add_custom(&*store, "Staging", &form).unwrap().id;
+        let shown = format!("{:?}", with_store(&id, false, store.clone()));
+        assert!(shown.contains(&id) && !shown.contains("pw-Zq9"), "{shown}");
+        // A store whose list does not name it does not know it.
+        assert!(format!("{:?}", with_connection(&id, false)).contains("(unknown)"));
+
+        remove_custom(&*store, &id).unwrap();
+        let c = with_store(&id, false, store.clone());
+        assert!(format!("{c:?}").contains("(unknown)"));
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NO_CONNECTION, "{path}");
+        }
+    }
+
     /// The id comes from the webview, which could send anything - a whole
     /// connection string included. Debug shows a known id and nothing else.
     #[test]
@@ -2035,7 +2096,7 @@ mod db_tests {
             let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
             assert_eq!(status, 409, "{path}: {said}");
             assert_eq!(said, NO_LOGIN_SAVED, "{path}");
-            assert!(said.contains("Manage credentials"), "{said}");
+            assert!(said.contains("Edit button"), "{said}");
         }
     }
 
@@ -2078,7 +2139,20 @@ mod db_tests {
         };
         save(&own, OWN_ID, &form).unwrap();
 
-        for c in [with_connection("dev-read", false), with_store(OWN_ID, false, Arc::new(own))] {
+        // One of the person's own databases, by its custom id: the route
+        // resolves its login and gets as far as sqlcmd - the same as `own`.
+        let dir = tempfile::tempdir().unwrap();
+        let listed = v2_lib::db::credentials::WithList {
+            store: MemoryStore::default(),
+            list: dir.path().join("databases.json"),
+        };
+        let custom = v2_lib::db::credentials::add_custom(&listed, "Staging", &form).unwrap().id;
+
+        for c in [
+            with_connection("dev-read", false),
+            with_store(OWN_ID, false, Arc::new(own)),
+            with_store(&custom, false, Arc::new(listed)),
+        ] {
             for (path, body) in [
                 ("/db-lookup", r#"{"query":"leave"}"#),
                 ("/db-query", r#"{"sql":"SELECT 1"}"#),

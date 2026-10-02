@@ -5,11 +5,15 @@ import type { DbDatabase } from "../bindings";
 const testDb = vi.fn();
 const saveDb = vi.fn();
 const resetDb = vi.fn();
+const addDb = vi.fn();
+const renameDb = vi.fn();
 vi.mock("../bindings", () => ({
   commands: {
     testDbConnection: (...a: unknown[]) => testDb(...a),
     saveDbCredentials: (...a: unknown[]) => saveDb(...a),
     resetDbCredentials: (...a: unknown[]) => resetDb(...a),
+    dbAddCustom: (...a: unknown[]) => addDb(...a),
+    dbRenameCustom: (...a: unknown[]) => renameDb(...a),
   },
 }));
 
@@ -19,6 +23,8 @@ beforeEach(() => {
   testDb.mockReset();
   saveDb.mockReset();
   resetDb.mockReset();
+  addDb.mockReset();
+  renameDb.mockReset();
 });
 
 const DEV: DbDatabase = {
@@ -47,7 +53,7 @@ const OWN: DbDatabase = {
   customised: false,
 };
 
-function open(database: DbDatabase, onSaved = vi.fn(), onClose = vi.fn()) {
+function open(database: DbDatabase | null, onSaved = vi.fn(), onClose = vi.fn()) {
   render(<DbCredentialsModal database={database} onClose={onClose} onSaved={onSaved} />);
   return { onSaved, onClose };
 }
@@ -199,4 +205,146 @@ test("Cancel closes without saving", () => {
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(onClose).toHaveBeenCalled();
   expect(saveDb).not.toHaveBeenCalled();
+});
+
+// ------------------------------------------------ adding and renaming
+
+const STAGING: DbDatabase = {
+  id: "custom-1a2b3c4d",
+  label: "Staging",
+  shipped: false,
+  server: "sql.staging",
+  port: null,
+  database: "HR",
+  user: "tester",
+  trust_cert: false,
+  has_password: true,
+  customised: true,
+};
+
+function fillLogin() {
+  fireEvent.change(screen.getByRole("textbox", { name: "Server" }), { target: { value: "sql.staging" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Database" }), { target: { value: "HR" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "User" }), { target: { value: "tester" } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+}
+
+test("adding a database asks for a name and every part of the login, all empty", () => {
+  open(null);
+  expect(screen.getByRole("dialog", { name: "Add a database" })).toBeInTheDocument();
+  for (const name of ["Name", "Server", "Port", "Database", "User"]) {
+    expect(screen.getByRole("textbox", { name })).toHaveValue("");
+  }
+  expect(screen.getByLabelText("Password")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
+});
+
+/// The name is required, and the command says so: its sentence shows
+/// under the fields, and the dialog stays open with what was typed.
+test("an add with no name shows the command's refusal inline and stays open", async () => {
+  addDb.mockResolvedValue({ status: "error", error: "Enter a name for the database." });
+  const { onSaved, onClose } = open(null);
+  fillLogin();
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  const status = await screen.findByRole("status");
+  expect(status).toHaveTextContent("Enter a name for the database.");
+  expect(status).toHaveClass("text-danger");
+  expect(addDb).toHaveBeenCalledWith("", expect.objectContaining({ server: "sql.staging", password: "pw" }));
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "Server" })).toHaveValue("sql.staging");
+});
+
+test("an add sends the name and the login, then hands the new database back", async () => {
+  addDb.mockResolvedValue({ status: "ok", data: STAGING });
+  const { onSaved, onClose } = open(null);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Staging" } });
+  fillLogin();
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledWith(STAGING));
+  expect(addDb).toHaveBeenCalledWith("Staging", {
+    server: "sql.staging",
+    port: null,
+    database: "HR",
+    user: "tester",
+    password: "pw",
+    trust_cert: false,
+  });
+  expect(saveDb).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalled();
+});
+
+test("Test connection on a database not added yet sends no id", async () => {
+  testDb.mockResolvedValue({ status: "ok", data: "Connected." });
+  open(null);
+  fillLogin();
+  fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+  await waitFor(() => expect(testDb).toHaveBeenCalled());
+  expect(testDb.mock.calls[0][0]).toBe("");
+});
+
+test("one of your own databases is edited with its name, never its password", () => {
+  open(STAGING);
+  expect(screen.getByRole("dialog", { name: "Credentials for Staging" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Staging");
+  expect(screen.getByRole("textbox", { name: "Server" })).toHaveValue("sql.staging");
+  expect(screen.getByLabelText("Password")).toHaveValue("");
+});
+
+test("a shipped database has no name to change", () => {
+  open(DEV);
+  expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+});
+
+test("a new name is saved before the login", async () => {
+  const renamed = { ...STAGING, label: "Staging EU" };
+  renameDb.mockResolvedValue({ status: "ok", data: renamed });
+  saveDb.mockResolvedValue({ status: "ok", data: renamed });
+  const { onSaved, onClose } = open(STAGING);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Staging EU" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(renameDb).toHaveBeenCalledWith("custom-1a2b3c4d", "Staging EU");
+  expect(saveDb).toHaveBeenCalledWith("custom-1a2b3c4d", expect.objectContaining({ password: null }));
+  expect(renameDb.mock.invocationCallOrder[0]).toBeLessThan(saveDb.mock.invocationCallOrder[0]);
+  expect(onSaved).toHaveBeenLastCalledWith(renamed);
+});
+
+test("a refused name stays inline and the login is not saved", async () => {
+  renameDb.mockResolvedValue({ status: "error", error: 'A database named "QA - read only" already exists.' });
+  const { onClose } = open(STAGING);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "QA - read only" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("status")).toHaveTextContent('A database named "QA - read only" already exists.');
+  expect(saveDb).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+test("an unchanged name is not sent again", async () => {
+  saveDb.mockResolvedValue({ status: "ok", data: STAGING });
+  const { onClose } = open(STAGING);
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(renameDb).not.toHaveBeenCalled();
+});
+
+/// The rename and the login are two commands: when the name went through
+/// and the login did not, the refusal says so, and the dialog stays open.
+test("a login refused after a rename says the rename went through", async () => {
+  const renamed = { ...STAGING, label: "Staging EU" };
+  renameDb.mockResolvedValue({ status: "ok", data: renamed });
+  saveDb.mockResolvedValue({ status: "error", error: "Enter the password for the new server or database." });
+  const { onSaved, onClose } = open(STAGING);
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Staging EU" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Server" }), { target: { value: "elsewhere" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  const status = await screen.findByRole("status");
+  expect(status).toHaveTextContent(
+    "Renamed to Staging EU, but the login was not saved: Enter the password for the new server or database.",
+  );
+  expect(status).toHaveClass("text-danger");
+  // The list hears about the new name; the dialog stays for the login.
+  expect(onSaved).toHaveBeenCalledWith(renamed);
+  expect(onClose).not.toHaveBeenCalled();
 });

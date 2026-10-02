@@ -350,3 +350,128 @@ fn foreign_json_and_newer_formats_are_refused() {
     assert!(err.contains("newer version"), "{err}");
     let _ = std::fs::remove_dir_all(d);
 }
+
+/// A person's own databases travel by name (the list holds no login), and
+/// come back as a MERGE: what this machine has stays, the backup's are added
+/// with no login, a clashing name gets " 2", retired ids are combined - and
+/// an environment restored beside them still means the same database.
+#[test]
+fn own_databases_travel_and_merge_into_this_machines_list() {
+    use v2_lib::db::credentials::{
+        add_custom, databases, is_known, remove_custom, DbCredentialsForm, MemoryStore, SecretStore, WithList,
+    };
+    let form = DbCredentialsForm {
+        server: "sql.staging".into(),
+        port: None,
+        database: "HR".into(),
+        user: "tester".into(),
+        password: Some("S3cret-XYZ".into()),
+        trust_cert: false,
+    };
+
+    // The machine the backup is made on: two own databases, one removed
+    // before (retired), and an environment that uses one of them.
+    let src = tmpdir("dbs-src");
+    let theirs = WithList { store: MemoryStore::default(), list: src.join("databases.json") };
+    let staging = add_custom(&theirs, "Staging", &form).unwrap();
+    let qa = add_custom(&theirs, "QA box", &form).unwrap();
+    let gone = add_custom(&theirs, "Old one", &form).unwrap();
+    remove_custom(&theirs, &gone.id).unwrap();
+    let known: Vec<String> = databases(&theirs).into_iter().map(|d| d.id).collect();
+    let root = src.join("autorun");
+    let mut default = v2_lib::environments::load_or_init(&root, Some(&staging.id)).unwrap().environments.remove(0);
+    default.name = "Staging env".into();
+    v2_lib::environments::save_env(&root, default, &known).unwrap();
+
+    let (files, _) = collect_files(&src);
+    assert!(files.iter().any(|(p, _)| p == "databases.json"), "the list is not in the backup");
+    let carried = String::from_utf8(files.iter().find(|(p, _)| p == "databases.json").unwrap().1.clone()).unwrap();
+    assert!(!carried.contains("S3cret-XYZ") && !carried.contains("sql.staging"), "{carried}");
+    let doc = build_doc("2.0.9", "2026-10-02T00:00:00Z", BTreeMap::new(), files);
+
+    // The machine it is restored on: its own "Staging" (a different
+    // database, with a login), and one id it retired itself.
+    let dst = tmpdir("dbs-dst");
+    let ours = WithList { store: MemoryStore::default(), list: dst.join("databases.json") };
+    let mine = add_custom(&ours, "Staging", &form).unwrap();
+    let mine_gone = add_custom(&ours, "Scratch", &form).unwrap();
+    remove_custom(&ours, &mine_gone.id).unwrap();
+
+    restore_files(&dst, &doc.files).unwrap();
+
+    let after: Vec<(String, String)> = databases(&ours).into_iter().filter(|d| !d.shipped).map(|d| (d.id, d.label)).collect();
+    assert_eq!(
+        after,
+        vec![
+            ("own".to_string(), "Your own database".to_string()),
+            (mine.id.clone(), "Staging".to_string()),
+            (staging.id.clone(), "Staging 2".to_string()),
+            (qa.id.clone(), "QA box".to_string()),
+        ]
+    );
+    // This machine's own login is untouched; the restored ones have none.
+    assert!(ours.get(&format!("tcm-v2/db/{}", mine.id)).unwrap().is_some());
+    let restored = databases(&ours).into_iter().find(|d| d.id == staging.id).unwrap();
+    assert!(restored.server.is_empty() && !restored.has_password);
+    // Both sides' retired ids stay retired, and neither comes back.
+    let text = std::fs::read_to_string(dst.join("databases.json")).unwrap();
+    assert!(text.contains(&gone.id) && text.contains(&mine_gone.id), "{text}");
+    assert!(!is_known(&ours, &gone.id) && !is_known(&ours, &mine_gone.id));
+    // The restored environment still names a database this machine knows.
+    let env = v2_lib::environments::active(&dst.join("autorun")).unwrap();
+    assert_eq!(env.db_id, staging.id);
+    assert!(is_known(&ours, &env.db_id));
+
+    // Restoring the same backup again adds nothing twice.
+    restore_files(&dst, &doc.files).unwrap();
+    assert_eq!(databases(&ours).into_iter().filter(|d| !d.shipped).count(), 4);
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// A backup whose list cannot be read restores everything else and leaves
+/// this machine's list as it was.
+#[test]
+fn an_unreadable_list_in_a_backup_is_skipped() {
+    use v2_lib::db::credentials::{add_custom, databases, DbCredentialsForm, MemoryStore, WithList};
+    let dst = tmpdir("dbs-bad");
+    let ours = WithList { store: MemoryStore::default(), list: dst.join("databases.json") };
+    let form = DbCredentialsForm { server: "h".into(), port: None, database: "d".into(), user: "u".into(), password: Some("p".into()), trust_cert: false };
+    add_custom(&ours, "Staging", &form).unwrap();
+    let before = std::fs::read_to_string(dst.join("databases.json")).unwrap();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![
+        BackupFile { path: "databases.json".into(), b64: b64.encode(b"{ not json") },
+        BackupFile { path: "cache.json".into(), b64: b64.encode(b"{}") },
+    ];
+    restore_files(&dst, &files).unwrap();
+    assert_eq!(std::fs::read_to_string(dst.join("databases.json")).unwrap(), before);
+    assert!(dst.join("cache.json").exists());
+    assert_eq!(databases(&ours).into_iter().filter(|d| !d.shipped).count(), 2);
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// This machine's own list unreadable: the merge is skipped and logged,
+/// and the rest of the restore still completes - environments included -
+/// with the local list left exactly as it was.
+#[test]
+fn an_unreadable_local_list_skips_the_merge_and_the_restore_completes() {
+    let dst = tmpdir("dbs-local-bad");
+    std::fs::write(dst.join("databases.json"), "{ not json").unwrap();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let envs = r#"{"active":"env-0000000a","environments":[{"id":"env-0000000a","name":"Restored","start_url":"","allowed_origins":[],"db_id":"custom-1a2b3c4d","test_environment":false}]}"#;
+    let list = r#"{"databases":[{"id":"custom-1a2b3c4d","label":"Staging"}],"retired":[]}"#;
+    let files = vec![
+        BackupFile { path: "databases.json".into(), b64: b64.encode(list) },
+        BackupFile { path: "autorun/environments.json".into(), b64: b64.encode(envs) },
+        BackupFile { path: "cache.json".into(), b64: b64.encode(b"{}") },
+    ];
+    let restored = restore_files(&dst, &files).expect("the restore completes");
+    assert_eq!(restored, 2, "the two other files land; the list merge is skipped");
+    assert_eq!(std::fs::read_to_string(dst.join("databases.json")).unwrap(), "{ not json");
+    let env = v2_lib::environments::active(&dst.join("autorun")).unwrap();
+    assert_eq!((env.name.as_str(), env.db_id.as_str()), ("Restored", "custom-1a2b3c4d"));
+    assert!(dst.join("cache.json").exists());
+    let _ = std::fs::remove_dir_all(&dst);
+}

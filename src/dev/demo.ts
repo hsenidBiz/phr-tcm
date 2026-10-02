@@ -340,6 +340,11 @@ function applyPatches() {
     setStaySignedIn: () => err("Demo mode: sign-in settings are disabled"),
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
     applyUpdate: () => err("Demo mode: updates are disabled"),
+    // Adding, renaming or removing one of your own databases would write
+    // this machine's real Credential Manager and databases.json.
+    dbAddCustom: () => err("Demo mode: adding a database is disabled"),
+    dbRenameCustom: () => err("Demo mode: renaming a database is disabled"),
+    dbRemoveCustom: () => err("Demo mode: removing a database is disabled"),
 
     listOrgs: () => ok([{ name: "DemoOrg", url: "https://example.invalid/demo" }]),
     listProjects: () => ok([{ id: "demo-project", name: "Demo Project" }]),

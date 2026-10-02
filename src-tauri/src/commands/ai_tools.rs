@@ -332,9 +332,71 @@ pub fn save_db_credentials(
     credentials::save(&*secrets.0, &id, &form)
 }
 
+/// Adds one of the person's own databases under `label`, its login saved
+/// from `form`. Answers its public view, new id included.
+#[tauri::command]
+#[specta::specta]
+pub fn db_add_custom(
+    secrets: State<'_, DbSecrets>,
+    label: String,
+    form: DbCredentialsForm,
+) -> Result<DbDatabase, String> {
+    credentials::add_custom(&*secrets.0, &label, &form)
+}
+
+/// A new name for one of the person's own databases.
+#[tauri::command]
+#[specta::specta]
+pub fn db_rename_custom(secrets: State<'_, DbSecrets>, id: String, label: String) -> Result<DbDatabase, String> {
+    credentials::rename_custom(&*secrets.0, &id, &label)
+}
+
+/// Removes one of the person's own databases - its saved login and its
+/// place on the list. Refused while an environment uses it.
+#[tauri::command]
+#[specta::specta]
+pub fn db_remove_custom(app: tauri::AppHandle, secrets: State<'_, DbSecrets>, id: String) -> Result<(), String> {
+    remove_custom_with(&super::autorun::root(&app)?, &*secrets.0, &id)
+}
+
+/// `db_remove_custom` beneath the Tauri layer: the environments under
+/// `root` are asked first, and their file stays locked until the removal
+/// is done, so none can start using the database halfway.
+pub fn remove_custom_with(
+    root: &std::path::Path,
+    store: &dyn credentials::SecretStore,
+    id: &str,
+) -> Result<(), String> {
+    let label = credentials::databases(store)
+        .into_iter()
+        .find(|d| d.id == id)
+        .map(|d| d.label)
+        .unwrap_or_else(|| id.to_string());
+    crate::environments::when_db_unused(
+        root,
+        id,
+        |users| in_use(&label, users),
+        || credentials::remove_custom(store, id),
+    )
+}
+
+/// `"<label>" is used by the environment "<name>" - pick another database
+/// for it first`, naming every environment that uses it.
+pub fn in_use(label: &str, users: &[String]) -> String {
+    let names = users.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>();
+    match names.as_slice() {
+        [one] => format!("\"{label}\" is used by the environment {one} - pick another database for it first"),
+        many => format!(
+            "\"{label}\" is used by the environments {} - pick another database for them first",
+            many.join(", ")
+        ),
+    }
+}
+
 /// Signs in with what the form holds now (a blank password meaning the
 /// saved one), or with the saved login when there is no form, and runs
-/// `SELECT 1`. Nothing is saved either way.
+/// `SELECT 1`. Nothing is saved either way. An empty `id` tests a form for
+/// a database not added yet.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_db_connection(
@@ -344,6 +406,7 @@ pub async fn test_db_connection(
 ) -> Result<String, String> {
     let store = &*secrets.0;
     let conn = match form {
+        Some(f) if id.trim().is_empty() => credentials::apply_new_form(&f)?,
         Some(f) => credentials::apply_form(store, &id, &f)?,
         None => credentials::resolve(store, &id)?
             .ok_or_else(|| "No login saved for this database yet.".to_string())?,

@@ -300,11 +300,24 @@ export const commands = {
 	 *  the connection string.
 	 */
 	dbDatabases: () => __TAURI_INVOKE<DbDatabase[]>("db_databases"),
+	/**
+	 *  Adds one of the person's own databases under `label`, its login saved
+	 *  from `form`. Answers its public view, new id included.
+	 */
+	dbAddCustom: (label: string, form: DbCredentialsForm) => typedError<DbDatabase, string>(__TAURI_INVOKE("db_add_custom", { label, form })),
+	/**  A new name for one of the person's own databases. */
+	dbRenameCustom: (id: string, label: string) => typedError<DbDatabase, string>(__TAURI_INVOKE("db_rename_custom", { id, label })),
+	/**
+	 *  Removes one of the person's own databases - its saved login and its
+	 *  place on the list. Refused while an environment uses it.
+	 */
+	dbRemoveCustom: (id: string) => typedError<null, string>(__TAURI_INVOKE("db_remove_custom", { id })),
 	saveDbCredentials: (id: string, form: DbCredentialsForm) => typedError<DbDatabase, string>(__TAURI_INVOKE("save_db_credentials", { id, form })),
 	/**
 	 *  Signs in with what the form holds now (a blank password meaning the
 	 *  saved one), or with the saved login when there is no form, and runs
-	 *  `SELECT 1`. Nothing is saved either way.
+	 *  `SELECT 1`. Nothing is saved either way. An empty `id` tests a form for
+	 *  a database not added yet.
 	 */
 	testDbConnection: (id: string, form: {
 	server: string,

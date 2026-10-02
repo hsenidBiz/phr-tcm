@@ -138,7 +138,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
     let sites_moved = before.as_ref().is_some_and(|b| sites(&b.allowed_origins) != sites(&env.allowed_origins));
     if !address_moved && !sites_moved {
-        let file = environments::save_env(root, env, &known_db_ids(store))?;
+        let file = environments::save_env_with(root, env, || known_db_ids(store))?;
         crate::applog::info(format!("Environments: saved ({} environment(s))", file.environments.len()));
         return Ok(view(store, file));
     }
@@ -154,7 +154,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         None
     };
     let id = env.id.clone();
-    let file = environments::save_env(root, env, &known_db_ids(store))?;
+    let file = environments::save_env_with(root, env, || known_db_ids(store))?;
     if address_moved {
         // `id` matched an entry the file check passed, so it is a
         // well-formed id and this path stays inside the root.

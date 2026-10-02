@@ -167,6 +167,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,
             ai_tools::db_databases,
+            ai_tools::db_add_custom,
+            ai_tools::db_rename_custom,
+            ai_tools::db_remove_custom,
             ai_tools::save_db_credentials,
             ai_tools::test_db_connection,
             ai_tools::reset_db_credentials,
@@ -402,9 +405,6 @@ pub fn run() {
         .manage(SubmitCancel::default())
         .manage(commands::ai_bridge::BridgeHandle::default())
         .manage(filewatch::FileWatchState::default())
-        // Each database's saved login. Shared, not owned, because the AI
-        // bridge's context carries the same store to its database tools.
-        .manage(db::DbSecrets(std::sync::Arc::new(db::CredentialManager)))
         // Stay signed in's kept session - the same per-user vault.
         .manage(saved_session::SessionVault::new(std::sync::Arc::new(db::CredentialManager)))
         .invoke_handler(builder.invoke_handler())
@@ -434,9 +434,24 @@ pub fn run() {
             // once, here, where `app` is in scope.
             ado::throttle::set_app_handle(app.handle().clone());
 
+            use tauri::Manager;
+            // Each database's saved login, and the list naming the person's
+            // own databases beside the app's other data. Managed here, not
+            // on the builder, because only a running app knows that folder.
+            // Shared, not owned, because the AI bridge's context carries
+            // the same store to its database tools. Without a data folder
+            // the list reads as it starts and cannot change.
+            let db_store: std::sync::Arc<dyn db::SecretStore> = match app.path().app_data_dir() {
+                Ok(dir) => std::sync::Arc::new(db::WithList {
+                    store: db::CredentialManager,
+                    list: dir.join("databases.json"),
+                }),
+                Err(_) => std::sync::Arc::new(db::CredentialManager),
+            };
+            app.manage(db::DbSecrets(db_store));
+
             // App log: file per day next to the OS's other app logs, plus
             // an in-memory tail Settings can show for bug reports.
-            use tauri::Manager;
             if let Ok(dir) = app.path().app_log_dir() {
                 applog::init(dir.clone());
                 // Detailed DB (and later API) records: same base folder,

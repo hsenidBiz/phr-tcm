@@ -3,23 +3,24 @@
 //! password or the full connection string. See the design at
 //! docs/superpowers/specs/2026-09-26-ui-polish-db-credentials-design.md.
 //!
-//! A database is named by an id - a shipped preset's, or `own` for the one
-//! a person points at themselves - and the id is all that crosses the IPC
-//! boundary. What it resolves to is an override saved in Windows Credential
+//! A database is named by an id - a shipped preset's, or one of a person's
+//! own (`own`, or `custom-<hex>`; their names live in `catalog`) - and the
+//! id is all that crosses the IPC boundary. What it resolves to is an override saved in Windows Credential
 //! Manager when there is one, the shipped string when there is not. The
 //! store sits behind `SecretStore` so the rules here are tested against
 //! memory, never against the real vault of whoever runs the suite.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::db::catalog::{self, Catalog, CustomDb};
 use crate::db::guard::normalised_key;
 use crate::db::sqlcmd::{hide_password, parse_connection, run_sql, Runner};
 use crate::db_defaults::{DbPreset, DB_PRESETS};
 
-pub const OWN_ID: &str = "own";
-const OWN_LABEL: &str = "Your own database";
+pub use crate::db::catalog::OWN_ID;
+const NOT_KNOWN: &str = "That database is not one the app knows.";
 const SEMICOLON: &str = "The login can't contain a semicolon.";
 const EDGE_SPACE: &str = "The password can't start or end with a space.";
 const PORT_TWICE: &str = "Put the port in the Port box, not after the server name.";
@@ -32,6 +33,42 @@ pub trait SecretStore: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<String>, String>;
     fn put(&self, id: &str, value: &str) -> Result<(), String>;
     fn remove(&self, id: &str) -> Result<(), String>;
+    /// Every saved target name that starts with `prefix` - how `forget_all`
+    /// finds a login whatever the list of databases says, even with the list
+    /// gone.
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String>;
+    /// The file naming a person's own databases (`catalog`) - ids and
+    /// labels, no secret. `None`, the default, reads as the starting list
+    /// (`own` alone) and refuses every change to it.
+    fn list_file(&self) -> Option<&Path> {
+        None
+    }
+}
+
+/// A store together with the file that names its own databases: the app's
+/// Credential Manager and `<app data>/databases.json`, or in the tests a
+/// `MemoryStore` and a temp file. Every secret call goes straight through.
+pub struct WithList<S> {
+    pub store: S,
+    pub list: PathBuf,
+}
+
+impl<S: SecretStore> SecretStore for WithList<S> {
+    fn get(&self, id: &str) -> Result<Option<String>, String> {
+        self.store.get(id)
+    }
+    fn put(&self, id: &str, value: &str) -> Result<(), String> {
+        self.store.put(id, value)
+    }
+    fn remove(&self, id: &str) -> Result<(), String> {
+        self.store.remove(id)
+    }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        self.store.targets(prefix)
+    }
+    fn list_file(&self) -> Option<&Path> {
+        Some(&self.list)
+    }
 }
 
 /// The store the tests use, and nothing else: it forgets everything when
@@ -58,6 +95,9 @@ impl SecretStore for MemoryStore {
     fn remove(&self, id: &str) -> Result<(), String> {
         self.values()?.remove(id);
         Ok(())
+    }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        Ok(self.values()?.keys().filter(|k| k.starts_with(prefix)).cloned().collect())
     }
 }
 
@@ -107,29 +147,44 @@ impl std::fmt::Debug for DbCredentialsForm {
     }
 }
 
+/// What every database login's target name starts with.
+const TARGET_PREFIX: &str = "tcm-v2/db/";
+
 fn target(id: &str) -> String {
-    format!("tcm-v2/db/{id}")
+    format!("{TARGET_PREFIX}{id}")
 }
 
 fn shipped(id: &str) -> Option<&'static DbPreset> {
     DB_PRESETS.iter().find(|p| p.id == id)
 }
 
-/// Whether `id` names a database this build knows: `own` or a shipped
-/// one. An id saved by an older release can name a preset since removed,
-/// and a caller that reads that as "nothing chosen" asks here first.
-pub fn is_known(id: &str) -> bool {
-    id == OWN_ID || shipped(id).is_some()
+/// Whether `id` names a database this build knows: a shipped one, or one
+/// in the store's list. An id saved by an older release can name a preset
+/// since removed, and one saved before a removal a database since removed;
+/// a caller that reads that as "nothing chosen" asks here first.
+pub fn is_known(store: &dyn SecretStore, id: &str) -> bool {
+    if shipped(id).is_some() {
+        return true;
+    }
+    match catalog::read(store.list_file()) {
+        Ok(c) => c.find(id).is_some(),
+        Err(e) => {
+            crate::applog::warn(format!("database logins: {e}"));
+            false
+        }
+    }
 }
 
 /// Refused up front so a stray id can never write an entry nothing will
-/// ever read or clean up.
-fn known(id: &str) -> Result<(), String> {
-    if is_known(id) {
-        Ok(())
-    } else {
-        Err("That database is not one the app knows.".into())
+/// ever read or clean up. Answers the database's label.
+fn known(store: &dyn SecretStore, id: &str) -> Result<String, String> {
+    if let Some(p) = shipped(id) {
+        return Ok(p.label.to_string());
     }
+    catalog::read(store.list_file())?
+        .find(id)
+        .map(|d| d.label.clone())
+        .ok_or_else(|| NOT_KNOWN.to_string())
 }
 
 /// "host,port" -> ("host", Some(port)); a bad port stays part of the host.
@@ -177,9 +232,15 @@ fn build(
 }
 
 /// The connection string a database id stands for right now: a saved
-/// override, else the shipped string, else nothing (`own` never saved).
+/// override, else the shipped string, else nothing (an own database with
+/// no login saved).
 pub fn resolve(store: &dyn SecretStore, id: &str) -> Result<Option<String>, String> {
-    known(id)?;
+    known(store, id)?;
+    saved_or_shipped(store, id)
+}
+
+/// `resolve` for an id already known to be known.
+fn saved_or_shipped(store: &dyn SecretStore, id: &str) -> Result<Option<String>, String> {
     if let Some(v) = store.get(&target(id))? {
         return Ok(Some(v));
     }
@@ -192,15 +253,30 @@ pub fn resolve(store: &dyn SecretStore, id: &str) -> Result<Option<String>, Stri
 /// setting whatever the form says: what a person may change there is who
 /// signs in, not where the app connects.
 pub fn apply_form(store: &dyn SecretStore, id: &str, form: &DbCredentialsForm) -> Result<String, String> {
-    known(id)?;
-    let current = resolve(store, id)?.and_then(|c| parse_connection(&c).ok());
+    known(store, id)?;
+    let current = saved_or_shipped(store, id)?.and_then(|c| parse_connection(&c).ok());
+    form_to_string(shipped(id), current, form)
+}
+
+/// The connection string a form for a database not added yet would
+/// produce - what Add database's Test connection signs in with. There is
+/// no saved password to fall back on, so the form must carry one.
+pub fn apply_new_form(form: &DbCredentialsForm) -> Result<String, String> {
+    form_to_string(None, None, form)
+}
+
+fn form_to_string(
+    preset: Option<&DbPreset>,
+    current: Option<crate::db::Connection>,
+    form: &DbCredentialsForm,
+) -> Result<String, String> {
     let typed = form.password.as_deref().filter(|p| !p.is_empty());
 
     if form.user.trim().is_empty() {
         return Err("Enter the user name.".into());
     }
 
-    if let Some(preset) = shipped(id) {
+    if let Some(preset) = preset {
         let base = parse_connection(preset.connection_string)?;
         let (server, port) = split_server(&base.server);
         // An override that no longer parses still has the shipped
@@ -250,6 +326,9 @@ fn same_place(saved: &crate::db::Connection, form: &DbCredentialsForm) -> bool {
 /// after a release rotates it, and mark the database as changed when it is
 /// not.
 pub fn save(store: &dyn SecretStore, id: &str, form: &DbCredentialsForm) -> Result<DbDatabase, String> {
+    // Held so a removal cannot take the database off the list between the
+    // check and the write - which would leave a login no list names.
+    let _held = catalog::lock();
     let conn = apply_form(store, id, form)?;
     if find_shipped(&conn) == Some(id) {
         store.remove(&target(id))?;
@@ -259,23 +338,142 @@ pub fn save(store: &dyn SecretStore, id: &str, form: &DbCredentialsForm) -> Resu
     view(store, id)
 }
 
-/// Back to the shipped login. `own` has no default, so there is nothing to
-/// reset it to - forgetting it is `forget_all`'s job.
+/// Back to the shipped login. A person's own database has no default, so
+/// there is nothing to reset it to - removing it is `remove_custom`'s job.
 pub fn reset(store: &dyn SecretStore, id: &str) -> Result<DbDatabase, String> {
-    known(id)?;
-    if id == OWN_ID {
+    known(store, id)?;
+    if shipped(id).is_none() {
         return Err("Only a shipped database has a default to go back to.".into());
     }
     store.remove(&target(id))?;
     view(store, id)
 }
 
-/// Remove every saved login. Every entry is attempted even when one fails,
-/// so a single stuck entry does not keep the rest on the machine.
+/// Add one of a person's own databases: a fresh id, its login saved under
+/// it, and its name appended to the list. A login that cannot be saved
+/// adds nothing; a list that cannot be saved takes the login back out, so
+/// a failure never leaves a secret behind that no list names.
+pub fn add_custom(store: &dyn SecretStore, label: &str, form: &DbCredentialsForm) -> Result<DbDatabase, String> {
+    let file = store.list_file().ok_or_else(|| catalog::NO_LIST.to_string())?;
+    let _held = catalog::lock();
+    let mut list = catalog::read(Some(file))?;
+    let label = catalog::check_label(label, taken_labels(&list, None))?;
+    let conn = apply_new_form(form)?;
+    let id = catalog::new_id(&label, &list);
+    store.put(&target(&id), &conn)?;
+    list.databases.push(CustomDb { id: id.clone(), label: label.clone() });
+    if let Err(e) = catalog::write(Some(file), &list) {
+        if let Err(back) = store.remove(&target(&id)) {
+            crate::applog::warn(format!("database logins: the login of a database not added stayed behind: {back}"));
+        }
+        return Err(e);
+    }
+    crate::applog::info("database logins: added one of the person's own databases");
+    view_as(store, &id, &label)
+}
+
+/// Give one of a person's own databases a new name. A shipped one keeps
+/// the name it ships with.
+pub fn rename_custom(store: &dyn SecretStore, id: &str, label: &str) -> Result<DbDatabase, String> {
+    if shipped(id).is_some() {
+        return Err("A shipped database keeps its name.".into());
+    }
+    let _held = catalog::lock();
+    let mut list = catalog::read(store.list_file())?;
+    if list.find(id).is_none() {
+        return Err(NOT_KNOWN.into());
+    }
+    let label = catalog::check_label(label, taken_labels(&list, Some(id)))?;
+    if let Some(d) = list.databases.iter_mut().find(|d| d.id == id) {
+        d.label = label.clone();
+    }
+    catalog::write(store.list_file(), &list)?;
+    view_as(store, id, &label)
+}
+
+/// Remove one of a person's own databases: its login out of the store
+/// first, then its name off the list and its id retired for good. A login
+/// that will not go stops the removal, so a secret is never left behind
+/// with no list naming it. Whether an environment still uses the database
+/// is the command's question (`commands::ai_tools::remove_custom_with`).
+pub fn remove_custom(store: &dyn SecretStore, id: &str) -> Result<(), String> {
+    if shipped(id).is_some() {
+        return Err("A shipped database can't be removed.".into());
+    }
+    let _held = catalog::lock();
+    let mut list = catalog::read(store.list_file())?;
+    if list.find(id).is_none() {
+        return Err(NOT_KNOWN.into());
+    }
+    store.remove(&target(id))?;
+    list.databases.retain(|d| d.id != id);
+    if id != OWN_ID && !list.retired.iter().any(|r| r == id) {
+        list.retired.push(id.to_string());
+    }
+    catalog::write(store.list_file(), &list)?;
+    crate::applog::info("database logins: removed one of the person's own databases");
+    Ok(())
+}
+
+/// Every name a label must differ from: the shipped databases' and the
+/// list's, except the one being renamed.
+fn taken_labels<'a>(list: &'a Catalog, except: Option<&'a str>) -> impl Iterator<Item = &'a str> {
+    DB_PRESETS.iter().map(|p| p.label).chain(
+        list.databases.iter().filter(move |d| Some(d.id.as_str()) != except).map(|d| d.label.as_str()),
+    )
+}
+
+/// Remove every saved login and every own database. Every entry is
+/// attempted even when one fails, so a single stuck entry does not keep
+/// the rest on the machine. The list goes back to how it starts - `own`
+/// alone, nothing saved for it - and every id it held is retired.
+///
+/// The logins to remove are found in the store itself as well as on the
+/// list: a list that was deleted or cannot be read, or an add whose
+/// rollback failed, must not leave a login behind that nothing names. A
+/// list that cannot be read is left exactly as it is.
 pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
+    let _held = catalog::lock();
     let mut first_error = None;
-    for id in std::iter::once(OWN_ID).chain(DB_PRESETS.iter().map(|p| p.id)) {
-        if let Err(e) = store.remove(&target(id)) {
+    let list = catalog::read(store.list_file());
+    let mut own: Vec<String> = match &list {
+        Ok(c) => c.databases.iter().map(|d| d.id.clone()).filter(|id| id != OWN_ID).collect(),
+        Err(e) => {
+            first_error = Some(e.clone());
+            vec![]
+        }
+    };
+    match store.targets(TARGET_PREFIX) {
+        Ok(found) => {
+            for id in found.iter().filter_map(|t| t.strip_prefix(TARGET_PREFIX)) {
+                if id != OWN_ID && shipped(id).is_none() && !own.iter().any(|o| o == id) {
+                    own.push(id.to_string());
+                }
+            }
+        }
+        Err(e) => {
+            first_error.get_or_insert(e);
+        }
+    }
+    let ids = std::iter::once(OWN_ID.to_string())
+        .chain(DB_PRESETS.iter().map(|p| p.id.to_string()))
+        .chain(own.iter().cloned());
+    for id in ids {
+        if let Err(e) = store.remove(&target(&id)) {
+            first_error.get_or_insert(e);
+        }
+    }
+    if let (Ok(old), Some(file)) = (list, store.list_file()) {
+        let mut fresh = Catalog::starting();
+        fresh.retired = old.retired;
+        // Only well-formed ids go on the list: a stray target name found in
+        // the store was removed above, and that is all it needs.
+        for id in own.into_iter().filter(|id| catalog::valid_id(id)) {
+            if !fresh.retired.contains(&id) {
+                fresh.retired.push(id);
+            }
+        }
+        if let Err(e) = catalog::write(Some(file), &fresh) {
             first_error.get_or_insert(e);
         }
     }
@@ -283,14 +481,22 @@ pub fn forget_all(store: &dyn SecretStore) -> Result<(), String> {
 }
 
 /// Every database the app knows: the shipped ones in `DB_PRESETS` order,
-/// then `own`. One that cannot be read is logged and left out, so a broken
-/// entry never hides the rest.
+/// then the person's own in the list's order. One that cannot be read is
+/// logged and left out, so a broken entry never hides the rest - and a
+/// list that cannot be read still leaves the shipped ones showing.
 pub fn databases(store: &dyn SecretStore) -> Vec<DbDatabase> {
+    let own = match catalog::read(store.list_file()) {
+        Ok(c) => c.databases,
+        Err(e) => {
+            crate::applog::warn(format!("database logins: {e}"));
+            vec![]
+        }
+    };
     DB_PRESETS
         .iter()
-        .map(|p| p.id)
-        .chain(std::iter::once(OWN_ID))
-        .filter_map(|id| match view(store, id) {
+        .map(|p| (p.id.to_string(), p.label.to_string()))
+        .chain(own.into_iter().map(|d| (d.id, d.label)))
+        .filter_map(|(id, label)| match view_as(store, &id, &label) {
             Ok(d) => Some(d),
             Err(e) => {
                 crate::applog::warn(format!("database logins: could not read {id}: {e}"));
@@ -301,14 +507,19 @@ pub fn databases(store: &dyn SecretStore) -> Vec<DbDatabase> {
 }
 
 fn view(store: &dyn SecretStore, id: &str) -> Result<DbDatabase, String> {
+    let label = known(store, id)?;
+    view_as(store, id, &label)
+}
+
+fn view_as(store: &dyn SecretStore, id: &str, label: &str) -> Result<DbDatabase, String> {
     let preset = shipped(id);
     // A string that does not parse shows empty fields rather than failing
     // the whole list: the person can still see it and save over it.
-    let parsed = resolve(store, id)?.and_then(|c| parse_connection(&c).ok());
+    let parsed = saved_or_shipped(store, id)?.and_then(|c| parse_connection(&c).ok());
     let (server, port) = parsed.as_ref().map(|c| split_server(&c.server)).unwrap_or_default();
     Ok(DbDatabase {
         id: id.to_string(),
-        label: preset.map_or(OWN_LABEL, |p| p.label).to_string(),
+        label: label.to_string(),
         shipped: preset.is_some(),
         server,
         port,
@@ -371,6 +582,20 @@ pub fn import_legacy(store: &dyn SecretStore, cs: &str) -> Result<String, String
     // A string nothing could sign in with is refused rather than saved as
     // a login that fails on first use.
     parse_connection(cs)?;
+    let _held = catalog::lock();
+    let mut list = catalog::read(store.list_file())?;
+    // `own` was removed from the list since: it comes back to hold the
+    // import, under a name nothing else has.
+    if list.find(OWN_ID).is_none() {
+        let mut label = catalog::OWN_LABEL.to_string();
+        let mut n = 2;
+        while catalog::check_label(&label, taken_labels(&list, None)).is_err() {
+            label = format!("{} {n}", catalog::OWN_LABEL);
+            n += 1;
+        }
+        list.databases.insert(0, CustomDb { id: OWN_ID.into(), label });
+        catalog::write(store.list_file(), &list)?;
+    }
     store.put(&target(OWN_ID), cs.trim())?;
     Ok(OWN_ID.into())
 }
@@ -408,6 +633,12 @@ impl SecretStore for CredentialManager {
             "Could not remove the saved login.".to_string()
         })
     }
+    fn targets(&self, prefix: &str) -> Result<Vec<String>, String> {
+        wincred::enumerate(prefix).map_err(|code| {
+            crate::applog::warn(format!("Credential Manager listing failed (Win32 error {code})"));
+            "Could not list the saved logins.".to_string()
+        })
+    }
 }
 
 #[cfg(not(windows))]
@@ -421,6 +652,9 @@ impl SecretStore for CredentialManager {
     fn remove(&self, _id: &str) -> Result<(), String> {
         Err("Windows Credential Manager is not available.".into())
     }
+    fn targets(&self, _prefix: &str) -> Result<Vec<String>, String> {
+        Err("Windows Credential Manager is not available.".into())
+    }
 }
 
 /// The Win32 calls, each wrapped small enough that its safety argument
@@ -430,7 +664,7 @@ impl SecretStore for CredentialManager {
 mod wincred {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND};
     use windows_sys::Win32::Security::Credentials::{
-        CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
+        CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
         CRED_TYPE_GENERIC,
     };
 
@@ -506,6 +740,56 @@ mod wincred {
             Err(last_error())
         } else {
             Ok(())
+        }
+    }
+
+    /// The target names of every generic entry whose name starts with
+    /// `prefix`. Only names come back - every blob is freed unread.
+    pub(super) fn enumerate(prefix: &str) -> Result<Vec<String>, u32> {
+        let filter = wide(&format!("{prefix}*"));
+        let mut count: u32 = 0;
+        let mut creds: *mut *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: `filter` is NUL-terminated and outlives the call; `count`
+        // and `creds` are out-pointers the API fills only when it returns
+        // non-zero.
+        let ok = unsafe { CredEnumerateW(filter.as_ptr(), 0, &mut count, &mut creds) };
+        if ok == 0 {
+            let code = last_error();
+            return if code == ERROR_NOT_FOUND { Ok(Vec::new()) } else { Err(code) };
+        }
+        // SAFETY: CredEnumerateW returned non-zero, so `creds` is an array
+        // of `count` credential pointers the API allocated as one block.
+        let names = unsafe { copy_names_and_free(creds, count) };
+        Ok(names.into_iter().filter(|n| n.starts_with(prefix)).collect())
+    }
+
+    /// Copies each generic entry's target name out, then frees the array.
+    ///
+    /// # Safety
+    /// `creds` must come from a successful CredEnumerateW with `count`
+    /// entries and not have been freed; each entry's TargetName is then a
+    /// NUL-terminated string (or null). The caller must not use `creds`
+    /// afterwards.
+    unsafe fn copy_names_and_free(creds: *mut *mut CREDENTIALW, count: u32) -> Vec<String> {
+        // SAFETY: the contract above; every name is copied out before
+        // CredFree, and nothing is touched after it.
+        unsafe {
+            let mut names = Vec::new();
+            if !creds.is_null() {
+                for &c in std::slice::from_raw_parts(creds, count as usize) {
+                    if c.is_null() || (*c).Type != CRED_TYPE_GENERIC || (*c).TargetName.is_null() {
+                        continue;
+                    }
+                    let t = (*c).TargetName;
+                    let mut len = 0;
+                    while *t.add(len) != 0 {
+                        len += 1;
+                    }
+                    names.push(String::from_utf16_lossy(std::slice::from_raw_parts(t, len)));
+                }
+                CredFree(creds as *const _);
+            }
+            names
         }
     }
 

@@ -392,7 +392,7 @@ function dbCard(): HTMLElement {
 
 /// The card is which database, its login, and whether it may write. The
 /// login itself lives in Rust: nothing on the card can show or take one.
-test("the database card is a picker, a login line, Manage credentials and the write switch", async () => {
+test("the database card is a picker, a login line, the list of databases and the write switch", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -401,7 +401,12 @@ test("the database card is a picker, a login line, Manage credentials and the wr
   await waitFor(() => expect(picker).toHaveTextContent("Dev - read only"));
   const card = dbCard();
   expect(within(card).getByText("Signs in as sgdev01db02_readonly")).toBeInTheDocument();
-  expect(within(card).getByRole("button", { name: "Manage credentials" })).toBeInTheDocument();
+  // One place to manage logins: every database's own Edit, and no
+  // separate button for the chosen one.
+  expect(within(card).queryByRole("button", { name: "Manage credentials" })).not.toBeInTheDocument();
+  for (const d of DATABASES) {
+    expect(within(card).getByRole("button", { name: `Edit ${d.label}` })).toBeInTheDocument();
+  }
   expect(within(card).getByRole("switch", { name: "Create, update and delete" })).toBeInTheDocument();
 
   expect(within(card).queryByText("Edit as one string")).not.toBeInTheDocument();
@@ -444,23 +449,165 @@ test("choosing a database stores its id and tells the bridge subscribers", async
   stop();
 });
 
-test("Manage credentials opens the login of the chosen database", async () => {
-  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+test("a shipped database's Edit opens its login, with no name to change", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  const manage = await screen.findByRole("button", { name: "Manage credentials" });
-  await waitFor(() => expect(manage).not.toBeDisabled());
-  fireEvent.click(manage);
-  expect(
-    await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" }),
-  ).toBeInTheDocument();
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Edit Dev - dev login" }));
+  const dialog = await screen.findByRole("dialog", { name: "Credentials for Dev - dev login" });
+  expect(within(dialog).queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+  // Editing a database does not choose it.
+  expect(selectedDbSnapshot()).toBe("dev-read");
 });
 
-test("with no database chosen there is no login to manage", async () => {
+test("with no database chosen every login can still be edited", async () => {
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  expect(await screen.findByRole("button", { name: "Manage credentials" })).toBeDisabled();
+  const edit = await within(dbCard()).findByRole("button", { name: "Edit QA - read only" });
+  expect(edit).not.toBeDisabled();
+  fireEvent.click(edit);
+  expect(await screen.findByRole("dialog", { name: "Credentials for QA - read only" })).toBeInTheDocument();
+});
+
+// ------------------------------------------------- your own databases
+
+const STAGING = {
+  id: "custom-1a2b3c4d", label: "Staging", shipped: false, server: "sql.staging", port: null,
+  database: "HR", user: "tester", trust_cert: false, has_password: true, customised: true,
+};
+
+function ownDbMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  const calls: { cmd: string; args: unknown }[] = [];
+  let list = [...DATABASES, STAGING];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_databases") return list;
+    const answer = extra(cmd, args);
+    if (cmd === "db_remove_custom") list = list.filter((d) => d.id !== (args as { id: string }).id);
+    return answer;
+  });
+  return calls;
+}
+
+/// Each of your own databases is listed with Edit and Remove, so neither
+/// needs it chosen above - choosing one moves the active environment to it.
+test("your own databases are listed under the picker with Edit and Remove", async () => {
+  ownDbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = dbCard();
+  expect(await within(card).findByText("Staging")).toBeInTheDocument();
+  expect(within(card).getByText("HR on sql.staging")).toBeInTheDocument();
+  expect(within(card).getByText("Not set up yet")).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Edit Staging" })).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "Remove Staging" })).toBeInTheDocument();
+  // A shipped one is listed with Edit, but can never be removed.
+  expect(within(card).getByRole("button", { name: "Edit Dev - read only" })).toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Remove Dev - read only" })).not.toBeInTheDocument();
+  expect(within(card).getByText("hrmmain on sgdev01db02.cloud")).toBeInTheDocument();
+
+  fireEvent.click(within(card).getByRole("button", { name: "Edit Staging" }));
+  const dialog = await screen.findByRole("dialog", { name: "Credentials for Staging" });
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("Staging");
+});
+
+test("Add database opens an empty form whose name the command requires, said inline", async () => {
+  const calls = ownDbMocks((cmd) => {
+    if (cmd === "db_add_custom") throw "Enter a name for the database.";
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Add database" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add a database" });
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue("");
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Server" }), { target: { value: "h" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Database" }), { target: { value: "d" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "User" }), { target: { value: "u" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+  expect(await within(dialog).findByText("Enter a name for the database.")).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Add a database" })).toBeInTheDocument();
+  expect(calls.find((c) => c.cmd === "db_add_custom")!.args).toMatchObject({ label: "" });
+});
+
+test("an added database joins the list without being chosen", async () => {
+  let added = false;
+  const calls = ownDbMocks((cmd) => {
+    if (cmd === "db_add_custom") {
+      added = true;
+      return { ...STAGING, id: "custom-99999999", label: "QA box" };
+    }
+  });
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Add database" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add a database" });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "QA box" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(added).toBe(true));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add a database" })).not.toBeInTheDocument());
+  // The list is asked again; the choice above is untouched.
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "db_databases").length).toBeGreaterThan(1));
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBe("dev-read");
+});
+
+test("Remove asks first, and a database an environment uses shows the refusal inline", async () => {
+  const refusal = '"Staging" is used by the environment "QA" - pick another database for it first';
+  const calls = ownDbMocks((cmd) => {
+    if (cmd === "db_remove_custom") throw refusal;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = dbCard();
+  fireEvent.click(await within(card).findByRole("button", { name: "Remove Staging" }));
+  expect(await within(card).findByText(/Its saved login is deleted from this machine/)).toBeInTheDocument();
+  expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
+
+  fireEvent.click(within(card).getByRole("button", { name: "Confirm remove" }));
+  expect(await within(card).findByText(refusal)).toBeInTheDocument();
+  expect(calls.find((c) => c.cmd === "db_remove_custom")!.args).toEqual({ id: STAGING.id });
+  // Refused means still there.
+  expect(within(card).getByText("Staging")).toBeInTheDocument();
+});
+
+test("Keep backs out of removing a database without sending anything", async () => {
+  const calls = ownDbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = dbCard();
+  fireEvent.click(await within(card).findByRole("button", { name: "Remove Staging" }));
+  fireEvent.click(await within(card).findByRole("button", { name: "Keep" }));
+  expect(within(card).queryByRole("button", { name: "Confirm remove" })).not.toBeInTheDocument();
+  expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
+});
+
+/// A choice naming a database that is gone would point the tools at an id
+/// nothing knows: removing the chosen one leaves no database chosen.
+test("removing the chosen database clears the card's choice", async () => {
+  ownDbMocks((cmd) => (cmd === "db_remove_custom" ? null : undefined));
+  localStorage.setItem("tcm-v2-db-selected", STAGING.id);
+  const told = vi.fn();
+  const stop = subscribeDbSettings(told);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const picker = await screen.findByRole("combobox", { name: "Database" });
+  await waitFor(() => expect(picker).toHaveTextContent("Staging"));
+
+  fireEvent.click(within(dbCard()).getByRole("button", { name: "Remove Staging" }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Confirm remove" }));
+  await waitFor(() => expect(selectedDbSnapshot()).toBe(""));
+  expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
+  expect(told).toHaveBeenCalled();
+  await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
+  expect(within(dbCard()).queryByText(/^Signs in as /)).not.toBeInTheDocument();
+  stop();
+});
+
+test("removing another database leaves the card's choice alone", async () => {
+  ownDbMocks((cmd) => (cmd === "db_remove_custom" ? null : undefined));
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove Staging" }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Confirm remove" }));
+  await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
+  expect(selectedDbSnapshot()).toBe("dev-read");
 });
 
 // ------------------------------------------------- working repository gate

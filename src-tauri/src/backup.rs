@@ -25,8 +25,13 @@ use std::path::{Component, Path, PathBuf};
 /// `reference-cache.json` and `suite-cache.json` are the pre-unified-cache
 /// files: kept here so a backup made before that migration still imports -
 /// `cache::Store::open` folds them into `cache.json` on next open.
-const ROOTS: [&str; 5] =
-    ["cache.json", "reference-cache.json", "suite-cache.json", "autorun", "shared-drafts"];
+///
+/// `databases.json` names the person's own databases - ids and labels,
+/// never a login - so environments restored beside it keep meaning the same
+/// database. It is restored as a MERGE (`db::catalog::merge_backup`), never
+/// written over the list here.
+const ROOTS: [&str; 6] =
+    ["cache.json", "reference-cache.json", "suite-cache.json", "autorun", "shared-drafts", "databases.json"];
 
 /// A single file per entry is capped so one enormous stray artifact cannot
 /// balloon the backup into something no one can email or copy around.
@@ -228,6 +233,19 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
             legacy_accounts = Some(bytes.clone());
         }
         has_environments |= norm == "autorun/environments.json";
+        if norm == "databases.json" {
+            // This machine's own list unreadable (or unsaveable) skips the
+            // merge, as an unreadable list in the backup does: the rest of
+            // the restore - and the settings handed back after it - must not
+            // fail halfway over the one file it would never overwrite.
+            match crate::db::catalog::merge_backup(&target, &bytes) {
+                Ok(_) => restored += 1,
+                Err(e) => crate::applog::warn(format!(
+                    "Backup import: the list of databases was not merged, and this machine's list was left as it was: {e}"
+                )),
+            }
+            continue;
+        }
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
         restored += 1;
         // The old single list, or any one environment's list

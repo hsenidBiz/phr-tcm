@@ -280,7 +280,20 @@ fn tidy(mut env: Environment) -> Environment {
 /// that id. Only the saved environment's database has to be known now:
 /// another one whose database has since gone is not this save's business.
 pub fn save_env(root: &Path, env: Environment, known_db_ids: &[String]) -> Result<EnvFile, String> {
+    save_env_with(root, env, || known_db_ids.to_vec())
+}
+
+/// `save_env` with the known database ids asked for UNDER the file's lock -
+/// what the commands use. A database removed a moment before (its removal
+/// holds this lock too, see `when_db_unused`) is then never written into an
+/// environment by a save that looked it up just before.
+pub fn save_env_with(
+    root: &Path,
+    env: Environment,
+    known_db_ids: impl FnOnce() -> Vec<String>,
+) -> Result<EnvFile, String> {
     let _held = lock();
+    let known_db_ids = known_db_ids();
     let mut file = load_or_init_locked(root, None)?;
     let mut env = tidy(env);
     if env.id.is_empty() {
@@ -299,6 +312,28 @@ pub fn save_env(root: &Path, env: Environment, known_db_ids: &[String]) -> Resul
     validate(&file, &known)?;
     write(root, &file)?;
     Ok(file)
+}
+
+/// Runs `f` only while no environment uses the database `db_id`, holding
+/// the file's lock throughout so no save can start using it halfway. When
+/// one does, answers `refuse` of the names of every environment using it,
+/// and `f` never runs. No file yet means no environment uses anything, and
+/// none is made.
+pub fn when_db_unused<T>(
+    root: &Path,
+    db_id: &str,
+    refuse: impl FnOnce(&[String]) -> String,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _held = lock();
+    let users: Vec<String> = read(root)?
+        .map(|file| file.environments.into_iter().filter(|e| e.db_id == db_id).map(|e| e.name).collect())
+        .unwrap_or_default();
+    if users.is_empty() {
+        f()
+    } else {
+        Err(refuse(&users))
+    }
 }
 
 /// Remove an environment and its local files: accounts, saved sessions and

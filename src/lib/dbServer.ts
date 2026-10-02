@@ -71,6 +71,13 @@ export function forgetDbConfig(): void {
   notify();
 }
 
+/** After one of the person's own databases is removed: a choice that named
+ * it names nothing now, so it goes - no database chosen - rather than
+ * pointing the tools at an id this build no longer knows. */
+export function forgetRemovedDb(id: string): void {
+  if (loadSelectedDb() === id) saveSelectedDb("");
+}
+
 export function loadSelectedDb(): string {
   try {
     return localStorage.getItem(SELECTED_KEY) ?? "";

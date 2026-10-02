@@ -16,24 +16,32 @@ import { Modal } from "./ui/modal";
  * webview does not have. It exists here only in this form's own state while
  * it is typed, and goes with the form when it closes. A blank password
  * means "keep the saved one", for Test connection and Save alike.
+ *
+ * With no `database` it adds one of the person's own: the same fields plus
+ * a Name, every one of them empty. One of their own databases keeps its
+ * Name field when edited too - renaming it is part of editing it.
  */
 export function DbCredentialsModal({
   database,
   onClose,
   onSaved,
 }: {
-  database: DbDatabase;
+  /** The database to edit, or null to add a new one. */
+  database: DbDatabase | null;
   onClose: () => void;
-  /** The database's new public view, after a save or a reset. */
+  /** The database's new public view, after an add, a save or a reset. */
   onSaved: (d: DbDatabase) => void;
 }) {
   const titleId = useId();
-  const [server, setServer] = useState(database.server);
-  const [port, setPort] = useState(database.port == null ? "" : String(database.port));
-  const [name, setName] = useState(database.database);
-  const [user, setUser] = useState(database.user);
+  const adding = database == null;
+  const shipped = database?.shipped ?? false;
+  const [label, setLabel] = useState(database?.label ?? "");
+  const [server, setServer] = useState(database?.server ?? "");
+  const [port, setPort] = useState(database?.port == null ? "" : String(database.port));
+  const [name, setName] = useState(database?.database ?? "");
+  const [user, setUser] = useState(database?.user ?? "");
   const [password, setPassword] = useState("");
-  const [trustCert, setTrustCert] = useState(database.trust_cert);
+  const [trustCert, setTrustCert] = useState(database?.trust_cert ?? false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | "reset" | null>(null);
 
@@ -54,22 +62,24 @@ export function DbCredentialsModal({
     };
   };
 
-  /** Runs one command, showing a refusal under the fields. */
+  /** Runs one command, showing a refusal under the fields - worded by
+   * `explain` when the refusal needs saying in context. */
   const run = async <T,>(
     kind: "test" | "save" | "reset",
     call: () => Promise<{ status: "ok"; data: T } | { status: "error"; error: string }>,
+    explain: (why: string) => string = (why) => why,
   ): Promise<T | null> => {
     setBusy(kind);
     setResult(null);
     try {
       const res = await call();
       if (res.status === "error") {
-        setResult({ ok: false, text: res.error });
+        setResult({ ok: false, text: explain(res.error) });
         return null;
       }
       return res.data;
     } catch (e) {
-      setResult({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setResult({ ok: false, text: explain(e instanceof Error ? e.message : String(e)) });
       return null;
     } finally {
       setBusy(null);
@@ -82,22 +92,49 @@ export function DbCredentialsModal({
     else then(f);
   };
 
+  // A database not added yet is tested by its form alone: an empty id.
   const test = () =>
     withForm(async (f) => {
-      const said = await run("test", () => commands.testDbConnection(database.id, f));
+      const said = await run("test", () => commands.testDbConnection(database?.id ?? "", f));
       if (said != null) setResult({ ok: true, text: said });
     });
 
   const save = () =>
     withForm(async (f) => {
-      const saved = await run("save", () => commands.saveDbCredentials(database.id, f));
+      if (database == null) {
+        const added = await run("save", () => commands.dbAddCustom(label, f));
+        if (!added) return;
+        toast.success(`Added ${added.label}.`);
+        onSaved(added);
+        onClose();
+        return;
+      }
+      // Two commands, in this order: the new name first, then the login.
+      // The name is the part most likely to be refused (taken already), and
+      // that refusal then leaves the login as it was too. They are not one
+      // transaction: if the name is saved and the login then refused, the
+      // new name stays with the old login - so the refusal says the rename
+      // went through, and the dialog stays open to fix the login.
+      let shownAs = database.label;
+      let renamedNow = false;
+      if (!shipped && label.trim() !== database.label) {
+        const renamed = await run("save", () => commands.dbRenameCustom(database.id, label));
+        if (!renamed) return;
+        shownAs = renamed.label;
+        renamedNow = true;
+        onSaved(renamed);
+      }
+      const saved = await run("save", () => commands.saveDbCredentials(database.id, f), (why) =>
+        renamedNow ? `Renamed to ${shownAs}, but the login was not saved: ${why}` : why,
+      );
       if (!saved) return;
-      toast.success(`Saved the login for ${database.label}.`);
+      toast.success(`Saved the login for ${shownAs}.`);
       onSaved(saved);
       onClose();
     });
 
   const reset = async () => {
+    if (database == null) return;
     const back = await run("reset", () => commands.resetDbCredentials(database.id));
     if (!back) return;
     toast.success(`${database.label} is back to its default login.`);
@@ -116,10 +153,22 @@ export function DbCredentialsModal({
   return (
     <Modal onClose={onClose} labelledBy={titleId} className="flex w-[440px] max-w-full flex-col gap-3 p-4">
       <h2 id={titleId} className="text-sm font-semibold text-text">
-        Credentials for {database.label}
+        {database ? `Credentials for ${database.label}` : "Add a database"}
       </h2>
 
-      {database.shipped ? (
+      {!shipped &&
+        field(
+          "Name",
+          <Input
+            className={inputClass}
+            placeholder="Staging"
+            maxLength={80}
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+          />,
+        )}
+
+      {database?.shipped ? (
         // The app's own databases: where they are is the app's, who signs
         // in is the person's.
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -172,7 +221,7 @@ export function DbCredentialsModal({
             // login's home is Windows Credential Manager.
             autoComplete="new-password"
             className={inputClass}
-            placeholder={database.has_password ? "Saved - leave blank to keep it" : undefined}
+            placeholder={database?.has_password ? "Saved - leave blank to keep it" : undefined}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />,
@@ -180,7 +229,7 @@ export function DbCredentialsModal({
         )}
       </div>
 
-      {!database.shipped && (
+      {!shipped && (
         <label className="flex items-center gap-2 text-xs text-muted">
           <Checkbox ariaLabel="Trust the server certificate" checked={trustCert} onCheckedChange={setTrustCert} />
           Trust the server certificate
@@ -198,7 +247,7 @@ export function DbCredentialsModal({
           {busy === "test" ? "Testing" : "Test connection"}
         </Button>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {database.shipped && database.customised && (
+          {shipped && database?.customised && (
             <Button size="sm" variant="ghost" disabled={busy != null} onClick={() => void reset()}>
               <IconUndo aria-hidden />
               {busy === "reset" ? "Resetting" : "Reset to default"}
@@ -210,7 +259,7 @@ export function DbCredentialsModal({
           </Button>
           <Button size="sm" disabled={busy != null} onClick={save}>
             <IconConfirm aria-hidden />
-            {busy === "save" ? "Saving" : "Save"}
+            {busy === "save" ? (adding ? "Adding" : "Saving") : adding ? "Add" : "Save"}
           </Button>
         </div>
       </div>
