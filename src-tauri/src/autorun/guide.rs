@@ -52,6 +52,26 @@ where the machine only proposes one. Nothing a script or a run does ever
 reaches Azure DevOps by itself; a person reviewing a finished run and
 pressing Send is the one door out.
 
+## Choosing a model for the work
+
+This work has parts that need different amounts of thinking, and which
+model or agent does each part is your choice: use your own judgement, and
+keep token use in mind. The lightest option is not always the right one;
+pick the one that fits the part.
+
+These are examples, not a rule:
+
+- Lookups usually suit a lighter model: `get_autorun_failures`,
+  `get_autorun_page`, `probe_autorun_locator` and `list_api_templates`
+  return text to read or a count to compare.
+- Writing a plain script from a clear case usually suits a mid-sized
+  model.
+- A hard diagnosis, such as telling a changed application from a timing
+  problem when the evidence is thin, may need a stronger model, and it is
+  worth the tokens.
+- Handing a lookup to a lighter agent keeps long page text out of your
+  own context; ask it for only what you need.
+
 ## The actions
 
 Each step of the test case becomes one entry with a `step_number` and a
@@ -595,6 +615,28 @@ brings it back rather than adding a copy - unless a person wrote it or
 retired it, which is refused: ask them to restore it. A note a person
 wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
+
+### When the application is wrong
+
+Some failures are not the script's fault. When the page reached the right
+place, with the right data, and then did something other than the case's
+expected result, the application is what differs. Call
+`mark_autorun_suspected_defect { case_id, step_number, note }` with one
+plain sentence about what you saw, and leave the script alone.
+
+- The script is not changed. A mark is not a repair: it does not count
+  toward the repair cap and it never edits a step.
+- Later runs label a failure at that step as a suspected application
+  defect and carry your note, so the person reviewing sees it as one. The
+  case still fails; it is only labelled.
+- A recorded pass of that step clears the mark, and so does a repair that
+  changes that step.
+- It is not a way around a check you could not make pass. If the locator,
+  the waiting, the navigation, the data or the environment could explain
+  the failure, fix that first. Never mark a case to avoid repairing it.
+
+Nothing about a mark reaches Azure DevOps by itself; a person sends any
+reason.
 "##
     .to_string()
 }
