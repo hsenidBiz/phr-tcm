@@ -166,7 +166,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     anchor: "ai-db",
-    title: "Company database",
+    title: "Database Read Access",
     body: "Your assistant can look up tables and check real data while it writes, using the connection you choose here.",
   },
   {

@@ -207,7 +207,7 @@ export default function AiBridge() {
     }
   };
   // The environments: which one is active, its address, and the database
-  // it uses - the card above Company database mirrors the active one.
+  // it uses - the card above Database Read Access mirrors the active one.
   const envs = useEnvironments();
   // Environments exist for Auto Run - its site, accounts and sign-ins - so
   // the card shows only where Auto Run does (never in a capture).
@@ -762,12 +762,12 @@ export default function AiBridge() {
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
-          <h2 className="text-sm font-semibold text-text">Company database</h2>
+          <h2 className="text-sm font-semibold text-text">Database Read Access</h2>
         </div>
         <p className="text-xs text-muted">
           The database you choose here is the one this app&apos;s own database tools
           use. Switch them on with{" "}
-          <span className="font-medium text-text">Company database (read)</span> in the
+          <span className="font-medium text-text">Database Read Access</span> in the
           tool list, and an assistant can find the table behind a screen and read it
           while it writes cases.
         </p>
@@ -876,7 +876,7 @@ export default function AiBridge() {
             />
           )}
 
-          {/* The second switch. Reading is the "Company database (read)"
+          {/* The second switch. Reading is the "Database Read Access"
               row in the tool list; writing is its own decision and lives
               here, beside the database it applies to, because that is
               what decides whether it may be made at all.
@@ -1040,9 +1040,9 @@ export default function AiBridge() {
             because reading only works on a page the search found.
           </li>
           <li>
-            <span className="font-medium text-text">Company database (read)</span>: two tools under one switch: one finds the tables and columns behind a
+            <span className="font-medium text-text">Database Read Access</span>: two tools under one switch: one finds the tables and columns behind a
             topic, the other runs a single statement on the connection you chose
-            under Company database. It is how an assistant checks what a screen
+            under Database Read Access. It is how an assistant checks what a screen
             actually reads, or what a value is today, instead of guessing. SELECT
             only, unless you switch creating, updating and deleting on separately
             beside that connection. Off, the assistant's database tools are
@@ -1072,7 +1072,7 @@ export default function AiBridge() {
               with a check on the chosen company database, save that flow with a sample
               record, and ask which stages are done for a record before every run, so
               templates go in the order the application allows. Those stage checks read
-              the company database, so they need Company database (read) switched on;
+              the company database, so they need Database Read Access switched on;
               while it is off, flows and the templates that depend on them are refused.
               Proving and running also need the separate API templates switch above, off
               by default. Off, template work stays something you drive by hand.

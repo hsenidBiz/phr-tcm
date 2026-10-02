@@ -29,7 +29,7 @@ pub struct BridgeContext {
     /// none is set - in which case a writing job cannot start, because
     /// there is nowhere agreed for its file to go.
     pub working_dir: Option<String>,
-    /// The database chosen under Company database, by id, or None when none
+    /// The database chosen under Database Read Access, by id, or None when none
     /// is - in which case both database tools refuse. Only the id travels
     /// here: the login it stands for is resolved from `db_secrets` each time
     /// a database tool runs, so a login saved a moment ago applies to the
@@ -1801,7 +1801,7 @@ fn db_ready(
     // The error names the missing key and nothing else - the rest of that
     // string is a credential, and this sentence is shown to a person.
     let connection = crate::db::parse_connection(&chosen)
-        .map_err(|why| (409, format!("{why} - choose a connection under Company database on the AI Bridge tab")))?;
+        .map_err(|why| (409, format!("{why} - choose a connection under Database Read Access on the AI Bridge tab")))?;
     let exe = crate::db::sqlcmd_path()
         .ok_or_else(|| (409, crate::db::NOT_INSTALLED.to_string()))?;
     Ok((connection, exe))
@@ -1813,10 +1813,10 @@ pub const FLOW_NEEDS_DB: &str =
     "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
 
 /// Said when a flow check would run while the person has switched off
-/// Company database (read): every check is an assistant-written read of
+/// Database Read Access: every check is an assistant-written read of
 /// that database, so none runs until reading is switched on again.
 pub const FLOW_NEEDS_READING: &str =
-    "flow checks read the company database: switch on Company database (read) on the AI Bridge tab";
+    "flow checks read the company database: switch on Database Read Access on the AI Bridge tab";
 
 /// The chosen database as the place flow checks are asked, with
 /// `db_ready`'s refusals as they are - what saving a flow and a flow's

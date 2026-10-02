@@ -151,7 +151,7 @@ the board's test count.
   folders, and in `C:\Program Files\sqlcmd`, and says so plainly when
   none of those has it.
 - Reading and writing are two separate switches on the AI Bridge tab.
-  "Company database (read)" turns the two tools on at all - SELECT only.
+  "Database Read Access" turns the two tools on at all - SELECT only.
   The create/update/delete switch is off by default, greyed out unless
   the chosen connection is a dev login one (a user ending in
   `_devlogin`), and a write still needs both: that switch on AND that

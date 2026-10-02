@@ -29,7 +29,7 @@ export const aiBridge: Screen = {
     "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
-    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and the company database" },
+    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and Database Read Access" },
     {
       id: OTHER,
       route: [NAV, { click: { text: "Other tools" } }, { waitFor: { role: "button", name: "Copy command" } }],
@@ -64,7 +64,7 @@ export const aiBridge: Screen = {
     { id: "repositories", title: "Working repositories", summary: "The folders your test cases belong to, and whether the bridge is running." },
     { id: "connect", title: "Connect your AI tools", summary: "Register the bridge with the AI tools installed on this computer." },
     { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call." },
-    { id: "company-database", title: "Company database", summary: "The one database the assistants' tools work with, and how they sign in to it." },
+    { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
   ],
   controls: [
@@ -180,7 +180,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Company database (read), Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Database Read Access, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
     },
     {
       id: "database",
@@ -189,7 +189,7 @@ export const aiBridge: Screen = {
       locate: { role: "combobox", name: "Database" },
       name: "Database",
       does:
-        "The company database this app's own database tools read, when **Company database (read)** is switched on. The x clears the choice.",
+        "The company database this app's own database tools read, when **Database Read Access** is switched on. The x clears the choice.",
     },
     {
       id: "signs-in-as",
@@ -375,7 +375,7 @@ export const aiBridge: Screen = {
       title: "Let an assistant read the company database",
       steps: [
         "Pick the database in **Database**. If it has no login yet, press **Manage credentials**, fill it in, **Test connection**, then **Save**.",
-        "Make sure **Company database (read)** is switched on in the tool list.",
+        "Make sure **Database Read Access** is switched on in the tool list.",
       ],
     },
   ],

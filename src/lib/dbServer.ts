@@ -1,4 +1,4 @@
-// The Company database card's local choices: which database the app's own
+// The Database Read Access card's local choices: which database the app's own
 // database tools use, and whether they may write.
 //
 // None of it is secret. Each database's login lives in Windows Credential

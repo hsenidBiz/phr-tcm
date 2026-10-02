@@ -1,5 +1,5 @@
 // Environments in the webview: the query that lists them, the switch, and
-// the two rules that tie an environment to the Company database card.
+// the two rules that tie an environment to the Database Read Access card.
 //
 // An environment names its database by id, and the card's choice is the
 // webview's copy of the ACTIVE environment's database. Switching an
@@ -37,7 +37,7 @@ export async function forgetEnvironmentData(qc: QueryClient): Promise<void> {
   );
 }
 
-/** Set once the first list has been compared with the Company database
+/** Set once the first list has been compared with the Database Read Access
  * card, so that comparison can never override a later deliberate change. */
 const RECONCILED_KEY = "tcm-v2-env-db-reconciled";
 
@@ -83,7 +83,7 @@ const EMPTY: EnvListView = { active: "", environments: [] };
 
 /** The environments, creating Default on first use.
  *
- * The Company database card's choice is passed only when it is a database
+ * The Database Read Access card's choice is passed only when it is a database
  * this build knows: Rust takes whatever id it is given for a new Default,
  * and an id that names nothing must never be written into an environment
  * (Rust falls back to the first shipped database on null).
@@ -107,7 +107,7 @@ export async function loadEnvironments(): Promise<EnvListView> {
         if (saved.status === "ok") {
           view = saved.data;
           markReconciled();
-          logUi("environments: Default now uses the database chosen on the Company database card");
+          logUi("environments: Default now uses the database chosen on the Database Read Access card");
         } else {
           logUi(`environments: could not bring Default in line with the database card: ${saved.error}`);
         }
@@ -142,7 +142,7 @@ export function useActiveEnvironmentName(): string | null {
   return activeEnvironmentLabel(useEnvironments().data);
 }
 
-/** Makes `id` the active environment and moves the Company database card
+/** Makes `id` the active environment and moves the Database Read Access card
  * to its database. An environment whose database is no longer in the list
  * (a saved custom login removed or reset) still switches; it sets no
  * database, and `dbMissing` says so. `view` is the list as Rust now has it.

@@ -26,13 +26,13 @@ use sqlcmd::{Connection, Runner};
 /// Said when no connection has been chosen. It names the card, because
 /// that is the only thing the person reading it can act on.
 pub const NO_CONNECTION: &str =
-    "no database connection is chosen - pick one under Company database on the AI Bridge tab";
+    "no database connection is chosen - pick one under Database Read Access on the AI Bridge tab";
 
 /// Said when Your own database is chosen but no login is saved for it. The
 /// choice has been made, so NO_CONNECTION's "pick one" would point at the
 /// wrong control: what is missing is the login.
 pub const NO_LOGIN_SAVED: &str =
-    "no login is saved for this database yet - save one with its Edit button under Company database on the AI Bridge tab";
+    "no login is saved for this database yet - save one with its Edit button under Database Read Access on the AI Bridge tab";
 
 /// Said when the statement would write and the switch for that is off.
 /// Separate from the guard's read-only sentence: one says "this connection
@@ -40,7 +40,7 @@ pub const NO_LOGIN_SAVED: &str =
 /// person to switch connections when the switch is the problem sends them
 /// to the wrong control.
 pub const WRITES_OFF: &str =
-    "create, update and delete are switched off - turn them on under Company database on the AI Bridge tab";
+    "create, update and delete are switched off - turn them on under Database Read Access on the AI Bridge tab";
 
 /// Tables a lookup returns when the call does not say.
 pub const LOOKUP_DEFAULT: usize = 10;
