@@ -485,7 +485,7 @@ export default function AiBridge() {
     // stack dissolves (display:contents) and How-it-works becomes its
     // own third column instead of leaving the window's right third empty.
     <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
-      <div className="space-y-6">
+      <div className="flex min-w-0 flex-col gap-6">
       {repoCard}
       {/* Whether the bridge is up is the glowing badge beside the tab title
           (BridgeStatusBadge, in App) - the card that said it in a sentence
@@ -709,14 +709,43 @@ export default function AiBridge() {
         )}
       </section>
 
+      {/* Which rules the writing guide carries. A trial of the team's
+          risk-tiering policy: off, the assistant writes cases exactly as
+          before. Shown only where Auto Run is, like the API templates card
+          below: capture mode and a locked release build hide it. */}
+      {autoRunToolsShown() && (
+      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+        <h2 className="text-sm font-semibold text-text">Test design rules</h2>
+        <div className="space-y-1 rounded-md border border-border/60 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted">Risk-tiered test design (trial)</span>
+            <Switch
+              ariaLabel="Risk-tiered test design (trial)"
+              checked={riskTiered}
+              onCheckedChange={setRiskTiered}
+            />
+          </div>
+          <p className="text-[11px] text-faint">
+            Off: the assistant writes cases with the standard guide. On: it tiers each
+            scenario by risk (T1 critical, T2 core, T3 low), lists the scenarios for your
+            approval before writing, keeps to a budget per story, and tags every case with
+            its trace, tier and run category (Smoke, Regression or Extended). Takes effect
+            the next time the assistant reads the writing guide.
+          </p>
+        </div>
+      </section>
+      )}
+
       </div>
 
-      {/* Right column: the two tallest cards, so neither column runs
-          far past the other. `grid gap-6`, not space-y: at 2xl this
-          wrapper turns into display:contents so the two sections place
-          as grid columns 2 and 3 - and space-y's child margins would
-          leak through contents into the outer grid, where gap does not. */}
-      <div className="grid gap-6 2xl:contents">
+      {/* Right side. Each column stacks its own cards, so no card waits
+          for a taller card in another column (a grid row would leave a
+          gap under the shorter one). At lg this wrapper is the second
+          column, B over C; at 2xl it dissolves (display:contents) and B
+          and C become columns 2 and 3. `gap`, not space-y: space-y's
+          child margins would leak through contents into the outer grid. */}
+      <div className="flex flex-col gap-6 2xl:contents">
+      <div className="flex min-w-0 flex-col gap-6">
       {environmentsShown && (
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
@@ -943,33 +972,6 @@ export default function AiBridge() {
         </p>
       </section>
 
-      {/* Which rules the writing guide carries. A trial of the team's
-          risk-tiering policy: off, the assistant writes cases exactly as
-          before. Shown only where Auto Run is, like the API templates card
-          below: capture mode and a locked release build hide it. */}
-      {autoRunToolsShown() && (
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Test design rules</h2>
-        <div className="space-y-1 rounded-md border border-border/60 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-muted">Risk-tiered test design (trial)</span>
-            <Switch
-              ariaLabel="Risk-tiered test design (trial)"
-              checked={riskTiered}
-              onCheckedChange={setRiskTiered}
-            />
-          </div>
-          <p className="text-[11px] text-faint">
-            Off: the assistant writes cases with the standard guide. On: it tiers each
-            scenario by risk (T1 critical, T2 core, T3 low), lists the scenarios for your
-            approval before writing, keeps to a budget per story, and tags every case with
-            its trace, tier and run category (Smoke, Regression or Extended). Takes effect
-            the next time the assistant reads the writing guide.
-          </p>
-        </div>
-      </section>
-      )}
-
       {/* Proving and running a template writes test data through the
           application's own endpoints - a decision separate from whether
           the four tools are reachable at all (the "API templates" row
@@ -992,12 +994,15 @@ export default function AiBridge() {
             </div>
             <p className="text-[11px] text-faint">
               Off by default. Templates run as your Auto Run accounts, against the
-              sign-in recipe&apos;s site.
+              environment&apos;s site address.
             </p>
           </div>
         </section>
       )}
 
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
         <p className="text-sm text-muted">
@@ -1091,6 +1096,7 @@ export default function AiBridge() {
           read data.
         </p>
       </section>
+      </div>
       </div>
     </div>
   );
