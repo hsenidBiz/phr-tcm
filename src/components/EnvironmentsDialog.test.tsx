@@ -294,3 +294,18 @@ test("a removed environment leaves the list", async () => {
   const rows = screen.getAllByRole("listitem");
   expect(within(rows[0]).getByText("Default")).toBeInTheDocument();
 });
+
+/// The database select reads `db_databases`, so a person's own databases
+/// are offered beside the shipped ones, by name.
+test("the database select offers your own databases after the shipped ones", async () => {
+  const own = [
+    { id: "own", label: "Your own database", shipped: false, server: "", port: null, database: "", user: "", trust_cert: false, has_password: false, customised: false },
+    { id: "custom-1a2b3c4d", label: "Staging", shipped: false, server: "s", port: null, database: "d", user: "u", trust_cert: false, has_password: true, customised: true },
+  ];
+  mount({ db_databases: () => [...DATABASES, ...own] });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment database" }));
+  const options = (await screen.findAllByRole("option")).map((o) => o.textContent);
+  expect(options).toEqual(["Dev - read only", "QA - read only", "Your own database", "Staging"]);
+});

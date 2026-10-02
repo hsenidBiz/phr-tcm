@@ -4,7 +4,7 @@ import { Database, FolderOpen, Globe } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
-import { commands, type AppSettings, type AutoApproveOutcome } from "../bindings";
+import { commands, type AppSettings, type AutoApproveOutcome, type DbDatabase } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { DbCredentialsModal } from "../components/DbCredentialsModal";
 import EnvironmentsDialog, { RECIPE_ADDRESS } from "../components/EnvironmentsDialog";
@@ -13,6 +13,7 @@ import { Switch } from "../components/ui/switch";
 import { cn } from "../lib/cn";
 import {
   forgetDbConfig,
+  forgetRemovedDb,
   isDevLoginUser,
   loadDbWrites,
   saveDbWrites,
@@ -54,11 +55,14 @@ import {
   subscribeAiScope,
 } from "../lib/aiScope";
 import {
+  IconAdd,
+  IconCancel,
   IconConfirm,
   IconCopy,
   IconEdit,
   IconRefresh,
   IconRegister,
+  IconRemove,
   IconUnregister,
 } from "../lib/actionIcons";
 
@@ -168,6 +172,37 @@ export default function AiBridge() {
   });
   const selectedDb = databases.data?.find((d) => d.id === dbId) ?? null;
   const [managing, setManaging] = useState(false);
+  // The person's own databases, listed under the picker so each can be
+  // edited or removed WITHOUT choosing it: choosing one also makes it the
+  // active environment's, and an environment that uses a database is
+  // exactly what refuses its removal.
+  const ownDbs = (databases.data ?? []).filter((d) => !d.shipped);
+  const [addingDb, setAddingDb] = useState(false);
+  const [editingDbId, setEditingDbId] = useState<string | null>(null);
+  const editingDb = ownDbs.find((d) => d.id === editingDbId) ?? null;
+  const [removingDb, setRemovingDb] = useState<string | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeProblem, setRemoveProblem] = useState<{ id: string; text: string } | null>(null);
+  const removeDb = async (d: DbDatabase) => {
+    setRemoveBusy(true);
+    setRemoveProblem(null);
+    try {
+      const res = await commands.dbRemoveCustom(d.id);
+      setRemovingDb(null);
+      if (res.status === "error") {
+        // In use by an environment, most likely: the sentence names it.
+        setRemoveProblem({ id: d.id, text: res.error });
+        return;
+      }
+      forgetRemovedDb(d.id);
+      toast.success(`Removed ${d.label}.`);
+      await qc.invalidateQueries({ queryKey: ["db-databases"] });
+    } catch (e) {
+      setRemoveProblem({ id: d.id, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setRemoveBusy(false);
+    }
+  };
   // The environments: which one is active, its address, and the database
   // it uses - the card above Company database mirrors the active one.
   const envs = useEnvironments();
@@ -741,6 +776,86 @@ export default function AiBridge() {
             <DbCredentialsModal
               database={selectedDb}
               onClose={() => setManaging(false)}
+              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
+            />
+          )}
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted">Your databases</span>
+              <Button size="sm" variant="outline" onClick={() => setAddingDb(true)}>
+                <IconAdd aria-hidden />
+                Add database
+              </Button>
+            </div>
+            {ownDbs.length > 0 && (
+              <ul className="space-y-1">
+                {ownDbs.map((d) => (
+                  <li key={d.id} className="space-y-1 rounded-md border border-border/60 p-2">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium text-text">{d.label}</p>
+                        <p className="truncate text-[11px] text-faint">
+                          {d.server ? `${d.database} on ${d.server}` : "Not set up yet"}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Edit ${d.label}`}
+                        onClick={() => setEditingDbId(d.id)}
+                      >
+                        <IconEdit aria-hidden />
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Remove ${d.label}`}
+                        onClick={() => {
+                          setRemoveProblem(null);
+                          setRemovingDb(d.id);
+                        }}
+                      >
+                        <IconRemove aria-hidden />
+                      </Button>
+                    </div>
+                    {removingDb === d.id && (
+                      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
+                        <span className="min-w-0 flex-1 text-xs text-text">
+                          Remove {d.label}? Its saved login is deleted from this machine.
+                        </span>
+                        <Button size="sm" variant="ghost" onClick={() => setRemovingDb(null)}>
+                          <IconCancel aria-hidden />
+                          Keep
+                        </Button>
+                        <Button size="sm" variant="outline" disabled={removeBusy} onClick={() => void removeDb(d)}>
+                          <IconRemove aria-hidden />
+                          Confirm remove
+                        </Button>
+                      </div>
+                    )}
+                    {removeProblem?.id === d.id && (
+                      <p role="status" className="break-words text-xs text-danger">
+                        {removeProblem.text}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {addingDb && (
+            <DbCredentialsModal
+              database={null}
+              onClose={() => setAddingDb(false)}
+              onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
+            />
+          )}
+          {editingDb && (
+            <DbCredentialsModal
+              database={editingDb}
+              onClose={() => setEditingDbId(null)}
               onSaved={() => qc.invalidateQueries({ queryKey: ["db-databases"] })}
             />
           )}
