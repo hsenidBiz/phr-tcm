@@ -6,7 +6,7 @@ use crate::common::ScriptedDriver;
 use serde_json::json;
 use std::collections::VecDeque;
 use v2_lib::browser::cdp::{Cdp, Driver, Event, Transport};
-use v2_lib::browser::net_record::{NetRecord, NetState, MAX_REQUESTS};
+use v2_lib::browser::net_record::{NetRecord, NetRedirect, NetState, MAX_REQUESTS};
 
 fn ev(method: &str, params: serde_json::Value) -> Event {
     Event { method: method.to_string(), params }
@@ -75,18 +75,97 @@ fn finished_and_failed_are_recorded() {
     assert_eq!(rec.since(0).len(), 2);
 }
 
+/// A redirect as Chrome reports it: the same request id sent again, to
+/// `to`, carrying what `from` answered.
+fn redirected(id: &str, status: u64, from: &str, to: &str, method: &str) -> Event {
+    ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": id, "type": "XHR", "request": { "url": to, "method": method },
+                "redirectResponse": { "url": from, "status": status, "mimeType": "text/html" } }),
+    )
+}
+
 #[test]
 fn a_redirect_keeps_its_place() {
     let mut rec = NetRecord::default();
-    rec.observe(&sent("1", "GET", "https://hr.example/hr"));
+    let save = "https://hr.example/hr/Cycle/Save?id=7";
+    rec.observe(&sent("1", "POST", save));
     rec.observe(&sent("2", "GET", "https://hr.example/hr/api/menu"));
-    rec.observe(&sent("1", "GET", "https://hr.example/hr/home/index?tab=2"));
+    rec.observe(&redirected("1", 302, save, "https://hr.example/Account/Login?ReturnUrl=%2Fhr%2Fsecret", "GET"));
     let all = rec.since(0);
     assert_eq!(all.len(), 2, "a redirect is the same request, not a new one: {all:?}");
-    assert_eq!(all[0].id, "1");
-    assert_eq!(all[0].path_query, "/hr/home/index?tab=2");
     assert!(all[0].seq < all[1].seq, "it keeps the place it started in");
     assert_eq!(rec.mark(), 2, "a redirect takes no new number");
+    // What the page asked is what matching sees: the first method and address.
+    let e = &all[0];
+    assert_eq!(e.id, "1");
+    assert_eq!(e.method, "POST");
+    assert_eq!(e.path_query, "/hr/Cycle/Save?id=7");
+    assert_eq!(e.status, None, "the new hop has not been answered yet");
+    assert_eq!(e.mime, None);
+    assert_eq!(e.state, NetState::Pending);
+    assert_eq!(
+        e.redirect,
+        Some(NetRedirect { status: 302, to: "/Account/Login".to_string(), other_site: false }),
+        "what it answered, and the path (no host, no query) it was sent to"
+    );
+
+    // The entry follows the later hops to the end, and keeps the FIRST
+    // redirect - the one the request itself answered.
+    rec.observe(&redirected(
+        "1",
+        301,
+        "https://hr.example/Account/Login?ReturnUrl=%2Fhr%2Fsecret",
+        "https://hr.example/Account/SignIn",
+        "GET",
+    ));
+    rec.observe(&answered("1", 200, "text/html"));
+    rec.observe(&finished("1"));
+    let e = &rec.since(0)[0];
+    assert_eq!(e.method, "POST");
+    assert_eq!(e.path_query, "/hr/Cycle/Save?id=7");
+    assert_eq!(e.status, Some(200));
+    assert_eq!(e.mime.as_deref(), Some("text/html"));
+    assert_eq!(e.state, NetState::Finished);
+    assert_eq!(e.redirect.as_ref().map(|r| (r.status, r.to.as_str())), Some((302, "/Account/Login")));
+    assert_eq!(rec.since(0)[1].redirect, None, "a request never redirected has none");
+
+    // A hop that then fails is followed too.
+    rec.observe(&sent("3", "GET", "https://hr.example/hr/a"));
+    rec.observe(&redirected("3", 302, "https://hr.example/hr/a", "https://hr.example/hr/b", "GET"));
+    rec.observe(&failed("3", "net::ERR_CONNECTION_RESET"));
+    let e = &rec.since(0)[2];
+    assert_eq!(e.state, NetState::Failed("net::ERR_CONNECTION_RESET".to_string()));
+    assert_eq!(e.path_query, "/hr/a");
+}
+
+#[test]
+fn a_redirect_to_another_site_is_marked_so_without_its_host() {
+    let mut rec = NetRecord::default();
+    let me = "https://hr.example/hr/api/me";
+    rec.observe(&sent("1", "GET", me));
+    rec.observe(&redirected(
+        "1",
+        302,
+        me,
+        "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc&state=xyz",
+        "GET",
+    ));
+    let e = &rec.since(0)[0];
+    assert_eq!(
+        e.redirect,
+        Some(NetRedirect { status: 302, to: "/common/oauth2/authorize".to_string(), other_site: true })
+    );
+    // The same host on another port or scheme is another site too; the
+    // same host in other letters is not.
+    rec.observe(&sent("2", "GET", me));
+    rec.observe(&redirected("2", 307, me, "http://hr.example/hr/api/me", "GET"));
+    rec.observe(&sent("3", "GET", me));
+    rec.observe(&redirected("3", 307, me, "https://HR.example/hr/api/v2/me", "GET"));
+    let all = rec.since(0);
+    assert!(all[1].redirect.as_ref().unwrap().other_site);
+    assert!(!all[2].redirect.as_ref().unwrap().other_site);
+    assert_eq!(all[2].redirect.as_ref().unwrap().to, "/hr/api/v2/me");
 }
 
 #[test]
@@ -143,6 +222,47 @@ fn non_http_requests_are_ignored() {
     rec.observe(&ev("Page.lifecycleEvent", json!({ "name": "load" })));
     rec.observe(&ev("Network.requestWillBeSent", json!(null)));
     assert!(rec.since(0).is_empty());
+}
+
+fn sent_as(id: &str, kind: Option<&str>, url: &str) -> Event {
+    let mut params = json!({ "requestId": id, "request": { "url": url, "method": "GET" } });
+    if let Some(kind) = kind {
+        params["type"] = json!(kind);
+    }
+    ev("Network.requestWillBeSent", params)
+}
+
+/// Only what a page asks its server is kept - not the pictures, scripts,
+/// styles and fonts a heavy page loads, which would push a step's own
+/// requests out of the 400.
+#[test]
+fn only_documents_xhr_fetch_and_other_requests_are_kept() {
+    let mut rec = NetRecord::default();
+    rec.observe(&sent_as("save", Some("XHR"), "https://hr.example/hr/Cycle/Save"));
+    for i in 0..MAX_REQUESTS {
+        for kind in ["Image", "Script", "Stylesheet", "Font"] {
+            rec.observe(&sent_as(&format!("{kind}{i}"), Some(kind), &format!("https://cdn.example/{kind}/{i}")));
+        }
+    }
+    assert_eq!(rec.mark(), 1, "they take no number");
+    let all = rec.since(0);
+    assert_eq!(all.len(), 1, "{:?}", all.iter().map(|e| &e.id).collect::<Vec<_>>());
+    assert_eq!(all[0].id, "save", "and do not push the step's own request out");
+    // Later events for a request never recorded are ignored, a redirect too.
+    rec.observe(&answered("Image3", 200, "image/png"));
+    rec.observe(&finished("Image3"));
+    rec.observe(&ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": "Image3", "type": "Image", "request": { "url": "https://cdn.example/b", "method": "GET" },
+                "redirectResponse": { "url": "https://cdn.example/a", "status": 302 } }),
+    ));
+    assert_eq!(rec.since(0).len(), 1);
+
+    for (id, kind) in [("d", Some("Document")), ("f", Some("Fetch")), ("o", Some("Other")), ("n", None)] {
+        rec.observe(&sent_as(id, kind, "https://hr.example/hr/x"));
+    }
+    let ids: Vec<String> = rec.since(0).into_iter().map(|e| e.id).collect();
+    assert_eq!(ids, vec!["save", "d", "f", "o", "n"], "a missing type counts as Other");
 }
 
 struct Frames(VecDeque<String>);

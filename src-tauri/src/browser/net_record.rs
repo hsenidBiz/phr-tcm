@@ -3,14 +3,16 @@
 //!
 //! Beside `page_log`, not inside it: the page log keeps only what explains
 //! a failure (failed, refused, unfinished), and its report is unchanged. This
-//! keeps every http(s) request, finished or not, so a step can look at the
-//! ones that started after it began (`mark`, then `since`).
+//! keeps every http(s) request the page makes of a server - documents, XHR,
+//! fetch and other - finished or not, so a step can look at the ones that
+//! started after it began (`mark`, then `since`). Pictures, scripts, styles
+//! and fonts are not kept: a heavy page would push a step's own requests out.
 //!
 //! Kept per request: its id, method, path + query, start order, status,
-//! content type, and whether it finished or failed. Never the host, request
-//! headers, request bodies or cookies - and the query string kept here is
-//! for matching only; nothing that stores an outcome may copy it out.
-//! Bounded: the oldest request goes first.
+//! content type, whether it finished or failed, and its first redirect.
+//! Never the host, request headers, request bodies or cookies - and the
+//! query string kept here is for matching only; nothing that stores an
+//! outcome may copy it out. Bounded: the oldest request goes first.
 
 use super::cdp::Event;
 use serde_json::Value;
@@ -41,6 +43,18 @@ pub struct NetEntry {
     pub status: Option<u16>,
     pub mime: Option<String>,
     pub state: NetState,
+    /// What the request itself answered when the server sent it on.
+    pub redirect: Option<NetRedirect>,
+}
+
+/// A request's first redirect: the 3xx it answered and where it was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetRedirect {
+    pub status: u16,
+    /// The path it was sent to - never the host, the query or a fragment.
+    pub to: String,
+    /// Sent to another site (scheme, host or port).
+    pub other_site: bool,
 }
 
 #[derive(Default)]
@@ -83,20 +97,35 @@ impl NetRecord {
 
     fn started(&mut self, p: &Value) {
         let url = p["request"]["url"].as_str().unwrap_or("");
-        let Some(path_query) = path_query(url) else { return };
-        let Some(id) = p["requestId"].as_str() else { return };
-        let method = p["request"]["method"].as_str().unwrap_or("GET").to_string();
         // A redirect arrives under the same id: the same request goes on,
-        // now to the new address, keeping the place it started in. What
-        // the old address answered is not this address's answer.
+        // to the new address, keeping the place it started in - and the
+        // method and address the page asked for, which are what a check
+        // matches. The 3xx it answered is kept, with the path (only) it was
+        // sent to; the later hops' answer and end are followed as before.
         if let Some(e) = self.entry(p) {
-            e.method = method;
-            e.path_query = path_query;
+            if e.redirect.is_none() {
+                if let Some(status) = status_of(&p["redirectResponse"]["status"]) {
+                    let from = p["redirectResponse"]["url"].as_str().unwrap_or("");
+                    let to = path_query(url).map(|pq| pq.split('?').next().unwrap_or("").to_string());
+                    e.redirect = Some(NetRedirect {
+                        status,
+                        to: to.unwrap_or_default(),
+                        other_site: origin(from).is_some() && origin(from) != origin(url),
+                    });
+                }
+            }
             e.status = None;
             e.mime = None;
             e.state = NetState::Pending;
             return;
         }
+        // What the page asks a server, not what it loads to show itself.
+        if !matches!(p["type"].as_str(), None | Some("Document" | "XHR" | "Fetch" | "Other")) {
+            return;
+        }
+        let Some(path_query) = path_query(url) else { return };
+        let Some(id) = p["requestId"].as_str() else { return };
+        let method = p["request"]["method"].as_str().unwrap_or("GET").to_string();
         let seq = self.next_seq;
         self.next_seq += 1;
         self.by_id.insert(id.to_string(), seq);
@@ -108,6 +137,7 @@ impl NetRecord {
             status: None,
             mime: None,
             state: NetState::Pending,
+            redirect: None,
         });
         while self.entries.len() > MAX_REQUESTS {
             if let Some(old) = self.entries.pop_front() {
@@ -144,6 +174,22 @@ impl NetRecord {
 fn status_of(v: &Value) -> Option<u16> {
     let n = v.as_u64().or_else(|| v.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64))?;
     u16::try_from(n).ok()
+}
+
+/// `scheme://host:port` of an http(s) address, in lower case, to tell one
+/// site from another - compared, never kept.
+fn origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Credentials are not the site.
+    let host = host.rsplit('@').next().unwrap_or(host).to_ascii_lowercase();
+    let default = if scheme == "https" { ":443" } else { ":80" };
+    let host = host.strip_suffix(default).unwrap_or(&host).to_string();
+    Some(format!("{scheme}://{host}"))
 }
 
 /// `/path?query` of an http(s) address; `None` for any other scheme

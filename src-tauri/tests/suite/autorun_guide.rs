@@ -38,8 +38,8 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
-        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None },
-        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -103,9 +103,21 @@ fn the_guide_teaches_the_api_checks_and_their_limits() {
     // A host never matches and is refused: the assistant has to know why.
     assert!(section.contains("host"), "the API section never mentions the host");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
-    // Every example line in the section is a real action, so a copied one runs.
+    // Imported templates are labelled Unproven: only the proven ones are proof.
+    assert!(section.contains("the ones marked proven"), "the guide must send the assistant to the PROVEN templates");
+    assert!(!section.contains("were proven against this site"), "not every saved template is proven");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    // A sign-in page or app shell answered 200 with no redirect passes a
+    // status-only check: the guide has to say so and advise `json`.
+    assert!(flat.contains("no redirect"), "the guide never says a 200 sign-in page without a redirect passes");
+    assert!(flat.contains("give `json` whenever the answer must be data"), "the guide never advises json for data");
+    // A tried expect_response is a step of its own.
+    assert!(flat.contains("sees only the requests the page makes while it waits"), "the guide never explains a tried check");
+    // Every example line in the section is a real action, so a copied one
+    // runs, and is indented like the guide's other examples.
     let mut seen = 0;
     for line in section.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
+        assert!(line.starts_with("    { \"kind\""), "an example line is not indented: {line}");
         let action: Action = serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("{line}: {e}"));
         action.validate().unwrap_or_else(|e| panic!("{line} is refused: {e}"));
         seen += 1;

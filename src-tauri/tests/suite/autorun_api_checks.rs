@@ -49,6 +49,7 @@ fn entry(seq: u64, method: &str, path_query: &str, status: Option<u16>, state: N
         status,
         mime: Some("application/json".to_string()),
         state,
+        redirect: None,
     }
 }
 
@@ -59,6 +60,7 @@ fn expect(method: Option<&str>, url_contains: &str, status: u16, json: Option<Va
         status,
         json,
         timeout_ms,
+        stray: Default::default(),
     }
 }
 
@@ -246,7 +248,13 @@ async fn no_request_at_all_says_so_after_the_timeout() {
     on_first_look(&mut d, vec![sent("1", "GET", "https://hr.example/hr/menu"), answered("1", 200, "text/html"), finished("1")]);
     let out = check(&mut d, &expect(None, "/Save", 200, None, Some(300))).await;
     assert!(!out.ok);
-    assert_eq!(out.detail, "no request matching \"/Save\" in 0.3 s (this step made 1 requests)");
+    assert_eq!(out.detail, "no request matching \"/Save\" in 0.3 s (this step made 1 request)");
+
+    // Two: plural.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("1", "GET", "https://hr.example/a"), sent("2", "GET", "https://hr.example/b")]);
+    let out = check(&mut d, &expect(None, "/Save", 200, None, Some(100))).await;
+    assert_eq!(out.detail, "no request matching \"/Save\" in 0.1 s (this step made 2 requests)");
     assert!(!out.harness);
 }
 
@@ -372,6 +380,201 @@ async fn an_invalid_expect_response_is_refused_before_it_waits() {
     assert!(!out.ok);
     assert!(out.detail.starts_with("this action cannot run: "), "{}", out.detail);
     assert!(d.calls.is_empty());
+}
+
+// -------------------------------------------------------- redirects (I1)
+
+/// A redirect as Chrome reports it: the same request id sent again, to
+/// `to`, carrying what `from` answered.
+fn redirected(id: &str, status: u64, from: &str, to: &str) -> Event {
+    ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": id, "type": "XHR", "request": { "url": to, "method": "GET" },
+                "redirectResponse": { "url": from, "status": status, "mimeType": "text/html" } }),
+    )
+}
+
+const SAVE: &str = "https://hr.example/hr/pmsv10/PerformanceCycle/Save?handler=x";
+
+#[tokio::test]
+async fn a_save_redirected_to_sign_in_says_so_promptly() {
+    // The session ended: the save is answered 302 to the sign-in page,
+    // which is still loading. The request WAS made - not "no request".
+    for json in [None, Some(json!({ "success": true }))] {
+        let mut d = browser(|| Ok(json!({ "body": "<html>sign in</html>", "base64Encoded": false })));
+        on_first_look(
+            &mut d,
+            vec![
+                sent("7", "POST", SAVE),
+                redirected("7", 302, SAVE, "https://hr.example/Account/Login?ReturnUrl=%2Fhr%2Fpmsv10%3Faccess_token%3Dabc"),
+            ],
+        );
+        let began = std::time::Instant::now();
+        let out = check(&mut d, &expect(Some("POST"), "/PerformanceCycle/Save", 200, json.clone(), Some(5_000))).await;
+        assert!(
+            began.elapsed() < std::time::Duration::from_millis(2_500),
+            "judged when the redirect arrived, not at the timeout: {out:?}"
+        );
+        assert!(!out.ok && !out.harness, "{out:?}");
+        assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /Account/Login");
+        assert!(d.calls_to("Network.getResponseBody").is_empty(), "a redirect's body is never read");
+        assert_eq!(classify(&out.detail, None), ErrorClass::Api);
+    }
+}
+
+#[tokio::test]
+async fn a_redirect_to_another_site_says_so_without_its_host() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(
+        &mut d,
+        vec![
+            sent("7", "POST", SAVE),
+            redirected("7", 302, SAVE, "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc&state=xyz"),
+        ],
+    );
+    let out = check(&mut d, &expect(None, "/Save", 200, None, Some(1_000))).await;
+    assert_eq!(
+        out.detail,
+        "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /common/oauth2/authorize (on another site)"
+    );
+    for leak in ["microsoftonline", "client_id", "abc", "xyz", "hr.example", "handler"] {
+        assert!(!out.detail.contains(leak), "{leak}: {}", out.detail);
+    }
+}
+
+#[tokio::test]
+async fn a_post_expected_to_answer_302_passes_post_redirect_get() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(
+        &mut d,
+        vec![
+            sent("7", "POST", SAVE),
+            redirected("7", 302, SAVE, "https://hr.example/hr/pmsv10/PerformanceCycle/Index"),
+            answered("7", 200, "text/html"),
+            finished("7"),
+        ],
+    );
+    let out = check(&mut d, &expect(Some("POST"), "/PerformanceCycle/Save", 302, None, Some(1_000))).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 302");
+
+    // A redirect has no JSON to check: asked for, it fails - without reading
+    // the page it went on to.
+    let mut d = browser(|| Ok(json!({ "body": "{\"success\":true}", "base64Encoded": false })));
+    on_first_look(
+        &mut d,
+        vec![
+            sent("7", "POST", SAVE),
+            redirected("7", 302, SAVE, "https://hr.example/hr/pmsv10/PerformanceCycle/Index"),
+            answered("7", 200, "application/json"),
+            finished("7"),
+        ],
+    );
+    let out = check(&mut d, &expect(Some("POST"), "/Save", 302, Some(json!({ "success": true })), Some(1_000))).await;
+    assert!(!out.ok, "{out:?}");
+    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index");
+    assert!(d.calls_to("Network.getResponseBody").is_empty());
+
+    // Expected another 3xx than the one it answered.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("7", "POST", SAVE), redirected("7", 302, SAVE, "https://hr.example/hr/Index")]);
+    let out = check(&mut d, &expect(None, "/Save", 303, None, Some(1_000))).await;
+    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/Index");
+}
+
+#[tokio::test]
+async fn a_redirect_target_that_matches_the_pattern_is_no_false_pass() {
+    // No method given; the save is redirected to the cycle list, whose
+    // path ALSO contains the pattern. The save did not answer 200.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(
+        &mut d,
+        vec![
+            sent("7", "POST", SAVE),
+            redirected("7", 302, SAVE, "https://hr.example/hr/pmsv10/PerformanceCycle/Index"),
+            answered("7", 200, "text/html"),
+            finished("7"),
+        ],
+    );
+    let out = check(&mut d, &expect(None, "/PerformanceCycle", 200, None, Some(1_000))).await;
+    assert!(!out.ok, "{out:?}");
+    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index");
+}
+
+// ------------------------------------------- misplaced expectations (I2)
+
+fn parsed(v: Value) -> Result<Action, String> {
+    let a: Action = serde_json::from_value(v).map_err(|e| e.to_string())?;
+    a.validate()?;
+    Ok(a)
+}
+
+#[test]
+fn an_api_request_written_like_an_expect_response_is_refused() {
+    for key in ["status", "json", "method", "url_contains", "timeout_ms"] {
+        let mut v = json!({ "kind": "api_request", "path": "/api/cycles/42" });
+        v[key] = match key {
+            "status" => json!(200),
+            "json" => json!({ "name": "Q4 Cycle" }),
+            "timeout_ms" => json!(5000),
+            _ => json!("GET"),
+        };
+        let err = parsed(v).unwrap_err();
+        assert!(err.contains("api_request takes status and json under \"expect\""), "{key}: {err}");
+    }
+    // The sibling's whole shape too.
+    let err = parsed(json!({ "kind": "api_request", "path": "/api/cycles/42", "status": 200, "json": { "name": "Q4 Cycle" } }))
+        .unwrap_err();
+    assert!(err.contains("under \"expect\""), "{err}");
+}
+
+#[test]
+fn an_expect_response_written_like_an_api_request_is_refused() {
+    let err = parsed(json!({ "kind": "expect_response", "url_contains": "/Save", "expect": { "status": 201 } })).unwrap_err();
+    assert!(err.contains("expect_response takes status and json directly, not under \"expect\""), "{err}");
+}
+
+#[test]
+fn a_misspelt_expectation_key_is_refused() {
+    let err = parsed(json!({ "kind": "api_request", "path": "/api/x", "expect": { "jsn": { "a": 1 } } })).unwrap_err();
+    assert!(err.contains("jsn"), "{err}");
+    let err = parsed(json!({ "kind": "api_request", "path": "/api/x", "expect": { "status": 200, "Json": {} } })).unwrap_err();
+    assert!(err.contains("Json"), "{err}");
+}
+
+#[test]
+fn the_right_shapes_are_still_accepted() {
+    let a = parsed(json!({
+        "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" },
+        "expect": { "status": 201, "json": { "name": "Q4 Cycle" } }
+    }))
+    .unwrap();
+    assert!(matches!(&a, Action::ApiRequest { expect, .. } if expect.status == 201 && expect.json.is_some()));
+    // Written back exactly as it came - nothing extra.
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        json!({ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" },
+                "expect": { "status": 201, "json": { "name": "Q4 Cycle" } } })
+    );
+    let full = json!({
+        "kind": "expect_response", "method": "POST", "url_contains": "/Save",
+        "status": 201, "json": { "success": true }, "timeout_ms": 5000
+    });
+    let e = parsed(full.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&e).unwrap(), full);
+    parsed(json!({ "kind": "expect_response", "url_contains": "/Save" })).unwrap();
+    parsed(json!({ "kind": "api_request", "path": "/api/x" })).unwrap();
+}
+
+#[test]
+fn an_old_script_of_another_kind_with_an_extra_key_still_loads() {
+    for v in [
+        json!({ "kind": "click", "selector": { "css": "#save" }, "note": "from an older app" }),
+        json!({ "kind": "expect_visible", "selector": { "css": "#ok" }, "status": 200 }),
+        json!({ "kind": "navigate", "url": "https://hr.example/", "expect": { "status": 200 } }),
+    ] {
+        parsed(v.clone()).unwrap_or_else(|e| panic!("{v}: {e}"));
+    }
 }
 
 // -------------------------------------------------------------- the runner
@@ -541,6 +744,7 @@ fn api(path: &str, query: &[(&str, &str)], status: u16, json: Option<Value>) -> 
         path: path.to_string(),
         query: query.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         expect: ApiExpect { status, json },
+        stray: Default::default(),
     }
 }
 
@@ -920,4 +1124,75 @@ async fn json_inside_a_json_string_is_hidden_too() {
     let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "data": 1 })))).await;
     assert!(out.detail.starts_with("the response to GET /hr/api/me: expected data = 1, got "), "{}", out.detail);
     assert!(!out.detail.contains("abc") && out.detail.contains("[redacted]"), "{}", out.detail);
+}
+
+// ----------------------------- addresses and tokens in a body (M1 + M2)
+
+/// Every outcome both kinds give for `body`, through each way a body is
+/// quoted: a body that is not the JSON asked for (or a field mismatch),
+/// and a wrong status (the excerpt).
+async fn every_quote_of(body: &str) -> Vec<String> {
+    let mut shown = both_kinds_show(body, false).await;
+    let owned = body.to_string();
+    let mut d = browser(move || Ok(json!({ "body": owned.clone(), "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(500));
+    shown.push(check(&mut d, &expect(None, "/Save", 200, Some(json!({ "ok": true })), None)).await.detail);
+    let mut d = page_answering(got(500, body));
+    shown.push(ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "ok": true })))).await.detail);
+    shown
+}
+
+fn none_of(details: &[String], leaks: &[&str]) {
+    for detail in details {
+        assert!(!detail.is_empty());
+        for leak in leaks {
+            assert!(!detail.contains(leak), "{leak} shows in: {detail}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_html_body_quotes_no_host_and_no_query() {
+    let body = r#"<html><script src="https://cdn.example.net/lib/app.js?v=3.1"></script><form action="/Account/Login?ReturnUrl=%2Fhr%2Fapi%3Faccess_token%3Dabc" method="post"></form></html>"#;
+    let details = every_quote_of(body).await;
+    none_of(&details, &["cdn.example.net", "https://", "?v=", "v=3.1", "ReturnUrl", "access_token", "abc"]);
+    // What is left still reads as the page: the paths survive.
+    assert!(details.iter().all(|d| d.contains("/lib/app.js") && d.contains("/Account/Login")), "{details:?}");
+}
+
+#[tokio::test]
+async fn a_json_body_address_loses_its_host_and_query_whole_or_in_a_mismatch() {
+    let body = r#"{"ok":false,"redirectUrl":"https://login.example.com/authorize?client_id=abc123&state=xyz789"}"#;
+    let details = every_quote_of(body).await;
+    none_of(&details, &["login.example.com", "client_id", "abc123", "xyz789"]);
+    assert!(details.iter().all(|d| d.contains("/authorize")), "{details:?}");
+
+    // The mismatch sentence quotes the value itself.
+    let mut d = page_answering(got(200, body));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "redirectUrl": "/home" })))).await;
+    assert!(out.detail.starts_with("the response to GET /hr/api/me: expected redirectUrl = "), "{}", out.detail);
+    none_of(&[out.detail.clone()], &["login.example.com", "client_id", "abc123", "xyz789"]);
+    assert!(out.detail.contains("/authorize"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_bare_jwt_or_bearer_token_is_redacted_wherever_it_sits() {
+    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.c2lnbmF0dXJlLXZhbHVl";
+    for body in [
+        format!(r#"{{"ok":false,"data":"{jwt}"}}"#),
+        r#"{"ok":false,"result":"Bearer abc.DEF-123_xyz"}"#.to_string(),
+        format!("<html><p>Bearer {jwt}</p></html>"),
+    ] {
+        let details = every_quote_of(&body).await;
+        none_of(&details, &[jwt, "eyJhbGci", "abc.DEF-123_xyz"]);
+        assert!(details.iter().all(|d| d.contains("[redacted]")), "{details:?}");
+    }
+    // ...and in a field mismatch.
+    let body = format!(r#"{{"data":"{jwt}","auth":"Bearer abc.DEF-123_xyz"}}"#);
+    for want in [json!({ "data": "x" }), json!({ "auth": "x" })] {
+        let mut d = page_answering(got(200, &body));
+        let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(want))).await;
+        none_of(&[out.detail.clone()], &[jwt, "eyJhbGci", "abc.DEF-123_xyz"]);
+        assert!(out.detail.contains("[redacted]"), "{}", out.detail);
+    }
 }

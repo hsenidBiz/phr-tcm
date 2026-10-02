@@ -1109,13 +1109,15 @@ export type Antiforgery = {
 
 /**
  *  What an `api_request` expects back. Mirrors the API templates'
- *  `Expect` (status, then a partial JSON match).
+ *  `Expect` (status, then a partial JSON match), and like it refuses a key
+ *  it does not know: a misspelt `json` must not pass as "answered 200".
  */
 export type ApiExpect = ApiExpect_Serialize | ApiExpect_Deserialize;
 
 /**
  *  What an `api_request` expects back. Mirrors the API templates'
- *  `Expect` (status, then a partial JSON match).
+ *  `Expect` (status, then a partial JSON match), and like it refuses a key
+ *  it does not know: a misspelt `json` must not pass as "answered 200".
  */
 export type ApiExpect_Deserialize = {
 	status?: number,
@@ -1124,7 +1126,8 @@ export type ApiExpect_Deserialize = {
 
 /**
  *  What an `api_request` expects back. Mirrors the API templates'
- *  `Expect` (status, then a partial JSON match).
+ *  `Expect` (status, then a partial JSON match), and like it refuses a key
+ *  it does not know: a misspelt `json` must not pass as "answered 200".
  */
 export type ApiExpect_Serialize = {
 	status: number,

@@ -88,6 +88,10 @@ pub enum Action {
         json: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// Any other key the script carried - see `Stray`.
+        #[serde(flatten)]
+        #[specta(skip)]
+        stray: Stray,
     },
     /// Ask the current site a GET question, sent by the page itself, and
     /// check the answer. `path` is a path on the page's own site, never an
@@ -98,12 +102,27 @@ pub enum Action {
         query: BTreeMap<String, String>,
         #[serde(default)]
         expect: ApiExpect,
+        /// Any other key the script carried - see `Stray`.
+        #[serde(flatten)]
+        #[specta(skip)]
+        stray: Stray,
     },
 }
 
+/// Keys a script gave one of the two API checks that it does not take,
+/// kept only so `validate` can refuse them: an expectation written in the
+/// other kind's shape (`api_request` with `status` beside `kind`) would
+/// otherwise be dropped without a word, and the step would still count as
+/// a check. Empty in every valid action, so never written back out, and
+/// not part of the TypeScript type. The other kinds keep ignoring a key
+/// they do not know, as scripts saved by older versions rely on.
+pub type Stray = BTreeMap<String, Value>;
+
 /// What an `api_request` expects back. Mirrors the API templates'
-/// `Expect` (status, then a partial JSON match).
+/// `Expect` (status, then a partial JSON match), and like it refuses a key
+/// it does not know: a misspelt `json` must not pass as "answered 200".
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
 pub struct ApiExpect {
     #[serde(default = "ok_status")]
     pub status: u16,
@@ -127,7 +146,35 @@ impl Default for ApiExpect {
 const UNSAFE_API_PATH: &str =
     "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address";
 
-const HTTP_METHODS: [&str; 7] =["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+const HTTP_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+/// A key an API check does not take, refused with what goes where. The
+/// key is the script's own word, shown cut short; its value never is.
+fn refuse_stray(kind: &str, stray: &Stray) -> Result<(), String> {
+    // The other kind's expectation keys first: they are the likely mistake.
+    let sibling: &[&str] = match kind {
+        "api_request" => &["status", "json", "method", "url_contains", "timeout_ms"],
+        _ => &["expect"],
+    };
+    let first = sibling.iter().copied().find(|k| stray.contains_key(*k));
+    let Some(key) = first.or_else(|| stray.keys().next().map(String::as_str)) else {
+        return Ok(());
+    };
+    let shown: String = key.chars().take(40).collect();
+    Err(match (kind, key) {
+        ("api_request", "status" | "json") => {
+            "api_request takes status and json under \"expect\", not beside \"kind\"".to_string()
+        }
+        ("api_request", "method" | "url_contains" | "timeout_ms") => {
+            format!("api_request takes status and json under \"expect\", and has no \"{shown}\" (that is expect_response's)")
+        }
+        ("api_request", _) => format!("api_request has no \"{shown}\" - it takes path, query and expect"),
+        (_, "expect") => "expect_response takes status and json directly, not under \"expect\"".to_string(),
+        _ => format!(
+            "expect_response has no \"{shown}\" - it takes method, url_contains, status, json and timeout_ms"
+        ),
+    })
+}
 
 fn check_status(status: u16) -> Result<(), String> {
     if (100..=599).contains(&status) {
@@ -338,7 +385,8 @@ impl Action {
                 Err(format!("upload: {}", crate::test_files::bad_name(file)))
             }
             Action::Upload { selector, .. } => selector.validate(),
-            Action::ExpectResponse { method, url_contains, status, .. } => {
+            Action::ExpectResponse { method, url_contains, status, stray, .. } => {
+                refuse_stray("expect_response", stray)?;
                 if url_contains.trim().is_empty() {
                     return Err("expect_response needs url_contains".to_string());
                 }
@@ -353,7 +401,8 @@ impl Action {
                 }
                 check_status(*status)
             }
-            Action::ApiRequest { path, expect, .. } => {
+            Action::ApiRequest { path, expect, stray, .. } => {
+                refuse_stray("api_request", stray)?;
                 // A refusal repeats only a safe path on this site: never
                 // what follows a `?` (it can be a token), never an address
                 // (it names a host).

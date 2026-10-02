@@ -1493,6 +1493,7 @@ async fn the_page_log_names_a_failed_request_and_a_console_error_from_a_real_bro
 async fn api_checks_read_the_requests_a_real_page_makes() {
     const PAGE: &str = r#"<!doctype html><html><body>
 <button id="save" onclick="fetch('/PerformanceCycle/Save?token=hunter2', { method: 'POST' }).then(r => r.text()).then(t => { document.getElementById('out').textContent = t; })">Save</button>
+<button id="expired" onclick="fetch('/PerformanceCycle/Expired?token=hunter2', { method: 'POST' })">Save as an ended session</button>
 <p id="out"></p>
 </body></html>"#;
     let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
@@ -1503,16 +1504,34 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
+            // A connection the browser opens ahead of time and never uses
+            // must not stall every request behind it.
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut buf = [0u8; 4096];
             let Ok(n) = stream.read(&mut buf) else { continue };
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let line = head.lines().next().unwrap_or("").to_string();
             log.lock().unwrap().push(line.clone());
+            // An ended session: the save is sent on to the sign-in page.
+            if line.starts_with("POST /PerformanceCycle/Expired") {
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 302 Found
+Location: /Account/Login?ReturnUrl=%2FPerformanceCycle%3Ftoken%3Dhunter2
+Content-Length: 0
+Connection: close
+
+"
+                );
+                continue;
+            }
             let (kind, body) = if line.starts_with("POST /PerformanceCycle/Save") {
                 ("application/json", r#"{"success":true,"id":7}"#.to_string())
             } else if line.starts_with("GET /api/cycles/42") {
                 let include = line.split("include=").nth(1).and_then(|r| r.split([' ', '&']).next()).unwrap_or("none");
                 ("application/json", format!(r#"{{"name":"Q4 Cycle","include":"{include}","extra":1}}"#))
+            } else if line.starts_with("GET /Account/Login") {
+                ("text/html; charset=utf-8", "<html><title>Sign in</title></html>".to_string())
             } else if line.starts_with("GET / ") {
                 ("text/html; charset=utf-8", PAGE.to_string())
             } else {
@@ -1532,7 +1551,7 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
     let root = tempfile::tempdir().unwrap();
     let mut account: Option<String> = None;
-    let mut step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
+    let step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
         step_number: number,
         actions: actions.into_iter().map(action_of).collect(),
         unchecked: None,
@@ -1560,7 +1579,7 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     refused(out[1].clone(), "answered 200, expected 500");
-    refused(out[2].clone(), "success");
+    refused(out[2].clone(), "expected success = false, got true");
     for o in &out[1..] {
         assert!(!o.detail.contains("hunter2") && !o.detail.contains("127.0.0.1"), "{}", o.detail);
     }
@@ -1587,6 +1606,27 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     assert!(
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /api/cycles/42?include=rules ")),
         "the server never saw the encoded query: {:?}",
+        seen.lock().unwrap()
+    );
+
+    // Chrome's own redirect events: the POST answered 302 is still the POST
+    // the page made - it passes as a 302, and fails as a 200 naming where it
+    // was sent (the path only), promptly rather than at the timeout.
+    let expired = step(5, vec![
+        json!({ "kind": "click", "selector": { "css": "#expired" } }),
+        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "status": 302 }),
+        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "timeout_ms": 8000 }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &expired, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert_eq!(out[2].detail, "POST /PerformanceCycle/Expired was redirected to /Account/Login");
+    assert!(!out[2].ok);
+    assert!(began.elapsed() < Duration::from_secs(8), "the redirect waited out the timeout");
+    assert!(
+        seen.lock().unwrap().iter().any(|l| l.starts_with("GET /Account/Login")),
+        "the browser never followed the redirect: {:?}",
         seen.lock().unwrap()
     );
 }

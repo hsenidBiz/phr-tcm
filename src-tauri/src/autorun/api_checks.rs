@@ -14,15 +14,16 @@
 //! record keeps the query string for matching, and nothing here copies it
 //! out - an address can carry a token there. A body is read only for a
 //! JSON check, and only an excerpt of it goes into a failure - with every
-//! value under a key named like a secret hidden (`shown_body`) and
-//! anti-forgery tokens scrubbed. A field mismatch hides the same values.
+//! value under a key named like a secret hidden (`shown_body`), anti-forgery
+//! tokens scrubbed, any address in it cut to its path, and bearer tokens and
+//! JWTs hidden (`scrub_shown`). A field mismatch hides the same.
 
 use crate::api_templates::exec::{encode_query, excerpt, partial_match_shown, scrub_tokens};
 use crate::api_templates::runner::FETCH_GRACE;
 use crate::autorun::report::without_query;
 use crate::browser::actions::{harness, harness_timeout, Action, ActionOutcome, CANNOT_RUN};
 use crate::browser::cdp::{CdpError, Driver};
-use crate::browser::net_record::{NetEntry, NetState};
+use crate::browser::net_record::{NetEntry, NetRedirect, NetState};
 use crate::browser::page;
 use crate::browser::timing::Timing;
 use base64::Engine;
@@ -52,8 +53,9 @@ pub const BODY_GONE: &str = "the response body was no longer available";
 pub const BODY_UNREADABLE: &str = "the response body could not be read";
 /// `the response to <METHOD> <path> was over 64 KB`: too long to judge.
 pub const OVER_CAP: &str = " was over 64 KB";
-/// `GET <path> was redirected to <path>` - an `api_request` answered by
-/// another page (an ended session's sign-in page, typically).
+/// `<METHOD> <path> was redirected to <path>` - a request answered by
+/// sending it on to another page (an ended session's sign-in page,
+/// typically).
 pub const REDIRECTED: &str = " was redirected to ";
 /// What a secret's value is shown as.
 pub const REDACTED: &str = "[redacted]";
@@ -267,16 +269,53 @@ fn value_end(text: &str, at: usize, escaped: bool) -> usize {
     }
 }
 
+/// An address in text: a scheme, `://` (or `:\/\/`, as JSON may write it),
+/// and everything up to a quote, a bracket or a space - JSON's `\/` and
+/// `\uXXXX` escapes included, so an escaped `&` does not end it early.
+static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\b[a-z][a-z0-9+.\-]*:(?:\\?/){2}(?:[^\s"'<>\\]|\\/|\\u[0-9a-f]{4})*"#).unwrap()
+});
+
+/// A query string (or a fragment carrying one) left in text once the
+/// addresses are cut: `?ReturnUrl=...`, `#access_token=...`.
+static QUERY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"[?#][\w.~%\[\]\-]+=(?:[^\s"'<>\\]|\\/|\\u[0-9a-fA-F]{4})*"#).unwrap()
+});
+
+/// `Bearer <token>`, whatever key or text it sits in.
+static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bbearer\s+[\w\-.~+/]+=*").unwrap());
+
+/// A JWT: three base64url parts, the first a JSON header (`eyJ`).
+static JWT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"eyJ[\w-]+\.[\w-]+\.[\w-]*").unwrap());
+
+/// Text a failure quotes, made safe to keep wherever it came from: every
+/// address cut to its path (no host, no query), any other query string
+/// dropped, and bearer tokens and JWTs hidden - under a key with an
+/// ordinary name too. Anti-forgery tokens are `scrub_tokens`' part.
+fn scrub_shown(text: &str) -> String {
+    let text = ADDRESS.replace_all(text, |c: &regex::Captures| {
+        let address = c[0].replace("\\/", "/");
+        match path_only(&address) {
+            "" => "/".to_string(),
+            path => path.to_string(),
+        }
+    });
+    let text = QUERY.replace_all(&text, "");
+    let text = BEARER.replace_all(&text, format!("Bearer {REDACTED}").as_str());
+    JWT.replace_all(&text, REDACTED).into_owned()
+}
+
 /// What a failure may quote of a body, for both kinds of check: a JSON body
 /// with every value under a key named like a secret hidden (text that does
 /// not parse gets the same, member by member), anti-forgery tokens
-/// scrubbed, then the 500-character excerpt.
+/// scrubbed, addresses and bare tokens made safe (`scrub_shown`), then the
+/// 500-character excerpt.
 pub fn shown_body(body: &str) -> String {
     let hidden = match serde_json::from_str::<Value>(body) {
         Ok(v) => serde_json::to_string(&redact(&v)).unwrap_or_default(),
         Err(_) => hide_members(body),
     };
-    excerpt(&scrub_tokens(&hidden, None))
+    excerpt(&scrub_tokens(&scrub_shown(&hidden), None))
 }
 
 /// A value of the answer as a field mismatch quotes it: hidden whole when
@@ -302,7 +341,8 @@ fn failed_showing(why: String, body: Option<&str>) -> ActionOutcome {
 /// Which of the step's requests an `expect_response` is about.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pick {
-    /// The most recent matching request that finished.
+    /// The most recent matching request that finished - or that was
+    /// redirected: what it answered is known as soon as it is sent on.
     Finished(NetEntry),
     /// No match finished; the most recent one that failed.
     Failed(NetEntry),
@@ -322,14 +362,26 @@ fn matches(e: &NetEntry, method: Option<&str>, pattern: &str) -> bool {
     method_ok && e.path_query.to_lowercase().contains(pattern)
 }
 
+/// Has it answered? Finished, or redirected - the redirect was its answer,
+/// whatever the page it was sent on to is still doing.
+fn answered(e: &NetEntry) -> bool {
+    e.state == NetState::Finished || e.redirect.is_some()
+}
+
+/// Still going, with nothing yet to judge.
+fn going(e: &NetEntry) -> bool {
+    e.state == NetState::Pending && e.redirect.is_none()
+}
+
 /// The request to judge among `entries` (the step's, oldest first): the
-/// most recent finished match, else the most recent failed one, else a
+/// most recent match that finished or was redirected (`answered`), else
+/// the most recent failed one, else a
 /// match still going. `url_contains` is matched without regard to case
 /// against the path and query - the record holds no host to match.
 pub fn pick(entries: &[NetEntry], method: Option<&str>, url_contains: &str) -> Pick {
     let pattern = url_contains.trim().to_lowercase();
     let found: Vec<&NetEntry> = entries.iter().rev().filter(|e| matches(e, method, &pattern)).collect();
-    if let Some(e) = found.iter().find(|e| e.state == NetState::Finished) {
+    if let Some(e) = found.iter().find(|e| answered(e)) {
         return Pick::Finished((*e).clone());
     }
     if let Some(e) = found.iter().find(|e| matches!(e.state, NetState::Failed(_))) {
@@ -357,9 +409,10 @@ fn seconds(ms: u64) -> String {
 
 fn no_request(pattern: &str, waited_ms: u64, seen: usize) -> String {
     format!(
-        "{NO_REQUEST}{}\" in {} s (this step made {seen} requests)",
+        "{NO_REQUEST}{}\" in {} s (this step made {seen} {})",
         without_query(pattern.trim()),
-        seconds(waited_ms)
+        seconds(waited_ms),
+        if seen == 1 { "request" } else { "requests" }
     )
 }
 
@@ -378,8 +431,24 @@ pub fn judge(entry: &NetEntry, status: u16, json: Option<&Value>, body: Option<&
     judge_body(entry, status, json, &body)
 }
 
+/// `<METHOD> <path> was redirected to <path>`, plus ` (on another site)`
+/// when it was. The path only: a sign-in page's address carries the
+/// address it was sent from, query and all.
+fn redirected(who: &str, r: &NetRedirect) -> String {
+    let to = if r.to.is_empty() { "another page" } else { r.to.as_str() };
+    let site = if r.other_site { " (on another site)" } else { "" };
+    format!("{who}{REDIRECTED}{to}{site}")
+}
+
 fn judge_body(entry: &NetEntry, status: u16, json: Option<&Value>, body: &Body) -> Result<(), String> {
     let who = named(entry);
+    // A redirect is the request's answer: right when that 3xx is the status
+    // expected and no JSON is asked for (post-redirect-get) - the body
+    // Chrome holds is the next page's, so there is none to check. Wrong
+    // otherwise, whatever the page it was sent on to answered.
+    if let Some(r) = &entry.redirect {
+        return if r.status == status && json.is_none() { Ok(()) } else { Err(redirected(&who, r)) };
+    }
     match &entry.state {
         NetState::Failed(why) if why.trim() == ABORTED => return Err(format!("{who}{CANCELLED}")),
         NetState::Failed(why) => return Err(format!("{who}{NET_FAILED}{why}")),
@@ -409,7 +478,7 @@ fn judge_answer(who: &str, got: Option<u16>, status: u16, json: Option<&Value>, 
     };
     // The mismatch quotes the answer's own values: secrets hidden first.
     partial_match_shown(expected, &actual, &show_answer)
-        .map_err(|why| format!("{RESPONSE_TO}{who}: {}", scrub_tokens(&why, None)))
+        .map_err(|why| format!("{RESPONSE_TO}{who}: {}", scrub_tokens(&scrub_shown(&why), None)))
 }
 
 /// Read what is waiting from the browser, so a request the page sent
@@ -430,7 +499,7 @@ async fn look<D: Driver>(d: &mut D) -> Result<Value, CdpError> {
 /// Carry out an `expect_response`, looking only at requests that started at
 /// or after `mark`.
 pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing: &Timing) -> ActionOutcome {
-    let Action::ExpectResponse { method, url_contains, status, json, timeout_ms } = a else {
+    let Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } = a else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_response"));
     };
     if let Err(why) = a.validate() {
@@ -448,9 +517,10 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
         Ok(e) => e,
         Err(out) => return out,
     };
-    // Read only for a JSON check; otherwise never looked at.
+    // Read only for a JSON check, and never for a redirected request (what
+    // Chrome holds is the next page's body); otherwise never looked at.
     let body = match (json, &entry.state) {
-        (Some(_), NetState::Finished) => match body_of(d, &entry.id).await {
+        (Some(_), NetState::Finished) if entry.redirect.is_none() => match body_of(d, &entry.id).await {
             Ok(b) => b,
             Err(out) => return out,
         },
@@ -468,7 +538,7 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
 /// another page - an ended session's sign-in page answers 200 too - fails,
 /// naming that page's path.
 pub async fn api_request<D: Driver>(d: &mut D, a: &Action, timing: &Timing) -> ActionOutcome {
-    let Action::ApiRequest { path, query, expect } = a else {
+    let Action::ApiRequest { path, query, expect, .. } = a else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an api_request"));
     };
     // The path again (safe, on this site, no query of its own), before
@@ -568,11 +638,11 @@ async fn watch<D: Driver>(
         }
         let entries = d.net_since(mark);
         let pattern = url_contains.trim().to_lowercase();
-        let going = entries.iter().any(|e| e.state == NetState::Pending && matches(e, method, &pattern));
+        let still_going = entries.iter().any(|e| going(e) && matches(e, method, &pattern));
         let picked = pick(&entries, method, url_contains);
         match picked {
             Pick::Finished(e) => return Ok(e),
-            Pick::Failed(e) if !going => return Ok(e),
+            Pick::Failed(e) if !still_going => return Ok(e),
             _ => {}
         }
         if Instant::now() >= deadline {

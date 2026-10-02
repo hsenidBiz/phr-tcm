@@ -630,8 +630,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
-        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None },
-        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -666,7 +666,8 @@ fn expect_response_and_api_request_round_trip_with_their_defaults() {
             url_contains: "/Cycle/Save".into(),
             status: 200,
             json: None,
-            timeout_ms: None
+            timeout_ms: None,
+            stray: Default::default()
         }
     );
     // Nothing optional is written back out when it is not set.
@@ -684,7 +685,7 @@ fn expect_response_and_api_request_round_trip_with_their_defaults() {
 
     let r: Action = serde_json::from_value(json!({ "kind": "api_request", "path": "/api/cycles/42" })).unwrap();
     match &r {
-        Action::ApiRequest { path, query, expect } => {
+        Action::ApiRequest { path, query, expect, .. } => {
             assert_eq!(path, "/api/cycles/42");
             assert!(query.is_empty());
             assert_eq!(expect.status, 200);
