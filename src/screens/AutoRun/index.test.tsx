@@ -499,7 +499,8 @@ test("the Setup card shows each row's state for a project with nothing set up", 
 
   expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
   await waitFor(() => expect(within(row("Site address")).getByText("Not set up yet")).toBeInTheDocument());
-  expect(within(row("Sign-in")).getByText("Not set up")).toBeInTheDocument();
+  // No saved recipe: the app's own sign-in is used.
+  expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
   expect(within(row("Accounts")).getByText("None yet")).toBeInTheDocument();
   // The nav query answers null in this mock: an answer, so the row reads
   // "none" rather than sitting on "Loading…" forever.
@@ -508,13 +509,26 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(within(row("Areas")).getByRole("button", { name: "Edit areas" })).toBeEnabled();
   expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
-  // Without a recipe there is no address to edit on its own: the row's one
-  // button records the sign-in instead, which asks for the address.
-  expect(within(row("Site address")).queryByRole("button", { name: "Edit site address" })).not.toBeInTheDocument();
-  fireEvent.click(within(row("Site address")).getByRole("button", { name: "Set up sign-in" }));
-  expect(await screen.findByRole("heading", { name: "Record sign-in" })).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Start address" })).toHaveValue("");
-  expect(screen.queryByRole("heading", { name: "Sign-in recipe" })).not.toBeInTheDocument();
+  // The address is the environment's, so it is set here with or without a
+  // saved recipe - the built-in sign-in needs nothing else.
+  expect(within(row("Site address")).queryByRole("button", { name: "Set up sign-in" })).not.toBeInTheDocument();
+  fireEvent.click(within(row("Site address")).getByRole("button", { name: "Edit site address" }));
+  expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Record sign-in" })).not.toBeInTheDocument();
+});
+
+test("with no saved recipe the built-in signs in at the environment's address", async () => {
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) =>
+    cmd === "env_list" ? envList("https://qa.example.com/start") : undefined,
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+  expect(await within(row("Site address")).findByText("https://qa.example.com/start")).toBeInTheDocument();
+  expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
+  expect(screen.getByText("QA - qa.example.com")).toBeInTheDocument();
+  // Recording or editing saves the project's own recipe, which replaces it.
+  expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeEnabled();
+  expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeEnabled();
 });
 
 test("the Setup card and the header line read a project that is set up", async () => {
@@ -632,7 +646,7 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   await screen.findByText("Alpha check");
 
   const why = "Pick an organization and project first";
-  for (const name of ["Set up sign-in", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
+  for (const name of ["Edit site address", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
     const b = screen.getByRole("button", { name });
     expect(b).toBeDisabled();
     expect(b).toHaveAttribute("title", why);

@@ -347,8 +347,8 @@ pub fn text(accounts: &[String], origin: Option<&str>) -> String {
             "Templates run against {o}. Steps hold paths only - never put this host in a template.\n"
         )),
         None => out.push_str(
-            "This project has no sign-in recipe yet - the person sets one up on the Auto Run tab. \
-             Nothing can be proven or run until it has one.\n",
+            "This project has no site address yet - the person sets it in Auto Run, Setup, Site address \
+             (or Edit environments on the AI Bridge tab). Nothing can be proven or run until it has one.\n",
         ),
     }
     out

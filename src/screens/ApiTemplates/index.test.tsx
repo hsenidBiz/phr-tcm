@@ -402,10 +402,10 @@ test("the header shows the environment host and the switch state, which opens AI
   expect(screen.getByRole("button", { name: /API templates on/ })).toBeInTheDocument();
 });
 
-test("a project with no sign-in recipe says so in place of a host", async () => {
+test("a project with no site address says so in place of a host", async () => {
   mockOverview({ origin: null, templates: [] });
   renderScreen();
-  expect(await screen.findByText("no sign-in recipe yet")).toBeInTheDocument();
+  expect(await screen.findByText("no site address yet")).toBeInTheDocument();
 });
 
 test("an empty project explains where templates come from", async () => {

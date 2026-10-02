@@ -91,6 +91,9 @@ export default function SiteAddressDialog({
   const blocked = envs.isLoading || envs.isError || !env;
   const recipeAddress = recipe.data?.start_url ?? "";
   const recipeSites = (recipe.data?.allowed_origins ?? []).join("\n");
+  // Answered, and nothing saved: the project signs in with the built-in
+  // recipe, which has no address or allowed sites of its own.
+  const builtIn = recipe.isSuccess && recipe.data == null;
 
   return (
     <Modal onClose={onClose} className="flex w-full max-w-lg flex-col gap-3 p-5">
@@ -113,6 +116,10 @@ export default function SiteAddressDialog({
         {noAddress && !blocked && recipeAddress !== "" && (
           <span className="block text-xs text-faint">Using the sign-in recipe's address</span>
         )}
+        {/* No saved recipe: the built-in one signs in here, and nowhere else. */}
+        {builtIn && !blocked && (
+          <span className="block text-xs text-faint">The built-in sign-in uses this address.</span>
+        )}
       </label>
       <label className="space-y-1">
         <span className="text-xs font-medium text-muted">Also allowed</span>
@@ -126,7 +133,9 @@ export default function SiteAddressDialog({
         />
         <span className="block text-xs text-faint">
           {noAddress
-            ? "Also allowed needs a start address - until then the sign-in recipe's are used."
+            ? builtIn
+              ? "Also allowed needs a start address first."
+              : "Also allowed needs a start address - until then the sign-in recipe's are used."
             : "Other sites scripts may open, one per line."}
         </span>
       </label>

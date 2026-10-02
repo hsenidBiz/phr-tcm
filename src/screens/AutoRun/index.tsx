@@ -355,10 +355,11 @@ export default function AutoRun({
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
   const saved = recipe.data;
   // Where a run goes now: the active environment's address when it has one,
-  // else the recipe's - the header and the Setup row both say this.
+  // else the saved recipe's - the header and the Setup row both say this.
+  // With no saved recipe the built-in one signs in at the environment's.
   const site = effectiveSite(envs.data, saved);
   const activeEnv = activeEnvironment(envs.data);
-  const extraSites = saved ? site.allowed_origins.length : 0;
+  const extraSites = site.allowed_origins.length;
 
   return (
     <>
@@ -407,7 +408,7 @@ export default function AutoRun({
                     <span className="text-muted">Loading…</span>
                   ) : recipe.isError ? (
                     <span className="text-danger">The saved recipe could not be read</span>
-                  ) : saved ? (
+                  ) : site.start_url ? (
                     <>
                       <span className="id-mono break-all">{site.start_url}</span>
                       {extraSites > 0 && (
@@ -421,34 +422,20 @@ export default function AutoRun({
                   )
                 }
               >
-                {/* The address lives inside the recipe, so there is nothing to
-                    edit on its own until a recipe exists - without one, this
-                    row's button records the sign-in instead, which asks for
-                    the address first. */}
-                {saved ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label="Edit site address"
-                    disabled={!setupReady}
-                    title={needsProject}
-                    onClick={() => setSiteOpen(true)}
-                  >
-                    <IconSiteAddress aria-hidden />
-                    Edit
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!setupReady || recipe.isLoading || recipe.isError}
-                    title={needsProject}
-                    onClick={() => setRecordOpen(true)}
-                  >
-                    <IconSiteAddress aria-hidden />
-                    Set up sign-in
-                  </Button>
-                )}
+                {/* The address is the active environment's, not the recipe's,
+                    so it is set here with or without a saved recipe: the
+                    built-in sign-in needs nothing more than this. */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Edit site address"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setSiteOpen(true)}
+                >
+                  <IconSiteAddress aria-hidden />
+                  Edit
+                </Button>
               </SetupRow>
 
               <SetupRow
@@ -463,7 +450,9 @@ export default function AutoRun({
                   ) : saved ? (
                     "Recipe saved"
                   ) : (
-                    <span className="text-muted">Not set up</span>
+                    // No saved recipe: the app's own runs. Recording or
+                    // editing one saves this project's, which replaces it.
+                    "Built-in"
                   )
                 }
               >

@@ -3456,7 +3456,7 @@ export type TemplatesImportSkip = {
 /**
  *  Everything the tab needs to draw itself: the origin these templates run
  *  against - the active environment's address, else the sign-in recipe's
- *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  (`None` when the project has no site address yet) - and every saved
  *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_Deserialize;
@@ -3464,7 +3464,7 @@ export type TemplatesOverview = TemplatesOverview_Serialize | TemplatesOverview_
 /**
  *  Everything the tab needs to draw itself: the origin these templates run
  *  against - the active environment's address, else the sign-in recipe's
- *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  (`None` when the project has no site address yet) - and every saved
  *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Deserialize = {
@@ -3476,7 +3476,7 @@ export type TemplatesOverview_Deserialize = {
 /**
  *  Everything the tab needs to draw itself: the origin these templates run
  *  against - the active environment's address, else the sign-in recipe's
- *  (`None` when the project has no sign-in recipe yet) - and every saved
+ *  (`None` when the project has no site address yet) - and every saved
  *  template with its run history, and every saved flow.
  */
 export type TemplatesOverview_Serialize = {

@@ -80,8 +80,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the nineteen dev-only
-    // tools (Auto Run's eleven, then the API templates row's eight) are listed
+    // debug assertions on), so with nothing disabled the twenty dev-only
+    // tools (Auto Run's twelve, then the API templates row's eight) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -106,6 +106,7 @@ fn tools_list_names_every_tool() {
             "mark_autorun_suspected_defect",
             "propose_accounts",
             "get_accounts",
+            "list_test_files",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
@@ -427,10 +428,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 36 in this development build: nothing is disabled by an unreachable
-    // bridge, including the nineteen dev-only tools, which default to ON here
+    // 37 in this development build: nothing is disabled by an unreachable
+    // bridge, including the twenty dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 36, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 37, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -1074,4 +1075,34 @@ fn the_save_tool_documents_a_scripts_area() {
     let props = &tool["inputSchema"]["properties"];
     assert!(props["scripts"]["description"].as_str().unwrap().contains("area?"), "{props}");
     assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
+}
+
+/// `list_test_files` belongs to the Auto Run row: listed where Auto Run is
+/// offered, "not available" where it is not, and a plain read of its own
+/// route.
+#[test]
+fn list_test_files_is_an_auto_run_read_of_its_own_route() {
+    assert!(DEV_ONLY_TOOLS.contains(&"list_test_files"));
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    assert!(names.iter().any(|n| n == "list_test_files"), "{names:?}");
+
+    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
+    assert!(!offered);
+    assert!(off.iter().any(|n| n == "list_test_files"), "not disabled in a locked release app: {off:?}");
+    assert!(v2_lib::mcp::refusal_text("list_test_files", false).contains("not available"));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "list_test_files", "arguments": {} },
+    });
+    let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_ne!(v["result"]["isError"], serde_json::json!(true), "{resp}");
+    let (m, p, _) = calls.borrow().last().unwrap().clone();
+    assert_eq!((m.as_str(), p.as_str()), ("GET", "/autorun-test-files"));
 }

@@ -77,10 +77,10 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // assistant calls on its own when the guide says so; a command per
     // tool made the picker a list of things nobody should have to know.
     // Auto Run is still in development: its tools are hidden and its
-    // command (`heal`) is left out with them wherever they are off, so
-    // nothing in the picker points at it.
-    const TOOLS: [&str; 5] = [
-        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "heal",
+    // commands (`setup`, `heal`) are left out with them wherever they are
+    // off, so nothing in the picker points at it.
+    const TOOLS: [&str; 6] = [
+        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "heal",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -602,6 +602,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "mark_autorun_suspected_defect",
             "propose_accounts",
             "get_accounts",
+            "list_test_files",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
@@ -725,6 +726,75 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
     assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
     assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
+}
+
+/// `/tcm:setup` walks an assistant through getting the app ready to run a
+/// module's cases: environment, accounts, areas, test files and the data
+/// each case needs first. An Auto Run command, so it is written only where
+/// the Auto Run tools are offered, and every tool it names is one the
+/// bridge really lists.
+#[test]
+fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
+    let c = COMMANDS.iter().find(|c| c.stem == "setup").expect("a setup command");
+    assert_eq!(c.tool, "get_autorun_guide");
+    assert_eq!(
+        c.desc,
+        "Set the app up for testing: environment, accounts, module, areas, test files and preconditions"
+    );
+    assert_eq!(c.hint, "[PBI id or suite, optional]");
+
+    let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    assert!(
+        hidden.iter().all(|(p, _)| p.file_name().unwrap() != "setup.md"),
+        "setup must not be written where Auto Run is not offered"
+    );
+    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "setup.md"));
+
+    let body = c.body.join("\n");
+    let mcp = include_str!("../../src/mcp.rs");
+    let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
+    for tool in [
+        "get_autorun_guide",
+        "db_lookup",
+        "db_query",
+        "propose_accounts",
+        "list_test_files",
+        "list_api_templates",
+        "get_api_template_guide",
+    ] {
+        assert!(body.contains(&format!("`{tool}`")), "the setup routine never names `{tool}`");
+        assert!(is_tool(tool), "`{tool}` is not in the bridge's tool list");
+    }
+    // Everything it names in backticks is a real tool: a misspelt one is a
+    // step the assistant cannot take.
+    let named: Vec<&str> = body.split('`').skip(1).step_by(2).collect();
+    assert!(named.len() >= 7, "{named:?}");
+    for name in named {
+        assert!(is_tool(name), "/tcm:setup names `{name}`, which mcp.rs does not expose");
+    }
+    assert!(!body.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    assert!(body.contains("$ARGUMENTS"), "{body}");
+    assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
+
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The real controls, by the names the screens give them.
+    for control in [
+        "Auto Run, Setup, Site address",
+        "Edit environments",
+        "Add selected",
+        "Record an area",
+        "Test files, Manage, Add files",
+        "API templates (create, edit and delete)",
+    ] {
+        assert!(flat.contains(control), "the routine does not name {control:?}: {flat}");
+    }
+    assert!(flat.contains("Never use a hash"), "{flat}");
+    assert!(flat.contains("HS_SM_USER_ACCOUNT"), "{flat}");
+    assert!(flat.contains("You cannot record an area yourself"), "{flat}");
+    assert!(flat.contains("Scripts never run templates"), "{flat}");
+    assert!(flat.contains("supervised run of a single case"), "{flat}");
 }
 
 /// A command renamed or dropped from `COMMANDS` (this branch trimmed 17

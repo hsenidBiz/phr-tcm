@@ -413,15 +413,44 @@ pub fn effective_recipe(recipe: &SignInRecipe, env: &crate::environments::Enviro
     SignInRecipe { start_url: start.to_string(), allowed_origins: env.allowed_origins.clone(), ..recipe.clone() }
 }
 
-/// The project's recipe as it runs in the active environment - what every
-/// sign-in and every navigation uses. `load_recipe` is the raw file, read
-/// directly only where the recipe is edited.
-pub fn load_effective_recipe(root: &Path, org: &str, project: &str) -> Result<Option<SignInRecipe>, String> {
-    let Some(recipe) = load_recipe(root, org, project)? else {
-        return Ok(None);
-    };
+/// The sign-in this app ships, used by every project that has not saved
+/// its own (owner ruling, 2026-10-02). It has no address: a project using
+/// it signs in at the active environment's site address, and nowhere else.
+pub const BUILTIN_RECIPE_JSON: &str = include_str!("builtin_recipe.json");
+
+/// Said when a project has no saved recipe and the active environment has
+/// no site address: the built-in recipe has nowhere to sign in. Names the
+/// Setup row whose Edit sets the address.
+pub const NO_SITE_ADDRESS: &str = "set the site address first - Auto Run, Setup, Site address";
+
+/// `BUILTIN_RECIPE_JSON` as a recipe, with an empty `start_url` - it does
+/// not validate until an address is filled in (`effective_recipe`).
+pub fn builtin_recipe() -> SignInRecipe {
+    let mut v: serde_json::Value = serde_json::from_str(BUILTIN_RECIPE_JSON).expect("the built-in recipe is JSON");
+    v["start_url"] = serde_json::Value::String(String::new());
+    serde_json::from_value(v).expect("the built-in recipe is a recipe")
+}
+
+/// The project's recipe as it runs in the active environment, or None when
+/// there is none to run: no saved recipe AND no site address. A saved
+/// recipe always wins; without one, the built-in signs in at the
+/// environment's address.
+pub fn load_effective_recipe_if_any(root: &Path, org: &str, project: &str) -> Result<Option<SignInRecipe>, String> {
+    let saved = load_recipe(root, org, project)?;
     let env = crate::environments::active(root)?;
-    Ok(Some(effective_recipe(&recipe, &env)))
+    Ok(match saved {
+        Some(recipe) => Some(effective_recipe(&recipe, &env)),
+        None if env.start_url.trim().is_empty() => None,
+        None => Some(effective_recipe(&builtin_recipe(), &env)),
+    })
+}
+
+/// The project's recipe as it runs in the active environment - what every
+/// sign-in and every navigation uses - refused with `NO_SITE_ADDRESS` when
+/// there is none to run. `load_recipe` is the raw file, read directly only
+/// where the recipe is edited.
+pub fn load_effective_recipe(root: &Path, org: &str, project: &str) -> Result<SignInRecipe, String> {
+    load_effective_recipe_if_any(root, org, project)?.ok_or_else(|| NO_SITE_ADDRESS.to_string())
 }
 
 pub fn save_recipe(root: &Path, org: &str, project: &str, recipe: &SignInRecipe) -> Result<(), String> {

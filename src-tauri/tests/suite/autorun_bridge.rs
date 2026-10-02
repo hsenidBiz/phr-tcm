@@ -1633,3 +1633,99 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
 }
+
+/// `list_test_files`: the project's Test files by name and human size, and
+/// nothing else - no path, no date. Gated with the other Auto Run routes.
+#[tokio::test]
+async fn list_test_files_gives_names_and_sizes_only() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let folder = v2_lib::test_files::folder(dir.path(), "acme", "Web");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("appraisal.pdf"), vec![0u8; 1536]).unwrap();
+    std::fs::write(folder.join("note.txt"), b"hello").unwrap();
+
+    let (status, body) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({ "test_files": [
+            { "name": "appraisal.pdf", "size": "1.5 KB" },
+            { "name": "note.txt", "size": "5 bytes" },
+        ] })
+    );
+    let shown = folder.display().to_string();
+    assert!(!body.contains(&shown) && !body.contains("modified"), "{body}");
+
+    // No project open: there is no Test files folder to read.
+    let (status, body) = route(&BridgeContext::default(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("project"), "{body}");
+
+    let (status, body) = autorun_guard_for("/autorun-test-files", false).expect("refused outside Auto Run");
+    assert_eq!((status, body.as_str()), (404, "not available in this build"));
+    assert!(autorun_guard_for("/autorun-test-files", true).is_none());
+}
+
+/// "The active environment" names its database as a person reads it - the
+/// label, and `<database> on <server>` - and never the login.
+#[tokio::test]
+async fn the_active_environment_names_its_database_and_never_its_login() {
+    use v2_lib::db::{credentials::databases, MemoryStore, SecretStore};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let env = v2_lib::environments::active(dir.path()).unwrap();
+    let store: std::sync::Arc<dyn SecretStore> = std::sync::Arc::new(MemoryStore::default());
+    let db = databases(store.as_ref()).into_iter().find(|d| d.id == env.db_id).expect("the default database");
+    assert!(!db.user.is_empty() && !db.server.is_empty() && !db.database.is_empty());
+
+    let context = BridgeContext { db_secrets: Some(store), ..ctx() };
+    let (status, body) = route(&context, None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    let section = body.split("## The active environment").nth(1).expect("the section");
+    assert!(section.contains(&format!("\"{}\"", db.label)), "{section}");
+    assert!(section.contains(&format!("{} on {}", db.database, db.server)), "{section}");
+    assert!(!body.contains(&db.user), "the login's user never reaches the guide");
+    assert!(!section.to_lowercase().contains("password=") && !section.contains("Server="), "{section}");
+}
+
+/// No database, no site address: the section says so rather than leaving
+/// the assistant to guess.
+#[test]
+fn the_active_environment_says_when_it_has_no_database_or_address() {
+    use v2_lib::autorun::guide::active_environment_section;
+    let env = v2_lib::environments::Environment {
+        id: "env-0000000a".into(),
+        name: "Scratch".into(),
+        start_url: String::new(),
+        allowed_origins: vec![],
+        db_id: String::new(),
+        test_environment: false,
+    };
+    let text = active_environment_section(&env, None);
+    assert!(text.contains("\"Scratch\""), "{text}");
+    assert!(text.contains("It has no database set."), "{text}");
+    assert!(text.contains("It has no site address yet:"), "{text}");
+    assert!(text.contains("any other project cannot sign in"), "{text}");
+}
+
+/// An environment whose database id names one the app no longer knows says
+/// so, rather than that it never had one.
+#[test]
+fn the_active_environment_says_when_its_database_is_gone() {
+    use v2_lib::autorun::guide::active_environment_section;
+    let env = v2_lib::environments::Environment {
+        id: "env-0000000b".into(),
+        name: "Scratch".into(),
+        start_url: "https://hr.example.internal/".into(),
+        allowed_origins: vec![],
+        db_id: "removed-db".into(),
+        test_environment: false,
+    };
+    let text = active_environment_section(&env, None);
+    assert!(text.contains("Its database is not set up any more."), "{text}");
+    assert!(!text.contains("It has no database set."), "{text}");
+}

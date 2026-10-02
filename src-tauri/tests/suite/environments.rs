@@ -719,9 +719,12 @@ fn prepare_signs_in_at_the_environment_address() {
     let (r, who) = prepare(root, "Acme", "Web", "hr.sup").unwrap();
     assert_eq!(r.start_url, "https://b");
     assert_eq!(who.username, "sup-b");
-    assert_eq!(load_effective_recipe(root, "Acme", "Web").unwrap().unwrap().start_url, "https://b");
+    assert_eq!(load_effective_recipe(root, "Acme", "Web").unwrap().start_url, "https://b");
     assert_eq!(load_recipe(root, "Acme", "Web").unwrap().unwrap().start_url, "https://a", "the saved recipe is untouched");
-    assert_eq!(load_effective_recipe(root, "Acme", "Other").unwrap(), None, "no recipe is still no recipe");
+    // No saved recipe: the built-in, at this environment's address.
+    let other = load_effective_recipe(root, "Acme", "Other").unwrap();
+    assert_eq!(other.start_url, "https://b");
+    assert_eq!(other.steps, v2_lib::autorun::recipe::builtin_recipe().steps);
 
     set_active(root, &first).unwrap();
     assert_eq!(prepare(root, "Acme", "Web", "hr.sup").unwrap().0.start_url, "https://a");

@@ -194,6 +194,15 @@ test("with no sign-in recipe the environment's address can still be set", async 
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
 
+test("with no saved recipe the hints speak of the built-in sign-in, never the recipe's address", async () => {
+  mount(null, undefined, listOf({ start_url: "", allowed_origins: [] }));
+  const start = (await screen.findByRole("textbox", { name: "Start address" })) as HTMLInputElement;
+  await waitFor(() => expect(start).toBeEnabled());
+  expect(await screen.findByText("The built-in sign-in uses this address.")).toBeInTheDocument();
+  expect(screen.getByText("Also allowed needs a start address first.")).toBeInTheDocument();
+  expect(screen.queryByText(/sign-in recipe's/)).not.toBeInTheDocument();
+});
+
 test("with no environment to edit, Save stays off", async () => {
   mount(RECIPE, undefined, { active: "", environments: [] });
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();

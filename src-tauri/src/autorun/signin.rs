@@ -49,9 +49,7 @@ pub fn redact(text: &str, account: &Account) -> String {
 /// The recipe as it runs in the active environment, and the account, or
 /// the sentence that says what to add.
 pub fn prepare(root: &Path, org: &str, project: &str, account_key: &str) -> Result<(SignInRecipe, Account), String> {
-    let recipe = load_effective_recipe(root, org, project)?.ok_or_else(|| {
-        "this project has no sign-in recipe yet - add one in Auto Run, Sign-in recipe".to_string()
-    })?;
+    let recipe = load_effective_recipe(root, org, project)?;
     let account = find_account(root, account_key)?.ok_or_else(|| {
         format!("there is no account \"{account_key}\" on this machine - add it in Auto Run, Accounts")
     })?;

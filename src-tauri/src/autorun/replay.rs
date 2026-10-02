@@ -390,7 +390,7 @@ pub async fn run_cases<B: Browsers>(
     } else {
         // An unreadable recipe gives no route here; the case's own sign-in
         // (step 0, `signin::prepare`) then fails with the read error itself.
-        recipe::load_effective_recipe(root, organization, project).ok().flatten()
+        recipe::load_effective_recipe(root, organization, project).ok()
     };
     let total = cases.len() as u32;
     let run_id = run.id.clone();

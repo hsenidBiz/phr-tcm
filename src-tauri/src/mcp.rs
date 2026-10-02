@@ -431,6 +431,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "list_test_files",
+            "description": "The current project's Test files - the documents a case's upload step sends - each by name and size, and nothing else. Read-only. A file a case uploads that is not here is one the person adds in the app (Auto Run, Setup, Test files); you cannot add one.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -824,6 +829,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "list_test_files" => call("GET", "/autorun-test-files", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),
         "list_api_templates" => call("GET", "/api-templates", ""),
         // The bridge reads its fields out of the body (a template or
