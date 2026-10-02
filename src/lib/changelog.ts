@@ -16,6 +16,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.5",
+    date: "2026-10-02",
+    items: [
+      "Add as many databases of your own as you need under AI Bridge, each with its own name and login.",
+      "AI assistants now list this app's tools as \"tcm\" instead of \"tcm-testcases\". Tools you had already allowed stay allowed.",
+      "With a window open, you can still move, minimise and close the app from its title bar.",
+    ],
+  },
+  {
     version: "2.0.9-beta.4",
     date: "2026-10-02",
     items: [
