@@ -717,6 +717,10 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         );
     }
     assert!(!body.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("matched on its stable part with a non-exact name"), "{flat}");
+    assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
+    assert!(flat.contains("refused when the failure is one of the `STOP:` lines"), "{flat}");
     assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
 }
 

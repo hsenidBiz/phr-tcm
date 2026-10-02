@@ -321,6 +321,8 @@ fn the_guide_teaches_marking_a_suspected_application_defect() {
     assert!(flat.contains("the script is not changed"), "{flat}");
     assert!(flat.contains("not a repair"), "{flat}");
     assert!(flat.contains("clears"), "{flat}");
+    assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
+    assert!(flat.contains("refused when the failure is one of the `stop:` lines"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
