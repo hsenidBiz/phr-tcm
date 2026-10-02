@@ -67,8 +67,11 @@ export default function ReadinessStrip({
     <div
       role="group"
       aria-label="Readiness"
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted"
+      className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-muted"
     >
+      {/* The items wrap among themselves; Open setup stays at the end of
+          the first line instead of dropping onto a line of its own. */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
       <span className="inline-flex items-center gap-1">
         <span>{envName ? "Environment" : "Runs against"} </span>
         {siteHost === null ? (
@@ -127,7 +130,9 @@ export default function ReadinessStrip({
         </Item>
       ))}
 
-      <Button size="sm" variant="ghost" className="ml-auto" onClick={onOpenSetup}>
+      </div>
+
+      <Button size="sm" variant="ghost" className="shrink-0" onClick={onOpenSetup}>
         Open setup
       </Button>
     </div>
