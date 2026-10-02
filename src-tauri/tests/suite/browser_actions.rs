@@ -734,7 +734,8 @@ fn the_two_response_steps_say_what_is_wrong_with_them() {
     for p in ["api/x", "//evil.example/x", "/a/../b", "https://evil.example/x", "/a\\b", ""] {
         assert_eq!(
             err(json!({ "kind": "api_request", "path": p })),
-            format!("api_request path \"{p}\" is not a safe path on this site"),
+            // Never repeated: an unsafe path can be a whole address.
+            "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address",
         );
     }
     assert_eq!(

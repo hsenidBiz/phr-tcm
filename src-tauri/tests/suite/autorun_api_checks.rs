@@ -632,19 +632,58 @@ async fn an_api_request_redirected_to_the_sign_in_page_fails_naming_where() {
     }));
     let out = ask(&mut d, &api("/hr/api/cycles/42", &[("access_token", "abc")], 200, None)).await;
     assert!(!out.ok && !out.harness);
-    assert!(out.detail.starts_with("GET /hr/api/cycles/42 was redirected to /Account/Login"), "{}", out.detail);
-    assert!(!out.detail.contains("ReturnUrl") && !out.detail.contains("abc"), "{}", out.detail);
+    // The path is enough: a sign-in page echoes its ReturnUrl, query and all.
+    assert_eq!(out.detail, "GET /hr/api/cycles/42 was redirected to /Account/Login");
+
+    // A sign-in page that writes the address into its own text.
+    let mut d = page_answering(json!({
+        "status": 200, "contentType": "text/html", "redirected": true, "sameOrigin": true,
+        "finalPath": "/Account/Login?ReturnUrl=x",
+        "text": "<form action=\"/Account/Login?ReturnUrl=%2Fhr%2Fapi%3Faccess_token%3Dabc\">"
+    }));
+    let out = ask(&mut d, &api("/hr/api/cycles/42", &[("access_token", "abc")], 200, None)).await;
+    assert_eq!(out.detail, "GET /hr/api/cycles/42 was redirected to /Account/Login");
+}
+
+#[tokio::test]
+async fn an_answer_from_another_site_fails_even_on_the_same_path() {
+    let mut d = page_answering(json!({
+        "status": 200, "contentType": "application/json", "redirected": true, "sameOrigin": false,
+        "finalPath": "/hr/api/me", "text": "{\"ok\":true}"
+    }));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, None)).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert_eq!(out.detail, "GET /hr/api/me was redirected to /hr/api/me on another site");
+    assert_eq!(classify(&out.detail, None), ErrorClass::Api);
+    assert!(GET_FN.contains("sameOrigin: at.origin === location.origin"));
 }
 
 #[tokio::test]
 async fn an_unsafe_or_query_carrying_path_is_refused_before_anything_is_sent() {
-    for p in ["https://evil.example/x", "//evil.example/x", "/a/../b", "api/x", "/x?access_token=abc", "/x#abc"] {
+    for p in [
+        "https://evil.example/x",
+        "//evil.example/x",
+        "/a/../b",
+        "api/x",
+        "/x?access_token=abc",
+        "/x#abc",
+        "https://evil.example/x?access_token=abc",
+        "//evil.example/x#abc",
+    ] {
         let mut d = page_answering(got(200, "{}"));
         let out = ask(&mut d, &api(p, &[], 200, None)).await;
         assert!(!out.ok, "{p}");
         assert!(out.detail.starts_with("this action cannot run: "), "{}", out.detail);
-        assert!(!out.detail.contains("abc"), "{}", out.detail);
+        assert!(!out.detail.contains("abc") && !out.detail.contains("evil.example"), "{}", out.detail);
         assert!(d.calls.is_empty(), "{p}: {:?}", d.calls);
+    }
+}
+
+#[test]
+fn a_path_refusal_never_repeats_a_host() {
+    let err = |p: &str| api(p, &[], 200, None).validate().unwrap_err();
+    for p in ["https://evil.example/x", "https://evil.example/x?y=1", "//evil.example/x#f", "/a/../b?x=1"] {
+        assert_eq!(err(p), "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address");
     }
 }
 
@@ -808,4 +847,77 @@ fn the_new_sentences_are_in_the_api_class() {
     ] {
         assert_eq!(classify(detail, None), ErrorClass::Api, "{detail}");
     }
+}
+
+// ------------------------------------------- redaction: no way round it
+
+/// What each kind of check shows of `body` when its JSON check fails.
+async fn both_kinds_show(body: &str, over: bool) -> Vec<String> {
+    let mut shown = vec![];
+    let owned = body.to_string();
+    let mut d = browser(move || Ok(json!({ "body": owned.clone(), "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(200));
+    shown.push(check(&mut d, &expect(None, "/Save", 200, Some(json!({ "ok": true })), None)).await.detail);
+    let text: String = body.chars().take(65_536).collect();
+    let mut d = page_answering(json!({ "status": 200, "redirected": false, "finalPath": "/hr/api/me", "text": text, "over": over }));
+    shown.push(ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "ok": true })))).await.detail);
+    shown
+}
+
+fn hides(details: &[String], secrets: &[&str]) {
+    for detail in details {
+        assert!(!detail.is_empty());
+        for s in secrets {
+            assert!(!detail.contains(s), "{s} shows in: {}", detail.chars().take(300).collect::<String>());
+        }
+        assert!(detail.contains("[redacted]"), "{}", detail.chars().take(300).collect::<String>());
+    }
+}
+
+#[tokio::test]
+async fn an_object_or_array_under_a_secret_key_is_hidden_in_a_cut_off_body() {
+    let pad = "x".repeat(70_000);
+    let body = format!(r#"{{"session":{{"id":"s1","inner":{{"v":"s2"}},"note":"a \"}}\" b"}},"pad":"{pad}"}}"#);
+    let details = both_kinds_show(&body, true).await;
+    for d in &details {
+        assert!(d.contains("over 64 KB"), "{}", d.chars().take(200).collect::<String>());
+        assert!(d.contains("\"pad\""), "what follows the hidden object still shows");
+    }
+    hides(&details, &["s1", "s2", "a \\\"}\\\" b"]);
+
+    let body = format!(r#"{{"cookies":["a1",{{"b":"b2"}}],"pad":"{pad}"}}"#);
+    hides(&both_kinds_show(&body, true).await, &["a1", "b2"]);
+
+    // Cut off inside the secret object itself: hidden to the end.
+    let body = format!(r#"{{"ok":false,"session":{{"id":"s1","pad":"{pad}"}}}}"#);
+    hides(&both_kinds_show(&body, true).await, &["s1", "xxxx"]);
+}
+
+#[tokio::test]
+async fn an_array_under_a_secret_key_is_hidden_in_a_whole_body() {
+    let body = r#"{"cookies":["a1",{"b":"b2"}],"tokens":{"x":[1,"t3"]},"ok":false}"#;
+    hides(&both_kinds_show(body, false).await, &["a1", "b2", "t3"]);
+}
+
+#[tokio::test]
+async fn json_inside_a_json_string_is_hidden_too() {
+    // The whole body a JSON string that holds JSON.
+    let body = serde_json::to_string(r#"{"token":"abc","user":{"password":"p"}}"#).unwrap();
+    hides(&both_kinds_show(&body, false).await, &["abc", "\\\"p\\\""]);
+
+    // A field that holds JSON as text, and one that holds JSON-like text.
+    let inner = serde_json::to_string(r#"{"token":"abc"}"#).unwrap();
+    let body = format!(r#"{{"data":{inner},"log":"saw \"secret\": \"zz9\" then","ok":false}}"#);
+    hides(&both_kinds_show(&body, false).await, &["abc", "zz9"]);
+
+    // ...and the same cut off past 64 KB, where nothing parses.
+    let body = format!(r#"{{"data":{inner},"log":"saw \"secret\": \"zz9\" then","pad":"{}"}}"#, "x".repeat(70_000));
+    hides(&both_kinds_show(&body, true).await, &["abc", "zz9"]);
+
+    // A field mismatch quoting a value that holds JSON as text.
+    let body = format!(r#"{{"data":{inner}}}"#);
+    let mut d = page_answering(got(200, &body));
+    let out = ask(&mut d, &api("/hr/api/me", &[], 200, Some(json!({ "data": 1 })))).await;
+    assert!(out.detail.starts_with("the response to GET /hr/api/me: expected data = 1, got "), "{}", out.detail);
+    assert!(!out.detail.contains("abc") && out.detail.contains("[redacted]"), "{}", out.detail);
 }

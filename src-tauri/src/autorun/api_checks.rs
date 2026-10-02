@@ -70,9 +70,10 @@ const MAX_BODY_CHARS: usize = 65_536;
 /// the browser attaches the site's cookies; no anti-forgery token (a GET
 /// does not need one). Aborted after `limitMs`. At most 64 KB of the body
 /// comes back, with `over` saying there was more; `finalPath` is the path
-/// and query the answer came from (the query is never shown). A request
-/// that did not complete comes back as `{ error }`, never a throw. The
-/// API templates' `FETCH_FN` is the pattern.
+/// and query the answer came from (the query is never shown), and
+/// `sameOrigin` whether it came from the page's own site. A request that
+/// did not complete comes back as `{ error }`, never a throw. The API
+/// templates' `FETCH_FN` is the pattern.
 pub const GET_FN: &str = r#"async function (url, limitMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), limitMs || 30000);
@@ -81,7 +82,8 @@ pub const GET_FN: &str = r#"async function (url, limitMs) {
     const whole = await r.text();
     const at = new URL(r.url || url, location.href);
     return { status: r.status, contentType: r.headers.get("content-type"), finalPath: at.pathname + at.search,
-             redirected: r.redirected, text: whole.slice(0, 65536), over: whole.length > 65536 };
+             sameOrigin: at.origin === location.origin, redirected: r.redirected,
+             text: whole.slice(0, 65536), over: whole.length > 65536 };
   } catch (e) {
     return { error: e && e.name === "AbortError" ? "timeout" : String(e) };
   } finally {
@@ -131,7 +133,9 @@ fn secret_key(key: &str) -> bool {
 }
 
 /// `v` with the value of every key named like a secret replaced by
-/// `REDACTED`, at any depth.
+/// `REDACTED`, at any depth. A string is a place JSON hides too: one that
+/// holds a JSON object or array is redacted the same way, and any other
+/// has `hide_members` run over it.
 fn redact(v: &Value) -> Value {
     match v {
         Value::Object(map) => Value::Object(
@@ -143,19 +147,125 @@ fn redact(v: &Value) -> Value {
                 .collect(),
         ),
         Value::Array(items) => Value::Array(items.iter().map(redact).collect()),
+        Value::String(s) => match serde_json::from_str::<Value>(s) {
+            Ok(inner @ (Value::Object(_) | Value::Array(_))) => {
+                Value::String(serde_json::to_string(&redact(&inner)).unwrap_or_default())
+            }
+            _ => Value::String(hide_members(s)),
+        },
         other => other.clone(),
     }
 }
 
-/// A JSON member named like a secret, and its value (a string - perhaps
-/// cut off - or a bare scalar), in text that does not parse: a body cut at
-/// the cap, or JSON inside a page.
-static SECRET_MEMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?i)("[^"\\]*(?:token|password|secret|authorization|cookie|session)[^"\\]*"\s*:\s*)(?:"(?:[^"\\]|\\.)*"?|[^,{}\[\]\s"]+)"#,
-    )
-    .unwrap()
+/// The key of a JSON member named like a secret, in text that does not
+/// parse (a body cut at the cap, JSON inside a page or inside a string):
+/// plain, `"token":`, or escaped once more, `\"token\":` - JSON written
+/// into a JSON string. The first group is the escape, when there is one.
+static SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\\?)"[^"\\]*(?:token|password|secret|authorization|cookie|session)[^"\\]*\\?"\s*:\s*"#).unwrap()
 });
+
+/// `text` with the value of every member named like a secret replaced by
+/// `REDACTED`, whatever the value is - a string, a scalar, or a whole
+/// object or array - and up to the end of the text when it was cut off
+/// inside one.
+fn hide_members(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    while let Some(key) = SECRET_KEY.captures_at(text, pos) {
+        let (Some(whole), Some(escape)) = (key.get(0), key.get(1)) else { break };
+        let escaped = !escape.is_empty();
+        out.push_str(&text[pos..whole.end()]);
+        let quote = if escaped { "\\\"" } else { "\"" };
+        out.push_str(&format!("{quote}{REDACTED}{quote}"));
+        pos = value_end(text, whole.end(), escaped).max(whole.end());
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+/// The characters of JSON text from a position, with one layer of escaping
+/// taken off when it is `escaped` (JSON written into a JSON string, which
+/// then ends at the first quote that is not escaped). Each comes with the
+/// byte just after it.
+struct Layer<'a> {
+    text: &'a str,
+    pos: usize,
+    escaped: bool,
+}
+
+impl Iterator for Layer<'_> {
+    type Item = (char, usize);
+
+    fn next(&mut self) -> Option<(char, usize)> {
+        let mut rest = self.text[self.pos..].chars();
+        let c = rest.next()?;
+        if self.escaped {
+            if c == '"' {
+                return None;
+            }
+            if c == '\\' {
+                let d = rest.next()?;
+                self.pos += 1 + d.len_utf8();
+                return Some((d, self.pos));
+            }
+        }
+        self.pos += c.len_utf8();
+        Some((c, self.pos))
+    }
+}
+
+/// Where the JSON value starting at `at` ends (the byte after it): a
+/// string to its closing quote, an object or array to its matching
+/// bracket - strings and escapes inside it respected - and anything else
+/// to the next separator. The end of the text, when it was cut off first.
+fn value_end(text: &str, at: usize, escaped: bool) -> usize {
+    let mut chars = Layer { text, pos: at, escaped };
+    let Some((first, after_first)) = chars.next() else { return chars.pos };
+    // A `\` arm's guard takes the character it escapes, so that character
+    // is never read as a quote or a bracket.
+    match first {
+        '"' => {
+            while let Some((c, after)) = chars.next() {
+                match c {
+                    '\\' if chars.next().is_none() => break,
+                    '"' => return after,
+                    _ => {}
+                }
+            }
+            chars.pos
+        }
+        '{' | '[' => {
+            let (mut depth, mut in_string) = (1usize, false);
+            while let Some((c, after)) = chars.next() {
+                match c {
+                    '\\' if in_string && chars.next().is_none() => break,
+                    '"' => in_string = !in_string,
+                    '{' | '[' if !in_string => depth += 1,
+                    '}' | ']' if !in_string => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return after;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            chars.pos
+        }
+        c if c == ',' || c == '}' || c == ']' || c.is_whitespace() => at,
+        _ => {
+            let mut end = after_first;
+            for (c, after) in chars.by_ref() {
+                if c == ',' || c == '}' || c == ']' || c.is_whitespace() {
+                    break;
+                }
+                end = after;
+            }
+            end
+        }
+    }
+}
 
 /// What a failure may quote of a body, for both kinds of check: a JSON body
 /// with every value under a key named like a secret hidden (text that does
@@ -164,7 +274,7 @@ static SECRET_MEMBER: LazyLock<Regex> = LazyLock::new(|| {
 pub fn shown_body(body: &str) -> String {
     let hidden = match serde_json::from_str::<Value>(body) {
         Ok(v) => serde_json::to_string(&redact(&v)).unwrap_or_default(),
-        Err(_) => SECRET_MEMBER.replace_all(body, format!("${{1}}\"{REDACTED}\"")).into_owned(),
+        Err(_) => hide_members(body),
     };
     excerpt(&scrub_tokens(&hidden, None))
 }
@@ -395,12 +505,16 @@ pub async fn api_request<D: Driver>(d: &mut D, a: &Action, timing: &Timing) -> A
         return ActionOutcome::failed(format!("{who}{NET_FAILED}the page gave no answer"));
     };
     let text = got["text"].as_str().unwrap_or("").to_string();
-    if got["redirected"].as_bool() == Some(true) {
-        let landed = path_only(got["finalPath"].as_str().unwrap_or(""));
-        if landed != path.as_str() {
-            let to = if landed.is_empty() { "another page" } else { landed };
-            return failed_showing(format!("{who}{REDIRECTED}{to}"), Some(&text));
-        }
+    // Answered by another page, or by another site even on the same path.
+    // No excerpt: a sign-in page writes the address it was sent from -
+    // query and all - into its own text, and the path says enough.
+    let landed = path_only(got["finalPath"].as_str().unwrap_or(""));
+    let to = if landed.is_empty() { "another page" } else { landed };
+    if got["sameOrigin"].as_bool() == Some(false) {
+        return ActionOutcome::failed(format!("{who}{REDIRECTED}{to} on another site"));
+    }
+    if got["redirected"].as_bool() == Some(true) && landed != path.as_str() {
+        return ActionOutcome::failed(format!("{who}{REDIRECTED}{to}"));
     }
     let body = if got["over"].as_bool() == Some(true) { Body::Over(text) } else { Body::Text(text) };
     match judge_answer(&who, Some(status), expect.status, expect.json.as_ref(), &body) {

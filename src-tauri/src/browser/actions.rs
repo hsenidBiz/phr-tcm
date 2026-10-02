@@ -122,7 +122,12 @@ impl Default for ApiExpect {
     }
 }
 
-const HTTP_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+/// An `api_request` path that is not a safe path on the page's own site -
+/// not repeated, since it can be a whole address.
+const UNSAFE_API_PATH: &str =
+    "api_request path is not a safe path on this site - give a path such as /api/cycles/42, never an address";
+
+const HTTP_METHODS: [&str; 7] =["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 fn check_status(status: u16) -> Result<(), String> {
     if (100..=599).contains(&status) {
@@ -349,16 +354,18 @@ impl Action {
                 check_status(*status)
             }
             Action::ApiRequest { path, expect, .. } => {
-                // The query goes only through `query`. Only what comes
-                // before the `?` is repeated: what follows can be a token.
-                if let Some(i) = path.find(['?', '#']) {
-                    return Err(format!(
-                        "api_request path \"{}\" must not contain ? or # - put the query in \"query\"",
-                        &path[..i]
-                    ));
+                // A refusal repeats only a safe path on this site: never
+                // what follows a `?` (it can be a token), never an address
+                // (it names a host).
+                let before = path.find(['?', '#']).map(|i| &path[..i]);
+                if !crate::api_templates::is_safe_relative_path(before.unwrap_or(path)) {
+                    return Err(UNSAFE_API_PATH.to_string());
                 }
-                if !crate::api_templates::is_safe_relative_path(path) {
-                    return Err(format!("api_request path \"{path}\" is not a safe path on this site"));
+                // The query goes only through `query`.
+                if let Some(before) = before {
+                    return Err(format!(
+                        "api_request path \"{before}\" must not contain ? or # - put the query in \"query\""
+                    ));
                 }
                 check_status(expect.status)
             }
