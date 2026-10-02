@@ -641,3 +641,29 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   expect(screen.getByRole("button", { name: "Edit accounts" })).toBeEnabled();
   expect(within(row("Site address")).getByText(why)).toBeInTheDocument();
 });
+
+// On a wide window the screen is two columns: what you set up and run from
+// on the left, what came of it (Past runs) on the right. jsdom does no
+// layout, so the breakpoint itself is a hand check; what is held here is
+// the structure it rests on - two columns, each with its own content, and
+// the left one first in the DOM so a screen reader meets the setup before
+// the results.
+test("the setup and case list sit in one column and Past runs in another, left first", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1]);
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+
+  const setup = screen.getByRole("heading", { name: "Setup" });
+  const cases = screen.getByRole("heading", { name: /^Test cases/ });
+  const runs = screen.getByRole("heading", { name: "Past runs" });
+  const leftColumn = setup.closest("section")!.parentElement!;
+  const rightColumn = runs.closest("section")!.parentElement!;
+
+  expect(leftColumn).not.toBe(rightColumn);
+  expect(leftColumn.parentElement).toBe(rightColumn.parentElement);
+  expect(leftColumn).toContainElement(cases);
+  expect(rightColumn).not.toContainElement(setup);
+  expect(leftColumn.compareDocumentPosition(rightColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The grid is what becomes two columns at the lg breakpoint.
+  expect(leftColumn.parentElement!.className).toMatch(/lg:grid-cols-/);
+});

@@ -349,361 +349,378 @@ export default function AutoRun({
   const extraSites = saved ? site.allowed_origins.length : 0;
 
   return (
-    <div className="max-w-3xl space-y-4">
-      {/* The same header line API Templates opens with: where this screen's
-          runs go, at a glance, before anything else. */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
-        <span>
-          Project <span className="font-medium text-text">{project || "none picked"}</span>
-        </span>
-        {recipe.isSuccess && (
-          <span>
-            {activeEnv ? "Environment" : "Runs against"}{" "}
-            <span className="font-medium text-text">
-              {activeEnv && `${activeEnv.name} - `}
-              {site.start_url ? siteHost(site.start_url) : "no site set yet"}
+    <>
+      {/* Two columns on a wide window, the way Settings lays out: the left
+          is everything you set up and run from (header, Setup, Test cases),
+          the right is what came of it (Past runs). The left track stops at
+          48rem - the case rows read no better wider - and gives way first, so
+          at the lg boundary the right keeps its 20rem floor and the case
+          list still has room for a title beside its two buttons. Below lg it
+          is one column in the old order. Normal page flow: Settings' columns
+          do not scroll on their own, so neither do these, and the page's own
+          bottom padding keeps the floating dock clear of the last run. In
+          the DOM the left column comes first, so a screen reader meets the
+          setup before the results. */}
+      <div className="grid max-w-3xl gap-6 lg:max-w-none lg:grid-cols-[minmax(0,48rem)_minmax(20rem,1fr)] lg:items-start">
+        <div className="min-w-0 space-y-4">
+          {/* The same header line API Templates opens with: where this screen's
+              runs go, at a glance, before anything else. */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
+            <span>
+              Project <span className="font-medium text-text">{project || "none picked"}</span>
             </span>
-          </span>
-        )}
-        {accountCount != null && <span>{plural(accountCount, "account")}</span>}
-        {areaCount != null && <span>{plural(areaCount, "area")}</span>}
-      </div>
-
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Setup</h2>
-        <div className="space-y-3">
-          <SetupRow
-            label="Site address"
-            state={
-              !setupReady ? (
-                <span className="text-muted">{needsProject}</span>
-              ) : recipe.isLoading ? (
-                <span className="text-muted">Loading…</span>
-              ) : recipe.isError ? (
-                <span className="text-danger">The saved recipe could not be read</span>
-              ) : saved ? (
-                <>
-                  <span className="id-mono break-all">{site.start_url}</span>
-                  {extraSites > 0 && (
-                    <span className="ml-2 text-xs text-faint">
-                      +{plural(extraSites, "allowed site")}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span className="text-muted">Not set up yet</span>
-              )
-            }
-          >
-            {/* The address lives inside the recipe, so there is nothing to
-                edit on its own until a recipe exists - without one, this
-                row's button records the sign-in instead, which asks for
-                the address first. */}
-            {saved ? (
-              <Button
-                size="sm"
-                variant="outline"
-                aria-label="Edit site address"
-                disabled={!setupReady}
-                title={needsProject}
-                onClick={() => setSiteOpen(true)}
-              >
-                <IconSiteAddress aria-hidden />
-                Edit
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!setupReady || recipe.isLoading || recipe.isError}
-                title={needsProject}
-                onClick={() => setRecordOpen(true)}
-              >
-                <IconSiteAddress aria-hidden />
-                Set up sign-in
-              </Button>
+            {recipe.isSuccess && (
+              <span>
+                {activeEnv ? "Environment" : "Runs against"}{" "}
+                <span className="font-medium text-text">
+                  {activeEnv && `${activeEnv.name} - `}
+                  {site.start_url ? siteHost(site.start_url) : "no site set yet"}
+                </span>
+              </span>
             )}
-          </SetupRow>
+            {accountCount != null && <span>{plural(accountCount, "account")}</span>}
+            {areaCount != null && <span>{plural(areaCount, "area")}</span>}
+          </div>
 
-          <SetupRow
-            label="Sign-in"
-            state={
-              !setupReady ? (
-                <span className="text-muted">{needsProject}</span>
-              ) : recipe.isLoading ? (
-                <span className="text-muted">Loading…</span>
-              ) : recipe.isError ? (
-                <span className="text-danger">Could not be read - open it to see why</span>
-              ) : saved ? (
-                "Recipe saved"
-              ) : (
-                <span className="text-muted">Not set up</span>
-              )
-            }
-          >
-            {/* Record: sign in by hand once and the recipe is written.
-                Edit: the recipe as JSON, for what a recording cannot say. */}
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label="Record sign-in"
-              disabled={!setupReady}
-              title={needsProject}
-              onClick={() => setRecordOpen(true)}
-            >
-              <IconRecord aria-hidden />
-              Record
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label="Edit sign-in recipe"
-              disabled={!setupReady}
-              title={needsProject}
-              onClick={() => setRecipeOpen(true)}
-            >
-              <IconRecipe aria-hidden />
-              Edit
-            </Button>
-          </SetupRow>
-
-          <SetupRow
-            label="Accounts"
-            state={
-              accounts.isError ? (
-                <span className="text-danger">The accounts could not be read</span>
-              ) : accounts.isPending || accountCount == null ? (
-                <span className="text-muted">Loading…</span>
-              ) : accountCount === 0 ? (
-                <span className="text-muted">None yet</span>
-              ) : (
-                `${plural(accountCount, "account")} on this machine`
-              )
-            }
-          >
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label="Edit accounts"
-              onClick={() => setAccountsOpen(true)}
-            >
-              <IconAccounts aria-hidden />
-              Edit
-            </Button>
-          </SetupRow>
-
-          <SetupRow
-            label="Areas"
-            state={
-              !setupReady ? (
-                <span className="text-muted">{needsProject}</span>
-              ) : nav.isError ? (
-                <span className="text-danger">The areas could not be read</span>
-              ) : nav.isPending || areaCount == null ? (
-                <span className="text-muted">Loading…</span>
-              ) : areaCount === 0 ? (
-                <span className="text-muted">None recorded yet</span>
-              ) : (
-                `${plural(areaCount, "area")} recorded`
-              )
-            }
-          >
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label="Edit areas"
-              disabled={!setupReady}
-              title={needsProject}
-              onClick={() => setNavOpen(true)}
-            >
-              <IconModulePaths aria-hidden />
-              Edit
-            </Button>
-          </SetupRow>
-
-          <SetupRow
-            label="Test files"
-            state={
-              !setupReady ? (
-                <span className="text-muted">{needsProject}</span>
-              ) : testFiles.isError ? (
-                <span className="text-danger">The test files could not be read</span>
-              ) : testFiles.isPending || testFileCount == null ? (
-                <span className="text-muted">Loading…</span>
-              ) : testFileCount === 0 ? (
-                <span className="text-muted">None yet</span>
-              ) : (
-                plural(testFileCount, "file")
-              )
-            }
-          >
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label="Manage test files"
-              disabled={!setupReady}
-              title={needsProject}
-              onClick={() => setTestFilesOpen(true)}
-            >
-              <IconTestFiles aria-hidden />
-              Manage
-            </Button>
-          </SetupRow>
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-text">
-          Test cases
-          {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
-        </h2>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={importScripts.isPending}
-            onClick={() => importScripts.mutate()}
-          >
-            <IconImport aria-hidden />
-            Import scripts
-          </Button>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-            <Checkbox
-              checked={grouped}
-              ariaLabel="Group by title"
-              onCheckedChange={(on) => {
-                setGrouped(on);
-                try {
-                  localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
-                } catch {
-                  // storage unavailable -> the choice lasts this session
+          <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Setup</h2>
+            <div className="space-y-3">
+              <SetupRow
+                label="Site address"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : recipe.isLoading ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : recipe.isError ? (
+                    <span className="text-danger">The saved recipe could not be read</span>
+                  ) : saved ? (
+                    <>
+                      <span className="id-mono break-all">{site.start_url}</span>
+                      {extraSites > 0 && (
+                        <span className="ml-2 text-xs text-faint">
+                          +{plural(extraSites, "allowed site")}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-muted">Not set up yet</span>
+                  )
                 }
-              }}
-            />
-            Group by title
-          </label>
-          {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
-              whole tab is gated in one place (`autoRunVisible` in
-              lib/extras.ts), so no further gating belongs here. Disabled
-              rather than hidden: a button that vanishes the moment it would
-              do nothing invites "where did it go", where greyed-out with
-              nothing to do reads as exactly that. Danger only on hover, the
-              way the import queue's Remove reads: destructive, but
-              secondary, and it still asks first. */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="ml-auto hover:border-danger hover:bg-danger/10 hover:text-danger"
-            disabled={!rows.some((_, i) => hasScript(i))}
-            onClick={() => setClearScriptsOpen(true)}
-          >
-            <IconClearScripts aria-hidden />
-            Clear scripts
-          </Button>
-        </div>
-        <p className="text-xs text-faint">One JSON file can carry every case in this PBI.</p>
-
-        {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
-        {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
-
-        {grouped ? (
-          groups.map(({ name, indices }) => {
-            const label = name || "Ungrouped";
-            const shut = collapsed.has(label);
-            return (
-              <div key={label} className="space-y-1">
-                <div className="flex w-full items-center gap-3 pb-1 pt-2">
-                  {/* Left-anchored with a trailing rule - see ViewCases for why. */}
-                  <button
-                    aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
-                    title={shut ? "Expand group" : "Collapse group"}
-                    className="text-muted transition-colors hover:text-accent"
-                    onClick={() => toggleCollapsed(label)}
+              >
+                {/* The address lives inside the recipe, so there is nothing to
+                    edit on its own until a recipe exists - without one, this
+                    row's button records the sign-in instead, which asks for
+                    the address first. */}
+                {saved ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label="Edit site address"
+                    disabled={!setupReady}
+                    title={needsProject}
+                    onClick={() => setSiteOpen(true)}
                   >
-                    {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-                  </button>
-                  {/* Same contract as the other grouped screens: selection
-                      is the checkbox's job (scripted cases only), the TITLE
-                      toggles the fold like the chevron. */}
-                  {(() => {
-                    const runnable = runnableIn(indices);
-                    const on = runnable.filter((id) => selected.has(id)).length;
-                    return (
-                      <Checkbox
-                        ariaLabel={`Select all in ${label}`}
-                        checked={runnable.length > 0 && on === runnable.length}
-                        indeterminate={on > 0 && on < runnable.length}
-                        onCheckedChange={() => toggleGroup(indices)}
-                      />
-                    );
-                  })()}
-                  <button
-                    className="group flex items-center gap-2"
-                    title={shut ? "Expand group" : "Collapse group"}
-                    onClick={() => toggleCollapsed(label)}
+                    <IconSiteAddress aria-hidden />
+                    Edit
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!setupReady || recipe.isLoading || recipe.isError}
+                    title={needsProject}
+                    onClick={() => setRecordOpen(true)}
                   >
-                    <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                      {label} ({indices.length})
-                    </span>
-                  </button>
-                  <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-                </div>
-                <Collapse open={!shut} animateIn={settled}>
-                  <ul className="space-y-1">{indices.map(row)}</ul>
-                </Collapse>
-              </div>
-            );
-          })
-        ) : (
-          <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
-        )}
+                    <IconSiteAddress aria-hidden />
+                    Set up sign-in
+                  </Button>
+                )}
+              </SetupRow>
 
-        {/* Actions on the selection live bottom-right, in the one shared
-            dock (see ActionDock): in place under the list, and floating
-            bottom-right once that row has scrolled away. It only exists
-            while something is ticked, so the screen never carries a
-            permanently disabled button nobody can use. */}
-        {selectedInOrder.length > 0 && (
-          <ActionDock label="Run selection" surface className="pt-1">
-            {(floating) => (
-              <>
-                {/* No "N cases selected" text - the count is already in the
-                    button's own label, same as Run Tests' floating pill. */}
+              <SetupRow
+                label="Sign-in"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : recipe.isLoading ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : recipe.isError ? (
+                    <span className="text-danger">Could not be read - open it to see why</span>
+                  ) : saved ? (
+                    "Recipe saved"
+                  ) : (
+                    <span className="text-muted">Not set up</span>
+                  )
+                }
+              >
+                {/* Record: sign in by hand once and the recipe is written.
+                    Edit: the recipe as JSON, for what a recording cannot say. */}
                 <Button
                   size="sm"
-                  tabIndex={floating ? -1 : undefined}
-                  onClick={() => setRunning(selectedInOrder)}
+                  variant="outline"
+                  aria-label="Record sign-in"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setRecordOpen(true)}
                 >
-                  <IconRun aria-hidden />
-                  Run {selectedInOrder.length} selected
+                  <IconRecord aria-hidden />
+                  Record
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  tabIndex={floating ? -1 : undefined}
-                  onClick={() => setReplaying(selectedInOrder)}
+                  aria-label="Edit sign-in recipe"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setRecipeOpen(true)}
                 >
-                  <IconUnattended aria-hidden />
-                  Run {selectedInOrder.length} unattended
+                  <IconRecipe aria-hidden />
+                  Edit
                 </Button>
+              </SetupRow>
+
+              <SetupRow
+                label="Accounts"
+                state={
+                  accounts.isError ? (
+                    <span className="text-danger">The accounts could not be read</span>
+                  ) : accounts.isPending || accountCount == null ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : accountCount === 0 ? (
+                    <span className="text-muted">None yet</span>
+                  ) : (
+                    `${plural(accountCount, "account")} on this machine`
+                  )
+                }
+              >
                 <Button
                   size="sm"
-                  variant="ghost"
-                  aria-label="Clear selection"
-                  title="Clear selection"
-                  tabIndex={floating ? -1 : undefined}
-                  className="rounded-full px-2 hover:text-danger"
-                  onClick={() => setSelected(new Set())}
+                  variant="outline"
+                  aria-label="Edit accounts"
+                  onClick={() => setAccountsOpen(true)}
                 >
-                  <IconCancel aria-hidden />
+                  <IconAccounts aria-hidden />
+                  Edit
                 </Button>
-              </>
-            )}
-          </ActionDock>
-        )}
-      </section>
+              </SetupRow>
 
-      <PastRuns pbiId={pbi.id} onReview={setReviewing} />
+              <SetupRow
+                label="Areas"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : nav.isError ? (
+                    <span className="text-danger">The areas could not be read</span>
+                  ) : nav.isPending || areaCount == null ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : areaCount === 0 ? (
+                    <span className="text-muted">None recorded yet</span>
+                  ) : (
+                    `${plural(areaCount, "area")} recorded`
+                  )
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Edit areas"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setNavOpen(true)}
+                >
+                  <IconModulePaths aria-hidden />
+                  Edit
+                </Button>
+              </SetupRow>
+
+              <SetupRow
+                label="Test files"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : testFiles.isError ? (
+                    <span className="text-danger">The test files could not be read</span>
+                  ) : testFiles.isPending || testFileCount == null ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : testFileCount === 0 ? (
+                    <span className="text-muted">None yet</span>
+                  ) : (
+                    plural(testFileCount, "file")
+                  )
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Manage test files"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setTestFilesOpen(true)}
+                >
+                  <IconTestFiles aria-hidden />
+                  Manage
+                </Button>
+              </SetupRow>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h2 className="text-sm font-semibold text-text">
+              Test cases
+              {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
+            </h2>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={importScripts.isPending}
+                onClick={() => importScripts.mutate()}
+              >
+                <IconImport aria-hidden />
+                Import scripts
+              </Button>
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <Checkbox
+                  checked={grouped}
+                  ariaLabel="Group by title"
+                  onCheckedChange={(on) => {
+                    setGrouped(on);
+                    try {
+                      localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+                    } catch {
+                      // storage unavailable -> the choice lasts this session
+                    }
+                  }}
+                />
+                Group by title
+              </label>
+              {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
+                  whole tab is gated in one place (`autoRunVisible` in
+                  lib/extras.ts), so no further gating belongs here. Disabled
+                  rather than hidden: a button that vanishes the moment it would
+                  do nothing invites "where did it go", where greyed-out with
+                  nothing to do reads as exactly that. Danger only on hover, the
+                  way the import queue's Remove reads: destructive, but
+                  secondary, and it still asks first. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto hover:border-danger hover:bg-danger/10 hover:text-danger"
+                disabled={!rows.some((_, i) => hasScript(i))}
+                onClick={() => setClearScriptsOpen(true)}
+              >
+                <IconClearScripts aria-hidden />
+                Clear scripts
+              </Button>
+            </div>
+            <p className="text-xs text-faint">One JSON file can carry every case in this PBI.</p>
+
+            {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
+            {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
+
+            {grouped ? (
+              groups.map(({ name, indices }) => {
+                const label = name || "Ungrouped";
+                const shut = collapsed.has(label);
+                return (
+                  <div key={label} className="space-y-1">
+                    <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                      {/* Left-anchored with a trailing rule - see ViewCases for why. */}
+                      <button
+                        aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
+                        title={shut ? "Expand group" : "Collapse group"}
+                        className="text-muted transition-colors hover:text-accent"
+                        onClick={() => toggleCollapsed(label)}
+                      >
+                        {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                      </button>
+                      {/* Same contract as the other grouped screens: selection
+                          is the checkbox's job (scripted cases only), the TITLE
+                          toggles the fold like the chevron. */}
+                      {(() => {
+                        const runnable = runnableIn(indices);
+                        const on = runnable.filter((id) => selected.has(id)).length;
+                        return (
+                          <Checkbox
+                            ariaLabel={`Select all in ${label}`}
+                            checked={runnable.length > 0 && on === runnable.length}
+                            indeterminate={on > 0 && on < runnable.length}
+                            onCheckedChange={() => toggleGroup(indices)}
+                          />
+                        );
+                      })()}
+                      <button
+                        className="group flex items-center gap-2"
+                        title={shut ? "Expand group" : "Collapse group"}
+                        onClick={() => toggleCollapsed(label)}
+                      >
+                        <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                          {label} ({indices.length})
+                        </span>
+                      </button>
+                      <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+                    </div>
+                    <Collapse open={!shut} animateIn={settled}>
+                      <ul className="space-y-1">{indices.map(row)}</ul>
+                    </Collapse>
+                  </div>
+                );
+              })
+            ) : (
+              <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
+            )}
+
+            {/* Actions on the selection live bottom-right, in the one shared
+                dock (see ActionDock): in place under the list, and floating
+                bottom-right once that row has scrolled away. It only exists
+                while something is ticked, so the screen never carries a
+                permanently disabled button nobody can use. */}
+            {selectedInOrder.length > 0 && (
+              <ActionDock label="Run selection" surface className="pt-1">
+                {(floating) => (
+                  <>
+                    {/* No "N cases selected" text - the count is already in the
+                        button's own label, same as Run Tests' floating pill. */}
+                    <Button
+                      size="sm"
+                      tabIndex={floating ? -1 : undefined}
+                      onClick={() => setRunning(selectedInOrder)}
+                    >
+                      <IconRun aria-hidden />
+                      Run {selectedInOrder.length} selected
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      tabIndex={floating ? -1 : undefined}
+                      onClick={() => setReplaying(selectedInOrder)}
+                    >
+                      <IconUnattended aria-hidden />
+                      Run {selectedInOrder.length} unattended
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label="Clear selection"
+                      title="Clear selection"
+                      tabIndex={floating ? -1 : undefined}
+                      className="rounded-full px-2 hover:text-danger"
+                      onClick={() => setSelected(new Set())}
+                    >
+                      <IconCancel aria-hidden />
+                    </Button>
+                  </>
+                )}
+              </ActionDock>
+            )}
+          </section>
+        </div>
+
+        <div className="min-w-0">
+          <PastRuns pbiId={pbi.id} onReview={setReviewing} />
+        </div>
+      </div>
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
@@ -851,6 +868,6 @@ export default function AutoRun({
           onClose={() => setReviewing(null)}
         />
       )}
-    </div>
+    </>
   );
 }
