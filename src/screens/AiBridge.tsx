@@ -62,9 +62,12 @@ import {
   IconUnregister,
 } from "../lib/actionIcons";
 
-/** Config keys, mirroring `ai_tools.rs`. The second is a server earlier
- * versions could register beside ours; it is only ever removed now. */
-const TCM_SERVER = "tcm-testcases";
+/** Config keys, mirroring `ai_tools.rs`. The second is our own server's
+ * name before it was renamed: a config still holding only that needs
+ * updating, which registering does. The third is a server earlier versions
+ * could register beside ours; it is only ever removed now. */
+const TCM_SERVER = "tcm";
+const LEGACY_TCM_SERVER = "tcm-testcases";
 const LEGACY_DB_SERVER = "phr-db-mcp";
 
 /** Clipboard copies are fire-and-forget from the UI's perspective, but the
@@ -493,17 +496,25 @@ export default function AiBridge() {
                       </Button>
                     </span>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={register.isPending && register.variables === t.id}
-                      onClick={() => register.mutate(t.id)}
-                    >
-                      <IconRegister aria-hidden />
-                      {register.isPending && register.variables === t.id
-                        ? "Registering"
-                        : "Register"}
-                    </Button>
+                    <span className="flex items-center gap-2">
+                      {/* Registered by an earlier version under the server's
+                          old name. Registering replaces it in the same
+                          config, so the same button is the fix. */}
+                      {(t.registered_servers ?? []).includes(LEGACY_TCM_SERVER) && (
+                        <span className="text-xs text-warning">Needs updating</span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={register.isPending && register.variables === t.id}
+                        onClick={() => register.mutate(t.id)}
+                      >
+                        <IconRegister aria-hidden />
+                        {register.isPending && register.variables === t.id
+                          ? "Registering"
+                          : "Register"}
+                      </Button>
+                    </span>
                   )}
                 </div>
                 {/* A machine-wide copy of our server, left from before this
@@ -511,9 +522,12 @@ export default function AiBridge() {
                     clients let a user-scope server shadow the project one,
                     so it is worth saying - and worth being able to remove
                     from here, since nothing else in the app reaches it.
-                    The old database server's copy is not ours to show: it
-                    is removed quietly above. */}
-                {(t.global_registered_servers ?? []).includes(TCM_SERVER) && (
+                    A copy under the server's old name counts the same:
+                    retiring takes out both. The old database server's copy
+                    is not ours to show: it is removed quietly above. */}
+                {(t.global_registered_servers ?? []).some(
+                  (s) => s === TCM_SERVER || s === LEGACY_TCM_SERVER,
+                ) && (
                   <div className="mt-1 flex items-center gap-2">
                     <span className="flex-1 text-xs text-faint">also registered globally</span>
                     <Button
@@ -543,14 +557,14 @@ export default function AiBridge() {
               <p className="mb-1 text-faint">Command-line registration (run inside the repository):</p>
               <div className="flex items-center gap-2">
                 <code className="id-mono flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text">
-                  claude mcp add --scope project tcm-testcases -- "{exe}" --mcp
+                  claude mcp add --scope project {TCM_SERVER} -- "{exe}" --mcp
                 </code>
                 <Button
                   size="sm"
                   variant="outline"
                   aria-label="Copy command"
                   onClick={() =>
-                    copy(`claude mcp add --scope project tcm-testcases -- "${exe}" --mcp`, "Command")
+                    copy(`claude mcp add --scope project ${TCM_SERVER} -- "${exe}" --mcp`, "Command")
                   }
                 >
                   <IconCopy aria-hidden />
@@ -563,7 +577,7 @@ export default function AiBridge() {
               <div className="flex items-start gap-2">
                 <pre className="id-mono flex-1 overflow-x-auto rounded bg-surface-2 px-2 py-1 text-xs text-text">
                   {JSON.stringify(
-                    { "tcm-testcases": { command: exe, args: ["--mcp"] } },
+                    { [TCM_SERVER]: { command: exe, args: ["--mcp"] } },
                     null,
                     2,
                   )}
@@ -575,7 +589,7 @@ export default function AiBridge() {
                   onClick={() =>
                     copy(
                       JSON.stringify(
-                        { "tcm-testcases": { command: exe, args: ["--mcp"] } },
+                        { [TCM_SERVER]: { command: exe, args: ["--mcp"] } },
                         null,
                         2,
                       ),

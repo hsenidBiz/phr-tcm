@@ -16,7 +16,7 @@ fn initialize_echoes_protocol_and_advertises_tools() {
     assert_eq!(v["id"], 1);
     assert_eq!(v["result"]["protocolVersion"], "2025-03-26");
     assert!(v["result"]["capabilities"]["tools"].is_object());
-    assert_eq!(v["result"]["serverInfo"]["name"], "tcm-testcases");
+    assert_eq!(v["result"]["serverInfo"]["name"], "tcm");
     // The proxy's OWN version. Reporting the app's (read from the handshake
     // file) is what hid a 1.22.1 proxy behind a 1.25.25 app for weeks: the
     // version looked current while the tool list was 1.22.1's (2026-09-24).
@@ -36,6 +36,8 @@ fn initialize_warns_when_the_running_app_is_a_different_version() {
     assert!(said.contains(PROXY_VERSION), "{said}");
     assert!(said.contains("LocalCache"), "names the stale copy's usual home: {said}");
     assert!(said.contains("new session"), "says what to do: {said}");
+    // The server names itself by the key it is registered under.
+    assert!(said.starts_with("The tcm MCP server"), "{said}");
 }
 
 /// Nothing extra when they match, or when the app is not running and its

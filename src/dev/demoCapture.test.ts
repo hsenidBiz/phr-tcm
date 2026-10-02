@@ -224,7 +224,7 @@ test("in capture mode, the AI Bridge, the board and pull requests start from the
 test("in capture mode the AI Bridge shows sample tools and databases, never this machine's", async () => {
   const { commands, CAPTURE_DATABASES } = await boot({ demo: true, capture: true });
   const tools = (await commands.detectAiTools(null)) as { registered_servers: string[]; scope: string }[];
-  expect(tools.map((t) => t.registered_servers)).toEqual([["tcm-testcases"], []]);
+  expect(tools.map((t) => t.registered_servers)).toEqual([["tcm"], []]);
   expect(tools.every((t) => t.scope === "project")).toBe(true);
   expect(await commands.dbDatabases()).toEqual(CAPTURE_DATABASES);
 

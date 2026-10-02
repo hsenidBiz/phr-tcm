@@ -12,7 +12,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
         install_dir: Some(".claude"),
         install_appdata_dir: None,
         // claude-code registers via its own CLI, but detection still reads
-        // ~/.claude.json to see whether tcm-testcases is already there.
+        // ~/.claude.json to see whether our server is already there.
         config_path: |home, _appdata| PathBuf::from(home).join(".claude.json"),
         entry_key: "mcpServers",
         project_config: Some(|root| PathBuf::from(root).join(".mcp.json")),
@@ -65,8 +65,20 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
     },
 ];
 
-/// Our own MCP server's key in every tool's config.
-pub const TCM_SERVER: &str = "tcm-testcases";
+/// Our own MCP server's key in every tool's config. Assistants show a tool
+/// as `<server>: <tool>`, so this is the prefix a person reads on every
+/// call - short, and the same `tcm` the slash commands are grouped under.
+pub const TCM_SERVER: &str = "tcm";
+
+/// The key our server was registered under until it was renamed to
+/// `TCM_SERVER`. Nothing writes it any more; it is named here so detection
+/// still reports a registration an earlier version made (the AI Bridge tab
+/// shows it as needing an update), and so registering `TCM_SERVER` can take
+/// it out of the same config - one server under two names would offer
+/// every tool twice. Also the name of the old single-file slash command
+/// (`legacy_command_path`) and the prefix of the old permission rules
+/// (`migrate_claude_permissions`).
+pub const LEGACY_TCM_SERVER: &str = "tcm-testcases";
 
 /// A separate database MCP server that earlier versions could register
 /// beside ours. The app's own database tools replaced it and nothing
@@ -77,7 +89,18 @@ pub const LEGACY_DB_SERVER: &str = "phr-db-mcp";
 
 /// Every server this app manages, including the one it only ever removes
 /// now. Anything else in a config is somebody else's and is never touched.
-pub const MANAGED_SERVERS: &[&str] = &[TCM_SERVER, LEGACY_DB_SERVER];
+pub const MANAGED_SERVERS: &[&str] = &[TCM_SERVER, LEGACY_TCM_SERVER, LEGACY_DB_SERVER];
+
+/// The names a registration of `server` replaces: registering it takes
+/// these out of the same config and scope. Only our own server replaces
+/// anything.
+pub fn superseded_by(server: &str) -> &'static [&'static str] {
+    if server == TCM_SERVER {
+        &[LEGACY_TCM_SERVER]
+    } else {
+        &[]
+    }
+}
 
 /// The Claude Code slash commands written alongside the MCP registration.
 ///
@@ -296,7 +319,7 @@ pub struct ToolSpec {
 /// One MCP server as it appears in a tool's config file.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct McpServer {
-    /// The config key, e.g. "tcm-testcases".
+    /// The config key, e.g. "tcm".
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
@@ -390,19 +413,31 @@ pub fn detect_in(
         .collect()
 }
 
+/// The server map under `key` in the config at `path`, or None when the
+/// file is missing, unparseable or has no such key.
+fn server_entries(path: &std::path::Path, key: &str) -> Option<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get(key).cloned())
+}
+
 /// Which of `MANAGED_SERVERS` the config at `path` carries under `key`.
 /// A missing or unparseable config reads as "none" - detection reports
 /// state, it never repairs a file it could not understand.
 fn managed_servers_in(path: &std::path::Path, key: &str) -> Vec<String> {
-    let entries = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(key).cloned());
+    let entries = server_entries(path, key);
     MANAGED_SERVERS
         .iter()
         .filter(|name| entries.as_ref().and_then(|e| e.get(**name)).is_some())
         .map(|name| name.to_string())
         .collect()
+}
+
+/// Whether the config at `path` carries `name` under `key` - read the same
+/// way detection reads it.
+pub fn config_carries(path: &std::path::Path, key: &str, name: &str) -> bool {
+    server_entries(path, key).is_some_and(|e| e.get(name).is_some())
 }
 
 /// Our own server, as it should appear in a config.
@@ -447,11 +482,23 @@ pub fn project_command_dir(root: &str) -> PathBuf {
 /// The single top-level file an earlier version wrote. Still named here so
 /// registering can clear it: leaving it behind would put `/tcm-testcases`
 /// in the picker next to the namespaced set, pointing at the same thing.
+/// Named after the server's OLD key, which is what that version used - not
+/// `TCM_SERVER`, whose `tcm.md` would be a different file.
 pub fn legacy_command_path(home: &str) -> PathBuf {
     PathBuf::from(home)
         .join(".claude")
         .join("commands")
-        .join(format!("{TCM_SERVER}.md"))
+        .join(format!("{LEGACY_TCM_SERVER}.md"))
+}
+
+/// Remove `legacy_command_path(home)` when it is ours (carries
+/// `COMMAND_MARKER`). A file of that name without the marker is somebody
+/// else's and stays; a missing one is already the state wanted.
+pub fn remove_legacy_command(home: &str) {
+    let legacy = legacy_command_path(home);
+    if matches!(std::fs::read_to_string(&legacy), Ok(t) if t.contains(COMMAND_MARKER)) {
+        let _ = std::fs::remove_file(&legacy);
+    }
 }
 
 /// Every command file to write: absolute path and full contents.
@@ -579,10 +626,13 @@ pub fn merge_entry(existing_json: &str, key: &str, server: &McpServer) -> Result
     if !server.env.is_empty() {
         entry.insert("env".into(), serde_json::json!(server.env));
     }
-    entries
-        .as_object_mut()
-        .unwrap()
-        .insert(server.name.clone(), serde_json::Value::Object(entry));
+    let entries = entries.as_object_mut().unwrap();
+    entries.insert(server.name.clone(), serde_json::Value::Object(entry));
+    // Registering under the current name retires the old one in the same
+    // config: both would start the same server and offer every tool twice.
+    for old in superseded_by(&server.name) {
+        entries.remove(*old);
+    }
     serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize config: {e}"))
 }
 
@@ -610,12 +660,94 @@ pub fn remove_entry(
 
 /// The Claude Code permission rule that lets our `db_query` run without the
 /// "Allow this tool?" prompt: one tool of one server, never a wildcard.
-pub const CLAUDE_DB_QUERY_RULE: &str = "mcp__tcm-testcases__db_query";
+pub const CLAUDE_DB_QUERY_RULE: &str = "mcp__tcm__db_query";
+
+/// Claude Code names a server's rules `mcp__<server>__<tool>`, and the
+/// server alone `mcp__<server>`.
+const CLAUDE_RULE_SERVER: &str = "mcp__tcm";
+const LEGACY_CLAUDE_RULE_SERVER: &str = "mcp__tcm-testcases";
+
+/// `rule` under the server's current name when it is one of the OLD name's
+/// rules - the whole server, or one of its tools - else None. A server
+/// whose name merely starts with the old one (`mcp__tcm-testcases-x__...`)
+/// is somebody else's.
+fn renamed_claude_rule(rule: &str) -> Option<String> {
+    if rule == LEGACY_CLAUDE_RULE_SERVER {
+        return Some(CLAUDE_RULE_SERVER.to_string());
+    }
+    rule.strip_prefix(LEGACY_CLAUDE_RULE_SERVER)
+        .and_then(|rest| rest.strip_prefix("__"))
+        .map(|tool| format!("{CLAUDE_RULE_SERVER}__{tool}"))
+}
+
+/// Rename the old name's rules in one permission list, in place: each takes
+/// the old one's position, and one whose new form the list already holds
+/// is dropped instead of written twice. `only` limits it to the rule that
+/// renames to that. Every other entry stays exactly where it was. Answers
+/// whether anything changed.
+fn rename_claude_rules(list: &mut Vec<serde_json::Value>, only: Option<&str>) -> bool {
+    let original = std::mem::take(list);
+    let mut changed = false;
+    for v in &original {
+        let renamed = v
+            .as_str()
+            .and_then(renamed_claude_rule)
+            .filter(|new| only.is_none_or(|o| o == new));
+        let Some(new) = renamed else {
+            list.push(v.clone());
+            continue;
+        };
+        changed = true;
+        let held = |l: &[serde_json::Value]| l.iter().any(|x| x.as_str() == Some(new.as_str()));
+        if !held(&original) && !held(list) {
+            list.push(serde_json::Value::String(new));
+        }
+    }
+    changed
+}
+
+/// A Claude Code settings file's text with every permission rule for the
+/// server's OLD name (`mcp__tcm-testcases`, `mcp__tcm-testcases__<tool>`)
+/// carried over to the current one, in `permissions.allow`, `deny` and
+/// `ask` - so an "always allow" given before the rename still holds after
+/// it. Same position, never a duplicate, nothing else touched. `None` when
+/// there is nothing to carry over (including an empty file), so an
+/// unchanged file is never rewritten. A file that is not a JSON object is
+/// refused, as `set_claude_allow` refuses it.
+pub fn migrate_claude_permissions(settings: &str) -> Result<Option<String>, String> {
+    if settings.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut root: serde_json::Value =
+        serde_json::from_str(settings).map_err(|e| format!("could not read the settings file: {e}"))?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "the settings file is not a JSON object".to_string())?;
+    let Some(perms) = obj.get_mut("permissions").and_then(|p| p.as_object_mut()) else {
+        return Ok(None);
+    };
+    let mut changed = false;
+    for key in ["allow", "deny", "ask"] {
+        if let Some(list) = perms.get_mut(key).and_then(|l| l.as_array_mut()) {
+            changed |= rename_claude_rules(list, None);
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize settings: {e}"))
+}
 
 /// A Claude Code settings file's text with `rule` in `permissions.allow`
 /// (`on`) or out of it, and nothing else touched - every other rule, key
 /// and value is somebody else's. `None` when the file already says what was
 /// asked, so an unchanged file is never rewritten.
+///
+/// The same rule under the server's old name is the same setting: it
+/// counts as `rule` being there, and is rewritten to `rule` where it stood
+/// (or taken out with it).
 ///
 /// An empty or missing file reads as `{}`. A file that is not a JSON object
 /// is refused rather than replaced: it is the person's own settings, and
@@ -630,36 +762,45 @@ pub fn set_claude_allow(settings: &str, rule: &str, on: bool) -> Result<Option<S
         .as_object_mut()
         .ok_or_else(|| "the settings file is not a JSON object".to_string())?;
 
+    let renamed = obj
+        .get_mut("permissions")
+        .and_then(|p| p.get_mut("allow"))
+        .and_then(|a| a.as_array_mut())
+        .is_some_and(|a| rename_claude_rules(a, Some(rule)));
+
     let has = obj
         .get("permissions")
         .and_then(|p| p.get("allow"))
         .and_then(|a| a.as_array())
         .is_some_and(|a| a.iter().any(|r| r == rule));
-    if has == on {
+    if has == on && !renamed {
         return Ok(None);
     }
 
-    if on {
-        let perms = obj
-            .entry("permissions")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .ok_or_else(|| "\"permissions\" in the settings file is not an object".to_string())?;
-        let allow = perms
-            .entry("allow")
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or_else(|| "\"permissions.allow\" in the settings file is not a list".to_string())?;
-        allow.push(serde_json::Value::String(rule.to_string()));
-    } else if let Some(perms) = obj.get_mut("permissions").and_then(|p| p.as_object_mut()) {
-        if let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut()) {
-            allow.retain(|r| r != rule);
-            if allow.is_empty() {
-                perms.remove("allow");
+    // `has == on` here means only the rename is left to write.
+    if has != on {
+        if on {
+            let perms = obj
+                .entry("permissions")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+                .ok_or_else(|| "\"permissions\" in the settings file is not an object".to_string())?;
+            let allow = perms
+                .entry("allow")
+                .or_insert_with(|| serde_json::json!([]))
+                .as_array_mut()
+                .ok_or_else(|| "\"permissions.allow\" in the settings file is not a list".to_string())?;
+            allow.push(serde_json::Value::String(rule.to_string()));
+        } else if let Some(perms) = obj.get_mut("permissions").and_then(|p| p.as_object_mut()) {
+            if let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut()) {
+                allow.retain(|r| r != rule);
+                if allow.is_empty() {
+                    perms.remove("allow");
+                }
             }
-        }
-        if perms.is_empty() {
-            obj.remove("permissions");
+            if perms.is_empty() {
+                obj.remove("permissions");
+            }
         }
     }
     serde_json::to_string_pretty(&root)
@@ -669,12 +810,20 @@ pub fn set_claude_allow(settings: &str, rule: &str, on: bool) -> Result<Option<S
 
 /// Cursor's allowlist entry that lets our `db_query` run without asking:
 /// `server:tool`, one tool of one server.
-pub const CURSOR_DB_QUERY_ENTRY: &str = "tcm-testcases:db_query";
+pub const CURSOR_DB_QUERY_ENTRY: &str = "tcm:db_query";
+
+/// `entry` as it read under the server's old name, when it is one of ours.
+fn legacy_cursor_entry(entry: &str) -> Option<String> {
+    entry
+        .strip_prefix(&format!("{TCM_SERVER}:"))
+        .map(|tool| format!("{LEGACY_TCM_SERVER}:{tool}"))
+}
 
 /// A Cursor `permissions.json`'s text with `entry` in `mcpAllowlist` (`on`)
 /// or out of it, nothing else touched. `None` when nothing would change.
 /// Same rules as `set_claude_allow`: an unreadable file is refused, never
-/// replaced, and a list the entry leaves empty goes with it.
+/// replaced, and a list the entry leaves empty goes with it - and the same
+/// entry under the server's old name counts as this one and is rewritten.
 pub fn set_cursor_allow(permissions: &str, entry: &str, on: bool) -> Result<Option<String>, String> {
     let text = if permissions.trim().is_empty() { "{}" } else { permissions };
     let mut root: serde_json::Value =
@@ -682,23 +831,44 @@ pub fn set_cursor_allow(permissions: &str, entry: &str, on: bool) -> Result<Opti
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "the permissions file is not a JSON object".to_string())?;
+    let mut renamed = false;
+    if let (Some(old), Some(list)) =
+        (legacy_cursor_entry(entry), obj.get_mut("mcpAllowlist").and_then(|a| a.as_array_mut()))
+    {
+        let matches = |v: &serde_json::Value, e: &str| v.as_str().is_some_and(|r| r.eq_ignore_ascii_case(e));
+        let original = std::mem::take(list);
+        let already = original.iter().any(|v| matches(v, entry));
+        for v in &original {
+            if !matches(v, &old) {
+                list.push(v.clone());
+                continue;
+            }
+            renamed = true;
+            if !already && !list.iter().any(|x| matches(x, entry)) {
+                list.push(serde_json::Value::String(entry.to_string()));
+            }
+        }
+    }
     let has = obj
         .get("mcpAllowlist")
         .and_then(|a| a.as_array())
         .is_some_and(|a| a.iter().any(|r| r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(entry))));
-    if has == on {
+    if has == on && !renamed {
         return Ok(None);
     }
-    if on {
-        obj.entry("mcpAllowlist")
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or_else(|| "\"mcpAllowlist\" in the permissions file is not a list".to_string())?
-            .push(serde_json::Value::String(entry.to_string()));
-    } else if let Some(list) = obj.get_mut("mcpAllowlist").and_then(|a| a.as_array_mut()) {
-        list.retain(|r| !r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(entry)));
-        if list.is_empty() {
-            obj.remove("mcpAllowlist");
+    // `has == on` here means only the rename is left to write.
+    if has != on {
+        if on {
+            obj.entry("mcpAllowlist")
+                .or_insert_with(|| serde_json::json!([]))
+                .as_array_mut()
+                .ok_or_else(|| "\"mcpAllowlist\" in the permissions file is not a list".to_string())?
+                .push(serde_json::Value::String(entry.to_string()));
+        } else if let Some(list) = obj.get_mut("mcpAllowlist").and_then(|a| a.as_array_mut()) {
+            list.retain(|r| !r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(entry)));
+            if list.is_empty() {
+                obj.remove("mcpAllowlist");
+            }
         }
     }
     serde_json::to_string_pretty(&root)

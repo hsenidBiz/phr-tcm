@@ -34,7 +34,7 @@ pub fn version_warning(proxy: &str, app: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "The tcm-testcases MCP server is version {proxy}, but the running Test Case Manager is {app}. \
+        "The tcm MCP server is version {proxy}, but the running Test Case Manager is {app}. \
          The tools offered here are {proxy}'s: any tool added since is missing. The usual cause is a \
          stale copy of the app that Claude desktop, a packaged app, keeps under \
          %LOCALAPPDATA%\\Packages\\<Claude package>\\LocalCache\\Local\\AzureDevOpsTestCaseManager.V2 - \
@@ -76,7 +76,7 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
             let mut result = serde_json::json!({
                 "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "tcm-testcases", "version": PROXY_VERSION },
+                "serverInfo": { "name": crate::ai_tools::TCM_SERVER, "version": PROXY_VERSION },
             });
             // `instructions` is where an MCP client hands the server's own
             // words to the assistant - the one reader who can act on it.
@@ -1034,7 +1034,7 @@ fn read_version() -> String {
 /// Entry point for `v2.exe --mcp`: MCP stdio bridge to a RUNNING Test Case
 /// Manager. Reads the handshake file for the port + token, proxies each
 /// tool call over localhost, and never sees credentials. Register in an AI
-/// tool as: `claude mcp add tcm-testcases -- "<install dir>\v2.exe" --mcp`
+/// tool as: `claude mcp add tcm -- "<install dir>\v2.exe" --mcp`
 pub fn run_stdio_proxy() {
     let version = read_version();
     // stderr is the MCP client's log: the same sentence the assistant gets

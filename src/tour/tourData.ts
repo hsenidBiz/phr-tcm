@@ -253,7 +253,7 @@ export const TOUR_TOOLS: DetectedTool[] = [
     id: "claude-code",
     name: "Claude Code",
     installed: true,
-    registered_servers: ["tcm-testcases"],
+    registered_servers: ["tcm"],
     scope: "project",
     global_registered_servers: [],
   },

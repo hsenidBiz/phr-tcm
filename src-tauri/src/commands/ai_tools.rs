@@ -10,11 +10,11 @@ use std::process::Command;
 use tauri::State;
 
 use crate::ai_tools::{
-    atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
-    legacy_command_path, merge_entry, project_command_dir, remove_entry, set_claude_allow,
-    set_cursor_allow, tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_QUERY_RULE,
-    CURSOR_DB_QUERY_ENTRY, COMMAND_MARKER,
-    LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
+    atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
+    legacy_command_path, merge_entry, migrate_claude_permissions, project_command_dir,
+    remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
+    tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_QUERY_RULE, CURSOR_DB_QUERY_ENTRY,
+    COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
@@ -187,7 +187,7 @@ fn allow_note(id: &str, name: &str) -> String {
         "cursor" => "Cursor only uses this outside its ask-every-time run mode - check Cursor Settings > Agents".to_string(),
         "claude-desktop" => "Claude Desktop keeps this in its own window: when it asks about db_query, choose Always allow".to_string(),
         "vscode" => "VS Code keeps this in its own window: when it asks about db_query, choose to always allow it (or use Chat: Manage Tool Approval)".to_string(),
-        _ => format!("{name} keeps this in its own settings: allow the tcm-testcases db_query tool there"),
+        _ => format!("{name} keeps this in its own settings: allow the {TCM_SERVER} db_query tool there"),
     }
 }
 
@@ -213,6 +213,39 @@ fn write_allow(file: &AllowFile, path: &std::path::Path, on: bool) -> Result<(),
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
     atomic_write(path, &updated)
+}
+
+/// Carry the server's old-name permission rules over to its current name
+/// in the Claude Code settings files the database switch writes - the
+/// repository's (when registering into one) and the machine's - and in no
+/// other file. Best-effort: the registration has already worked, and a
+/// rule left under the old name only means one more "Allow this tool?".
+fn carry_over_claude_rules(root: Option<&str>) {
+    let mut paths = Vec::new();
+    if let Some(r) = root {
+        paths.push((CLAUDE_ALLOW.project)(r));
+    }
+    paths.push((CLAUDE_ALLOW.user)());
+    for path in paths {
+        if let Err(e) = carry_over_claude_rules_in(&path) {
+            crate::applog::warn(format!("could not carry the old permission rules over: {e}"));
+        }
+    }
+}
+
+/// `migrate_claude_permissions` for one file. A missing file stays
+/// missing, and a file with nothing to carry over is not rewritten. Public
+/// for `tests/suite/ai_tools.rs`.
+pub fn carry_over_claude_rules_in(path: &std::path::Path) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+    };
+    match migrate_claude_permissions(&existing).map_err(|e| format!("{}: {e}", path.display()))? {
+        Some(updated) => atomic_write(path, &updated),
+        None => Ok(()),
+    }
 }
 
 /// Each installed tool that carries our server, and what was done for it.
@@ -448,7 +481,9 @@ fn register_server(
         // did before per-repo scoping.
         let Some(r) = root else {
             register_claude_code_global(server)?;
+            retire_superseded_claude_now(&server.name, "user", None);
             if server.name == TCM_SERVER {
+                carry_over_claude_rules(None);
                 if let Err(e) = write_commands_in(&command_dir(&home_dir()), disabled) {
                     crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
                 }
@@ -456,7 +491,9 @@ fn register_server(
             return Ok(());
         };
         register_claude_code_in(r, server)?;
+        retire_superseded_claude_now(&server.name, "project", Some(r));
         if server.name == TCM_SERVER {
+            carry_over_claude_rules(Some(r));
             // Best-effort, and deliberately after the server is in: a
             // command pointing at tools that are not registered would be
             // worse than no command. A failure here does not undo a
@@ -465,16 +502,32 @@ fn register_server(
                 crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
             }
         }
-        retire_global(spec, &server.name, Some(r));
+        retire_global_with_superseded(spec, &server.name, r);
         return Ok(());
     }
 
+    // `merge_entry` also takes any name this one supersedes out of the
+    // same config.
     let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
     merge_into_file(&config_path, key, server)?;
     if let Some(r) = root {
-        retire_global(spec, &server.name, Some(r));
+        retire_global_with_superseded(spec, &server.name, r);
     }
     Ok(())
+}
+
+/// `retire_global` for the server just registered into `root`, and for
+/// each name it supersedes that the tool's global config still carries -
+/// an old-name copy there would shadow the repository's as surely as a
+/// current one. Checked first so no CLI runs for a name that is not there.
+fn retire_global_with_superseded(spec: &ToolSpec, server_name: &str, root: &str) {
+    retire_global(spec, server_name, Some(root));
+    let (global_path, key, _) = config_for(spec, &home_dir(), &appdata_dir(), None);
+    for old in superseded_by(server_name) {
+        if config_carries(&global_path, key, old) {
+            retire_global(spec, old, Some(root));
+        }
+    }
 }
 
 /// Take the app's OWN global copy away once the repository carries it.
@@ -513,7 +566,22 @@ pub fn unregister_ai_tool(
     working_dir: Option<String>,
     global: bool,
 ) -> Result<(), String> {
-    unregister_server(&id, TCM_SERVER, working_dir.as_deref(), global)
+    unregister_server(&id, TCM_SERVER, working_dir.as_deref(), global)?;
+    // The server's old name is ours too, so it goes with it - only where
+    // that same config still carries it, so no CLI runs for nothing.
+    // Best-effort: what was asked for, the current entry, is gone.
+    if let Some(spec) = TOOL_SPECS.iter().find(|s| s.id == id) {
+        let root = unregister_root(spec, working_dir.as_deref(), global);
+        let (path, key, _) = config_for(spec, &home_dir(), &appdata_dir(), root);
+        for old in superseded_by(TCM_SERVER) {
+            if config_carries(&path, key, old) {
+                if let Err(e) = unregister_server(&id, old, working_dir.as_deref(), global) {
+                    crate::applog::warn(format!("could not remove the old {old} registration: {e}"));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Take away every global registration this app made for `id` - the copies
@@ -538,6 +606,17 @@ pub fn retire_global_registrations(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The repository an unregister for `spec` acts on, or None for the global
+/// config. The machine-wide choice removes the global entry even when a
+/// repository happens to be set - the row the user clicked showed the
+/// global state, so that is the one to act on.
+fn unregister_root<'a>(spec: &ToolSpec, working_dir: Option<&'a str>, global: bool) -> Option<&'a str> {
+    match (global, spec.project_config, root_of(working_dir)) {
+        (false, Some(_), Some(r)) => Some(r),
+        _ => None,
+    }
+}
+
 /// Removes a server from the repository's config when one is set and the
 /// tool has such a config, else from the global one. No installed-guard:
 /// if a config still carries an entry after the tool was uninstalled,
@@ -552,13 +631,7 @@ fn unregister_server(
         .iter()
         .find(|s| s.id == id)
         .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
-    // The machine-wide choice removes the global entry even when a
-    // repository happens to be set - the row the user clicked showed the
-    // global state, so that is the one to act on.
-    let root = match (global, spec.project_config, root_of(working_dir)) {
-        (false, Some(_), Some(r)) => Some(r),
-        _ => None,
-    };
+    let root = unregister_root(spec, working_dir, global);
 
     if spec.id == "claude-code" {
         return match root {
@@ -611,10 +684,7 @@ pub fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(
     // put `/tcm-testcases` in the picker beside the namespaced set. Only
     // ours, and only when writing the global set.
     if dir == command_dir(&home_dir()) {
-        let legacy = legacy_command_path(&home_dir());
-        if matches!(std::fs::read_to_string(&legacy), Ok(t) if t.contains(COMMAND_MARKER)) {
-            let _ = std::fs::remove_file(&legacy);
-        }
+        remove_legacy_command(&home_dir());
     }
 
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
@@ -756,6 +826,50 @@ fn claude_cli() -> Option<PathBuf> {
     crate::ai_tools::claude_cli_candidates(&home_dir(), &appdata_dir())
         .into_iter()
         .find(|p| p.is_file())
+}
+
+/// After `server_name` is registered with Claude Code in `scope`, take out
+/// every name it supersedes from that same scope, so nobody is left with
+/// one server under two names. Only a name `config` - the file that scope
+/// lives in: `<repo>/.mcp.json` or `~/.claude.json` - actually carries, so
+/// nothing runs for a name that is not there. Through the CLI at `cli`
+/// (run in `cwd`, which project scope is keyed on) when there is one; from
+/// `config` itself when there is not, or when the CLI fails. Public for
+/// `tests/suite/ai_tools.rs`, which drives it with a probe for the CLI.
+pub fn retire_superseded_claude(
+    cli: Option<&std::path::Path>,
+    server_name: &str,
+    scope: &str,
+    cwd: Option<&std::path::Path>,
+    config: &std::path::Path,
+) -> Result<(), String> {
+    let mut first_error = None;
+    for old in superseded_by(server_name) {
+        if !config_carries(config, "mcpServers", old) {
+            continue;
+        }
+        let via_cli = match cli {
+            Some(c) => run_claude_mcp_remove(c, old, scope, cwd),
+            None => Err("no Claude Code CLI".to_string()),
+        };
+        if let Err(e) = via_cli.or_else(|_| remove_from_file(config, "mcpServers", old)) {
+            first_error.get_or_insert(e);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+/// `retire_superseded_claude` for the real CLI and config, best-effort:
+/// the registration itself has worked.
+fn retire_superseded_claude_now(server_name: &str, scope: &str, root: Option<&str>) {
+    let (cwd, config) = match root {
+        Some(r) => (Some(std::path::Path::new(r)), std::path::Path::new(r).join(".mcp.json")),
+        None => (None, PathBuf::from(home_dir()).join(".claude.json")),
+    };
+    let cli = claude_cli().unwrap_or_else(claude_on_path);
+    if let Err(e) = retire_superseded_claude(Some(&cli), server_name, scope, cwd, &config) {
+        crate::applog::warn(format!("could not remove the old name of the {server_name} registration: {e}"));
+    }
 }
 
 /// Project scope: `claude mcp add --scope project` run INSIDE the repo -

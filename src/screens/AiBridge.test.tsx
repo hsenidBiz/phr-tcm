@@ -38,7 +38,7 @@ test("lists installed AI tools with their registered state", async () => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
-        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases"], scope: "global" },
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm"], scope: "global" },
         { id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" },
       ];
   });
@@ -74,7 +74,7 @@ test("Unregister invokes unregister_ai_tool for a registered tool", async () => 
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered_servers: ["tcm-testcases"], scope: "global" }];
+      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered_servers: ["tcm"], scope: "global" }];
     if (cmd === "unregister_ai_tool") {
       unregisteredId = (args as { id: string }).id;
       return null;
@@ -213,9 +213,84 @@ test("the copy button writes the registration command to the clipboard", async (
 
   await waitFor(() =>
     expect(copied).toContain(
-      'claude mcp add --scope project tcm-testcases -- \\"C:\\\\apps\\\\tcm\\\\v2.exe\\" --mcp',
+      'claude mcp add --scope project tcm -- \\"C:\\\\apps\\\\tcm\\\\v2.exe\\" --mcp',
     ),
   );
+});
+
+// The server is registered as `tcm`: assistants show its tools as
+// "tcm: <tool>", so the manual-setup snippets must use the same key.
+test("the manual-setup snippets name the server tcm", async () => {
+  let copied = "";
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    if (String(cmd).startsWith("plugin:clipboard-manager|")) {
+      copied = JSON.stringify(args);
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByText("Other tools"));
+  await waitFor(() =>
+    expect(document.querySelector("code")?.textContent?.includes("v2.exe")).toBe(true),
+  );
+  expect(document.querySelector("code")?.textContent).toBe(
+    'claude mcp add --scope project tcm -- "C:\\apps\\tcm\\v2.exe" --mcp',
+  );
+  const config = JSON.parse(document.querySelector("pre")?.textContent ?? "{}");
+  expect(config).toEqual({ tcm: { command: "C:\\apps\\tcm\\v2.exe", args: ["--mcp"] } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy config" }));
+  await waitFor(() => expect(copied).toContain('\\"tcm\\"'));
+  expect(copied).not.toContain("tcm-testcases");
+});
+
+// A registration an earlier version made under the server's old name is
+// not "Registered": it needs updating, and Register is what updates it.
+test("a tool registered under the old name reads as needing an update", async () => {
+  let registeredId: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm-testcases"], scope: "project",
+          global_registered_servers: [],
+        },
+      ];
+    if (cmd === "register_ai_tool") {
+      registeredId = (args as { id: string }).id;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Needs updating")).toBeInTheDocument();
+  expect(screen.queryByText("Registered ✓")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Register" }));
+  await waitFor(() => expect(registeredId).toBe("claude-code"));
+});
+
+test("a global copy under the old name is offered for retiring too", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm"], scope: "project",
+          global_registered_servers: ["tcm-testcases"],
+        },
+      ];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("also registered globally")).toBeInTheDocument();
+  expect(screen.queryByText("Needs updating")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retire global copies" })).toBeInTheDocument();
 });
 
 // The bridge's state itself is the badge beside the tab title
@@ -552,8 +627,8 @@ test("a leftover global registration is surfaced and can be retired", async () =
       return [
         {
           id: "claude-code", name: "Claude Code", installed: true,
-          registered_servers: ["tcm-testcases"], scope: "project",
-          global_registered_servers: ["tcm-testcases"],
+          registered_servers: ["tcm"], scope: "project",
+          global_registered_servers: ["tcm"],
         },
       ];
     if (cmd === "retire_global_registrations") {
@@ -575,7 +650,7 @@ test("a tool with nothing left globally is not offered the retire button", async
       return [
         {
           id: "claude-code", name: "Claude Code", installed: true,
-          registered_servers: ["tcm-testcases"], scope: "project",
+          registered_servers: ["tcm"], scope: "project",
           global_registered_servers: [],
         },
       ];
@@ -593,7 +668,7 @@ test("a tool with no project config is labelled global", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "windsurf", name: "Windsurf", installed: true, registered_servers: ["tcm-testcases"], scope: "global" }];
+      return [{ id: "windsurf", name: "Windsurf", installed: true, registered_servers: ["tcm"], scope: "global" }];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
@@ -747,8 +822,8 @@ function legacyMocks(tools: unknown[], removal: (args: Removal) => unknown = () 
 /// and says nothing about it anywhere on screen.
 test("a tool still carrying the old database server has it removed quietly", async () => {
   const { removed, logged } = legacyMocks([
-    { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases", "phr-db-mcp"], scope: "project" },
-    { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm-testcases"], scope: "project" },
+    { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm", "phr-db-mcp"], scope: "project" },
+    { id: "vscode", name: "VS Code", installed: true, registered_servers: ["tcm"], scope: "project" },
     { id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" },
   ]);
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -819,7 +894,7 @@ test("the old server's machine-wide copy is removed from the global config, unan
   const { removed } = legacyMocks([
     {
       id: "cursor", name: "Cursor", installed: true,
-      registered_servers: ["tcm-testcases"], scope: "project",
+      registered_servers: ["tcm"], scope: "project",
       global_registered_servers: ["phr-db-mcp"],
     },
   ]);
