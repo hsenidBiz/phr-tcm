@@ -61,6 +61,8 @@ function runsTitle(f: ResultFilter): string {
 export default function PastRuns({
   pbiId,
   onReview,
+  filter,
+  onFilterChange,
 }: {
   /** The PBI currently selected on the Auto Run screen. A run reviewed
    * here is sent with THIS PBI's title and step ids (see `RunReview`), so
@@ -69,13 +71,19 @@ export default function PastRuns({
    * name with every `step_ids` empty, silently. */
   pbiId: number | null;
   onReview: (runId: string) => void;
+  /** Which results the list shows. Held by the screen, not here: this panel
+   * unmounts whenever another tab is shown, and a person who picked Failed
+   * expects it to still be Failed when they come back. */
+  filter: ResultFilter;
+  onFilterChange: (f: ResultFilter) => void;
 }) {
   const queryClient = useQueryClient();
-  // The one subscriber to "autorun-runs" on the screen. "Clear results"
-  // lives here, beside the runs it clears, so it reads the count straight
-  // off this query - a second `useQuery(["autorun-runs"])` in the parent
-  // once shifted render timing enough to paint a run's case title here
-  // and the matching case row above at the same instant.
+  // "Clear results" lives here, beside the runs it clears, so it reads the
+  // count straight off this query. The screen's Past runs tab reads the
+  // same query for its count. That second subscriber once shifted render
+  // timing enough to paint a run's case title here and the matching case
+  // row at the same instant - harmless now that this list and the case
+  // rows are on different tabs, never shown together.
   const runs = useQuery({
     queryKey: ["autorun-runs"],
     queryFn: () => commands.autoRunListRuns(),
@@ -88,7 +96,6 @@ export default function PastRuns({
    * bucket - and inside each of those, only its cases in that bucket, the
    * way the review dialog's list filters. A card's own counts always cover
    * the whole run. */
-  const [filter, setFilter] = useState<ResultFilter>("All");
   const allRuns = runs.data ?? [];
   const runsWith: Record<ResultBucket, number> = { Passed: 0, Failed: 0, Blocked: 0, "Not run": 0 };
   for (const run of allRuns) {
@@ -151,7 +158,7 @@ export default function PastRuns({
       {runCount > 0 && (
         <ResultFilterRow
           value={filter}
-          onChange={setFilter}
+          onChange={onFilterChange}
           total={runCount}
           counts={runsWith}
           titleFor={runsTitle}

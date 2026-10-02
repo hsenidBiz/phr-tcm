@@ -115,3 +115,74 @@ test("closing plays a short shrink: hidden and unclickable at once, gone after i
   });
   expect(screen.getByRole("menu")).not.toHaveClass("is-closing");
 });
+
+/// An action can explain itself in a line under its label, be unavailable, or
+/// be destructive - Auto Run's More menu uses all three. The description is
+/// read as the item's description, not folded into its name.
+test("an action can carry a description, be disabled, and read as dangerous", () => {
+  const picked: string[] = [];
+  render(
+    <MoreActionsMenu
+      label="More"
+      actions={[
+        { label: "Import", description: "One file can carry every case.", onSelect: () => picked.push("Import") },
+        { label: "Clear", disabled: true, danger: true, onSelect: () => picked.push("Clear") },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+
+  const imp = screen.getByRole("menuitem", { name: "Import" });
+  expect(imp).toHaveAccessibleDescription("One file can carry every case.");
+  expect(screen.getByText("One file can carry every case.")).toBeInTheDocument();
+
+  const clear = screen.getByRole("menuitem", { name: "Clear" });
+  expect(clear).toBeDisabled();
+  expect(clear).toHaveClass("hover:text-danger");
+  fireEvent.click(clear);
+  expect(picked).toEqual([]);
+  // A disabled item stays in the list, so the menu reads the same each time.
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+
+  fireEvent.click(imp);
+  expect(picked).toEqual(["Import"]);
+});
+
+/// A picked item often opens a dialog. The dialog remembers what had focus
+/// when it opened and gives it back on close - so that must already be the
+/// More button, not the menu item that is about to unmount.
+test("choosing an item puts focus back on the More button before it runs", () => {
+  let focusedWhenRun: Element | null = null;
+  render(
+    <MoreActionsMenu
+      label="More"
+      actions={[{ label: "Clear", onSelect: () => (focusedWhenRun = document.activeElement) }]}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "More" });
+  fireEvent.click(trigger);
+  const item = screen.getByRole("menuitem", { name: "Clear" });
+  item.focus();
+  fireEvent.click(item);
+  expect(focusedWhenRun).toBe(trigger);
+});
+
+test("arrow keys skip a disabled item", () => {
+  render(
+    <MoreActionsMenu
+      label="More"
+      actions={[
+        { label: "First", onSelect: () => {} },
+        { label: "Second", disabled: true, onSelect: () => {} },
+        { label: "Third", onSelect: () => {} },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  const first = screen.getByRole("menuitem", { name: "First" });
+  first.focus();
+  fireEvent.keyDown(first, { key: "ArrowDown" });
+  expect(screen.getByRole("menuitem", { name: "Third" })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Third" }), { key: "ArrowUp" });
+  expect(first).toHaveFocus();
+});

@@ -67,19 +67,37 @@ function mockList(
   });
 }
 
+/** Switches the screen to its tab of that name, the way a person would. */
+function openTab(name: "Test cases" | "Past runs" | "Setup") {
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+}
+
+/** Opens the Test cases tab's More menu and returns one of its items. */
+function moreItem(name: "Import scripts" | "Clear scripts") {
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  return screen.getByRole("menuitem", { name });
+}
+
+/** Renders the screen on its Test cases tab. The mocks here set nothing up,
+ * so the opening rule alone would choose Setup; a tab clicked before the
+ * setup has loaded is the person's choice, which the rule never overrides.
+ * A test about the Setup rows or the past runs switches tab first. */
 function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <AutoRun org="acme" project="proj" pbi={pbi as never} />
     </QueryClientProvider>,
   );
+  openTab("Test cases");
+  return view;
 }
 
 test("the Setup card's Accounts and Sign-in buttons open their own dialogs", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1]);
   renderScreen();
   await screen.findByText("Login - valid credentials");
+  openTab("Setup");
 
   fireEvent.click(screen.getByRole("button", { name: "Edit accounts" }));
   expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
@@ -297,8 +315,9 @@ test("Clear scripts and Clear results are disabled when there is nothing to clea
   renderScreen();
   await screen.findByText("Alpha check");
 
-  expect(screen.getByRole("button", { name: "Clear scripts" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Clear results" })).toBeDisabled();
+  expect(moreItem("Clear scripts")).toBeDisabled();
+  openTab("Past runs");
+  expect(await screen.findByRole("button", { name: "Clear results" })).toBeDisabled();
 });
 
 test("Clear scripts opens its confirm with the exact sentence; Cancel calls nothing", async () => {
@@ -310,7 +329,7 @@ test("Clear scripts opens its confirm with the exact sentence; Cancel calls noth
   renderScreen();
   await screen.findByText("Alpha check");
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  fireEvent.click(moreItem("Clear scripts"));
   expect(
     await screen.findByText(
       "This removes the scripts of the 2 cases listed for this PBI from this machine. Nothing in Azure DevOps changes.",
@@ -335,7 +354,7 @@ test("confirming Clear scripts calls the command, toasts the count and refreshes
   renderScreen();
   await screen.findByText("Alpha check");
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  fireEvent.click(moreItem("Clear scripts"));
   fireEvent.click(await screen.findByRole("button", { name: "Clear 1 script" }));
 
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 script removed."));
@@ -351,8 +370,9 @@ test("Clear results opens its confirm with the exact sentence and, once confirme
   );
   renderScreen();
   await screen.findByText("Alpha check");
+  openTab("Past runs");
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Clear results" }));
   expect(
     await screen.findByText(
       "This removes every Auto Run result and picture on this machine, including runs already sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.",
@@ -369,6 +389,7 @@ test("the Setup card's Areas button opens its dialog", async () => {
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
+  openTab("Setup");
   fireEvent.click(screen.getByRole("button", { name: "Edit areas" }));
   expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
@@ -445,6 +466,7 @@ test("the header names the active environment and the host of its address", asyn
   expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
   expect(screen.getByText("QA - qa.example.com").parentElement).toHaveTextContent("Environment QA - qa.example.com");
   // The Setup card says the same address, not the recipe's.
+  openTab("Setup");
   const site = row("Site address");
   expect(await within(site).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(site).queryByText("https://hr.example.internal/login")).not.toBeInTheDocument();
@@ -458,6 +480,7 @@ test("an environment with no address of its own shows the recipe's host", async 
   );
   renderScreen();
   expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
+  openTab("Setup");
   expect(within(row("Site address")).getByText("https://hr.example.internal/login")).toBeInTheDocument();
 });
 
@@ -474,6 +497,7 @@ test("the Setup card's Test files row counts the project's files, and Manage ope
   });
   renderScreen();
   await screen.findByText("Alpha check");
+  openTab("Setup");
 
   expect(await within(row("Test files")).findByText("2 files")).toBeInTheDocument();
   expect(listed[0]).toEqual(expect.objectContaining({ organization: "acme", project: "proj" }));
@@ -488,6 +512,7 @@ test("the Test files row reads None yet for a project with none", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
+  openTab("Setup");
   expect(await within(row("Test files")).findByText("None yet")).toBeInTheDocument();
   expect(within(row("Test files")).getByRole("button", { name: "Manage test files" })).toBeEnabled();
 });
@@ -496,6 +521,9 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
+  // The strip on Test cases says there is no address yet.
+  expect(await screen.findByText("no site set yet")).toBeInTheDocument();
+  openTab("Setup");
 
   expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
   await waitFor(() => expect(within(row("Site address")).getByText("Not set up yet")).toBeInTheDocument());
@@ -507,7 +535,6 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   expect(await within(row("Areas")).findByText("None recorded yet")).toBeInTheDocument();
   expect(within(row("Areas")).queryByText("Loading…")).not.toBeInTheDocument();
   expect(within(row("Areas")).getByRole("button", { name: "Edit areas" })).toBeEnabled();
-  expect(screen.getByText("no site set yet")).toBeInTheDocument();
 
   // The address is the environment's, so it is set here with or without a
   // saved recipe - the built-in sign-in needs nothing else.
@@ -523,18 +550,28 @@ test("with no saved recipe the built-in signs in at the environment's address", 
   );
   renderScreen();
   await screen.findByText("Alpha check");
+  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
+  openTab("Setup");
   expect(await within(row("Site address")).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
-  expect(screen.getByText("QA - qa.example.com")).toBeInTheDocument();
   // Recording or editing saves the project's own recipe, which replaces it.
   expect(within(row("Sign-in")).getByRole("button", { name: "Record sign-in" })).toBeEnabled();
   expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeEnabled();
 });
 
-test("the Setup card and the header line read a project that is set up", async () => {
+test("the Setup card and the readiness strip read a project that is set up", async () => {
   mockSetUp();
   renderScreen();
   await screen.findByText("Alpha check");
+
+  // The strip on Test cases: the host the runs go to, and the counts.
+  expect(await screen.findByText("hr.example.internal")).toBeInTheDocument();
+  expect(await screen.findByText("2 accounts")).toBeInTheDocument();
+  expect(await screen.findByText("1 area")).toBeInTheDocument();
+  // The old header line's project name is gone.
+  expect(screen.queryByText("proj")).not.toBeInTheDocument();
+
+  openTab("Setup");
 
   const site = row("Site address");
   expect(await within(site).findByText("https://hr.example.internal/login")).toBeInTheDocument();
@@ -546,20 +583,16 @@ test("the Setup card and the header line read a project that is set up", async (
   // One wording for the same count, in the row and in the header.
   expect(await within(row("Areas")).findByText("1 area recorded")).toBeInTheDocument();
 
-  // The header line: project, the host the runs go to, and the counts.
-  expect(screen.getByText("proj")).toBeInTheDocument();
-  expect(screen.getByText("hr.example.internal")).toBeInTheDocument();
-  expect(screen.getByText("2 accounts")).toBeInTheDocument();
-  expect(screen.getByText("1 area")).toBeInTheDocument();
 });
 
-test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the header", async () => {
+test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the readiness strip", async () => {
   const saves = mockSetUp(envList(""));
   renderScreen();
   await screen.findByText("Alpha check");
-  // No address of its own yet: the header shows the recipe's host.
+  // No address of its own yet: the strip shows the recipe's host.
   expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
+  openTab("Setup");
   fireEvent.click(await screen.findByRole("button", { name: "Edit site address" }));
   expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
   const start = screen.getByRole("textbox", { name: "Start address" }) as HTMLInputElement;
@@ -583,9 +616,10 @@ test("saving a new site address writes it to the active environment, not the rec
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Site address" })).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
-  expect(within(row("Site address")).getByText("https://people.example.org/")).toBeInTheDocument();
+  expect(await within(row("Site address")).findByText("https://people.example.org/")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("+2 allowed sites")).toBeInTheDocument();
+  openTab("Test cases");
+  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
 });
 
 test("the selection's actions live in the shared dock, in place and as an aria-hidden floating copy", async () => {
@@ -619,20 +653,23 @@ test("the selection's actions live in the shared dock, in place and as an aria-h
   await waitFor(() => expect(document.querySelector("[data-sticky-action]")).toBeNull());
 });
 
-test("Clear results lives in the Past runs section, and Clear scripts with the test cases", async () => {
+test("Clear results lives in the Past runs section, and Clear scripts and Import scripts in the test cases' More menu", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
 
-  const pastRuns = screen.getByRole("heading", { name: "Past runs" }).closest("section")!;
+  const testCases = screen.getByRole("heading", { name: /^Test cases/ }).closest("section")!;
+  expect(within(testCases).getByRole("button", { name: "More" })).toBeInTheDocument();
+  expect(moreItem("Clear scripts")).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeInTheDocument();
+  expect(within(testCases).queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Clear results" })).not.toBeInTheDocument();
+
+  openTab("Past runs");
+  const pastRuns = (await screen.findByRole("heading", { name: "Past runs" })).closest("section")!;
   expect(within(pastRuns).getByRole("button", { name: "Clear results" })).toBeInTheDocument();
   // The "saved on this machine" note belongs with the runs it describes.
   expect(within(pastRuns).getByText(/nothing goes to azure devops unless you press send/i)).toBeInTheDocument();
-
-  const testCases = screen.getByRole("heading", { name: /^Test cases/ }).closest("section")!;
-  expect(within(testCases).getByRole("button", { name: "Clear scripts" })).toBeInTheDocument();
-  expect(within(testCases).getByRole("button", { name: "Import scripts" })).toBeInTheDocument();
-  expect(within(testCases).queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
 });
 
 test("with no project picked, the project-bound Setup buttons are disabled and say why", async () => {
@@ -643,7 +680,8 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
       <AutoRun org="acme" project="" pbi={pbi as never} />
     </QueryClientProvider>,
   );
-  await screen.findByText("Alpha check");
+  openTab("Setup");
+  await screen.findByRole("button", { name: "Edit site address" });
 
   const why = "Pick an organization and project first";
   for (const name of ["Edit site address", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
@@ -656,29 +694,28 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   expect(within(row("Site address")).getByText(why)).toBeInTheDocument();
 });
 
-// On a wide window the screen is two columns: what you set up and run from
-// on the left, what came of it (Past runs) on the right. jsdom does no
-// layout, so the breakpoint itself is a hand check; what is held here is
-// the structure it rests on - two columns, each with its own content, and
-// the left one first in the DOM so a screen reader meets the setup before
-// the results.
-test("the setup and case list sit in one column and Past runs in another, left first", async () => {
+// The screen used to be two columns from xl (setup and cases left, Past
+// runs right). It is three tabs now, one panel at a time, so no width ever
+// shows two sections side by side.
+test("the setup, the case list and Past runs are one tab panel each, shown one at a time", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1]);
   renderScreen();
   await screen.findByText("Login - valid credentials");
 
-  const setup = screen.getByRole("heading", { name: "Setup" });
-  const cases = screen.getByRole("heading", { name: /^Test cases/ });
-  const runs = screen.getByRole("heading", { name: "Past runs" });
-  const leftColumn = setup.closest("section")!.parentElement!;
-  const rightColumn = runs.closest("section")!.parentElement!;
+  const only = (name: string) => {
+    const panels = screen.getAllByRole("tabpanel");
+    expect(panels).toHaveLength(1);
+    expect(panels[0]).toHaveAccessibleName(new RegExp(`^${name}`));
+    return panels[0];
+  };
+  expect(within(only("Test cases")).getByRole("heading", { name: /^Test cases/ })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Setup" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Past runs" })).not.toBeInTheDocument();
 
-  expect(leftColumn).not.toBe(rightColumn);
-  expect(leftColumn.parentElement).toBe(rightColumn.parentElement);
-  expect(leftColumn).toContainElement(cases);
-  expect(rightColumn).not.toContainElement(setup);
-  expect(leftColumn.compareDocumentPosition(rightColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  // The grid is what becomes two columns, from the xl breakpoint.
-  expect(leftColumn.parentElement!.className).toMatch(/ xl:grid-cols-/);
-  expect(leftColumn.parentElement!.className).not.toMatch(/lg:grid-cols-/);
+  openTab("Setup");
+  expect(within(only("Setup")).getByRole("heading", { name: "Setup" })).toBeInTheDocument();
+  openTab("Past runs");
+  expect(within(only("Past runs")).getByRole("heading", { name: "Past runs" })).toBeInTheDocument();
+
+  expect(document.querySelector('[class*="xl:grid-cols-"]')).toBeNull();
 });

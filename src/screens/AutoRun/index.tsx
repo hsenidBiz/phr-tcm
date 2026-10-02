@@ -6,17 +6,27 @@
 // person reviewing a finished run and pressing Send (`RunReview`) is the
 // one door out - see `autorun::publish` on the Rust side.
 
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, TriangleAlert } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
+import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
+import { cn } from "../../lib/cn";
 import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
@@ -25,7 +35,6 @@ import {
   IconCancel,
   IconClearScripts,
   IconEdit,
-  IconImport,
   IconModulePaths,
   IconRecipe,
   IconRecord,
@@ -41,14 +50,24 @@ import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
+import ReadinessStrip from "./ReadinessStrip";
 import RecordSignInDialog from "./RecordSignInDialog";
 import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
+import type { ResultFilter } from "./verdicts";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
+import { useAutoRunReadiness, type AutoRunTab } from "./useAutoRunReadiness";
+
+/** The screen's tabs, in order. The arrow keys walk this list. */
+const TABS: { id: AutoRunTab; label: string }[] = [
+  { id: "cases", label: "Test cases" },
+  { id: "runs", label: "Past runs" },
+  { id: "setup", label: "Setup" },
+];
 
 // How many imported case ids the success toast spells out before it falls
 // back to a count - the same shape as the assigned-work notification
@@ -104,12 +123,16 @@ export default function AutoRun({
   });
 
   // One script lookup per case, so the list can say which are drivable.
+  // `combine` hands back just each script, and TanStack keeps the array the
+  // same object while no script has changed - the readiness check below
+  // reads it, and would otherwise redo its work on every render.
   const scripts = useQueries({
     queries: (cases.data ?? []).map((c) => ({
       queryKey: ["autorun-script", c.id],
       queryFn: () => unwrapStr(commands.autoRunLoadScript(c.id)),
       retry: false,
     })),
+    combine: (results) => results.map((q) => q.data),
   });
 
   const [editing, setEditing] = useState<number | null>(null);
@@ -157,6 +180,152 @@ export default function AutoRun({
   const testFiles = useTestFiles(org, project);
   const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
   const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
+
+  const saved = recipe.data;
+  // Where a run goes now: the active environment's address when it has one,
+  // else the saved recipe's - the header and the Setup row both say this.
+  // With no saved recipe the built-in one signs in at the environment's.
+  const site = effectiveSite(envs.data, saved);
+  const activeEnv = activeEnvironment(envs.data);
+  /** The same address, as far as it is KNOWN: `undefined` while the
+   * environments or the recipe it may fall back to have not answered, or
+   * could not be read - an unreadable recipe may well hold an address, so
+   * it never reads as "none". */
+  const knownSiteUrl = ((): string | undefined => {
+    if (envs.isPending) return undefined;
+    const own = activeEnv?.start_url.trim();
+    if (own) return own;
+    if (setupReady && (recipe.isPending || recipe.isError)) return undefined;
+    if (site.start_url) return site.start_url;
+    return envs.isError ? undefined : "";
+  })();
+  const testFileNames = useMemo(
+    () => (testFiles.isSuccess ? (testFiles.data ?? []).map((f) => f.name) : null),
+    [testFiles.isSuccess, testFiles.data],
+  );
+  // No project, no sign-in: the recipe is a project's. A recipe that could
+  // not be read is unknown, and its row says why.
+  const signIn: "saved" | "builtin" | "none" | null = !setupReady
+    ? "none"
+    : recipe.isSuccess
+      ? saved
+        ? "saved"
+        : "builtin"
+      : null;
+  const readiness = useAutoRunReadiness({
+    siteUrl: knownSiteUrl,
+    signIn,
+    accountCount,
+    areaCount,
+    scripts,
+    testFileNames,
+  });
+
+  /** Which tab shows. `null` until the screen has decided, once: Setup when
+   * something a run cannot go without is missing, Test cases otherwise.
+   * After that only the person's clicks - and a review closing - move it,
+   * so setup that changes later (the last account removed, say) never
+   * pulls anyone off the tab they are on. */
+  const [tab, setTab] = useState<AutoRunTab | null>(null);
+  /** Past runs' result filter. Here rather than in the panel, which is not
+   * mounted while another tab shows - the choice outlives it. */
+  const [runsFilter, setRunsFilter] = useState<ResultFilter>("All");
+  /** Every essential read has answered, or failed. A failed read is shown
+   * on its Setup row and is never "missing" (see `useAutoRunReadiness`), so
+   * the screen still opens - on what it does know. */
+  const essentialsSettled =
+    !envs.isPending && !(setupReady && recipe.isPending) && !accounts.isPending;
+  /** Reads that failed, each as the sentence its Setup row already says.
+   * A failed read is never "missing" (it does not route the screen), but
+   * it must be visible on the tab the screen opens on, not only on Setup.
+   * The first three are what a run cannot go without; they also flag the
+   * Setup tab. */
+  const essentialUnreadable = [
+    ...(envs.isError ? ["The environments could not be read"] : []),
+    ...(setupReady && recipe.isError ? ["The saved recipe could not be read"] : []),
+    ...(accounts.isError ? ["The accounts could not be read"] : []),
+  ];
+  const unreadable = [
+    ...essentialUnreadable,
+    ...(setupReady && testFiles.isError ? ["The test files could not be read"] : []),
+  ];
+  const opening: AutoRunTab | null = essentialsSettled
+    ? readiness.essentialMissing
+      ? "setup"
+      : "cases"
+    : null;
+  useEffect(() => {
+    if (tab === null && opening !== null) setTab(opening);
+  }, [tab, opening]);
+  // The render that first knows the answer shows it, rather than one frame
+  // of nothing before the effect stores it.
+  const shown = tab ?? opening;
+
+  const tabIds = useId();
+  const tabRefs = useRef<Partial<Record<AutoRunTab, HTMLButtonElement | null>>>({});
+  /** Set when a closing review sends the person to Past runs: the button
+   * they pressed to open it is gone by then (the run that opened it was
+   * on Test cases), so focus would fall to the page. */
+  const [focusRunsTab, setFocusRunsTab] = useState(false);
+  useEffect(() => {
+    if (!focusRunsTab) return;
+    tabRefs.current.runs?.focus();
+    setFocusRunsTab(false);
+  }, [focusRunsTab]);
+  /** Arrow keys move between the tabs (wrapping), Home and End go to the
+   * ends - and the chosen tab takes the focus, as a tab list's should. */
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    // Alt+Left is the browser's "back" (and Ctrl/Meta+Arrow are other
+    // shortcuts' too): a tab list only answers the bare keys.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const last = TABS.length - 1;
+    const next =
+      e.key === "ArrowRight"
+        ? i === last
+          ? 0
+          : i + 1
+        : e.key === "ArrowLeft"
+          ? i === 0
+            ? last
+            : i - 1
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    e.preventDefault();
+    const id = TABS[next].id;
+    setTab(id);
+    tabRefs.current[id]?.focus();
+  };
+
+  /** The run count on the Past runs tab. The same query PastRuns reads, so
+   * a saved or cleared run moves the count without that tab being open. */
+  const runs = useQuery({
+    queryKey: ["autorun-runs"],
+    queryFn: () => commands.autoRunListRuns(),
+    retry: false,
+  });
+  const runCount = runs.data ? runs.data.length : null;
+
+  /** The active environment's database, named on the Setup tab. The same
+   * list, under the same key, AI Bridge reads and edits. */
+  const databases = useQuery({
+    queryKey: ["db-databases"],
+    queryFn: async () => (await commands.dbDatabases()) ?? [],
+    retry: false,
+  });
+  const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
+  const dbLine = databases.isPending
+    ? "loading…"
+    : databases.isError
+      ? "could not be read"
+      : !activeDb
+        ? "not set up any more"
+        : activeDb.server
+          ? `${activeDb.label}: ${activeDb.database} on ${activeDb.server}`
+          : `${activeDb.label}: not set up yet`;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every script
@@ -233,7 +402,7 @@ export default function AutoRun({
       ),
     [rows],
   );
-  const hasScript = (i: number) => Boolean(scripts[i]?.data);
+  const hasScript = (i: number) => Boolean(scripts[i]);
   /** Only scripted cases can be run, so only they can be ticked. */
   const runnableIn = (indices: number[]) =>
     indices.filter(hasScript).map((i) => rows[i].id);
@@ -285,7 +454,7 @@ export default function AutoRun({
   const row = (i: number) => {
     const c = rows[i];
     const ready = hasScript(i);
-    const defect = scripts[i]?.data?.suspected_defect;
+    const defect = scripts[i]?.suspected_defect;
     return (
       <li
         key={c.id}
@@ -353,375 +522,446 @@ export default function AutoRun({
   }
 
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
-  const saved = recipe.data;
-  // Where a run goes now: the active environment's address when it has one,
-  // else the saved recipe's - the header and the Setup row both say this.
-  // With no saved recipe the built-in one signs in at the environment's.
-  const site = effectiveSite(envs.data, saved);
-  const activeEnv = activeEnvironment(envs.data);
   const extraSites = site.allowed_origins.length;
+  const caseCount = cases.data ? rows.length : null;
 
   return (
     <>
-      {/* Two columns on a wide window, in Settings' pattern: the left is
-          everything you set up and run from (header, Setup, Test cases), the
-          right is what came of it (Past runs). From xl, not Settings' lg: at
-          lg with the sidebar expanded the case list would be left about
-          420px for a checkbox, id, title and two buttons. The left track
-          stops at 48rem - the case rows read no better wider - and gives way
-          first, so the right keeps its 20rem floor. Below xl it is one
-          column in the old order. Normal page flow: Settings' columns
-          do not scroll on their own, so neither do these, and the page's own
-          bottom padding keeps the floating dock clear of the last run. In
-          the DOM the left column comes first, so a screen reader meets the
-          setup before the results. */}
-      <div className="grid max-w-3xl gap-6 xl:max-w-none xl:grid-cols-[minmax(0,48rem)_minmax(20rem,1fr)] xl:items-start">
+      {/* Three tabs, one panel at a time: the cases to run, what came of
+          past runs, and the setup a run needs. One reading width for all
+          three - the case rows read no better wider, and nothing ever sits
+          beside anything else. Normal page flow, so the page's own bottom
+          padding keeps the floating dock clear of the last row. */}
+      <div className="max-w-3xl space-y-4">
         <div className="min-w-0 space-y-4">
-          {/* The same header line API Templates opens with: where this screen's
-              runs go, at a glance, before anything else. */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
-            <span>
-              Project <span className="font-medium text-text">{project || "none picked"}</span>
-            </span>
-            {recipe.isSuccess && (
-              <span>
-                {activeEnv ? "Environment" : "Runs against"}{" "}
-                <span className="font-medium text-text">
-                  {activeEnv && `${activeEnv.name} - `}
-                  {site.start_url ? siteHost(site.start_url) : "no site set yet"}
-                </span>
-              </span>
-            )}
-            {accountCount != null && <span>{plural(accountCount, "account")}</span>}
-            {areaCount != null && <span>{plural(areaCount, "area")}</span>}
-          </div>
-
-          <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-            <h2 className="text-sm font-semibold text-text">Setup</h2>
-            <div className="space-y-3">
-              <SetupRow
-                label="Site address"
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : recipe.isLoading ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : recipe.isError ? (
-                    <span className="text-danger">The saved recipe could not be read</span>
-                  ) : site.start_url ? (
-                    <>
-                      <span className="id-mono break-all">{site.start_url}</span>
-                      {extraSites > 0 && (
-                        <span className="ml-2 text-xs text-faint">
-                          +{plural(extraSites, "allowed site")}
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-muted">Not set up yet</span>
-                  )
-                }
-              >
-                {/* The address is the active environment's, not the recipe's,
-                    so it is set here with or without a saved recipe: the
-                    built-in sign-in needs nothing more than this. */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit site address"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setSiteOpen(true)}
-                >
-                  <IconSiteAddress aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              <SetupRow
-                label="Sign-in"
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : recipe.isLoading ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : recipe.isError ? (
-                    <span className="text-danger">Could not be read - open it to see why</span>
-                  ) : saved ? (
-                    "Recipe saved"
-                  ) : (
-                    // No saved recipe: the app's own runs. Recording or
-                    // editing one saves this project's, which replaces it.
-                    "Built-in"
-                  )
-                }
-              >
-                {/* Record: sign in by hand once and the recipe is written.
-                    Edit: the recipe as JSON, for what a recording cannot say. */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Record sign-in"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecordOpen(true)}
-                >
-                  <IconRecord aria-hidden />
-                  Record
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit sign-in recipe"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setRecipeOpen(true)}
-                >
-                  <IconRecipe aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              <SetupRow
-                label="Accounts"
-                state={
-                  accounts.isError ? (
-                    <span className="text-danger">The accounts could not be read</span>
-                  ) : accounts.isPending || accountCount == null ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : accountCount === 0 ? (
-                    <span className="text-muted">None yet</span>
-                  ) : (
-                    `${plural(accountCount, "account")} on this machine`
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit accounts"
-                  onClick={() => setAccountsOpen(true)}
-                >
-                  <IconAccounts aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              <SetupRow
-                label="Areas"
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : nav.isError ? (
-                    <span className="text-danger">The areas could not be read</span>
-                  ) : nav.isPending || areaCount == null ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : areaCount === 0 ? (
-                    <span className="text-muted">None recorded yet</span>
-                  ) : (
-                    `${plural(areaCount, "area")} recorded`
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit areas"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setNavOpen(true)}
-                >
-                  <IconModulePaths aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              <SetupRow
-                label="Test files"
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : testFiles.isError ? (
-                    <span className="text-danger">The test files could not be read</span>
-                  ) : testFiles.isPending || testFileCount == null ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : testFileCount === 0 ? (
-                    <span className="text-muted">None yet</span>
-                  ) : (
-                    plural(testFileCount, "file")
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Manage test files"
-                  disabled={!setupReady}
-                  title={needsProject}
-                  onClick={() => setTestFilesOpen(true)}
-                >
-                  <IconTestFiles aria-hidden />
-                  Manage
-                </Button>
-              </SetupRow>
-            </div>
-          </section>
-
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold text-text">
-              Test cases
-              {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
-            </h2>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={importScripts.isPending}
-                onClick={() => importScripts.mutate()}
-              >
-                <IconImport aria-hidden />
-                Import scripts
-              </Button>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-                <Checkbox
-                  checked={grouped}
-                  ariaLabel="Group by title"
-                  onCheckedChange={(on) => {
-                    setGrouped(on);
-                    try {
-                      localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
-                    } catch {
-                      // storage unavailable -> the choice lasts this session
-                    }
+          {/* The Templates/Flows tab pattern from API Templates, with the
+              keyboard a tab list owes: only the chosen tab is in the Tab
+              order (the first, before the screen has chosen), and the arrow
+              keys move along. */}
+          <div role="tablist" aria-label="Auto Run sections" className="flex gap-1 border-b border-border">
+            {TABS.map(({ id, label }, i) => {
+              const selected = shown === id;
+              const count = id === "cases" ? caseCount : id === "runs" ? runCount : null;
+              const attention =
+                id === "setup" && (readiness.essentialMissing || essentialUnreadable.length > 0);
+              return (
+                <button
+                  key={id}
+                  ref={(el) => {
+                    tabRefs.current[id] = el;
                   }}
-                />
-                Group by title
-              </label>
-              {/* Housekeeping shown wherever Auto Run is (dev, or unlocked) - the
-                  whole tab is gated in one place (`autoRunVisible` in
-                  lib/extras.ts), so no further gating belongs here. Disabled
-                  rather than hidden: a button that vanishes the moment it would
-                  do nothing invites "where did it go", where greyed-out with
-                  nothing to do reads as exactly that. Danger only on hover, the
-                  way the import queue's Remove reads: destructive, but
-                  secondary, and it still asks first. */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-auto hover:border-danger hover:bg-danger/10 hover:text-danger"
-                disabled={!rows.some((_, i) => hasScript(i))}
-                onClick={() => setClearScriptsOpen(true)}
-              >
-                <IconClearScripts aria-hidden />
-                Clear scripts
-              </Button>
-            </div>
-            <p className="text-xs text-faint">One JSON file can carry every case in this PBI.</p>
+                  id={`${tabIds}-${id}-tab`}
+                  role="tab"
+                  aria-selected={selected}
+                  aria-controls={selected ? `${tabIds}-${id}-panel` : undefined}
+                  tabIndex={selected || (shown === null && i === 0) ? 0 : -1}
+                  className={cn(
+                    "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
+                    selected ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
+                  )}
+                  onClick={() => setTab(id)}
+                  onKeyDown={(e) => onTabKey(e, i)}
+                >
+                  {label}
+                  {count != null && (
+                    <>
+                      {" "}
+                      <span className="text-xs text-faint">{count}</span>
+                    </>
+                  )}
+                  {/* There is no site address, no way to sign in, or no
+                      account - said in words too, for a screen reader. */}
+                  {attention && (
+                    <>
+                      <TriangleAlert aria-hidden className="ml-1.5 inline size-3.5 align-[-2px] text-warning" />
+                      <span className="sr-only">, needs attention</span>
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-            {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
-            {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
-
-            {grouped ? (
-              groups.map(({ name, indices }) => {
-                const label = name || "Ungrouped";
-                const shut = collapsed.has(label);
-                return (
-                  <div key={label} className="space-y-1">
-                    <div className="flex w-full items-center gap-3 pb-1 pt-2">
-                      {/* Left-anchored with a trailing rule - see ViewCases for why. */}
-                      <button
-                        aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
-                        title={shut ? "Expand group" : "Collapse group"}
-                        className="text-muted transition-colors hover:text-accent"
-                        onClick={() => toggleCollapsed(label)}
-                      >
-                        {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
-                      </button>
-                      {/* Same contract as the other grouped screens: selection
-                          is the checkbox's job (scripted cases only), the TITLE
-                          toggles the fold like the chevron. */}
-                      {(() => {
-                        const runnable = runnableIn(indices);
-                        const on = runnable.filter((id) => selected.has(id)).length;
-                        return (
-                          <Checkbox
-                            ariaLabel={`Select all in ${label}`}
-                            checked={runnable.length > 0 && on === runnable.length}
-                            indeterminate={on > 0 && on < runnable.length}
-                            onCheckedChange={() => toggleGroup(indices)}
-                          />
-                        );
-                      })()}
-                      <button
-                        className="group flex items-center gap-2"
-                        title={shut ? "Expand group" : "Collapse group"}
-                        onClick={() => toggleCollapsed(label)}
-                      >
-                        <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                          {label} ({indices.length})
-                        </span>
-                      </button>
-                      <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
-                    </div>
-                    <Collapse open={!shut} animateIn={settled}>
-                      <ul className="space-y-1">{indices.map(row)}</ul>
-                    </Collapse>
-                  </div>
-                );
-              })
-            ) : (
-              <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
-            )}
-
-            {/* Actions on the selection live bottom-right, in the one shared
-                dock (see ActionDock): in place under the list, and floating
-                bottom-right once that row has scrolled away. It only exists
-                while something is ticked, so the screen never carries a
-                permanently disabled button nobody can use. */}
-            {selectedInOrder.length > 0 && (
-              <ActionDock label="Run selection" surface className="pt-1">
-                {(floating) => (
-                  <>
-                    {/* No "N cases selected" text - the count is already in the
-                        button's own label, same as Run Tests' floating pill. */}
-                    <Button
-                      size="sm"
-                      tabIndex={floating ? -1 : undefined}
-                      onClick={() => setRunning(selectedInOrder)}
-                    >
-                      <IconRun aria-hidden />
-                      Run {selectedInOrder.length} selected
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      tabIndex={floating ? -1 : undefined}
-                      onClick={() => setReplaying(selectedInOrder)}
-                    >
-                      <IconUnattended aria-hidden />
-                      Run {selectedInOrder.length} unattended
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label="Clear selection"
-                      title="Clear selection"
-                      tabIndex={floating ? -1 : undefined}
-                      className="rounded-full px-2 hover:text-danger"
-                      onClick={() => setSelected(new Set())}
-                    >
-                      <IconCancel aria-hidden />
-                    </Button>
-                  </>
+        {shown && (
+          <div
+            role="tabpanel"
+            id={`${tabIds}-${shown}-panel`}
+            aria-labelledby={`${tabIds}-${shown}-tab`}
+            className="min-w-0"
+          >
+            {shown === "setup" && (
+              <div className="space-y-3">
+                {/* Read-only here: the environment and its database are chosen on
+                    AI Bridge, which owns them. */}
+                {activeEnv && (
+                  <p className="text-xs text-muted">
+                    Environment <span className="font-medium text-text">{activeEnv.name}</span>, database{" "}
+                    <span className="font-medium text-text">{dbLine}</span>. Both change on the AI Bridge tab.
+                  </p>
                 )}
-              </ActionDock>
-            )}
-          </section>
-        </div>
+                <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+                  <h2 className="text-sm font-semibold text-text">Setup</h2>
+                  <div className="space-y-3">
+                    <SetupRow
+                      label="Site address"
+                      state={
+                        !setupReady ? (
+                          <span className="text-muted">{needsProject}</span>
+                        ) : recipe.isLoading ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : recipe.isError ? (
+                          <span className="text-danger">The saved recipe could not be read</span>
+                        ) : envs.isError && !site.start_url ? (
+                          <span className="text-danger">The environments could not be read</span>
+                        ) : site.start_url ? (
+                          <>
+                            <span className="id-mono break-all">{site.start_url}</span>
+                            {extraSites > 0 && (
+                              <span className="ml-2 text-xs text-faint">
+                                +{plural(extraSites, "allowed site")}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-muted">Not set up yet</span>
+                        )
+                      }
+                    >
+                      {/* The address is the active environment's, not the recipe's,
+                          so it is set here with or without a saved recipe: the
+                          built-in sign-in needs nothing more than this. */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Edit site address"
+                        disabled={!setupReady}
+                        title={needsProject}
+                        onClick={() => setSiteOpen(true)}
+                      >
+                        <IconSiteAddress aria-hidden />
+                        Edit
+                      </Button>
+                    </SetupRow>
 
-        <div className="min-w-0">
-          <PastRuns pbiId={pbi.id} onReview={setReviewing} />
-        </div>
+                    <SetupRow
+                      label="Sign-in"
+                      state={
+                        !setupReady ? (
+                          <span className="text-muted">{needsProject}</span>
+                        ) : recipe.isLoading ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : recipe.isError ? (
+                          <span className="text-danger">Could not be read - open it to see why</span>
+                        ) : saved ? (
+                          "Recipe saved"
+                        ) : (
+                          // No saved recipe: the app's own runs. Recording or
+                          // editing one saves this project's, which replaces it.
+                          "Built-in"
+                        )
+                      }
+                    >
+                      {/* Record: sign in by hand once and the recipe is written.
+                          Edit: the recipe as JSON, for what a recording cannot say. */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Record sign-in"
+                        disabled={!setupReady}
+                        title={needsProject}
+                        onClick={() => setRecordOpen(true)}
+                      >
+                        <IconRecord aria-hidden />
+                        Record
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Edit sign-in recipe"
+                        disabled={!setupReady}
+                        title={needsProject}
+                        onClick={() => setRecipeOpen(true)}
+                      >
+                        <IconRecipe aria-hidden />
+                        Edit
+                      </Button>
+                    </SetupRow>
+
+                    <SetupRow
+                      label="Accounts"
+                      state={
+                        accounts.isError ? (
+                          <span className="text-danger">The accounts could not be read</span>
+                        ) : accounts.isPending || accountCount == null ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : accountCount === 0 ? (
+                          <span className="text-muted">None yet</span>
+                        ) : (
+                          `${plural(accountCount, "account")} on this machine`
+                        )
+                      }
+                    >
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Edit accounts"
+                        onClick={() => setAccountsOpen(true)}
+                      >
+                        <IconAccounts aria-hidden />
+                        Edit
+                      </Button>
+                    </SetupRow>
+
+                    <SetupRow
+                      label="Areas"
+                      state={
+                        !setupReady ? (
+                          <span className="text-muted">{needsProject}</span>
+                        ) : nav.isError ? (
+                          <span className="text-danger">The areas could not be read</span>
+                        ) : nav.isPending || areaCount == null ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : areaCount === 0 ? (
+                          <span className="text-muted">None recorded yet</span>
+                        ) : (
+                          `${plural(areaCount, "area")} recorded`
+                        )
+                      }
+                    >
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Edit areas"
+                        disabled={!setupReady}
+                        title={needsProject}
+                        onClick={() => setNavOpen(true)}
+                      >
+                        <IconModulePaths aria-hidden />
+                        Edit
+                      </Button>
+                    </SetupRow>
+
+                    <SetupRow
+                      label="Test files"
+                      state={
+                        !setupReady ? (
+                          <span className="text-muted">{needsProject}</span>
+                        ) : testFiles.isError ? (
+                          <span className="text-danger">The test files could not be read</span>
+                        ) : testFiles.isPending || testFileCount == null ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : testFileCount === 0 ? (
+                          <span className="text-muted">None yet</span>
+                        ) : (
+                          plural(testFileCount, "file")
+                        )
+                      }
+                    >
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Manage test files"
+                        disabled={!setupReady}
+                        title={needsProject}
+                        onClick={() => setTestFilesOpen(true)}
+                      >
+                        <IconTestFiles aria-hidden />
+                        Manage
+                      </Button>
+                    </SetupRow>
+                  </div>
+                </section>
+                <p className="text-xs text-muted">
+                  An assistant&apos;s <span className="id-mono">/tcm:setup</span> command can walk you through
+                  this.
+                </p>
+              </div>
+            )}
+
+            {shown === "cases" && (
+              <section className="space-y-2">
+                <h2 className="text-sm font-semibold text-text">
+                  Test cases
+                  {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
+                </h2>
+                {/* Where runs go and whether the setup is in place, in one line.
+                    Only once the three things a run cannot go without are
+                    known, so a slow read never shows as a warning. */}
+                {essentialsSettled && (
+                  <ReadinessStrip
+                    envName={activeEnv?.name ?? null}
+                    // undefined: the address could not be told (a read failed).
+                    siteHost={
+                      knownSiteUrl === undefined ? undefined : site.start_url ? siteHost(site.start_url) : null
+                    }
+                    signIn={signIn}
+                    accountCount={accountCount}
+                    areaCount={areaCount}
+                    testFileCount={testFileCount}
+                    missingTestFiles={readiness.missingTestFiles}
+                    unreadable={unreadable}
+                    onOpenSetup={() => {
+                      setTab("setup");
+                      // The button is in the panel that is about to unmount.
+                      tabRefs.current.setup?.focus();
+                    }}
+                  />
+                )}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                    <Checkbox
+                      checked={grouped}
+                      ariaLabel="Group by title"
+                      onCheckedChange={(on) => {
+                        setGrouped(on);
+                        try {
+                          localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+                        } catch {
+                          // storage unavailable -> the choice lasts this session
+                        }
+                      }}
+                    />
+                    Group by title
+                  </label>
+                  {/* The rare actions. Clear scripts is housekeeping shown wherever
+                      Auto Run is (dev, or unlocked) - the whole tab is gated in one
+                      place (`autoRunVisible` in lib/extras.ts), so no further gating
+                      belongs here. Disabled rather than hidden: an item that vanishes
+                      the moment it would do nothing invites "where did it go". Danger
+                      only on hover, and it still asks first. */}
+                  <span className="ml-auto">
+                    <MoreActionsMenu
+                      label="More"
+                      actions={[
+                        {
+                          label: "Import scripts",
+                          description: "One JSON file can carry every case in this PBI.",
+                          disabled: importScripts.isPending,
+                          onSelect: () => importScripts.mutate(),
+                        },
+                        {
+                          label: "Clear scripts",
+                          danger: true,
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setClearScriptsOpen(true),
+                        },
+                      ]}
+                    />
+                  </span>
+                </div>
+
+                {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
+                {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
+
+                {grouped ? (
+                  groups.map(({ name, indices }) => {
+                    const label = name || "Ungrouped";
+                    const shut = collapsed.has(label);
+                    return (
+                      <div key={label} className="space-y-1">
+                        <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                          {/* Left-anchored with a trailing rule - see ViewCases for why. */}
+                          <button
+                            aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
+                            title={shut ? "Expand group" : "Collapse group"}
+                            className="text-muted transition-colors hover:text-accent"
+                            onClick={() => toggleCollapsed(label)}
+                          >
+                            {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                          </button>
+                          {/* Same contract as the other grouped screens: selection
+                              is the checkbox's job (scripted cases only), the TITLE
+                              toggles the fold like the chevron. */}
+                          {(() => {
+                            const runnable = runnableIn(indices);
+                            const on = runnable.filter((id) => selected.has(id)).length;
+                            return (
+                              <Checkbox
+                                ariaLabel={`Select all in ${label}`}
+                                checked={runnable.length > 0 && on === runnable.length}
+                                indeterminate={on > 0 && on < runnable.length}
+                                onCheckedChange={() => toggleGroup(indices)}
+                              />
+                            );
+                          })()}
+                          <button
+                            className="group flex items-center gap-2"
+                            title={shut ? "Expand group" : "Collapse group"}
+                            onClick={() => toggleCollapsed(label)}
+                          >
+                            <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                              {label} ({indices.length})
+                            </span>
+                          </button>
+                          <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+                        </div>
+                        <Collapse open={!shut} animateIn={settled}>
+                          <ul className="space-y-1">{indices.map(row)}</ul>
+                        </Collapse>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
+                )}
+
+                {/* Actions on the selection live bottom-right, in the one shared
+                    dock (see ActionDock): in place under the list, and floating
+                    bottom-right once that row has scrolled away. It only exists
+                    while something is ticked, so the screen never carries a
+                    permanently disabled button nobody can use. */}
+                {selectedInOrder.length > 0 && (
+                  <ActionDock label="Run selection" surface className="pt-1">
+                    {(floating) => (
+                      <>
+                        {/* No "N cases selected" text - the count is already in the
+                            button's own label, same as Run Tests' floating pill. */}
+                        <Button
+                          size="sm"
+                          tabIndex={floating ? -1 : undefined}
+                          onClick={() => setRunning(selectedInOrder)}
+                        >
+                          <IconRun aria-hidden />
+                          Run {selectedInOrder.length} selected
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          tabIndex={floating ? -1 : undefined}
+                          onClick={() => setReplaying(selectedInOrder)}
+                        >
+                          <IconUnattended aria-hidden />
+                          Run {selectedInOrder.length} unattended
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label="Clear selection"
+                          title="Clear selection"
+                          tabIndex={floating ? -1 : undefined}
+                          className="rounded-full px-2 hover:text-danger"
+                          onClick={() => setSelected(new Set())}
+                        >
+                          <IconCancel aria-hidden />
+                        </Button>
+                      </>
+                    )}
+                  </ActionDock>
+                )}
+              </section>
+            )}
+
+            {shown === "runs" && (
+              <PastRuns
+                pbiId={pbi.id}
+                onReview={setReviewing}
+                filter={runsFilter}
+                onFilterChange={setRunsFilter}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
@@ -870,7 +1110,17 @@ export default function AutoRun({
           sharedSteps={Object.fromEntries(
             rows.map((c) => [c.id, c.steps.flatMap((s, i) => (s.shared != null ? [i + 1] : []))]),
           )}
-          onClose={() => setReviewing(null)}
+          onClose={() => {
+            setReviewing(null);
+            // Opened from Past runs, the card's Review button is still there
+            // and the dialog hands focus back to it. Only a review opened
+            // from elsewhere (a finished unattended run over Test cases) has
+            // lost its opener.
+            if (shown !== "runs") setFocusRunsTab(true);
+            // Wherever the review opened from - Past runs, or a finished
+            // unattended run over Test cases - the run now lives in Past runs.
+            setTab("runs");
+          }}
         />
       )}
     </>
