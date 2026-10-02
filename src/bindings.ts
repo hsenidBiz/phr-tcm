@@ -396,8 +396,23 @@ export const commands = {
 	 *  from the app always starts from a clean slate.
 	 */
 	last_repair?: string | null,
+	/**
+	 *  An assistant's finding that the script is right and the application
+	 *  did not do what the case expects, at one step. Set only through
+	 *  `store::set_suspected_defect` (the assistant's
+	 *  `mark_autorun_suspected_defect`); every save keeps the one already
+	 *  on disk and ignores whatever it was sent. Never changes `steps`,
+	 *  `repairs` or `last_repair`.
+	 */
+	suspected_defect?: SuspectedDefect | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
+	/**
+	 *  A person's Clear on a case's suspected-defect mark: they have looked and
+	 *  decided it is not, or no longer, the application's fault. Removes the
+	 *  mark and nothing else - the script's actions and repair count stay.
+	 */
+	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
@@ -1557,6 +1572,15 @@ export type CaseScript_Deserialize = {
 	 *  from the app always starts from a clean slate.
 	 */
 	last_repair?: string | null,
+	/**
+	 *  An assistant's finding that the script is right and the application
+	 *  did not do what the case expects, at one step. Set only through
+	 *  `store::set_suspected_defect` (the assistant's
+	 *  `mark_autorun_suspected_defect`); every save keeps the one already
+	 *  on disk and ignores whatever it was sent. Never changes `steps`,
+	 *  `repairs` or `last_repair`.
+	 */
+	suspected_defect?: SuspectedDefect | null,
 };
 
 /**
@@ -1593,6 +1617,15 @@ export type CaseScript_Serialize = {
 	 *  from the app always starts from a clean slate.
 	 */
 	last_repair?: string | null,
+	/**
+	 *  An assistant's finding that the script is right and the application
+	 *  did not do what the case expects, at one step. Set only through
+	 *  `store::set_suspected_defect` (the assistant's
+	 *  `mark_autorun_suspected_defect`); every save keeps the one already
+	 *  on disk and ignores whatever it was sent. Never changes `steps`,
+	 *  `repairs` or `last_repair`.
+	 */
+	suspected_defect?: SuspectedDefect | null,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -3336,6 +3369,22 @@ export type SuiteRef = {
 export type SuiteScanProgress = {
 	done: number,
 	total: number,
+};
+
+/**
+ *  One case's suspected application defect: the step, and what the
+ *  application did against what the case expects. One per case; a new
+ *  mark replaces the old one.
+ */
+export type SuspectedDefect = {
+	step_number: number,
+	/**
+	 *  At most 300 characters, stored after the address and token scrub
+	 *  API-check excerpts get (`defects::check_mark`).
+	 */
+	note: string,
+	/**  Epoch milliseconds as a string, like `LocalRun::started_at`. */
+	marked_at: string,
 };
 
 /**

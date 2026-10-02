@@ -72,6 +72,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
   },
   {
+    name: "mark_autorun_suspected_defect",
+    label: "Mark a suspected defect",
+    summary: "Mark a failed step as the application's fault, not the script's, with a note, and leave the script alone.",
+  },
+  {
     name: "propose_accounts",
     label: "Propose test logins",
     summary: "Suggest logins for the active environment - never passwords - for you to add as accounts.",
@@ -164,6 +169,7 @@ export const DEV_ONLY_TOOLS = [
   "get_autorun_failures",
   "record_autorun_quirk",
   "retire_autorun_quirk",
+  "mark_autorun_suspected_defect",
   "propose_accounts",
   "get_accounts",
   "get_api_template_guide",
@@ -240,6 +246,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",
+    "mark_autorun_suspected_defect",
     "propose_accounts",
     "get_accounts",
   ],

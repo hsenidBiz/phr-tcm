@@ -395,6 +395,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["id", "reason"]),
         },
         {
+            "name": "mark_autorun_suspected_defect",
+            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run for a reason other than a STOP line.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case whose script to mark." },
+                "step_number": { "type": "number", "description": "The step that failed because of the application." },
+                "note": { "type": "string", "description": "What the application did, against what the case expects; at most 300 characters." },
+            }), &["case_id", "step_number", "note"]),
+        },
+        {
             "name": "propose_accounts",
             "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role? }; NEVER a password: the person picks which to add and gives each its password in the app. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
             "inputSchema": schema(serde_json::json!({
@@ -811,6 +820,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),

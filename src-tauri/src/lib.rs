@@ -189,6 +189,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_step,
             autorun::auto_run_load_script,
             autorun::auto_run_save_script,
+            autorun::auto_run_clear_suspected_defect,
             autorun::auto_run_import_scripts,
             autorun::auto_run_save_run,
             autorun::auto_run_list_runs,

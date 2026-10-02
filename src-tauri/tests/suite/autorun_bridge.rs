@@ -1436,6 +1436,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-failures",
         "/autorun-quirk",
         "/autorun-quirk-retire",
+        "/autorun-defect",
     ];
     for path in autorun {
         let (status, body) =

@@ -274,6 +274,23 @@ pub fn save_script_from_editor(
     store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())
 }
 
+/// A person's Clear on a case's suspected-defect mark: they have looked and
+/// decided it is not, or no longer, the application's fault. Removes the
+/// mark and nothing else - the script's actions and repair count stay.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_clear_suspected_defect(app: tauri::AppHandle, case_id: i32) -> Result<(), String> {
+    clear_suspected_defect(&root(&app)?, case_id)
+}
+
+/// The pure half of [`auto_run_clear_suspected_defect`], so a test can
+/// reach it without an `AppHandle`. A case with no mark is left as it is.
+pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<(), String> {
+    store::set_suspected_defect(root, case_id, None)?;
+    crate::applog::info(format!("Auto Run: the suspected defect on case {case_id} was cleared from the app"));
+    Ok(())
+}
+
 /// Import a BUNDLE of scripts from one file - the shape an assistant
 /// writes for a whole PBI, and the shape the Auto Run screen's Import
 /// button reads back.
