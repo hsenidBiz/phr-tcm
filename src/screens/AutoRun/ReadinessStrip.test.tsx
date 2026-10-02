@@ -16,6 +16,7 @@ const READY: Props = {
   areaCount: 3,
   testFileCount: 1,
   missingTestFiles: [],
+  unreadable: [],
   onOpenSetup: () => {},
 };
 
@@ -33,9 +34,25 @@ test("names the environment and the host runs go to", () => {
 
 test("with no environment it says where runs go, and says plainly when there is no address", () => {
   const s = strip({ envName: null, siteHost: null });
-  expect(within(s).getByText("no site set yet").parentElement).toHaveTextContent(
-    "Runs against no site set yet",
-  );
+  expect(s).toHaveTextContent("Runs against no site set yet");
+  // A run cannot go without an address, so it is flagged like the other gaps.
+  expect(within(s).getByText("no site set yet")).toHaveClass("text-warning");
+});
+
+test("an address that could not be read is not called missing", () => {
+  const s = strip({ siteHost: undefined, unreadable: ["The environments could not be read"] });
+  expect(within(s).queryByText("no site set yet")).not.toBeInTheDocument();
+  expect(within(s).getByText("The environments could not be read")).toHaveClass("text-warning");
+});
+
+test("a read that failed is said in words, as a warning, beside what is known", () => {
+  const s = strip({
+    accountCount: null,
+    unreadable: ["The accounts could not be read", "The test files could not be read"],
+  });
+  expect(within(s).getByText("The accounts could not be read")).toHaveClass("text-warning");
+  expect(within(s).getByText("The test files could not be read")).toHaveClass("text-warning");
+  expect(within(s).getByText("QA - qa.example.com")).toBeInTheDocument();
 });
 
 test("sign-in says Saved, or Built-in when the built-in recipe is in effect, or warns when there is none", () => {

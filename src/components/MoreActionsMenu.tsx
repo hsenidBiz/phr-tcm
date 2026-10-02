@@ -255,6 +255,10 @@ export default function MoreActionsMenu({
                   e.stopPropagation();
                   if (a.disabled) return;
                   close();
+                  // The menu is about to unmount. A dialog the action opens
+                  // gives focus back to whatever had it when it opened, so
+                  // that must be the button that stays, not this item.
+                  trigger.current?.focus();
                   a.onSelect();
                 }}
               >

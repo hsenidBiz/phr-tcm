@@ -1293,7 +1293,74 @@ test("a setup read that fails still lets the screen open", async () => {
   });
   renderAutoRun(null);
   await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
-  expect(tab("Setup")).toHaveAccessibleName("Setup");
+  expect(tab("Setup")).not.toHaveAttribute("aria-selected", "true");
+});
+
+/// ...but it must not vanish from the tab the screen opens on. The strip
+/// opens degraded, says what could not be read, and Setup carries the flag.
+test("a failed accounts read shows on the Test cases strip and flags Setup", async () => {
+  mockReady((cmd) => {
+    if (cmd === "auto_run_list_accounts") throw new Error("disk read failed");
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(within(strip).getByText("The accounts could not be read")).toBeInTheDocument();
+  // What is known is still said.
+  expect(within(strip).getByText("QA - qa.example.com")).toBeInTheDocument();
+  expect(within(strip).queryByText(/^No accounts/)).not.toBeInTheDocument();
+  expect(tab("Setup")).toHaveAccessibleName(/needs attention/);
+  // Flagging is not routing: the screen still opened on the cases.
+  expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
+});
+
+test("a failed recipe read shows on the strip and flags Setup", async () => {
+  mockReady((cmd) => {
+    if (cmd === "env_list") return envWith("");
+    if (cmd === "auto_run_load_recipe") throw new Error("bad recipe");
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(within(strip).getByText("The saved recipe could not be read")).toBeInTheDocument();
+  // An address that may live in the unreadable recipe is not "missing".
+  expect(within(strip).queryByText("no site set yet")).not.toBeInTheDocument();
+  expect(tab("Setup")).toHaveAccessibleName(/needs attention/);
+});
+
+test("a failed environments read shows on the strip and flags Setup", async () => {
+  mockReady((cmd) => {
+    if (cmd === "env_list") throw new Error("no environments");
+    return undefined;
+  });
+  renderAutoRun(null);
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(within(strip).getByText("The environments could not be read")).toBeInTheDocument();
+  expect(within(strip).queryByText("no site set yet")).not.toBeInTheDocument();
+  expect(tab("Setup")).toHaveAccessibleName(/needs attention/);
+});
+
+test("a failed test files read shows on the strip", async () => {
+  mockReady((cmd) => {
+    if (cmd === "test_files_list") throw new Error("folder gone");
+    return undefined;
+  });
+  renderAutoRun(null);
+  const strip = await screen.findByRole("group", { name: "Readiness" });
+  expect(await within(strip).findByText("The test files could not be read")).toBeInTheDocument();
+});
+
+test("while the setup is only loading the strip stays hidden", async () => {
+  mockReady((cmd) => (cmd === "auto_run_list_accounts" ? new Promise(() => {}) : undefined));
+  renderAutoRun(null);
+  await screen.findByRole("tab", { name: /^Past runs 0/ });
+  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
 });
 
 test("a tab the person picks while the setup loads is never overridden by the opening rule", async () => {
@@ -1466,6 +1533,8 @@ test("Open setup in the strip selects the Setup tab", async () => {
   fireEvent.click(within(strip).getByRole("button", { name: "Open setup" }));
   expect(tab("Setup")).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+  // The button that held focus is gone with its panel; focus goes to the tab.
+  expect(tab("Setup")).toHaveFocus();
 });
 
 test("the strip belongs to Test cases alone", async () => {
@@ -1517,7 +1586,10 @@ test("Clear scripts in More is disabled with no script, and still asks first whe
 test("Clear scripts in More is disabled when no case has a script", async () => {
   mockReady();
   renderAutoRun("Test cases");
-  await screen.findByText("Valid login");
+  // Wait for the script lookups to answer (no script: an Add button), or
+  // the item would be disabled merely because they are still pending.
+  await screen.findByRole("button", { name: "Add script for #201" });
+  await screen.findByRole("button", { name: "Add script for #202" });
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   expect(screen.getByRole("menuitem", { name: "Clear scripts" })).toBeDisabled();
 });
@@ -1593,4 +1665,60 @@ test("the Past runs result filter survives switching tabs and back", async () =>
   expect(await screen.findByRole("button", { name: "Failed (1)" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("button", { name: "All (2)" })).toHaveAttribute("aria-pressed", "false");
   expect(screen.queryByText("Locked account")).not.toBeInTheDocument();
+});
+
+test("a Clear scripts dialog that is cancelled returns focus to the More button", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 202 ? scriptFor202 : null;
+    }
+    return undefined;
+  });
+  renderAutoRun("Test cases");
+  await screen.findByRole("button", { name: "Run #202" });
+  chooseFromMore("Clear scripts");
+  await screen.findByRole("heading", { name: "Clear scripts?" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Clear scripts?" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("button", { name: "More" })).toHaveFocus());
+});
+
+const reviewableRun = {
+  id: "run-unattended",
+  pbi_id: 42,
+  started_at: "1786000300000",
+  mode: "unattended",
+  cases: [
+    {
+      case_id: 202,
+      title: "Locked account",
+      verdict: "",
+      note: "",
+      proposed: "Passed",
+      reason: "every action of 1 step passed",
+      steps: [],
+    },
+  ],
+};
+
+test("closing a review opened from Past runs leaves focus on the Review button that opened it", async () => {
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_list_runs") return [reviewableRun];
+    if (cmd === "auto_run_load_run") {
+      return (args as { runId: string }).runId === reviewableRun.id ? reviewableRun : null;
+    }
+    return undefined;
+  });
+  renderAutoRun("Past runs");
+
+  const open = await screen.findByRole("button", { name: "Review" });
+  open.focus();
+  fireEvent.click(open);
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByText(/proposed: passed/i)).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toHaveFocus());
+  expect(tab("Past runs")).not.toHaveFocus();
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
 });

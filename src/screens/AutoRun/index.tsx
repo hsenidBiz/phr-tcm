@@ -235,6 +235,20 @@ export default function AutoRun({
    * the screen still opens - on what it does know. */
   const essentialsSettled =
     !envs.isPending && !(setupReady && recipe.isPending) && !accounts.isPending;
+  /** Reads that failed, each as the sentence its Setup row already says.
+   * A failed read is never "missing" (it does not route the screen), but
+   * it must be visible on the tab the screen opens on, not only on Setup.
+   * The first three are what a run cannot go without; they also flag the
+   * Setup tab. */
+  const essentialUnreadable = [
+    ...(envs.isError ? ["The environments could not be read"] : []),
+    ...(setupReady && recipe.isError ? ["The saved recipe could not be read"] : []),
+    ...(accounts.isError ? ["The accounts could not be read"] : []),
+  ];
+  const unreadable = [
+    ...essentialUnreadable,
+    ...(setupReady && testFiles.isError ? ["The test files could not be read"] : []),
+  ];
   const opening: AutoRunTab | null = essentialsSettled
     ? readiness.essentialMissing
       ? "setup"
@@ -528,7 +542,8 @@ export default function AutoRun({
             {TABS.map(({ id, label }, i) => {
               const selected = shown === id;
               const count = id === "cases" ? caseCount : id === "runs" ? runCount : null;
-              const attention = id === "setup" && readiness.essentialMissing;
+              const attention =
+                id === "setup" && (readiness.essentialMissing || essentialUnreadable.length > 0);
               return (
                 <button
                   key={id}
@@ -597,6 +612,8 @@ export default function AutoRun({
                           <span className="text-muted">Loading…</span>
                         ) : recipe.isError ? (
                           <span className="text-danger">The saved recipe could not be read</span>
+                        ) : envs.isError && !site.start_url ? (
+                          <span className="text-danger">The environments could not be read</span>
                         ) : site.start_url ? (
                           <>
                             <span className="id-mono break-all">{site.start_url}</span>
@@ -771,16 +788,24 @@ export default function AutoRun({
                 {/* Where runs go and whether the setup is in place, in one line.
                     Only once the three things a run cannot go without are
                     known, so a slow read never shows as a warning. */}
-                {readiness.loaded && (
+                {essentialsSettled && (
                   <ReadinessStrip
                     envName={activeEnv?.name ?? null}
-                    siteHost={site.start_url ? siteHost(site.start_url) : null}
+                    // undefined: the address could not be told (a read failed).
+                    siteHost={
+                      knownSiteUrl === undefined ? undefined : site.start_url ? siteHost(site.start_url) : null
+                    }
                     signIn={signIn}
                     accountCount={accountCount}
                     areaCount={areaCount}
                     testFileCount={testFileCount}
                     missingTestFiles={readiness.missingTestFiles}
-                    onOpenSetup={() => setTab("setup")}
+                    unreadable={unreadable}
+                    onOpenSetup={() => {
+                      setTab("setup");
+                      // The button is in the panel that is about to unmount.
+                      tabRefs.current.setup?.focus();
+                    }}
                   />
                 )}
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -1087,7 +1112,11 @@ export default function AutoRun({
           )}
           onClose={() => {
             setReviewing(null);
-            setFocusRunsTab(true);
+            // Opened from Past runs, the card's Review button is still there
+            // and the dialog hands focus back to it. Only a review opened
+            // from elsewhere (a finished unattended run over Test cases) has
+            // lost its opener.
+            if (shown !== "runs") setFocusRunsTab(true);
             // Wherever the review opened from - Past runs, or a finished
             // unattended run over Test cases - the run now lives in Past runs.
             setTab("runs");

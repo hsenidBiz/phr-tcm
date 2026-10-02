@@ -38,15 +38,19 @@ export function useAutoRunReadiness(input: {
     if (testFileNames === null) return [];
     // Windows file names: cv.txt and CV.TXT are the same file.
     const have = new Set(testFileNames.map((n) => n.toLowerCase()));
-    const missing = new Set<string>();
+    // Keyed by the lower-cased name so one file asked for in two spellings
+    // counts once; the first spelling seen is the one reported.
+    const missing = new Map<string, string>();
     for (const script of scripts) {
       for (const step of script?.steps ?? []) {
         for (const action of step.actions) {
-          if (action.kind === "upload" && !have.has(action.file.toLowerCase())) missing.add(action.file);
+          if (action.kind !== "upload") continue;
+          const key = action.file.toLowerCase();
+          if (!have.has(key) && !missing.has(key)) missing.set(key, action.file);
         }
       }
     }
-    return [...missing].sort((a, b) => a.localeCompare(b));
+    return [...missing.values()].sort((a, b) => a.localeCompare(b));
   }, [scripts, testFileNames]);
 
   return { loaded, essentialMissing, missingTestFiles };

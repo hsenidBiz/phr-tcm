@@ -43,12 +43,14 @@ export default function ReadinessStrip({
   areaCount,
   testFileCount,
   missingTestFiles,
+  unreadable,
   onOpenSetup,
 }: {
   /** The active environment's name, or null when there is none. */
   envName: string | null;
-  /** The host runs go to, or null when no site address is set. */
-  siteHost: string | null;
+  /** The host runs go to, null when no site address is set, or undefined
+   * when it could not be told (a read failed - see `unreadable`). */
+  siteHost: string | null | undefined;
   /** A saved recipe, the built-in one, no way to sign in, or not read yet. */
   signIn: "saved" | "builtin" | "none" | null;
   accountCount: number | null;
@@ -56,6 +58,9 @@ export default function ReadinessStrip({
   testFileCount: number | null;
   /** Files a saved script uploads that the Test files folder does not hold. */
   missingTestFiles: string[];
+  /** Reads that failed, each as the sentence its Setup row says. A count
+   * that could not be read is left out above; this is where it is said. */
+  unreadable: string[];
   onOpenSetup: () => void;
 }) {
   return (
@@ -64,12 +69,21 @@ export default function ReadinessStrip({
       aria-label="Readiness"
       className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted"
     >
-      <span>
-        {envName ? "Environment" : "Runs against"}{" "}
-        <span className="font-medium text-text">
-          {envName && `${envName} - `}
-          {siteHost ?? "no site set yet"}
-        </span>
+      <span className="inline-flex items-center gap-1">
+        <span>{envName ? "Environment" : "Runs against"} </span>
+        {siteHost === null ? (
+          // A run cannot go without an address, so it is flagged like the
+          // other gaps.
+          <>
+            {envName && <span className="font-medium text-text">{envName} - </span>}
+            <Item tone="warn">no site set yet</Item>
+          </>
+        ) : (
+          <span className="font-medium text-text">
+            {envName && `${envName} - `}
+            {siteHost ?? "not known"}
+          </span>
+        )}
       </span>
 
       {signIn === "none" ? (
@@ -106,6 +120,12 @@ export default function ReadinessStrip({
           <Item tone="ok">{plural(testFileCount, "test file")}</Item>
         )
       ) : null}
+
+      {unreadable.map((sentence) => (
+        <Item key={sentence} tone="warn">
+          {sentence}
+        </Item>
+      ))}
 
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onOpenSetup}>
         Open setup

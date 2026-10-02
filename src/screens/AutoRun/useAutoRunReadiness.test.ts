@@ -69,3 +69,13 @@ test("a test file a script uploads but the folder lacks is missing, once, in nam
   // Until the folder has been read nothing can be called missing.
   expect(readiness({ scripts: [uploading("x.pdf")], testFileNames: null }).missingTestFiles).toEqual([]);
 });
+
+test("names that differ only in case are one missing file, counted once", () => {
+  const r = readiness({
+    scripts: [uploading("CV.txt"), uploading("cv.txt", "Cv.TXT")],
+    testFileNames: [],
+  });
+  expect(r.missingTestFiles).toHaveLength(1);
+  // The first spelling seen is the one reported.
+  expect(r.missingTestFiles).toEqual(["CV.txt"]);
+});
