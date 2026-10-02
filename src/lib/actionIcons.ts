@@ -98,6 +98,14 @@ export {
   // Starting a run nobody has to sit in front of - a person picks IconRun.
   Bot as IconUnattended,
   Flag as IconFinish,
+  // Opening and folding a row's detail - the steps under a case in the
+  // unattended run. One glyph per direction, named for the result.
+  ChevronRight as IconShowSteps,
+  ChevronDown as IconHideSteps,
+  // Returning to the case running now after scrolling the list away.
+  LocateFixed as IconFollowRun,
+  // The mark beside a step the run has already carried out.
+  Check as IconStepDone,
 
   // Capturing evidence during a run
   Video as IconRecord,
