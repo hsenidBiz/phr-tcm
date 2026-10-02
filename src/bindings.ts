@@ -1033,7 +1033,8 @@ export type Account = {
 
 /**
  *  One proposed account a person picked to add. `password` is what they
- *  typed; empty means "use the environment's default password".
+ *  typed; empty means "use the password the assistant proposed with it, or
+ *  else the environment's default password".
  */
 export type AccountInput = {
 	key: string,
@@ -2515,15 +2516,17 @@ export type Project = {
 };
 
 /**
- *  An account the assistant proposed for an environment: a login it found
- *  (in a seed script, a spec, the database). Never a password - a person
- *  picks which to add and gives each one its password in the app.
+ *  An account the assistant proposed for an environment, as the webview
+ *  sees it: a login it found (in a seed script, a spec, the database). A
+ *  password the assistant read with it stays in Rust - this says only
+ *  whether there is one. There is deliberately no password field.
  */
 export type ProposedAccount = {
 	key: string,
 	label: string,
 	username: string,
-	role?: string | null,
+	role: string | null,
+	has_password: boolean,
 };
 
 export type Proven = Proven_Serialize | Proven_Deserialize;

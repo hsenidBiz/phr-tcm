@@ -79,7 +79,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "propose_accounts",
     label: "Propose test logins",
-    summary: "Suggest logins for the active environment - never passwords - for you to add as accounts.",
+    summary: "Suggest logins for the active environment - with their passwords only in a test environment - for you to add as accounts.",
   },
   {
     name: "get_accounts",

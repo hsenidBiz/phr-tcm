@@ -833,6 +833,7 @@ mod accounts_for_the_assistant {
     use v2_lib::db::credentials::MemoryStore;
     use v2_lib::environments::{
         active_id, load_or_init, load_proposals, proposals_path_for, save_env, save_proposals, ProposedAccount,
+        StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
     };
 
     /// A root with Default made, set as the process-wide root the bridge
@@ -863,11 +864,35 @@ mod accounts_for_the_assistant {
     }
 
     fn seed_proposals(root: &Path, keys: &[&str]) {
-        let list: Vec<ProposedAccount> = keys
+        let with: Vec<(&str, Option<&str>)> = keys.iter().map(|k| (*k, None)).collect();
+        seed_proposals_with(root, &with);
+    }
+
+    /// Proposals as the bridge keeps them, each with the password the
+    /// assistant read for it, if any. Usernames are `<key>-user`.
+    fn seed_proposals_with(root: &Path, keys: &[(&str, Option<&str>)]) {
+        let list: Vec<StoredProposal> = keys
             .iter()
-            .map(|k| ProposedAccount { key: k.to_string(), label: k.to_string(), username: format!("{k}-user"), role: None })
+            .map(|(k, pw)| StoredProposal {
+                key: k.to_string(),
+                label: k.to_string(),
+                username: format!("{k}-user"),
+                role: None,
+                password: pw.map(str::to_string),
+            })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
+    }
+
+    fn with_password(key: &str, user: &str, password: &str) -> Value {
+        let mut p = proposal(key, user);
+        p["password"] = json!(password);
+        p
+    }
+
+    /// The proposals file's raw text, or empty when there is none.
+    fn proposals_text(root: &Path) -> String {
+        std::fs::read_to_string(proposals_path_for(root, &active_id(root).unwrap())).unwrap_or_default()
     }
 
     #[tokio::test]
@@ -889,10 +914,10 @@ mod accounts_for_the_assistant {
             call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.sup", "  ")] }).to_string()).await;
         assert_eq!(status, 400, "{out}");
 
-        // A password is never accepted in a proposal.
-        let mut with_pw = proposal("hr.sup", "sup1");
-        with_pw["password"] = json!("pw-Zq9");
-        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": [with_pw] }).to_string()).await;
+        // A field the shape does not have is still refused.
+        let mut extra = proposal("hr.sup", "sup1");
+        extra["secret"] = json!("x");
+        let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": [extra] }).to_string()).await;
         assert_eq!(status, 400, "{out}");
         assert!(!proposals_path_for(root, &env_id).exists());
 
@@ -925,6 +950,7 @@ mod accounts_for_the_assistant {
                 label: "hr.admin label".into(),
                 username: "adm1".into(),
                 role: Some("Supervisor".into()),
+                has_password: false,
             }]
         );
         assert!(proposals_path_for(root, &env_id).is_file(), "stored under the environment's id");
@@ -932,6 +958,171 @@ mod accounts_for_the_assistant {
         dismiss_proposals_with(root).unwrap();
         assert!(proposals_with(root).unwrap().is_empty());
         assert!(!proposals_path_for(root, &env_id).exists());
+    }
+
+    // ---- A password from the same database lookup (test environments only)
+
+    #[tokio::test]
+    async fn a_test_environment_keeps_each_proposed_password() {
+        let _root = crate::serial::autorun();
+        let _log = crate::serial::log_tail();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-7731"), proposal("hr.emp", "emp1")] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!out.contains("Db-Pw-7731"), "{out}");
+
+        // Kept, for the add to use.
+        let stored = load_proposals(root, &active_id(root).unwrap()).unwrap();
+        assert_eq!(stored[0].password.as_deref(), Some("Db-Pw-7731"));
+        assert_eq!(stored[1].password, None);
+        assert!(format!("{stored:?}").find("Db-Pw-7731").is_none(), "Debug hides it");
+
+        // The webview's view says only whether there is one.
+        let view = proposals_with(root).unwrap();
+        assert_eq!(view.iter().map(|p| p.has_password).collect::<Vec<_>>(), [true, false]);
+        let sent = serde_json::to_string(&view).unwrap();
+        assert!(!sent.contains("Db-Pw-7731"), "{sent}");
+        let fields: Vec<String> = serde_json::from_str::<Value>(&sent).unwrap()[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert!(!fields.iter().any(|f| f == "password"), "{fields:?}");
+
+        let tail = v2_lib::applog::recent(500);
+        assert!(tail.iter().any(|l| l.message.contains("proposed 2 account(s)")), "the proposal is on record: {tail:?}");
+        assert!(tail.iter().all(|l| !l.message.contains("Db-Pw-7731")), "{tail:?}");
+    }
+
+    #[tokio::test]
+    async fn a_proposed_password_outside_a_test_environment_refuses_the_whole_call() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+
+        // Without passwords a proposal works anywhere, as before.
+        let (status, out) =
+            call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.emp", "emp1")] }).to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        let before = proposals_text(root);
+
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-7731"), proposal("hr.adm", "adm1")] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!((status, out.as_str()), (400, PROPOSED_PASSWORD_NOT_TEST));
+        assert_eq!(
+            PROPOSED_PASSWORD_NOT_TEST,
+            "passwords can only be proposed for an environment marked as a test environment - mark it in Edit environments, or propose the logins without passwords"
+        );
+        // Nothing of it is kept: the earlier proposal stands untouched.
+        assert_eq!(proposals_text(root), before);
+        assert!(!proposals_text(root).contains("Db-Pw-7731"));
+    }
+
+    #[tokio::test]
+    async fn a_proposed_password_is_never_empty_or_over_256_characters() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        let long = "x".repeat(257);
+        for bad in ["", long.as_str()] {
+            let body = json!({ "accounts": [with_password("hr.sup", "sup1", bad)] });
+            let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+            assert_eq!(status, 400, "{out}");
+            assert!(out.contains("hr.sup"), "names the key: {out}");
+            assert!(bad.is_empty() || !out.contains(bad), "never repeats the password: {out}");
+            assert!(proposals_text(root).is_empty());
+        }
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", &"y".repeat(256))] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 200, "{out}");
+    }
+
+    #[tokio::test]
+    async fn replacing_or_dismissing_a_proposal_drops_its_passwords() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-1"), with_password("hr.emp", "emp1", "Db-Pw-2")] });
+        assert_eq!(call("POST", "/accounts-propose", &body.to_string()).await.0, 200);
+        // The next proposal replaces the last one, passwords included.
+        let body = json!({ "accounts": [with_password("hr.emp", "emp1", "Db-Pw-3")] });
+        assert_eq!(call("POST", "/accounts-propose", &body.to_string()).await.0, 200);
+        let text = proposals_text(root);
+        assert!(!text.contains("Db-Pw-1") && !text.contains("Db-Pw-2"), "{text}");
+        assert!(text.contains("Db-Pw-3"));
+
+        dismiss_proposals_with(root).unwrap();
+        assert!(!proposals_path_for(root, &active_id(root).unwrap()).exists());
+    }
+
+    #[test]
+    fn adding_a_proposal_takes_its_database_password_unless_one_is_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1")), ("hr.emp", Some("Db-Pw-2")), ("hr.adm", None)]);
+        let store = MemoryStore::default();
+
+        // No password anywhere for hr.adm, and no default: today's rule, unchanged.
+        let err = add_proposals_with(root, &store, vec![pick("hr.adm", "hr.adm-user", "")], vec![]).unwrap_err();
+        assert!(err.contains("hr.adm") && err.contains("no default password set - type one"), "{err}");
+
+        let picks = vec![pick("hr.sup", "hr.sup-user", ""), pick("hr.emp", "hr.emp-user", "typed-2")];
+        assert!(add_proposals_with(root, &store, picks, vec![]).unwrap().is_empty());
+        let now = load_accounts(root).unwrap();
+        assert_eq!(now.iter().find(|a| a.key == "hr.sup").unwrap().password, "Db-Pw-1");
+        assert_eq!(now.iter().find(|a| a.key == "hr.emp").unwrap().password, "typed-2", "a typed one wins");
+
+        // What was added left the proposal, and its password went with it.
+        let left: Vec<String> = proposals_with(root).unwrap().into_iter().map(|p| p.key).collect();
+        assert_eq!(left, ["hr.adm"]);
+        let text = proposals_text(root);
+        assert!(!text.contains("Db-Pw-1") && !text.contains("Db-Pw-2"), "{text}");
+    }
+
+    #[test]
+    fn a_proposals_password_is_only_for_its_own_username() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1"))]);
+        let store = MemoryStore::default();
+
+        // The pick names another login than the one proposed: the
+        // proposal's password is not that login's, so the usual rule applies.
+        let err = add_proposals_with(root, &store, vec![pick("hr.sup", "someone-else", "")], vec![]).unwrap_err();
+        assert!(err.contains("no default password set - type one"), "{err}");
+        assert!(load_accounts(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_key_waiting_on_replace_keeps_its_database_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        load_or_init(root, Some("dev-read")).unwrap();
+        save_accounts(root, &[acct("hr.sup", "sup-old")]).unwrap();
+        seed_proposals_with(root, &[("hr.sup", Some("Db-Pw-1"))]);
+        let store = MemoryStore::default();
+
+        let confirm = add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec![]).unwrap();
+        assert_eq!(confirm, ["hr.sup"]);
+        assert_eq!(proposals_with(root).unwrap()[0].has_password, true, "still proposed, password and all");
+
+        let confirm =
+            add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec!["hr.sup".into()]).unwrap();
+        assert!(confirm.is_empty());
+        let now = load_accounts(root).unwrap();
+        assert_eq!((now[0].username.as_str(), now[0].password.as_str()), ("hr.sup-user", "Db-Pw-1"));
+        assert!(proposals_with(root).unwrap().is_empty());
     }
 
     #[tokio::test]

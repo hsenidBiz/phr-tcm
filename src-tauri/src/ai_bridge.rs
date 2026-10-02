@@ -1688,11 +1688,14 @@ fn autorun_quirk_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
 // ------------------------------------------------- the environment's accounts
 
 /// `POST /accounts-propose`: the assistant's proposed logins for the active
-/// environment, REPLACING whatever it proposed before. Never a password -
-/// a field the shape does not have is refused, `password` included - and
-/// nothing reaches the accounts until a person adds it in the app.
+/// environment, REPLACING whatever it proposed before, passwords included.
+/// Each may carry the password the assistant read in the same database
+/// lookup - accepted only for an environment marked as a test environment,
+/// and otherwise the whole call is refused. A password is never logged or
+/// repeated in an answer, and nothing reaches the accounts until a person
+/// adds it in the app.
 fn accounts_propose(body: &str) -> (u16, String) {
-    use crate::environments::{active, save_proposals, ProposedAccount};
+    use crate::environments::{active, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST};
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Proposal {
@@ -1702,8 +1705,10 @@ fn accounts_propose(body: &str) -> (u16, String) {
         username: String,
         #[serde(default)]
         role: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
     }
-    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\" }] }";
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\" }] }";
     let raw = match body_field(body, "accounts", shape) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -1712,13 +1717,13 @@ fn accounts_propose(body: &str) -> (u16, String) {
     let list: Vec<Proposal> = match serde_json::from_value(raw) {
         Ok(l) => l,
         Err(e) => {
-            return (400, format!("\"accounts\" is a list of {{ key, label, username, role? }} - never a password: {e}"))
+            return (400, format!("\"accounts\" is a list of {{ key, label, username, role?, password? }}: {e}"))
         }
     };
     if list.is_empty() {
         return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
     }
-    let proposals: Vec<ProposedAccount> = list
+    let proposals: Vec<StoredProposal> = list
         .into_iter()
         .map(|p| {
             let key = p.key.trim().to_string();
@@ -1727,9 +1732,11 @@ fn accounts_propose(body: &str) -> (u16, String) {
                 l => l.to_string(),
             };
             let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
-            ProposedAccount { key, label, username: p.username.trim().to_string(), role }
+            // Kept exactly as read: a password's spaces are its own.
+            StoredProposal { key, label, username: p.username.trim().to_string(), role, password: p.password }
         })
         .collect();
+    let with_password = proposals.iter().filter(|p| p.password.is_some()).count();
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -1738,18 +1745,21 @@ fn accounts_propose(body: &str) -> (u16, String) {
         Ok(e) => e,
         Err(e) => return (500, e),
     };
+    if with_password > 0 && !env.test_environment {
+        return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
+    }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
     }
     crate::applog::info(format!(
-        "Environments: the assistant proposed {} account(s) for {}",
+        "Environments: the assistant proposed {} account(s) for {}, {with_password} with a password",
         proposals.len(),
         env.name
     ));
     (
         200,
         format!(
-            "proposed {} account(s) for the environment {} - a person picks which to add, and gives each its password, in the app. Another call replaces this proposal.",
+            "proposed {} account(s) for the environment {}, {with_password} with a password - a person picks which to add in the app, and a proposed password is used unless they type another. Another call replaces this proposal.",
             proposals.len(),
             env.name
         ),

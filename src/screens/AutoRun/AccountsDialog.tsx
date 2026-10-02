@@ -4,9 +4,12 @@
 // only ever names an account by its key.
 //
 // Under the accounts sit the logins the AI assistant PROPOSED for the
-// active environment (it never supplies a password): the person ticks the
-// ones to add and types a password for each, or leaves it empty to use the
-// environment's default password. There is no event when the assistant
+// active environment: the person ticks the ones to add and types a password
+// for each, or leaves it empty. Empty uses the password the assistant read
+// from the database with that login, when it proposed one (in a test
+// environment only; it stays in Rust - this screen only learns that there
+// is one), and otherwise the environment's default password. There is no
+// event when the assistant
 // writes a proposal, so the list is read again every time this dialog
 // opens.
 
@@ -268,8 +271,9 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
           <section className="space-y-2 border-t border-border pt-3">
             <h3 className="text-xs font-semibold text-text">Proposed by the assistant ({proposals.length})</h3>
             <p className="text-xs text-muted">
-              Logins the assistant found for this environment. It does not know their passwords: type one for
-              each, or leave it empty to use the environment's default password.
+              Logins the assistant found for this environment. Type a password for each, or leave it empty to use
+              the password from the database when the assistant found one, or else the environment's default
+              password.
             </p>
             {proposals.map((p) => (
               <div
@@ -294,13 +298,22 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
                   {p.role ? <span className="ml-1 text-faint">({p.role})</span> : null}
                 </span>
                 <span className="break-all text-xs text-muted">{p.username}</span>
-                <Input
-                  aria-label={`Password for proposed ${p.key}`}
-                  placeholder={hasDefaultPassword ? "default password" : "no default password set - type one"}
-                  value={typed[p.key] ?? ""}
-                  type={show ? "text" : "password"}
-                  onChange={(e) => setTyped((cur) => ({ ...cur, [p.key]: e.target.value }))}
-                />
+                <div className="space-y-1">
+                  <Input
+                    aria-label={`Password for proposed ${p.key}`}
+                    placeholder={
+                      p.has_password
+                        ? "Leave blank to use the database password"
+                        : hasDefaultPassword
+                          ? "default password"
+                          : "no default password set - type one"
+                    }
+                    value={typed[p.key] ?? ""}
+                    type={show ? "text" : "password"}
+                    onChange={(e) => setTyped((cur) => ({ ...cur, [p.key]: e.target.value }))}
+                  />
+                  {p.has_password && <p className="text-xs text-muted">Password from the database</p>}
+                </div>
               </div>
             ))}
             {asking && (

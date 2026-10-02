@@ -366,24 +366,77 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
     Ok(file)
 }
 
-/// An account the assistant proposed for an environment: a login it found
-/// (in a seed script, a spec, the database). Never a password - a person
-/// picks which to add and gives each one its password in the app.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+/// An account the assistant proposed for an environment, as the webview
+/// sees it: a login it found (in a seed script, a spec, the database). A
+/// password the assistant read with it stays in Rust - this says only
+/// whether there is one. There is deliberately no password field.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct ProposedAccount {
+    pub key: String,
+    pub label: String,
+    pub username: String,
+    pub role: Option<String>,
+    pub has_password: bool,
+}
+
+/// A proposed account as it is kept in the proposals file. `password` is
+/// the one the assistant read from the same database lookup as the login,
+/// accepted only for an environment marked as a test environment. Like an
+/// account's own password it is kept in plain JSON (the owner's decision
+/// for test logins, see `autorun::accounts`), and it leaves the file when
+/// its proposal is added, dismissed or replaced.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StoredProposal {
     pub key: String,
     pub label: String,
     pub username: String,
     #[serde(default)]
     pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+/// Hand-written so a password cannot reach a log line through `{:?}`.
+impl std::fmt::Debug for StoredProposal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredProposal")
+            .field("key", &self.key)
+            .field("label", &self.label)
+            .field("username", &self.username)
+            .field("role", &self.role)
+            .field("password", &self.password.as_ref().map(|_| "(hidden)"))
+            .finish()
+    }
+}
+
+impl StoredProposal {
+    /// What the webview may see of it.
+    pub fn view(&self) -> ProposedAccount {
+        ProposedAccount {
+            key: self.key.clone(),
+            label: self.label.clone(),
+            username: self.username.clone(),
+            role: self.role.clone(),
+            has_password: self.password.is_some(),
+        }
+    }
 }
 
 /// The most accounts one proposal may carry.
 pub const MAX_PROPOSALS: usize = 100;
 
+/// The longest password a proposal may carry, in characters.
+pub const MAX_PROPOSED_PASSWORD: usize = 256;
+
+/// Said when a proposal carries a password and the active environment is
+/// not marked as a test environment. The whole call is refused.
+pub const PROPOSED_PASSWORD_NOT_TEST: &str = "passwords can only be proposed for an environment marked as a test environment - mark it in Edit environments, or propose the logins without passwords";
+
 /// A proposal as it may be kept: at most `MAX_PROPOSALS`, each key a usable
-/// account key and used once, each with a username.
-pub fn validate_proposals(list: &[ProposedAccount]) -> Result<(), String> {
+/// account key and used once, each with a username, and a password, when
+/// there is one, that is not empty and at most `MAX_PROPOSED_PASSWORD`
+/// characters. No message repeats a password.
+pub fn validate_proposals(list: &[StoredProposal]) -> Result<(), String> {
     if list.len() > MAX_PROPOSALS {
         return Err(format!(
             "at most {MAX_PROPOSALS} accounts can be proposed at once - this proposal has {}",
@@ -404,12 +457,28 @@ pub fn validate_proposals(list: &[ProposedAccount]) -> Result<(), String> {
         if p.username.trim().is_empty() {
             return Err(format!("the account \"{}\" has no username", p.key));
         }
+        match &p.password {
+            Some(pw) if pw.is_empty() => {
+                return Err(format!(
+                    "the password proposed for \"{}\" is empty - leave the password out instead",
+                    p.key
+                ))
+            }
+            Some(pw) if pw.chars().count() > MAX_PROPOSED_PASSWORD => {
+                return Err(format!(
+                    "the password proposed for \"{}\" is longer than {MAX_PROPOSED_PASSWORD} characters",
+                    p.key
+                ))
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
 
-/// One environment's proposed accounts; none when nothing was proposed.
-pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<ProposedAccount>, String> {
+/// One environment's proposed accounts as kept, passwords included - for
+/// Rust only. The webview gets `StoredProposal::view` of each.
+pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<StoredProposal>, String> {
     if !valid_id(env_id) {
         return Err(format!("\"{env_id}\" is not a usable environment id"));
     }
@@ -425,7 +494,7 @@ pub fn load_proposals(root: &Path, env_id: &str) -> Result<Vec<ProposedAccount>,
 
 /// Replace one environment's proposal with `list`, validated first. An
 /// empty list removes the file.
-pub fn save_proposals(root: &Path, env_id: &str, list: &[ProposedAccount]) -> Result<(), String> {
+pub fn save_proposals(root: &Path, env_id: &str, list: &[StoredProposal]) -> Result<(), String> {
     if !valid_id(env_id) {
         return Err(format!("\"{env_id}\" is not a usable environment id"));
     }

@@ -234,7 +234,8 @@ pub fn clear_default_password_with(root: &Path, store: &dyn SecretStore, id: &st
 }
 
 /// One proposed account a person picked to add. `password` is what they
-/// typed; empty means "use the environment's default password".
+/// typed; empty means "use the password the assistant proposed with it, or
+/// else the environment's default password".
 #[derive(Clone, serde::Deserialize, specta::Type)]
 pub struct AccountInput {
     pub key: String,
@@ -259,12 +260,13 @@ impl std::fmt::Debug for AccountInput {
 /// default password.
 pub const NO_DEFAULT_PASSWORD: &str = "no default password set - type one";
 
-/// The active environment's proposed accounts.
+/// The active environment's proposed accounts, as the webview may see
+/// them: whether each carries a password, never the password.
 pub fn proposals_with(root: &Path) -> Result<Vec<environments::ProposedAccount>, String> {
-    environments::load_proposals(root, &environments::active_id(root)?)
+    Ok(environments::load_proposals(root, &environments::active_id(root)?)?.iter().map(|p| p.view()).collect())
 }
 
-/// Drop the active environment's whole proposal.
+/// Drop the active environment's whole proposal, with any password it held.
 pub fn dismiss_proposals_with(root: &Path) -> Result<(), String> {
     environments::save_proposals(root, &environments::active_id(root)?, &[])
 }
@@ -272,11 +274,14 @@ pub fn dismiss_proposals_with(root: &Path) -> Result<(), String> {
 /// Add the picked proposals to the active environment's accounts.
 ///
 /// Every pick is checked first - a usable key used once, a username, and a
-/// password (typed, or the environment's default) - and one that fails
-/// refuses the whole call with nothing written. A pick whose key is
-/// already an account is written only when `replace` names it; otherwise
-/// it is left as it is and its key returned, for the person to confirm.
-/// What was added leaves the proposal.
+/// password - and one that fails refuses the whole call with nothing
+/// written. The password is the one typed; else the one the assistant
+/// proposed with that same key and username (it moves from the proposals
+/// file into the account, never through the webview); else the
+/// environment's default. A pick whose key is already an account is
+/// written only when `replace` names it; otherwise it is left as it is and
+/// its key returned, for the person to confirm. What was added leaves the
+/// proposal, its password with it.
 pub fn add_proposals_with(
     root: &Path,
     store: &dyn SecretStore,
@@ -286,6 +291,7 @@ pub fn add_proposals_with(
     use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
     let env_id = environments::active_id(root)?;
     let mut accounts = load_accounts_for(root, &env_id)?;
+    let proposed = environments::load_proposals(root, &env_id)?;
     let mut default: Option<Option<String>> = None;
     let mut seen = std::collections::HashSet::new();
     let mut ready: Vec<Account> = vec![];
@@ -308,7 +314,15 @@ pub fn add_proposals_with(
             confirm.push(key);
             continue;
         }
-        let password = if p.password.is_empty() {
+        let from_proposal = proposed
+            .iter()
+            .find(|q| q.key == key && q.username.trim() == username)
+            .and_then(|q| q.password.clone());
+        let password = if !p.password.is_empty() {
+            p.password
+        } else if let Some(pw) = from_proposal {
+            pw
+        } else {
             if default.is_none() {
                 let found = store
                     .get(&environments::password_target(&env_id))
@@ -319,8 +333,6 @@ pub fn add_proposals_with(
                 Some(d) => d,
                 None => return Err(format!("\"{key}\": {NO_DEFAULT_PASSWORD}")),
             }
-        } else {
-            p.password
         };
         let label = match p.label.trim() {
             "" => key.clone(),
