@@ -3105,7 +3105,7 @@ mod api_template_routes {
     }
 
     /// Flow checks are assistant-written reads of the company database, so
-    /// with Company database (read) switched off none of them runs: saving a
+    /// with Database Read Access switched off none of them runs: saving a
     /// flow, asking its progress and a flow template's run are all refused
     /// with the switch named, before any database or browser.
     #[tokio::test]
@@ -3117,7 +3117,7 @@ mod api_template_routes {
         v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
         let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
         v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
-        let sentence = "flow checks read the company database: switch on Company database (read) on the AI Bridge tab";
+        let sentence = "flow checks read the company database: switch on Database Read Access on the AI Bridge tab";
 
         assert_eq!(v2_lib::ai_bridge::real_stage_db(&c).err(), Some((409, sentence.to_string())));
 

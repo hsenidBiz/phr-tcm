@@ -128,7 +128,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run results", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Company database (read)"]) {
+  for (const label of ["Test Suites", "Run results", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "API templates", "Database Read Access"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -390,7 +390,7 @@ function dbMocks(extra: (cmd: string, args: unknown) => unknown = () => undefine
 }
 
 function dbCard(): HTMLElement {
-  return screen.getByText("Company database").closest("section")!;
+  return screen.getByRole("heading", { name: "Database Read Access" }).closest("section")!;
 }
 
 /// The card is which database, its login, and whether it may write. The
@@ -919,7 +919,7 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   expect(entry.textContent).toMatch(/flow/i);
   expect(entry.textContent).toMatch(/stage/i);
   // The stage checks read the database, so they need reading switched on.
-  expect(entry.textContent).toMatch(/need Company database \(read\) switched on/);
+  expect(entry.textContent).toMatch(/need Database Read Access switched on/);
   expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 

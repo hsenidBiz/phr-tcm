@@ -187,7 +187,7 @@ test("the two database tools are one switchable row in either build kind", async
   const row = visibleRows().find((r) => r.names.includes("db_lookup"));
   expect(row, "the database row exists").toBeTruthy();
   expect(row!.names).toEqual(["db_lookup", "db_query"]);
-  expect(row!.label).toBe("Company database (read)");
+  expect(row!.label).toBe("Database Read Access");
 
   const off = toggleRow([], row!.names);
   expect([...off].sort()).toEqual(["db_lookup", "db_query"]);
@@ -201,7 +201,7 @@ test("the two database tools are one switchable row in either build kind", async
   vi.stubEnv("DEV", false);
   vi.resetModules();
   const mod = await import("./mcpTools");
-  expect(mod.visibleRows().some((r) => r.label === "Company database (read)")).toBe(true);
+  expect(mod.visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
   vi.unstubAllEnvs();
   vi.resetModules();
 });

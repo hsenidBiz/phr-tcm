@@ -267,7 +267,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose
   // answer nothing can query is a map with no road. Creating, updating
-  // and deleting is a SEPARATE switch, on the Company database card - it
+  // and deleting is a SEPARATE switch, on the Database Read Access card - it
   // is a different decision, and it is off until someone makes it.
   ["db_lookup", "db_query"],
 ];
@@ -290,7 +290,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
       "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
   },
   db_lookup: {
-    label: "Company database (read)",
+    label: "Database Read Access",
     summary: "Look up tables and run SELECT on the connection chosen below.",
   },
 };

@@ -770,7 +770,7 @@ fn the_guide_explains_flows() {
         .join(" ");
     // Proving or running on a flow needs a database, and reading switched on.
     assert!(flows.contains("Proving or running a template on a flow needs a database chosen on the AI Bridge tab"), "{flows}");
-    assert!(flows.contains("Company database (read)"), "no reading switch: {flows}");
+    assert!(flows.contains("Database Read Access"), "no reading switch: {flows}");
     // A prove on a flow is saved only once its own stage reads as done.
     assert!(flows.contains("saved only if its own stage's check reads done afterwards"), "{flows}");
     // A number subject must be captured as a JSON number.

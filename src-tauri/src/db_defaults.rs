@@ -1,5 +1,5 @@
 //! The database tools' SHIPPED defaults: the schema a lookup searches
-//! first, plus the named presets the Company database card's dropdown
+//! first, plus the named presets the Database Read Access card's dropdown
 //! offers. A person's own saved login always wins, and no preset is chosen
 //! for them.
 //!

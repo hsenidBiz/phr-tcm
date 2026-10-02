@@ -1169,7 +1169,7 @@ export const CAPTURE_AI_TOOLS: DetectedTool[] = [
   },
 ];
 
-/** The databases the Company database card offers in capture mode, in
+/** The databases the Database Read Access card offers in capture mode, in
  * place of this machine's own list and logins. */
 export const CAPTURE_DATABASES: DbDatabase[] = [
   {

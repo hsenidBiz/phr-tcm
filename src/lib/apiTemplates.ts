@@ -4,7 +4,7 @@
 //
 // A separate decision from whether the four API template tools are
 // reachable at all (the "API templates" row in mcpTools.ts's TOOL_PAIRS) -
-// the same shape as the Company database card's create/update/delete
+// the same shape as the Database Read Access card's create/update/delete
 // switch (dbServer.ts), which this file mirrors.
 
 /** The prove/run switch. "1" only when it is on, and absent otherwise - so
