@@ -1447,3 +1447,35 @@ async fn upload_reaches_a_file_input_directly_and_through_the_chooser() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#seen-direct" }, "equals": "cv.txt 5" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#seen-chooser" }, "equals": "cv.txt 5" })).await);
 }
+
+/// Real Edge sends what the page log reads: a request that failed and a
+/// console error, after `watch` - with the address's query string gone.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_page_log_names_a_failed_request_and_a_console_error_from_a_real_browser() {
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.unwrap();
+    // A port nothing listens on any more.
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    page::eval_value(
+        &mut live.cdp,
+        &format!("fetch('http://127.0.0.1:{port}/hr/pmsv10/menu?token=secret').catch(() => {{}}); console.error('menu data missing'); 1"),
+    )
+    .await
+    .unwrap();
+
+    // Events are read while a call waits; a few cheap calls read them in.
+    let mut lines = vec![];
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = page::eval_value(&mut live.cdp, "1").await;
+        lines = live.cdp.page_log();
+        if lines.iter().any(|l| l.starts_with("request failed")) && lines.iter().any(|l| l.starts_with("console error")) {
+            break;
+        }
+    }
+    assert!(lines.contains(&"console error: menu data missing".to_string()), "{lines:?}");
+    let failed = lines.iter().find(|l| l.starts_with("request failed (")).unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(failed.ends_with(&format!("GET http://127.0.0.1:{port}/hr/pmsv10/menu")), "{failed}");
+    assert!(!lines.iter().any(|l| l.contains("secret")), "{lines:?}");
+}

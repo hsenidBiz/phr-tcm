@@ -29,6 +29,27 @@ const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached";
 const AFTER_STOP: &str = "not run: the run was stopped";
 
+/// Added to a failed trip's sentence when the page log had something to
+/// say, so the person knows where to look.
+pub const PAGE_LOG_NOTE: &str = " What the page was doing then is in Settings, Logs.";
+
+/// A case that never reached its module says only what it could not
+/// find; the page's failed and unfinished requests and console errors say
+/// why. They go to the application log - what a bug report ships - and
+/// not into the run, where a long list would bury the sentence the person
+/// reads (PeoplesHR, 2026-10-02: a first case stuck on a spinner).
+fn log_the_page<D: Driver>(d: &D, case_id: i32, out: &mut ActionOutcome) {
+    let lines = d.page_log();
+    if lines.is_empty() {
+        return;
+    }
+    crate::applog::warn(format!("unattended run, case {case_id}: {} What the page was doing:", out.detail));
+    for line in lines {
+        crate::applog::warn(format!("unattended run, case {case_id}, page: {line}"));
+    }
+    out.detail.push_str(PAGE_LOG_NOTE);
+}
+
 /// Where a fresh browser per case comes from. The command gives real ones;
 /// the tests give fakes.
 pub trait Browsers {
@@ -207,6 +228,9 @@ pub async fn run_case_as<D: Driver>(
             let mut out = nav::reached(r.path.name(), nav::go_to_module(d, r, from, timing).await);
             if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
+                // Read after the picture: taking it read every event the
+                // page had sent by then.
+                log_the_page(d, script.case_id, &mut out);
             }
             if !out.ok {
                 skip = Some(AFTER_UNREACHED);

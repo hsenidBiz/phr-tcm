@@ -160,6 +160,8 @@ pub struct Cdp<T: Transport = WsTransport> {
     next_id: u64,
     events: VecDeque<Event>,
     dialogs: Vec<String>,
+    /// What the page did, for a failure to explain itself (`page_log`).
+    page_log: super::page_log::PageLog,
     /// When the wait loop that owns this connection runs out of time. See
     /// `set_deadline`.
     deadline: Option<Instant>,
@@ -202,7 +204,14 @@ impl Cdp<WsTransport> {
 
 impl<T: Transport> Cdp<T> {
     pub fn over(transport: T) -> Self {
-        Cdp { transport, next_id: 1, events: VecDeque::new(), dialogs: vec![], deadline: None }
+        Cdp {
+            transport,
+            next_id: 1,
+            events: VecDeque::new(),
+            dialogs: vec![],
+            page_log: Default::default(),
+            deadline: None,
+        }
     }
 
     /// For tests that need to see what was sent.
@@ -299,6 +308,12 @@ impl<T: Transport> Cdp<T> {
                 .map_err(CdpError::Transport)?;
             return Ok(());
         }
+        // Network and console events go to the page log, never into the
+        // buffer: a page volunteers thousands, and they would push out the
+        // load event a navigation is about to wait for.
+        if self.page_log.observe(&ev) {
+            return Ok(());
+        }
         if self.events.len() >= MAX_BUFFERED_EVENTS {
             self.events.pop_front();
         }
@@ -342,6 +357,12 @@ impl<T: Transport> Cdp<T> {
         std::mem::take(&mut self.dialogs)
     }
 
+    /// What the page has been doing, as far as the events read so far say
+    /// (`page_log::PageLog::report`). Empty unless `page_log::watch` ran.
+    pub fn page_log(&self) -> Vec<String> {
+        self.page_log.report()
+    }
+
     /// Run an expression in the page and return the raw DevTools result.
     pub async fn eval(&mut self, expression: &str) -> Result<serde_json::Value, CdpError> {
         self.call(
@@ -379,6 +400,11 @@ pub trait Driver {
     ) -> impl Future<Output = Result<Event, CdpError>>;
     fn forget_events(&mut self);
     fn take_dialogs(&mut self) -> Vec<String>;
+    /// Failed and unfinished requests and console errors, for a failure
+    /// to explain itself. A driver that keeps none (a test's fake) has none.
+    fn page_log(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
     /// every path out.
     fn set_deadline(&mut self, deadline: Option<Instant>);
@@ -408,6 +434,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)
+    }
+    fn page_log(&self) -> Vec<String> {
+        Cdp::page_log(self)
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         Cdp::set_deadline(self, deadline)

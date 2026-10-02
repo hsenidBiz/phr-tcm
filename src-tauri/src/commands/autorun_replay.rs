@@ -111,8 +111,13 @@ impl Browsers for RealBrowsers {
     type D = Cdp;
 
     async fn open(&mut self) -> Result<Cdp, String> {
-        let (cdp, browser) = open_real(self.which, self.watch).await?;
+        let (mut cdp, browser) = open_real(self.which, self.watch).await?;
         self.current = Some(browser);
+        // So a case that cannot reach its module can say what the page was
+        // doing. Losing that is no reason not to run the case.
+        if let Err(e) = crate::browser::page_log::watch(&mut cdp).await {
+            crate::applog::warn(format!("unattended run: the page log could not be switched on: {e}"));
+        }
         Ok(cdp)
     }
 

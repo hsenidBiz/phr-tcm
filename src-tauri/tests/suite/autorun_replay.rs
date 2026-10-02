@@ -9,9 +9,12 @@ use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
 use std::path::Path;
 use v2_lib::autorun::nav::{
-    nav_path, no_address, no_path, save_nav, NavFile, Route, AFTER_SIGN_IN, NO_ACCOUNT, NO_MODULE, UNREACHED_PREFIX,
+    is_setup_problem, nav_path, no_address, no_path, save_nav, NavFile, Route, AFTER_SIGN_IN, NO_ACCOUNT, NO_MODULE,
+    UNREACHED_PREFIX,
 };
-use v2_lib::autorun::replay::{propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, SIGN_IN_STEP};
+use v2_lib::autorun::replay::{
+    propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
+};
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
@@ -819,6 +822,65 @@ async fn with_paths_a_case_no_account_applies_to_is_blocked() {
     assert_eq!(browsers.opened, 0);
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, NO_ACCOUNT);
+}
+
+/// A trip that never reached its module logs what the page was doing -
+/// every line, in the application log - and its sentence says where to
+/// look. The run itself keeps only the sentence.
+#[tokio::test]
+async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
+    let _tail = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &script(4711, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]))).unwrap();
+    let (mut d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    d.page_log = vec![
+        "request still waiting after 14s: GET https://hr.example.internal/hr/pmsv10/PerformanceCycle".to_string(),
+        "console error: initialData is not defined".to_string(),
+    ];
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4711, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+
+    let rec = &run.cases[0];
+    let module = &rec.steps.iter().find(|s| s.step_number == MODULE_STEP).unwrap().outcomes[0];
+    assert!(module.detail.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - "), "{}", module.detail);
+    assert!(module.detail.ends_with(PAGE_LOG_NOTE), "{}", module.detail);
+    assert!(!module.detail.contains("pmsv10"), "the lines stay out of the run: {}", module.detail);
+    assert_eq!(rec.reason, module.detail);
+    assert!(is_setup_problem(&rec.reason), "still read as the trip that failed");
+
+    let logged: Vec<String> = v2_lib::applog::recent(50).into_iter().map(|l| l.message).collect();
+    let mine: Vec<&String> = logged.iter().filter(|l| l.starts_with("unattended run, case 4711")).collect();
+    assert_eq!(mine.len(), 3, "{mine:?}");
+    assert!(mine[0].contains("Could not reach module \"Leave\"") && mine[0].ends_with("What the page was doing:"), "{}", mine[0]);
+    assert_eq!(
+        mine[1],
+        "unattended run, case 4711, page: request still waiting after 14s: GET https://hr.example.internal/hr/pmsv10/PerformanceCycle"
+    );
+    assert_eq!(mine[2], "unattended run, case 4711, page: console error: initialData is not defined");
+}
+
+#[tokio::test]
+async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_sentence() {
+    let _tail = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &script(4712, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]))).unwrap();
+    let (d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4712, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert!(!run.cases[0].reason.contains(PAGE_LOG_NOTE.trim()), "{}", run.cases[0].reason);
+    assert!(!v2_lib::applog::recent(50).iter().any(|l| l.message.starts_with("unattended run, case 4712")));
 }
 
 #[tokio::test]

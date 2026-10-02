@@ -42,6 +42,9 @@ pub struct ScriptedDriver {
     /// When no event is waiting, `wait_event` says the browser closed
     /// instead of timing out - a window the person shut.
     pub closed_when_drained: bool,
+    /// What `page_log` reports - the lines a real page's requests and
+    /// console would have given.
+    pub page_log: Vec<String>,
 }
 
 impl ScriptedDriver {
@@ -59,6 +62,7 @@ impl ScriptedDriver {
             dialogs: vec![],
             deadlines: vec![],
             closed_when_drained: false,
+            page_log: vec![],
         }
     }
 
@@ -116,6 +120,10 @@ impl Driver for ScriptedDriver {
 
     fn take_dialogs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.dialogs)
+    }
+
+    fn page_log(&self) -> Vec<String> {
+        self.page_log.clone()
     }
 
     fn set_deadline(&mut self, deadline: Option<Instant>) {

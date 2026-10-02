@@ -66,6 +66,7 @@ mod browser_launch;
 mod browser_live;
 mod browser_locator;
 mod browser_page;
+mod browser_page_log;
 mod browser_session;
 mod browser_snapshot;
 mod bugreport;
