@@ -31,6 +31,7 @@ import {
   useEnvironments,
 } from "../lib/environments";
 import { loadRiskTiered, saveRiskTiered } from "../lib/riskTieredGuide";
+import { useAutoRunVisible } from "../lib/extras";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
@@ -208,6 +209,9 @@ export default function AiBridge() {
   // The environments: which one is active, its address, and the database
   // it uses - the card above Company database mirrors the active one.
   const envs = useEnvironments();
+  // Environments exist for Auto Run - its site, accounts and sign-ins - so
+  // the card shows only where Auto Run does (never in a capture).
+  const environmentsShown = useAutoRunVisible();
   const activeEnv = envs.data?.environments.find((e) => e.id === envs.data?.active) ?? null;
   const dbGone = activeDbMissing(
     envs.data,
@@ -713,6 +717,7 @@ export default function AiBridge() {
           as grid columns 2 and 3 - and space-y's child margins would
           leak through contents into the outer grid, where gap does not. */}
       <div className="grid gap-6 2xl:contents">
+      {environmentsShown && (
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Globe size={14} className="shrink-0 text-muted" />
@@ -752,6 +757,7 @@ export default function AiBridge() {
           {managingEnvs && <EnvironmentsDialog onClose={() => setManagingEnvs(false)} />}
         </div>
       </section>
+      )}
 
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
