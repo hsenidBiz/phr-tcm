@@ -722,17 +722,44 @@ test("a module with a flow and no templates still shows its map", async () => {
   expect(screen.getByRole("region", { name: "PMS / Performance Cycle" })).toContainElement(flow);
 });
 
-test("a wide map scrolls inside its own box", async () => {
+test("a wide map pans and zooms inside its own box", async () => {
   mockOverview(FLOW_OVERVIEW);
   renderScreen();
   await showFlows();
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   const map = within(flow).getByTestId("flow-map");
-  expect(map.className).toContain("overflow-x-auto");
+  // No scrollbars: the box clips, and the drawing moves inside it.
+  expect(map.className).toContain("overflow-hidden");
+  expect(map.className).not.toContain("overflow-x-auto");
   // The drawing is sized from the layout, never measured: four columns.
   const canvas = map.firstElementChild as HTMLElement;
   expect(canvas.style.width).toBe(`${4 * 208 + 3 * 56}px`);
+  expect(canvas.style.transform).toMatch(/^translate\(.+\) scale\(.+\)$/);
+});
+
+test("a flow map sits in a pan and zoom viewport with its three controls", async () => {
+  mockOverview(FLOW_OVERVIEW);
+  renderScreen();
+  await showFlows();
+
+  const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
+  const viewport = within(flow).getByRole("group", { name: "Performance cycle wizard map" });
+  expect(viewport).toBe(within(flow).getByTestId("flow-map"));
+  expect(viewport).toHaveAttribute("tabindex", "0");
+  // The stages, their arrows and the pulses all move with the drawing.
+  const canvas = viewport.firstElementChild as HTMLElement;
+  expect(canvas.querySelector("svg path.flow-pulse")).not.toBeNull();
+  expect(within(canvas).getByRole("group", { name: "Cycle setup" })).toBeInTheDocument();
+
+  const zoomIn = within(flow).getByRole("button", { name: "Zoom in" });
+  expect(within(flow).getByRole("button", { name: "Zoom out" })).toBeInTheDocument();
+  expect(within(flow).getByRole("button", { name: "Reset view" })).toBeInTheDocument();
+  const level = within(flow).getByText(/^\d+%$/);
+  expect(level).toHaveAttribute("aria-live", "polite");
+  const before = level.textContent;
+  fireEvent.click(zoomIn);
+  expect(level.textContent).not.toBe(before);
 });
 
 // ---------------------------------------------------------------------------

@@ -66,6 +66,11 @@ export {
   ChevronsDownUp as IconCollapseAll,
   // The opposite of IconCollapseAll: every folded group or lane opens.
   ChevronsUpDown as IconExpandAll,
+  // A map's view (the API Templates flow maps): closer, further away, and
+  // back to the whole map in view.
+  ZoomIn as IconZoomIn,
+  ZoomOut as IconZoomOut,
+  Maximize as IconResetView,
   ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
   Trash2 as IconRemove,

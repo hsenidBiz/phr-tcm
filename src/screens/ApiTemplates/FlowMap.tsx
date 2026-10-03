@@ -1,5 +1,6 @@
 import { useId, useMemo } from "react";
 import type { Effect, Flow, SavedTemplate } from "../../bindings";
+import { PanZoomControls, PanZoomViewport, usePanZoom } from "../../components/PanZoom";
 import { Button } from "../../components/ui/button";
 import { IconOpenInBrowser, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
@@ -43,6 +44,8 @@ const PULSE_STAGGER = 0.18;
  *
  * Positions come from `layoutFlow`, never from measuring: the arrows are an
  * `aria-hidden` SVG, and a visually hidden list says the same in words.
+ * The drawing pans and zooms like the Test map (PanZoom): drag, wheel,
+ * Ctrl + wheel, the header's zoom controls, or the keys once it has focus.
  */
 export default function FlowMap({
   flow,
@@ -79,6 +82,8 @@ export default function FlowMap({
     return layoutFlow(flow, counts);
   }, [flow, byStage]);
 
+  const pz = usePanZoom({ w: layout.width, h: layout.height });
+
   const placed = new Map(layout.boxes.map((b) => [b.id, b]));
   const titleOf = new Map(flow.stages.map((s) => [s.id, s.title]));
   const saved = flow.saved ? stampDate(flow.saved.at) : null;
@@ -94,10 +99,10 @@ export default function FlowMap({
         {flow.saved && (
           <span className="text-xs text-faint">Saved {saved ? dayMonth(saved) : flow.saved.at}</span>
         )}
+        <PanZoomControls pz={pz} className="ml-auto" />
         <Button
           size="sm"
           variant="ghost"
-          className="ml-auto"
           aria-label={`View flow ${flow.title} in the browser`}
           onClick={onView}
         >
@@ -115,94 +120,92 @@ export default function FlowMap({
         </Button>
       </div>
 
-      <div data-testid="flow-map" className="overflow-x-auto pb-1">
-        <div className="relative" style={{ width: layout.width, height: layout.height }}>
-          <svg
-            aria-hidden="true"
-            width={layout.width}
-            height={layout.height}
-            className="absolute inset-0 fill-none"
-          >
-            {layout.edges.map(({ from, to }) => {
-              const a = placed.get(from);
-              const b = placed.get(to);
-              if (!a || !b) return null;
-              const tone = edgeTone(byStage.get(to) ?? []);
-              return (
-                <g
-                  key={`${from}->${to}`}
-                  data-tone={tone}
-                  className={cn("flow-edge", EDGE_TONE[tone])}
-                  stroke="currentColor"
-                  strokeWidth={1.75}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path data-edge d={edgePath(a, b)} />
-                  <path d={arrowHead(b)} />
-                  {/* A short bright stretch running from the arrow's start to
-                      its end, as the Test map's limbs pulse when a case is
-                      hovered. `pathLength` makes the run the same pace on a
-                      long arrow as a short one. */}
-                  <path
-                    className="flow-pulse"
-                    d={edgePath(a, b)}
-                    pathLength={1}
-                    style={{ animationDelay: `${a.col * PULSE_STAGGER}s` }}
-                  />
-                </g>
-              );
-            })}
-          </svg>
-          {flow.stages.map((s) => {
-            const box = placed.get(s.id);
-            if (!box) return null;
-            const list = byStage.get(s.id) ?? [];
+      <PanZoomViewport pz={pz} label={`${flow.title} map`} testId="flow-map">
+        <svg
+          aria-hidden="true"
+          width={layout.width}
+          height={layout.height}
+          className="absolute inset-0 fill-none"
+        >
+          {layout.edges.map(({ from, to }) => {
+            const a = placed.get(from);
+            const b = placed.get(to);
+            if (!a || !b) return null;
+            const tone = edgeTone(byStage.get(to) ?? []);
             return (
-              <div
-                key={s.id}
-                role="group"
-                aria-label={s.title}
-                className={cn(
-                  "absolute flex flex-col rounded-md border bg-surface-2 px-2",
-                  s.optional ? "border-dashed border-border-strong" : "border-border",
-                )}
-                style={{ left: box.x, top: box.y, width: GEOMETRY.colW, height: box.h }}
+              <g
+                key={`${from}->${to}`}
+                data-tone={tone}
+                className={cn("flow-edge", EDGE_TONE[tone])}
+                stroke="currentColor"
+                strokeWidth={1.75}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                <div className="flex h-10 shrink-0 items-center gap-2">
-                  <span title={s.title} className="min-w-0 flex-1 truncate text-xs font-semibold text-text">
-                    {s.title}
-                  </span>
-                  {s.optional && <span className="text-[10px] text-faint">Optional</span>}
-                </div>
-                {list.length === 0 ? (
-                  <p className="flex h-6 items-center text-xs text-faint">No template yet</p>
-                ) : (
-                  <ul>
-                    {list.map((t) => (
-                      <li key={t.id}>
-                        <button
-                          title={`Show ${t.title} below`}
-                          className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-xs text-text transition-colors hover:bg-surface hover:text-accent"
-                          onClick={() => onOpenTemplate(t.id)}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                          {!t.proven && (
-                            <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
-                              Unproven
-                            </Badge>
-                          )}
-                          <EffectBadge effect={t.effect} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                <path data-edge d={edgePath(a, b)} />
+                <path d={arrowHead(b)} />
+                {/* A short bright stretch running from the arrow's start to
+                    its end, as the Test map's limbs pulse when a case is
+                    hovered. `pathLength` makes the run the same pace on a
+                    long arrow as a short one. */}
+                <path
+                  className="flow-pulse"
+                  d={edgePath(a, b)}
+                  pathLength={1}
+                  style={{ animationDelay: `${a.col * PULSE_STAGGER}s` }}
+                />
+              </g>
             );
           })}
-        </div>
-      </div>
+        </svg>
+        {flow.stages.map((s) => {
+          const box = placed.get(s.id);
+          if (!box) return null;
+          const list = byStage.get(s.id) ?? [];
+          return (
+            <div
+              key={s.id}
+              role="group"
+              aria-label={s.title}
+              className={cn(
+                "absolute flex flex-col rounded-md border bg-surface-2 px-2",
+                s.optional ? "border-dashed border-border-strong" : "border-border",
+              )}
+              style={{ left: box.x, top: box.y, width: GEOMETRY.colW, height: box.h }}
+            >
+              <div className="flex h-10 shrink-0 items-center gap-2">
+                <span title={s.title} className="min-w-0 flex-1 truncate text-xs font-semibold text-text">
+                  {s.title}
+                </span>
+                {s.optional && <span className="text-[10px] text-faint">Optional</span>}
+              </div>
+              {list.length === 0 ? (
+                <p className="flex h-6 items-center text-xs text-faint">No template yet</p>
+              ) : (
+                <ul>
+                  {list.map((t) => (
+                    <li key={t.id}>
+                      <button
+                        title={`Show ${t.title} below`}
+                        className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-xs text-text transition-colors hover:bg-surface hover:text-accent"
+                        onClick={() => onOpenTemplate(t.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{t.title}</span>
+                        {!t.proven && (
+                          <Badge className="bg-warning/15 text-warning" title={UNPROVEN_HINT}>
+                            Unproven
+                          </Badge>
+                        )}
+                        <EffectBadge effect={t.effect} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </PanZoomViewport>
 
       <ol aria-label={`Stages of ${flow.title}`} className="sr-only">
         {flow.stages.map((s) => {
