@@ -68,7 +68,17 @@ export function layoutFlow(
 
   const width = boxes.reduce((w, b) => Math.max(w, b.x + GEOMETRY.colW), 0);
   const height = boxes.reduce((h, b) => Math.max(h, b.y + b.h), 0);
-  return { boxes, edges, width, height };
+
+  // Centre every column against the tallest one, so a lone first stage sits
+  // halfway down and its arrows fan out up and down rather than all running
+  // along the top. A column's stack is where its next box would have gone,
+  // less the trailing gap. The tallest column's offset is 0, so `height`
+  // stands.
+  const centred = boxes.map((b) => {
+    const stack = (nextY.get(b.col) ?? 0) - GEOMETRY.gapY;
+    return { ...b, y: b.y + (height - stack) / 2 };
+  });
+  return { boxes: centred, edges, width, height };
 }
 
 /** An arrow's line: a cubic from `from`'s right-middle to `to`'s left-middle,

@@ -84,6 +84,7 @@ describe("layoutFlow", () => {
     const { boxes } = layoutFlow(CYCLE, { competencies: 3, participants: 2 });
     const b = byId(boxes);
     expect(b.competencies.y + b.competencies.h + GEOMETRY.gapY).toBeLessThanOrEqual(b.participants.y);
+    // Column 2 is the tallest here, so centring leaves it at the top.
     expect(b.competencies.y).toBe(0);
   });
 
@@ -103,6 +104,68 @@ describe("layoutFlow", () => {
       expect(b.y + b.h).toBeLessThanOrEqual(height);
     }
     expect(width).toBe(4 * GEOMETRY.colW + 3 * GEOMETRY.gapX);
+  });
+});
+
+describe("layoutFlow centres each column", () => {
+  // The owner: the first template "always starts on top" - centred instead,
+  // the arrows fan out up and down and stay distinguishable.
+  test("a one-box column beside a taller column sits halfway down", () => {
+    const { boxes, height } = layoutFlow(CYCLE, { competencies: 3, participants: 2 });
+    const b = byId(boxes);
+    expect(b.setup.y).toBe((height - b.setup.h) / 2);
+    expect(b.rules.y).toBe((height - b.rules.h) / 2);
+    expect(b.publish.y).toBe((height - b.publish.h) / 2);
+    expect(b.setup.y).toBeGreaterThan(0);
+  });
+
+  test("the tallest column still starts at 0, and height is still its stack", () => {
+    const { boxes, height } = layoutFlow(CYCLE, { competencies: 3, participants: 2 });
+    const b = byId(boxes);
+    expect(b.competencies.y).toBe(0);
+    // ...while a shorter column on the same map is pushed down from the top.
+    expect(b.setup.y).toBeGreaterThan(0);
+    expect(b.publish.y).toBeGreaterThan(0);
+    expect(height).toBe(b.competencies.h + GEOMETRY.gapY + b.participants.h);
+    expect(b.participants.y + b.participants.h).toBe(height);
+  });
+
+  test("a column of several boxes is centred as one stack, gaps included", () => {
+    // Column 1 holds b and c (two short boxes); column 2 holds d alone but tall.
+    const f = flow([
+      s("a", { creates: true }),
+      s("b", { requires: ["a"] }),
+      s("c", { requires: ["a"] }),
+      s("d", { requires: ["b", "c"] }),
+      s("e", { requires: ["b", "c"] }),
+      s("g", { requires: ["b", "c"] }),
+    ]);
+    const { boxes, height } = layoutFlow(f, { d: 6 });
+    const x = byId(boxes);
+    const stack = x.b.h + GEOMETRY.gapY + x.c.h;
+    expect(x.b.y).toBe((height - stack) / 2);
+    expect(x.c.y).toBe(x.b.y + x.b.h + GEOMETRY.gapY);
+  });
+
+  test("no box goes above 0, and every box stays inside the height", () => {
+    const cases: Record<string, number>[] = [{}, { setup: 5 }, { competencies: 4 }, { publish: 9, rules: 2 }];
+    for (const counts of cases) {
+      const { boxes, height } = layoutFlow(CYCLE, counts);
+      for (const b of boxes) {
+        expect(b.y).toBeGreaterThanOrEqual(0);
+        expect(b.y + b.h).toBeLessThanOrEqual(height);
+      }
+    }
+  });
+
+  test("the edges still run from right-middle to left-middle of the placed boxes", () => {
+    const { boxes } = layoutFlow(CYCLE, { competencies: 3, participants: 2 });
+    const b = byId(boxes);
+    const nums = (edgePath(b.setup, b.rules).match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+    expect(nums[0]).toBe(b.setup.x + GEOMETRY.colW);
+    expect(nums[1]).toBe(b.setup.y + b.setup.h / 2);
+    expect(nums[nums.length - 2]).toBe(b.rules.x);
+    expect(nums[nums.length - 1]).toBe(b.rules.y + b.rules.h / 2);
   });
 });
 
