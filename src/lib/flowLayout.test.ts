@@ -123,6 +123,9 @@ describe("layoutFlow centres each column", () => {
     const { boxes, height } = layoutFlow(CYCLE, { competencies: 3, participants: 2 });
     const b = byId(boxes);
     expect(b.competencies.y).toBe(0);
+    // ...while a shorter column on the same map is pushed down from the top.
+    expect(b.setup.y).toBeGreaterThan(0);
+    expect(b.publish.y).toBeGreaterThan(0);
     expect(height).toBe(b.competencies.h + GEOMETRY.gapY + b.participants.h);
     expect(b.participants.y + b.participants.h).toBe(height);
   });

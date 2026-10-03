@@ -5,7 +5,7 @@
 // jsdom does no layout, so the viewport's size is mocked (clientWidth /
 // clientHeight) and every position is read back from the layer's transform.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   KEEP,
@@ -113,8 +113,16 @@ const VIEWPORT = { w: 600, h: 300 };
 // With 16px padding each side the room is 568 x 268, so this fits at 50%.
 const CONTENT = { w: 1136, h: 200 };
 
-function Harness({ onBox = () => {}, onButton = () => {} }: { onBox?: () => void; onButton?: () => void }) {
-  const pz = usePanZoom(CONTENT);
+function Harness({
+  onBox = () => {},
+  onButton = () => {},
+  content = CONTENT,
+}: {
+  onBox?: () => void;
+  onButton?: () => void;
+  content?: Size;
+}) {
+  const pz = usePanZoom(content);
   return (
     <div>
       <PanZoomControls pz={pz} />
@@ -163,6 +171,11 @@ describe("PanZoom", () => {
 
     expect(percent()).toHaveTextContent("50%");
     expect(percent()).toHaveAttribute("aria-live", "polite");
+    // Read aloud, the number says what it is.
+    expect(percent().textContent).toBe("Zoom 50%");
+    expect(percent().querySelector(".sr-only")).toHaveTextContent("Zoom");
+    // A touch drag pans the map rather than the page.
+    expect(viewport.className).toContain("touch-none");
   });
 
   test("Zoom in and Zoom out step by 1.2 about the centre and clamp at 20% and 400%", () => {
@@ -234,7 +247,7 @@ describe("PanZoom", () => {
     const before = readView();
 
     fireEvent.pointerDown(button, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 60, clientY: 40 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 60, clientY: 40 });
     fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 60, clientY: 40 });
     fireEvent.click(button);
 
@@ -251,7 +264,7 @@ describe("PanZoom", () => {
     expect(viewport.className).toContain("cursor-grab");
 
     fireEvent.pointerDown(box, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 30, clientY: 25 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 30, clientY: 25 });
     expect(viewport.className).toContain("cursor-grabbing");
     expect(readView()).toEqual({ ...before, tx: before.tx + 20, ty: before.ty + 15 });
     fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 30, clientY: 25 });
@@ -259,6 +272,114 @@ describe("PanZoom", () => {
 
     expect(onBox).not.toHaveBeenCalled();
     expect(viewport.className).not.toContain("cursor-grabbing");
+  });
+
+  test("only the click that ends a drag is swallowed; the next one is real", () => {
+    const onBox = vi.fn();
+    render(<Harness onBox={onBox} />);
+    const viewport = screen.getByTestId("viewport");
+    const box = screen.getByTestId("box");
+
+    fireEvent.pointerDown(box, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 40, clientY: 10 });
+    fireEvent.click(box);
+    expect(onBox).not.toHaveBeenCalled();
+    fireEvent.click(box);
+    expect(onBox).toHaveBeenCalledTimes(1);
+  });
+
+  test("a move with no button held ends a drag whose pointerup was lost", () => {
+    render(<Harness />);
+    const viewport = screen.getByTestId("viewport");
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 120, clientY: 100 });
+    const panned = readView();
+    expect(viewport.className).toContain("cursor-grabbing");
+
+    // The button came up somewhere that never told us (an alt-tab, an OS dialog).
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 0, clientX: 150, clientY: 100 });
+    expect(viewport.className).not.toContain("cursor-grabbing");
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 200, clientY: 140 });
+    expect(readView()).toEqual(panned);
+  });
+
+  test("the window losing focus mid-drag ends the drag", () => {
+    render(<Harness />);
+    const viewport = screen.getByTestId("viewport");
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 120, clientY: 100 });
+    const panned = readView();
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(viewport.className).not.toContain("cursor-grabbing");
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 200, clientY: 140 });
+    expect(readView()).toEqual(panned);
+  });
+
+  test("focus leaving the map mid-drag ends the drag; focus moving inside it does not", () => {
+    render(
+      <>
+        <Harness />
+        <button>Elsewhere</button>
+      </>,
+    );
+    const viewport = screen.getByTestId("viewport");
+    const inner = screen.getByRole("button", { name: "Open a template" });
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 120, clientY: 100 });
+
+    // A press focusing the viewport from a button inside it is still the same drag.
+    fireEvent.focusOut(inner, { relatedTarget: viewport });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 140, clientY: 100 });
+    expect(viewport.className).toContain("cursor-grabbing");
+    const panned = readView();
+
+    fireEvent.focusOut(viewport, { relatedTarget: screen.getByRole("button", { name: "Elsewhere" }) });
+    expect(viewport.className).not.toContain("cursor-grabbing");
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 200, clientY: 140 });
+    expect(readView()).toEqual(panned);
+  });
+
+  test("a drag that ends releases the pointer it captured", () => {
+    const captured = new Set<number>();
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    const had = { set: proto.setPointerCapture, has: proto.hasPointerCapture, release: proto.releasePointerCapture };
+    proto.setPointerCapture = (id: number) => captured.add(id);
+    proto.hasPointerCapture = (id: number) => captured.has(id);
+    const release = vi.fn((id: number) => captured.delete(id));
+    proto.releasePointerCapture = release;
+    try {
+      render(<Harness />);
+      const viewport = screen.getByTestId("viewport");
+      fireEvent.pointerDown(viewport, { button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(viewport, { pointerId: 7, buttons: 1, clientX: 120, clientY: 100 });
+      expect(captured.has(7)).toBe(true);
+      fireEvent.pointerUp(viewport, { pointerId: 7, clientX: 120, clientY: 100 });
+      expect(release).toHaveBeenCalledWith(7);
+      expect(captured.has(7)).toBe(false);
+    } finally {
+      proto.setPointerCapture = had.set;
+      proto.hasPointerCapture = had.has;
+      proto.releasePointerCapture = had.release;
+    }
+  });
+
+  test("new content keeps a moved view clamped, so the map cannot be left out of view", () => {
+    const { rerender } = render(<Harness />);
+    const viewport = screen.getByTestId("viewport");
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 300, clientY: 150 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: -5000, clientY: 150 });
+    fireEvent.pointerUp(viewport, { pointerId: 1 });
+    expect(readView().tx).toBe(KEEP - CONTENT.w * 0.5);
+
+    // The map shrinks (a template removed): the old offset would hide it all.
+    rerender(<Harness content={{ w: 200, h: CONTENT.h }} />);
+    const v = readView();
+    expect(v.s).toBe(0.5);
+    expect(v.tx + 200 * v.s).toBe(KEEP);
   });
 
   test("a press that moves 3px or less is still a click", () => {
@@ -269,7 +390,7 @@ describe("PanZoom", () => {
     const before = readView();
 
     fireEvent.pointerDown(box, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 12, clientY: 12 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 12, clientY: 12 });
     fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 12, clientY: 12 });
     fireEvent.click(box);
 
@@ -281,12 +402,12 @@ describe("PanZoom", () => {
     render(<Harness />);
     const viewport = screen.getByTestId("viewport");
     fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 300, clientY: 150 });
-    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: -5000, clientY: -5000 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: -5000, clientY: -5000 });
     const v = readView();
     expect(v.tx + CONTENT.w * v.s).toBe(KEEP);
     expect(v.ty + CONTENT.h * v.s).toBe(KEEP);
 
-    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 5000, clientY: 5000 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, buttons: 1, clientX: 5000, clientY: 5000 });
     expect(readView()).toEqual({ s: 0.5, tx: VIEWPORT.w - KEEP, ty: VIEWPORT.h - KEEP });
     fireEvent.pointerUp(viewport, { pointerId: 1 });
   });

@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -127,6 +128,7 @@ export type PanZoomController = {
   onPointerMove: (e: PointerEvent<HTMLDivElement>) => void;
   onPointerEnd: (e: PointerEvent<HTMLDivElement>) => void;
   onPointerLeave: () => void;
+  onBlur: (e: FocusEvent<HTMLDivElement>) => void;
   onClickCapture: (e: MouseEvent<HTMLDivElement>) => void;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
 };
@@ -177,10 +179,13 @@ export function usePanZoom(content: Size): PanZoomController {
     };
   }, []);
 
-  // Fitted to start with, and kept fitted until the person moves it.
+  // Fitted to start with, and kept fitted until the person moves it; once
+  // moved, kept clamped, so new content (or a smaller box) cannot leave the
+  // map out of view.
   useLayoutEffect(() => {
     contentRef.current = { w: content.w, h: content.h };
     if (!touched.current) commit(fit(), false);
+    else commit(clampPan(viewRef.current, contentRef.current, sizeRef.current), false);
   }, [content.w, content.h, size.w, size.h, commit, fit]);
 
   const zoomTo = useCallback(
@@ -239,10 +244,36 @@ export function usePanZoom(content: Size): PanZoomController {
     drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, tx: v.tx, ty: v.ty, moved: false };
   }, []);
 
+  /** Ends any drag, releasing the pointer it captured. True when it was a pan. */
+  const endDrag = useCallback((): boolean => {
+    const d = drag.current;
+    if (!d) return false;
+    drag.current = null;
+    if (!d.moved) return false;
+    setDragging(false);
+    const el = viewportRef.current;
+    if (el?.hasPointerCapture?.(d.id)) el.releasePointerCapture(d.id);
+    return true;
+  }, []);
+
+  // A pointerup can be lost - the window lost focus mid-drag (an alt-tab,
+  // an OS dialog) - and a drag must not outlive it.
+  useEffect(() => {
+    const onBlur = () => endDrag();
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [endDrag]);
+
   const onPointerMove = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       const d = drag.current;
       if (!d || e.pointerId !== d.id) return;
+      // No button held: it came up somewhere that never told us. The drag
+      // is over, and this move is not part of it.
+      if (e.buttons === 0) {
+        endDrag();
+        return;
+      }
       const dx = e.clientX - d.x;
       const dy = e.clientY - d.y;
       if (!d.moved) {
@@ -256,23 +287,34 @@ export function usePanZoom(content: Size): PanZoomController {
       }
       move(clampPan({ s: viewRef.current.s, tx: d.tx + dx, ty: d.ty + dy }, contentRef.current, sizeRef.current), false);
     },
-    [move],
+    [move, endDrag],
   );
 
-  const onPointerEnd = useCallback((e: PointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    if (!d || e.pointerId !== d.id) return;
-    drag.current = null;
-    if (!d.moved) return;
-    setDragging(false);
-    // The click that ends a pan is not a click on what lies under it. It
-    // arrives straight after this, in the same task; anything later (Enter
-    // on a focused button) is a real click again.
-    swallowClick.current = true;
-    setTimeout(() => {
-      swallowClick.current = false;
-    }, 0);
-  }, []);
+  const onPointerEnd = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      const d = drag.current;
+      if (!d || e.pointerId !== d.id) return;
+      if (!endDrag()) return;
+      // The click that ends a pan is not a click on what lies under it. It
+      // arrives straight after this, in the same task; anything later (Enter
+      // on a focused button) is a real click again.
+      swallowClick.current = true;
+      setTimeout(() => {
+        swallowClick.current = false;
+      }, 0);
+    },
+    [endDrag],
+  );
+
+  // Focus leaving the map ends a drag; focus moving within it (a press
+  // focusing the viewport from a button inside) does not.
+  const onBlur = useCallback(
+    (e: FocusEvent<HTMLDivElement>) => {
+      if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+      endDrag();
+    },
+    [endDrag],
+  );
 
   // A press that left the box before it became a pan never will.
   const onPointerLeave = useCallback(() => {
@@ -334,6 +376,7 @@ export function usePanZoom(content: Size): PanZoomController {
     onPointerMove,
     onPointerEnd,
     onPointerLeave,
+    onBlur,
     onClickCapture,
     onKeyDown,
   };
@@ -354,6 +397,7 @@ export function PanZoomControls({ pz, className }: { pz: PanZoomController; clas
         Reset view
       </Button>
       <span aria-live="polite" className="w-10 text-right text-xs tabular-nums text-muted">
+        <span className="sr-only">Zoom </span>
         {Math.round(pz.view.s * 100)}%
       </span>
     </div>
@@ -384,7 +428,7 @@ export function PanZoomViewport({
       tabIndex={0}
       data-testid={testId}
       className={cn(
-        "relative select-none overflow-hidden rounded-md border border-border focus-visible:outline-2 focus-visible:outline-accent",
+        "relative touch-none select-none overflow-hidden rounded-md border border-border focus-visible:outline-2 focus-visible:outline-accent",
         // A button inside keeps its own pointer: it clicks, it does not drag.
         pz.dragging ? "cursor-grabbing" : "cursor-grab [&_button]:cursor-default",
       )}
@@ -397,6 +441,7 @@ export function PanZoomViewport({
       onPointerCancel={pz.onPointerEnd}
       onLostPointerCapture={pz.onPointerEnd}
       onPointerLeave={pz.onPointerLeave}
+      onBlur={pz.onBlur}
       onClickCapture={pz.onClickCapture}
       onKeyDown={pz.onKeyDown}
     >

@@ -757,6 +757,7 @@ test("a flow map sits in a pan and zoom viewport with its three controls", async
   expect(within(flow).getByRole("button", { name: "Reset view" })).toBeInTheDocument();
   const level = within(flow).getByText(/^\d+%$/);
   expect(level).toHaveAttribute("aria-live", "polite");
+  expect(level.textContent).toMatch(/^Zoom \d+%$/);
   const before = level.textContent;
   fireEvent.click(zoomIn);
   expect(level.textContent).not.toBe(before);
