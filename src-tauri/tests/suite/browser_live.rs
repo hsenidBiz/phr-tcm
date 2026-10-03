@@ -73,6 +73,12 @@ fn fixture_url() -> String {
     format!("file:///{}", path.trim_start_matches('/').replace(' ', "%20"))
 }
 
+/// The page whose frames are built the way `<phr-employee-search>` builds
+/// its own: no `src`, filled with `document.write`.
+fn iframe_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-iframe.html")
+}
+
 /// Short enough that a failing test fails fast, long enough for the
 /// fixture's 700 ms of being disabled and covered.
 fn timing() -> Timing {
@@ -123,6 +129,15 @@ async fn open() -> Live {
     let mut live = Live { browser, cdp };
     let out = run(&mut live, json!({ "kind": "navigate", "url": fixture_url() })).await;
     assert!(out.ok, "the fixture did not load: {}", out.detail);
+    live
+}
+
+/// `open()`, then on to the frame fixture.
+async fn open_iframes() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": iframe_fixture_url() })).await;
+    assert!(out.ok, "the iframe fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#es-frame" } })).await);
     live
 }
 
@@ -1637,5 +1652,54 @@ Connection: close
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /Account/Login")),
         "the browser never followed the redirect: {:?}",
         seen.lock().unwrap()
+    );
+}
+
+/// Spike: can Chrome's role lookup reach inside a same-origin frame when it
+/// is handed the frame's DOCUMENT, and does role `Iframe` find the frame
+/// element itself? The answers decide how a role step searches inside a
+/// frame, and what step the snapshot prints for an iframe.
+///
+/// Observed on Edge 153 (2026-10-03): (a) yes - handed the frame document,
+/// queryAXTree returns the frame's own buttons, so a role step searches
+/// inside a frame with no fallback; (b) yes - role "Iframe" (capitalised;
+/// "iframe" finds nothing) returns each visible iframe by its title, and
+/// not the hidden twin. Asserted, so a browser that changes either fails
+/// here first.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_spike_role_lookup_through_a_frame_document() {
+    let mut live = open_iframes().await;
+    let top = page::document(&mut live.cdp).await.expect("no document");
+    let frames = page::call_elements(&mut live.cdp, &top, "function() { return [document.querySelector('#es-frame')]; }", &[])
+        .await
+        .expect("no frame element");
+    let docs = page::call_elements(&mut live.cdp, &frames[0], "function() { return [this.contentDocument]; }", &[])
+        .await
+        .expect("no frame document");
+    let names = |r: &serde_json::Value| -> Vec<String> {
+        r["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|n| !n["ignored"].as_bool().unwrap_or(false))
+            .map(|n| n["name"]["value"].as_str().unwrap_or("").to_string())
+            .collect()
+    };
+    let inside = live
+        .cdp
+        .call("Accessibility.queryAXTree", json!({ "objectId": docs[0], "role": "button" }))
+        .await
+        .expect("queryAXTree on the frame document failed");
+    assert_eq!(names(&inside), vec!["Select".to_string()], "(a) the role lookup did not reach inside the frame");
+    let r = live
+        .cdp
+        .call("Accessibility.queryAXTree", json!({ "objectId": top, "role": "Iframe" }))
+        .await
+        .expect("queryAXTree for the iframe role failed");
+    assert_eq!(
+        names(&r),
+        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new()],
+        "(b) role Iframe did not list the visible frames by title"
     );
 }
