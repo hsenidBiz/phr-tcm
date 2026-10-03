@@ -665,11 +665,10 @@ describe("the bouncing flasks at the foot of the page", () => {
     expect(el.textContent).toBe("");
   });
 
-  test("it closes the page: the last thing in the content, after the footer, and not in the hero", () => {
+  test("it sits in the space just above the footer, whose top line is its ground, and not in the hero", () => {
     mount();
-    const main = document.querySelector("main")!;
-    expect(main.lastElementChild).toBe(strip());
-    expect(strip().previousElementSibling?.tagName).toBe("FOOTER");
+    expect(strip().nextElementSibling?.tagName).toBe("FOOTER");
+    expect(document.querySelector("main")!.lastElementChild?.tagName).toBe("FOOTER");
     expect(document.querySelector("header.hero .flask-strip")).toBeNull();
   });
 

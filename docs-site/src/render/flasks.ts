@@ -1,4 +1,4 @@
-// A row of flasks bouncing gently along the very bottom of the page. Purely
+// A row of flasks bouncing gently in the space above the page's footer. Purely
 // decoration: the strip is aria-hidden and takes no pointer or focus.
 //
 // Two halves. `step` is the physics, a pure function of the state, the time

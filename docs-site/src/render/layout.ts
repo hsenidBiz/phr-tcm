@@ -90,6 +90,9 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
   const main = h("main", { id: "main", class: "content", tabindex: "-1" }, ...heroParts);
   for (const s of sections) main.appendChild(s.section);
   if (content.recipes.length) main.appendChild(renderRecipes(content, exists));
+  // The flasks bounce in the space above the footer, on the footer's own
+  // top line (decoration; owner, 2026-10-03).
+  main.appendChild(renderFlaskStrip());
   main.appendChild(
     h(
       "footer",
@@ -98,9 +101,6 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
       h("p", { class: "footer-hint" }, rich("Press [[Ctrl+K]] anywhere to search.")),
     ),
   );
-  // The flasks close the page, after everything else (decoration; owner,
-  // 2026-10-03: at the very bottom instead of above Quick start).
-  main.appendChild(renderFlaskStrip());
 
   const scrim = h("div", { class: "nav-scrim", "aria-hidden": "true" });
   const site = h(
