@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.10",
+    date: "2026-10-03",
+    items: [
+      "The AI Bridge tab lays its cards out in columns that fit the window, without gaps between them.",
+    ],
+  },
+  {
     version: "2.0.9-beta.9",
     date: "2026-10-03",
     items: [
