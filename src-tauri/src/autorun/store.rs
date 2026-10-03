@@ -409,6 +409,11 @@ fn shots_dir(root: &Path) -> PathBuf {
     root.join("shots")
 }
 
+/// Where a run's report page is written - beside the shots it links.
+pub fn reports_dir(root: &Path) -> PathBuf {
+    root.join("reports")
+}
+
 /// `shot-<digits>-<digits>.jpg` and nothing else. The name comes back from
 /// the webview, so it is checked, not trusted.
 pub fn safe_shot_name(name: &str) -> bool {
@@ -576,6 +581,21 @@ pub fn clear_runs(root: &Path) -> Result<usize, String> {
         }
     }
     if let Some(entries) = existing_dir(&shots_dir(root))? {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+                }
+            }
+        }
+    }
+    // The reports opened from those runs go too: they name the cases and
+    // link pictures that are now gone. Only the files directly in
+    // `reports/` - never a folder, never anything outside it.
+    if let Some(entries) = existing_dir(&reports_dir(root))? {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {

@@ -107,9 +107,11 @@ export default function PastRuns({
   });
 
   /** One run as a page opened in the person's browser: Rust writes it to
-   * the Auto Run folder and opens it, so there is nothing to pick or save. */
+   * the Auto Run folder and opens it, so there is nothing to pick or save.
+   * The run's time goes as this screen shows it, so the report reads in the
+   * person's own locale. */
   const openReport = useMutation({
-    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(run.id)),
+    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(run.id, when(run.started_at))),
     onSuccess: () => toast.success("Report opened in your browser"),
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });

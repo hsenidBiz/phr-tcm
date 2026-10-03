@@ -396,9 +396,15 @@ pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 /// supply a failed action's words and a case's area. Returns the file's
 /// path, for the opener.
 ///
-/// No `ran_at` goes in: the page prints the run's start in UTC, since the
-/// command takes only the run id.
-pub fn write_report_at(offered: bool, root: &std::path::Path, run_id: &str) -> Result<std::path::PathBuf, String> {
+/// `ran_at` is the run's start as the webview shows it (the person's own
+/// locale); the page escapes it and prints it as given, and blank falls
+/// back to the run's start in UTC.
+pub fn write_report_at(
+    offered: bool,
+    root: &std::path::Path,
+    run_id: &str,
+    ran_at: &str,
+) -> Result<std::path::PathBuf, String> {
     crate::commands::api_templates::refuse_unless(offered)?;
     if !safe_run_id(run_id) {
         return Err(format!("run id {run_id:?} is not a safe filename"));
@@ -409,8 +415,8 @@ pub fn write_report_at(offered: bool, root: &std::path::Path, run_id: &str) -> R
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    let html = crate::autorun::report::build(&run, &scripts, "", &|name| store::shot_exists(root, name));
-    let dir = root.join("reports");
+    let html = crate::autorun::report::build(&run, &scripts, ran_at, &|name| store::shot_exists(root, name));
+    let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));
     std::fs::create_dir_all(&dir).map_err(|e| {
         crate::applog::warn(format!("auto run report: the reports folder could not be made: {e}"));
@@ -430,15 +436,16 @@ pub const REPORT_NOT_WRITTEN: &str = "the report could not be written - see Sett
 /// Said when the browser could not be asked to open the report.
 pub const REPORT_NOT_OPENED: &str = "the report could not be opened in your browser - see Settings, Logs";
 
-/// Writes one run's report and opens it in the default browser. Async, with
+/// Writes one run's report and opens it in the default browser. `ran_at` is
+/// the run's start time as the webview shows it. Async, with
 /// the write on a blocking thread: reading a run's scripts and writing the
 /// page must not hold the main thread, which would freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String) -> Result<(), String> {
+pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String, ran_at: String) -> Result<(), String> {
     let offered = crate::ai_tools::autorun_offered();
     let root = root(&app)?;
-    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &run_id))
+    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &run_id, &ran_at))
         .await
         .map_err(|e| {
             crate::applog::warn(format!("auto run report: the writer stopped: {e}"));

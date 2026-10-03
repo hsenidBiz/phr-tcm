@@ -461,11 +461,12 @@ export const commands = {
 	environment?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
-	 *  Writes one run's report and opens it in the default browser. Async, with
+	 *  Writes one run's report and opens it in the default browser. `ran_at` is
+	 *  the run's start time as the webview shows it. Async, with
 	 *  the write on a blocking thread: reading a run's scripts and writing the
 	 *  page must not hold the main thread, which would freeze the window.
 	 */
-	autoRunOpenReport: (runId: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_report", { runId })),
+	autoRunOpenReport: (runId: string, ranAt: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_report", { runId, ranAt })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
 	/**

@@ -638,6 +638,48 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
     );
 }
 
+/// The reports opened from runs go when the runs do - and only the files
+/// directly in `reports/`: no folder in it, nothing beside it.
+#[test]
+fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let run = LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        mode: "unattended".into(),
+        published: None,
+        cases: vec![],
+        environment: None,
+    };
+    save_run(root, &run).unwrap();
+    std::fs::create_dir_all(root.join("reports").join("kept-folder")).unwrap();
+    std::fs::write(root.join("reports").join("run-1.html"), "<html></html>").unwrap();
+    std::fs::write(root.join("reports").join("run-2.html"), "<html></html>").unwrap();
+    std::fs::write(root.join("reports").join("kept-folder").join("inner.txt"), "stay").unwrap();
+    // Beside reports/, not Auto Run's to clear here.
+    std::fs::write(root.join("settings.json"), "{}").unwrap();
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(root.join("scripts").join("case-9.json"), "{}").unwrap();
+    let outside = dir.path().parent().unwrap().join(format!("outside-{}.html", std::process::id()));
+    std::fs::write(&outside, "keep").unwrap();
+
+    let removed = clear_runs(root).unwrap();
+    assert_eq!(removed, 1, "the count stays runs, not report files");
+    assert!(!root.join("reports").join("run-1.html").exists());
+    assert!(!root.join("reports").join("run-2.html").exists());
+    assert!(!root.join("shots").join(&shot).exists());
+    assert!(list_runs(root).is_empty());
+    // Only files were swept: the folder inside reports/ and what it holds stay.
+    assert_eq!(std::fs::read_to_string(root.join("reports").join("kept-folder").join("inner.txt")).unwrap(), "stay");
+    assert_eq!(std::fs::read_to_string(root.join("settings.json")).unwrap(), "{}");
+    assert_eq!(std::fs::read_to_string(root.join("scripts").join("case-9.json")).unwrap(), "{}");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+    let _ = std::fs::remove_file(&outside);
+}
+
 /// A `runs/` directory that cannot be listed is not the same thing as one
 /// that was never created: the first is a real failure (permissions, or -
 /// as reproduced here - something else sitting where the directory should

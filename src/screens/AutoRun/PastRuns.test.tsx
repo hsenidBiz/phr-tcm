@@ -164,7 +164,7 @@ test("Report opens the run's report in the browser and says so", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
 
   await waitFor(() => expect(calls).toHaveLength(1));
-  expect(calls[0]).toEqual({ runId: "run-1" });
+  expect(calls[0]).toEqual({ runId: "run-1", ranAt: new Date(1786000200000).toLocaleString() });
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Report opened in your browser"));
   // Nothing is saved anywhere the person has to pick.
   expect(saveDialog).not.toHaveBeenCalled();

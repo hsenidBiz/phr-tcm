@@ -312,10 +312,13 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
 
-    let path = write_report_at(true, &root, "run-1786000200000").unwrap();
+    let path = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     assert_eq!(path, root.join("reports").join("run-1786000200000.html"));
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<dd>click text=Save</dd>"));
+    // The time the webview sent, as given - not UTC.
+    assert!(html.contains("<dt>Ran</dt><dd>2 Oct 2026, 09:30</dd>"));
+    assert!(!html.contains(" UTC"));
     // The picture on disk is linked; the one that is not is a note.
     assert!(html.contains(&format!("src=\"../shots/{SHOT}\"")));
     assert!(html.contains(&format!("The picture {PASSED_SHOT} was not found")));
@@ -334,12 +337,12 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
 fn opening_again_overwrites_the_same_file() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
-    let first = write_report_at(true, &root, "run-1786000200000").unwrap();
+    let first = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     std::fs::write(&first, "stale").unwrap();
     // A picture that has since arrived is linked on the next open.
     std::fs::write(root.join("shots").join(PASSED_SHOT), JPEG).unwrap();
 
-    let second = write_report_at(true, &root, "run-1786000200000").unwrap();
+    let second = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     assert_eq!(first, second);
     let html = std::fs::read_to_string(&second).unwrap();
     assert!(html.starts_with("<!doctype html>"));
@@ -352,7 +355,7 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
 
-    let err = write_report_at(false, &root, "run-1786000200000").unwrap_err();
+    let err = write_report_at(false, &root, "run-1786000200000", "x").unwrap_err();
     assert_eq!(err, "not available in this build");
     assert!(!root.join("reports").exists());
 }
@@ -361,9 +364,9 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
 fn opening_says_so_for_a_run_that_is_gone_and_refuses_an_unsafe_id() {
     let dir = TempDir::new();
     let root = dir.path().join("autorun");
-    assert_eq!(write_report_at(true, &root, "run-1").unwrap_err(), REPORT_RUN_GONE);
+    assert_eq!(write_report_at(true, &root, "run-1", "x").unwrap_err(), REPORT_RUN_GONE);
     for bad in ["../run-1", "a/b", "a\\b", "", "run 1", "run-1.html"] {
-        let err = write_report_at(true, &root, bad).unwrap_err();
+        let err = write_report_at(true, &root, bad, "x").unwrap_err();
         assert!(err.contains("not a safe filename"), "{bad:?}: {err}");
     }
     assert!(!root.join("reports").exists());
@@ -410,4 +413,14 @@ fn a_navigate_address_is_reported_without_its_query_string() {
     let html = build(&run, &[script], "x", &no_shots);
     assert!(html.contains("<dd>go to https://app.example.test/login</dd>"));
     assert!(!html.contains("s3cr3t-value"));
+}
+
+#[test]
+fn opening_escapes_the_time_it_is_given() {
+    let dir = TempDir::new();
+    let root = seeded_root(&dir);
+    let path = write_report_at(true, &root, "run-1786000200000", "<script>x</script>").unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
+    assert!(!html.to_lowercase().contains("<script"));
 }
