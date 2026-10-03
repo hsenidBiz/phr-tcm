@@ -161,7 +161,7 @@ test("Report opens the run's report in the browser and says so", async () => {
     return null;
   });
 
-  fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /open a report of the run/i }));
 
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0]).toEqual({ runId: "run-1", ranAt: new Date(1786000200000).toLocaleString() });
@@ -179,7 +179,7 @@ test("a report that cannot be opened shows the error toast", async () => {
     return null;
   });
 
-  fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /open a report of the run/i }));
 
   await waitFor(() =>
     expect(toast.error).toHaveBeenCalledWith(

@@ -191,7 +191,7 @@ export default function PastRuns({
                   <Button
                     size="sm"
                     variant="outline"
-                    aria-label={`Save a report of the run from ${when(run.started_at)}`}
+                    aria-label={`Open a report of the run from ${when(run.started_at)}`}
                     title="Open this run's report in your browser"
                     disabled={openReport.isPending}
                     onClick={() => openReport.mutate(run)}

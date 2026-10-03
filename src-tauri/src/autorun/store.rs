@@ -427,8 +427,11 @@ pub fn safe_shot_name(name: &str) -> bool {
 
 /// Whether a screenshot of that name is in the shots folder. Only a name
 /// `safe_shot_name` accepts is looked up at all.
+/// It must be a regular file: a name that is a link to somewhere else is not
+/// a picture of the run and is never linked.
 pub fn shot_exists(root: &Path, name: &str) -> bool {
-    safe_shot_name(name) && shots_dir(root).join(name).is_file()
+    safe_shot_name(name)
+        && std::fs::symlink_metadata(shots_dir(root).join(name)).is_ok_and(|m| m.file_type().is_file())
 }
 
 pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
@@ -542,19 +545,6 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     Ok(removed)
 }
 
-/// `Ok(None)` for a directory nobody has created yet - the same "nothing
-/// to clear" reading `list_runs` gives a missing `runs/`. Any other read
-/// error (permissions, or something that is not a directory at all) is
-/// handed back as a message naming the path, instead of being folded into
-/// "0 removed" the way a caller cannot tell apart from genuine success.
-fn existing_dir(path: &Path) -> Result<Option<std::fs::ReadDir>, String> {
-    match std::fs::read_dir(path) {
-        Ok(entries) => Ok(Some(entries)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("could not read {}: {e}", path.display())),
-    }
-}
-
 /// Delete every saved run, and every screenshot with it - including runs
 /// that were already sent to Azure DevOps. The record Azure DevOps holds
 /// is the durable one; the confirm the screen shows before calling this
@@ -567,45 +557,92 @@ fn existing_dir(path: &Path) -> Result<Option<std::fs::ReadDir>, String> {
 /// and cannot be listed (permissions, or a file sitting where `runs/`
 /// should be) is a real failure, reported rather than swallowed as zero.
 pub fn clear_runs(root: &Path) -> Result<usize, String> {
-    let mut removed = 0usize;
-    if let Some(entries) = existing_dir(&runs_dir(root))? {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|x| x == "json") {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => removed += 1,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
-                }
-            }
-        }
-    }
-    if let Some(entries) = existing_dir(&shots_dir(root))? {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
-                }
-            }
-        }
-    }
+    // Every pass runs even if an earlier one failed, so a partial clear is
+    // finished as far as it can be and then reported - never half done with
+    // no sign of it.
+    let mut problems: Vec<String> = Vec::new();
+    let removed = sweep_files(&runs_dir(root), Some("json"), &mut problems);
+    sweep_files(&shots_dir(root), None, &mut problems);
     // The reports opened from those runs go too: they name the cases and
-    // link pictures that are now gone. Only the files directly in
-    // `reports/` - never a folder, never anything outside it.
-    if let Some(entries) = existing_dir(&reports_dir(root))? {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
-                }
-            }
+    // link pictures that are now gone.
+    sweep_files(&reports_dir(root), None, &mut problems);
+    if problems.is_empty() {
+        Ok(removed)
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
+/// Whether `path` is itself a link (a symlink or, on Windows, a junction or
+/// any other reparse point) - never followed.
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
         }
     }
-    Ok(removed)
+    false
+}
+
+/// Remove the regular files directly in `dir` (only those with extension
+/// `only_ext`, when given) and return how many went. Nothing else is
+/// touched: a folder in it, a link (never followed, never removed) and
+/// anything outside it stay, and a `dir` that is itself a link is skipped
+/// whole - what it points at is not ours to clear. A missing `dir` is
+/// nothing to do; one that cannot be read, or a file that cannot be
+/// removed, is added to `problems` and the sweep goes on.
+fn sweep_files(dir: &Path, only_ext: Option<&str>, problems: &mut Vec<String>) -> usize {
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) if is_link(&meta) => return 0,
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(e) => {
+            problems.push(format!("could not read {}: {e}", dir.display()));
+            return 0;
+        }
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            problems.push(format!("could not read {}: {e}", dir.display()));
+            return 0;
+        }
+    };
+    let mut removed = 0usize;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                problems.push(format!("could not read an entry of {}: {e}", dir.display()));
+                continue;
+            }
+        };
+        let path = entry.path();
+        // `DirEntry::file_type` does not follow links.
+        match entry.file_type() {
+            Ok(t) if t.is_file() => {}
+            Ok(_) => continue,
+            Err(e) => {
+                problems.push(format!("could not read {}: {e}", path.display()));
+                continue;
+            }
+        }
+        if let Some(ext) = only_ext {
+            if !path.extension().is_some_and(|x| x == ext) {
+                continue;
+            }
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => problems.push(format!("could not remove {}: {e}", path.display())),
+        }
+    }
+    removed
 }

@@ -113,6 +113,33 @@ pub fn without_query(url: &str) -> &str {
     }
 }
 
+/// A sentence the run recorded, with the query string and fragment taken
+/// off every `http://`, `https://` or `file://` address in it. The runner
+/// writes whole addresses into some of its sentences ("loaded <url>"), and a
+/// query string can carry a token; the report is a file people pass around.
+pub fn scrub_urls(text: &str) -> String {
+    const SCHEMES: [&str; 3] = ["http://", "https://", "file://"];
+    // ASCII lowercasing keeps every byte offset, so indexes carry over.
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        let next = SCHEMES.iter().filter_map(|s| lower[i..].find(s)).min();
+        let Some(rel) = next else {
+            out.push_str(&text[i..]);
+            break;
+        };
+        let start = i + rel;
+        out.push_str(&text[i..start]);
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace() || "\"'<>)]}".contains(c))
+            .map_or(text.len(), |n| start + n);
+        out.push_str(without_query(&text[start..end]));
+        i = end;
+    }
+    out
+}
+
 /// Text into HTML, element content or a quoted attribute alike.
 pub fn esc(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -215,7 +242,7 @@ fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
 fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>) -> String {
     let mut h = String::new();
     if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&case.reason)));
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
     }
     match stopping_point(case) {
         Some((step, index, outcome)) => {
@@ -225,7 +252,7 @@ fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>) -> String {
                 "<dt>Action</dt><dd>{}</dd>",
                 esc(&stopped_action(case, step, index, script))
             ));
-            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&outcome.detail)));
+            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&scrub_urls(&outcome.detail))));
             h.push_str("</dl>");
         }
         None => h.push_str(
@@ -255,7 +282,7 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
             h.push_str("<ul class=\"actions\">");
             for o in &step.outcomes {
                 let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
-                h.push_str(&format!("<li class=\"{class}\">{mark} {}</li>", esc(&o.detail)));
+                h.push_str(&format!("<li class=\"{class}\">{mark} {}</li>", esc(&scrub_urls(&o.detail))));
             }
             h.push_str("</ul>");
         }
@@ -298,7 +325,7 @@ fn case_section(
     if matches!(b, "Failed" | "Blocked") {
         h.push_str(&stopped_summary(case, script));
     } else if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&case.reason)));
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
     }
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));

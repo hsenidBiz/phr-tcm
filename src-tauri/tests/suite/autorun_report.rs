@@ -5,7 +5,7 @@
 //! reports folder (never embedded), a missing picture is a note rather than
 //! a failure, and a name that is not a screenshot is never linked.
 
-use v2_lib::autorun::report::{action_words, bucket, build, counts, BUCKETS, CSP};
+use v2_lib::autorun::report::{action_words, bucket, build, counts, scrub_urls, BUCKETS, CSP};
 use v2_lib::autorun::store::{save_run, save_script};
 use v2_lib::autorun::{CaseScript, LocalRun};
 use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
@@ -423,4 +423,32 @@ fn opening_escapes_the_time_it_is_given() {
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
     assert!(!html.to_lowercase().contains("<script"));
+}
+
+#[test]
+fn an_address_in_a_recorded_sentence_loses_its_query_string_and_fragment() {
+    let mut run = run_of(SHOT);
+    // A passed outcome, a failed one's message, and the run's own reason.
+    run.cases[3].steps[0].outcomes[0].detail = "loaded https://x/y?token=s3cr3t#frag".to_string();
+    run.cases[0].steps[2].outcomes[0].detail = "url is http://h/p?a=s3cr3t2 not the expected one".to_string();
+    run.cases[0].reason = "moved to file:///C:/a/b.html?k=s3cr3t3#top and stopped".to_string();
+    let html = build(&run, &[], "x", &no_shots);
+    assert!(html.contains("<li class=\"ok\">\u{2713} loaded https://x/y</li>"));
+    assert!(html.contains("<dd>url is http://h/p not the expected one</dd>"));
+    assert!(html.contains("moved to file:///C:/a/b.html and stopped"));
+    for secret in ["s3cr3t", "s3cr3t2", "s3cr3t3", "#frag", "#top"] {
+        assert!(!html.contains(secret), "{secret} leaked into the page");
+    }
+}
+
+#[test]
+fn scrubbing_keeps_the_rest_of_the_sentence_and_every_address_in_it() {
+    assert_eq!(scrub_urls("no address here: 100% ok? yes #1"), "no address here: 100% ok? yes #1");
+    assert_eq!(
+        scrub_urls("from HTTPS://a/b?x=1 to http://c/d#e then (https://f/g?h=2) done"),
+        "from HTTPS://a/b to http://c/d then (https://f/g) done"
+    );
+    assert_eq!(scrub_urls("moved to \"https://x/y?t=1\" ok"), "moved to \"https://x/y\" ok");
+    assert_eq!(scrub_urls("https://x/y?t=1"), "https://x/y");
+    assert_eq!(scrub_urls(""), "");
 }
