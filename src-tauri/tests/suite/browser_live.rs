@@ -1459,7 +1459,10 @@ async fn the_page_log_names_a_failed_request_and_a_console_error_from_a_real_bro
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     page::eval_value(
         &mut live.cdp,
-        &format!("fetch('http://127.0.0.1:{port}/hr/pmsv10/menu?token=secret').catch(() => {{}}); console.error('menu data missing'); 1"),
+        &format!(
+            "fetch('http://127.0.0.1:{port}/hr/pmsv10/menu?token=secret').catch(() => {{}}); console.error('menu data missing'); \
+             const s = document.createElement('script'); s.text = 'var x = ;'; document.body.appendChild(s); 1"
+        ),
     )
     .await
     .unwrap();
@@ -1470,11 +1473,17 @@ async fn the_page_log_names_a_failed_request_and_a_console_error_from_a_real_bro
         tokio::time::sleep(Duration::from_millis(100)).await;
         let _ = page::eval_value(&mut live.cdp, "1").await;
         lines = live.cdp.page_log();
-        if lines.iter().any(|l| l.starts_with("request failed")) && lines.iter().any(|l| l.starts_with("console error")) {
+        if lines.iter().any(|l| l.starts_with("request failed"))
+            && lines.iter().any(|l| l.starts_with("console error"))
+            && lines.iter().any(|l| l.starts_with("uncaught error"))
+        {
             break;
         }
     }
-    assert!(lines.contains(&"console error: menu data missing".to_string()), "{lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("console error: menu data missing (at ")), "{lines:?}");
+    // A script the page inserted itself: Edge names the line it broke on.
+    let thrown = lines.iter().find(|l| l.starts_with("uncaught error: SyntaxError")).unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(thrown.contains(" (at ") && (thrown.contains("line 1") || thrown.contains(":1:")), "{thrown}");
     let failed = lines.iter().find(|l| l.starts_with("request failed (")).unwrap_or_else(|| panic!("{lines:?}"));
     assert!(failed.ends_with(&format!("GET http://127.0.0.1:{port}/hr/pmsv10/menu")), "{failed}");
     assert!(!lines.iter().any(|l| l.contains("secret")), "{lines:?}");

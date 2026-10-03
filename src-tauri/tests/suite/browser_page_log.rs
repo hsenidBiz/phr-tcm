@@ -70,7 +70,69 @@ fn a_redirect_follows_the_same_request_to_its_new_address() {
     sent(&mut log, "1", "GET", "https://hr.example/hr/home/index");
     let lines = log.report();
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].ends_with("GET https://hr.example/hr/home/index"), "{}", lines[0]);
+    assert!(lines[0].ends_with("GET https://hr.example/hr/home/index (after 1 redirect)"), "{}", lines[0]);
+}
+
+/// Times come from the browser's own clock (`timestamp`), first hop to
+/// finish: a redirect does not restart them.
+fn at_time(log: &mut PageLog, method: &str, params: serde_json::Value) {
+    assert!(log.observe(&ev(method, params)));
+}
+
+#[test]
+fn a_slow_request_that_finished_is_reported_with_its_time_and_a_quick_one_is_not() {
+    let mut log = PageLog::default();
+    let send = |id: &str, url: &str, t: f64| json!({ "requestId": id, "timestamp": t, "request": { "url": url, "method": "GET" } });
+    at_time(&mut log, "Network.requestWillBeSent", send("1", "https://hr.example/hr/PMSV10/PerformanceCycle/Manage?x=1", 100.0));
+    at_time(&mut log, "Network.requestWillBeSent", json!({ "requestId": "1", "timestamp": 101.0, "redirectResponse": { "status": 302 }, "request": { "url": "https://hr.example/hr/pmsv10/PerformanceCycle/Manage", "method": "GET" } }));
+    at_time(&mut log, "Network.loadingFinished", json!({ "requestId": "1", "timestamp": 114.04 }));
+    at_time(&mut log, "Network.requestWillBeSent", send("2", "https://hr.example/hr/home/widgets", 100.0));
+    at_time(&mut log, "Network.loadingFinished", json!({ "requestId": "2", "timestamp": 104.9 }));
+    at_time(&mut log, "Network.requestWillBeSent", send("3", "https://hr.example/hr/api/menu", 100.0));
+    at_time(&mut log, "Network.responseReceived", json!({ "requestId": "3", "response": { "status": 500 } }));
+    at_time(&mut log, "Network.loadingFinished", json!({ "requestId": "3", "timestamp": 100.4 }));
+    at_time(&mut log, "Network.requestWillBeSent", send("4", "https://hr.example/hr/api/badge", 100.0));
+    at_time(&mut log, "Network.loadingFailed", json!({ "requestId": "4", "timestamp": 107.25, "errorText": "net::ERR_TIMED_OUT", "canceled": false }));
+    assert_eq!(
+        log.report(),
+        vec![
+            "request took 14s: GET https://hr.example/hr/pmsv10/PerformanceCycle/Manage (after 1 redirect)".to_string(),
+            "request answered 500 after 0.4s: GET https://hr.example/hr/api/menu".to_string(),
+            "request failed (net::ERR_TIMED_OUT) after 7.2s: GET https://hr.example/hr/api/badge".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_still_waiting_request_counts_its_redirects() {
+    let mut log = PageLog::default();
+    sent(&mut log, "1", "GET", "https://hr.example/hr/a");
+    sent(&mut log, "1", "GET", "https://hr.example/hr/b");
+    sent(&mut log, "1", "GET", "https://hr.example/hr/a");
+    let line = &log.report()[0];
+    assert!(line.starts_with("request still waiting after "), "{line}");
+    assert!(line.ends_with("s: GET https://hr.example/hr/a (after 2 redirects)"), "{line}");
+}
+
+#[test]
+fn an_uncaught_error_says_which_script_and_line_threw_it() {
+    let mut log = PageLog::default();
+    at_time(&mut log, "Runtime.exceptionThrown", json!({ "exceptionDetails": {
+        "text": "Uncaught", "lineNumber": 41, "columnNumber": 7, "url": "https://hr.example/hr/js/home.js?v=12",
+        "exception": { "description": "SyntaxError: Invalid or unexpected token" } } }));
+    at_time(&mut log, "Runtime.exceptionThrown", json!({ "exceptionDetails": {
+        "text": "Uncaught", "lineNumber": 0, "columnNumber": 3, "url": "", "scriptId": "88",
+        "exception": { "description": "SyntaxError: Invalid or unexpected token" } } }));
+    at_time(&mut log, "Runtime.consoleAPICalled", json!({ "type": "error", "args": [{ "type": "string", "value": "menu data missing" }],
+        "stackTrace": { "callFrames": [{ "url": "https://hr.example/hr/js/menu.js?token=s", "lineNumber": 9, "columnNumber": 0 }] } }));
+    assert_eq!(
+        log.report(),
+        vec![
+            "uncaught error: SyntaxError: Invalid or unexpected token (at https://hr.example/hr/js/home.js:42:8)".to_string(),
+            "uncaught error: SyntaxError: Invalid or unexpected token (at line 1 of a script the page added itself)".to_string(),
+            "console error: menu data missing (at https://hr.example/hr/js/menu.js:10:1)".to_string(),
+        ]
+    );
 }
 
 #[test]
