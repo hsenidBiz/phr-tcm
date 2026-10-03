@@ -353,15 +353,16 @@ li:focus-within > .nav-sub { transition-delay: 0s; }
 }
 .hero-visual:hover .window { transform: rotateX(0deg) scale(1); }
 
-/* The row of flasks at the very bottom of the page. Decoration only: flasks.ts
-   moves them with transforms, and when motion is off they rest on the line. */
+/* The row of flasks in the space above the footer. Their ground is the
+   footer's own top line, so the strip draws none and the footer drops the
+   margin the strip now fills (44 + 96 = the footer's usual 140).
+   Decoration only: flasks.ts moves them with transforms, and when motion is
+   off they rest on the line. */
 .flask-strip {
-  position: relative; height: 96px; margin-top: 28px; overflow: hidden;
+  position: relative; height: 96px; margin-top: 44px; overflow: hidden;
   pointer-events: none; user-select: none;
 }
-.flask-strip::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--border);
-}
+.flask-strip + .footer { margin-top: 0; }
 .flask { position: absolute; left: 0; bottom: 0; transform-origin: 50% 100%; }
 .flask svg { display: block; width: 100%; height: 100%; }
 .flask-0 { color: var(--accent-text); }
