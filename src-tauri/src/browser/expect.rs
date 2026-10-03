@@ -9,7 +9,7 @@
 use super::actions::{harness, harness_timeout, ActionOutcome};
 use super::cdp::{CdpError, Driver};
 use super::input::STILL_LOOKING;
-use super::locator::{resolve, Target, VISIBLE_JS};
+use super::locator::{resolve, resolve_explained, Target, VISIBLE_JS};
 use super::page::{self, Handle};
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -77,7 +77,14 @@ async fn look<D: Driver>(
     check: &Check<'_>,
 ) -> Result<Result<String, String>, CdpError> {
     let what = target.describe();
-    let handles = resolve(d, target).await?;
+    let found = resolve_explained(d, target).await?;
+    // Nothing found because the chain could not enter a frame is not an
+    // answer to ANY check - expect_hidden or a count of 0 would otherwise
+    // pass on a page Auto Run never saw.
+    if let (true, Some(why)) = (found.handles.is_empty(), found.unreachable_frame) {
+        return Ok(Err(why));
+    }
+    let handles = found.handles;
     Ok(match check {
         Check::Visible => match only(&handles) {
             // A locator keeps only what a person could see, so "nothing

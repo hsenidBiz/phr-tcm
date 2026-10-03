@@ -4,7 +4,9 @@ use crate::common;
 
 use common::ScriptedDriver;
 use serde_json::json;
-use v2_lib::browser::locator::{name_matches, resolve, LocatorStep, Target, CSS_JS, LEGACY_JS, VISIBLE_JS};
+use v2_lib::browser::expect::{expect, Check};
+use v2_lib::browser::snapshot::{frame_step, probe};
+use v2_lib::browser::locator::{frame_unreachable, name_matches, resolve_explained, FRAME_DOC_JS, FRAME_JS, resolve, LocatorStep, Target, CSS_JS, LEGACY_JS, VISIBLE_JS};
 
 fn step(json: serde_json::Value) -> LocatorStep {
     serde_json::from_value(json).unwrap()
@@ -191,6 +193,11 @@ async fn a_chain_narrows_inside_the_previous_match() {
         "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
             Ok(json!({ "result": { "value": true } }))
         }
+        // Each match of a step that is not the last is asked whether it is
+        // a frame to enter; these dialogs are plain elements.
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == FRAME_JS => {
+            Ok(json!({ "result": { "value": "element" } }))
+        }
         "Runtime.callFunctionOn" => {
             assert_eq!(params["functionDeclaration"], CSS_JS);
             assert_eq!(params["objectId"], "dialog", "the css step must search inside the dialog");
@@ -234,6 +241,11 @@ async fn a_chain_deduplicates_elements_reached_through_more_than_one_root() {
         }
         "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
             Ok(json!({ "result": { "value": true } }))
+        }
+        // Each match of a step that is not the last is asked whether it is
+        // a frame to enter; these dialogs are plain elements.
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == FRAME_JS => {
+            Ok(json!({ "result": { "value": "element" } }))
         }
         "Runtime.callFunctionOn" => {
             assert_eq!(params["functionDeclaration"], CSS_JS);
@@ -290,4 +302,114 @@ async fn nothing_matching_is_an_empty_list_not_an_error() {
     });
     let t: Target = serde_json::from_value(json!([{ "role": "dialog" }, { "css": "button" }])).unwrap();
     assert!(resolve(&mut d, &t).await.unwrap().is_empty());
+}
+
+#[test]
+fn an_unreachable_frame_is_explained_in_a_sentence() {
+    assert_eq!(
+        frame_unreachable("iframe#locked"),
+        "the frame iframe#locked holds a page from another site (or has not loaded), which Auto Run cannot reach"
+    );
+}
+
+// --- frames, scripted ------------------------------------------------------
+
+/// A page holding one frame element (`frame-el`). `FRAME_JS` answers
+/// `frame_answer` for it. Entering it reads `contentDocument` (handle
+/// `doc-parent`, which lives in the PARENT's context), which must be
+/// re-resolved by backend id 42 into `frame-doc` before anything searches
+/// inside: a search on `doc-parent` would run with the parent's globals.
+fn frame_page(frame_answer: &'static str) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| {
+        let on = params["objectId"].as_str().unwrap_or("");
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.releaseObjectGroup" => Ok(json!({})),
+            "Runtime.callFunctionOn" if f == FRAME_JS => Ok(json!({ "result": { "value": frame_answer } })),
+            "Runtime.callFunctionOn" if f == FRAME_DOC_JS => Ok(json!({ "result": { "objectId": "a-doc" } })),
+            "Runtime.callFunctionOn" if f == CSS_JS => {
+                let arr = match on {
+                    "doc" => "a-top",
+                    "frame-doc" => "a-in",
+                    other => panic!("searched inside {other}: the frame document was not re-resolved"),
+                };
+                Ok(json!({ "result": { "objectId": arr } }))
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": { "tag": "button", "text": "Select", "rect": [0, 0, 10, 10] } } })),
+            "Runtime.getProperties" => {
+                let item = match on {
+                    "a-top" => "frame-el",
+                    "a-in" => "pick",
+                    "a-doc" => "doc-parent",
+                    other => panic!("unexpected array {other}"),
+                };
+                Ok(json!({ "result": [{ "name": "0", "value": { "objectId": item } }] }))
+            }
+            "DOM.describeNode" => {
+                assert_eq!(on, "doc-parent");
+                Ok(json!({ "node": { "backendNodeId": 42 } }))
+            }
+            "DOM.resolveNode" => {
+                assert_eq!(params["backendNodeId"], 42);
+                Ok(json!({ "object": { "objectId": "frame-doc" } }))
+            }
+            other => panic!("unexpected {other}"),
+        }
+    })
+}
+
+fn through_frame() -> Target {
+    serde_json::from_value(json!([{ "css": "iframe" }, { "css": "#pick" }])).unwrap()
+}
+
+#[tokio::test]
+async fn a_step_after_a_frame_searches_the_frames_own_document() {
+    let mut d = frame_page("frame");
+    let r = resolve_explained(&mut d, &through_frame()).await.unwrap();
+    assert_eq!(r.handles, vec!["pick".to_string()]);
+    assert_eq!(r.unreachable_frame, None);
+}
+
+#[tokio::test]
+async fn a_frame_on_the_last_step_is_kept_as_the_element() {
+    let mut d = frame_page("frame");
+    let t: Target = serde_json::from_value(json!({ "css": "iframe" })).unwrap();
+    assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["frame-el".to_string()]);
+    assert!(d.calls_to("DOM.resolveNode").is_empty(), "the last step must not be entered");
+}
+
+#[tokio::test]
+async fn an_unreachable_frame_yields_nothing_and_says_why() {
+    let mut d = frame_page("unreachable");
+    let r = resolve_explained(&mut d, &through_frame()).await.unwrap();
+    assert!(r.handles.is_empty());
+    assert_eq!(r.unreachable_frame, Some(frame_unreachable("iframe")));
+}
+
+#[tokio::test]
+async fn no_check_passes_on_nothing_behind_an_unreachable_frame() {
+    for check in [Check::Hidden, Check::Count(0)] {
+        let mut d = frame_page("unreachable");
+        let out = expect(&mut d, &through_frame(), check, 50, 10).await;
+        assert!(!out.ok, "passed through a frame it never entered: {}", out.detail);
+        assert!(out.detail.contains("holds a page from another site"), "{}", out.detail);
+    }
+}
+
+#[tokio::test]
+async fn the_probe_names_an_unreachable_frame() {
+    let mut d = frame_page("unreachable");
+    let out = probe(&mut d, &through_frame()).await.unwrap();
+    assert!(out.contains("holds a page from another site"), "{out}");
+}
+
+#[test]
+fn an_iframe_step_is_its_name_else_its_id_else_its_title_else_its_place() {
+    let attrs = |pairs: &[&str]| json!(pairs);
+    assert_eq!(frame_step("Employee Search", &attrs(&[]), 0), json!({ "role": "Iframe", "name": "Employee Search", "exact": true }));
+    assert_eq!(frame_step("", &attrs(&["id", "es-frame", "title", "Search"]), 0), json!({ "css": "iframe#es-frame" }));
+    assert_eq!(frame_step("", &attrs(&["title", "Search"]), 0), json!({ "css": "iframe[title='Search']" }));
+    assert_eq!(frame_step("", &attrs(&["data-k", "bare"]), 2), json!({ "css": "iframe", "nth": 2 }));
 }

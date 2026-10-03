@@ -400,9 +400,14 @@ that exists at runtime. Check for these before you trust one:
    for them; `check_text` does not, so follow a navigation with an
    `expect_visible` on something inside the rendered result.
 
-Content inside an `<iframe>` cannot be reached at all: the actions run in
-the top document only. If a step depends on one, say so and leave it for
-the person to do by hand.
+Content inside a same-origin `<iframe>` (one the page fills itself, such as
+an embedded search dialog) is reached through a chain: name the iframe as
+one step and what is inside it as the next, e.g.
+`[{"css": "iframe[title='Employee Search']"}, {"role": "button", "name": "Search"}]`.
+`get_autorun_page` prints each frame's contents under its iframe with those
+chains already written. A frame holding a page from another site cannot be
+reached - a step that depends on one fails saying so; leave it for the
+person to do by hand.
 
 ## Where each fact is allowed to come from
 

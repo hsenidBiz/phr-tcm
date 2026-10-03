@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run iframe fixture</title>
+<!--
+  Frames the way PeoplesHR's <phr-employee-search> builds them: an iframe
+  with no src, filled with document.write, so it is same-origin with the
+  page. Below a tall spacer (it has to be scrolled to) and inside a
+  bordered, offset box (the click point has to add both). Also: a hidden
+  twin of that frame, a sandboxed frame the page cannot enter, a frame
+  with neither id nor title, and an overlay that can cover the frame.
+
+  Everything a test reads back is written by the FRAME's own handlers.
+-->
+<style>
+  #spacer { height: 1200px; }
+  #es-wrap { margin-left: 180px; }
+  #es-frame { border: 7px solid #888; width: 500px; height: 260px; }
+  #cover { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.2); z-index: 9; }
+</style>
+<main>
+  <h1>Frames</h1>
+  <button id="show-cover" onclick="document.getElementById('cover').style.display = 'block'">Show cover</button>
+  <div id="spacer"></div>
+
+  <div id="es-wrap">
+    <iframe id="es-frame" title="Employee Search"></iframe>
+  </div>
+  <div style="display:none">
+    <iframe title="Employee Search"></iframe>
+  </div>
+
+  <iframe id="locked" title="Locked frame" sandbox srcdoc="<button>Locked</button>"></iframe>
+  <iframe data-k="bare" style="width:300px;height:80px"></iframe>
+  <!-- Padding sits between the border and the frame's viewport: a click
+       point that adds only the border lands short of the button. -->
+  <iframe id="pad-frame" title="Padded frame" style="border:0;padding:40px 0 0 60px;width:300px;height:120px"></iframe>
+</main>
+<div id="cover"></div>
+<script>
+  const SEARCH = `<!doctype html><meta charset="utf-8">
+    <button id="pick" onclick="document.getElementById('out').textContent = 'picked'">Select</button>
+    <input id="q" aria-label="Search employees"
+           oninput="document.getElementById('out').textContent = 'typed:' + this.value">
+    <div id="out"></div>`;
+  function fill(frame, html) {
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write(html);
+    doc.close();
+  }
+  for (const f of document.querySelectorAll('iframe[title="Employee Search"]')) fill(f, SEARCH);
+  fill(document.querySelector('iframe[data-k="bare"]'), '<button>Bare inner</button>');
+  fill(document.getElementById('pad-frame'),
+    '<button id="pad-btn" style="width:40px;height:20px" onclick="document.getElementById(\x27pout\x27).textContent = \x27hit\x27">Pad</button><div id="pout"></div>');
+</script>

@@ -7,7 +7,7 @@ use common::ScriptedDriver;
 use serde_json::json;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
-use v2_lib::browser::snapshot::{parse_nodes, probe, render, snapshot, AxNode, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
+use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
 
 /// A plain, printable node with no value/ignored/disabled/focusable
 /// wrinkles - tests override the fields they care about with `..`.
@@ -21,6 +21,7 @@ fn node(id: &str, role: &str, name: &str, children: &[&str]) -> AxNode {
         children: children.iter().map(|s| s.to_string()).collect(),
         focusable: false,
         disabled: false,
+        backend: None,
     }
 }
 
@@ -531,4 +532,63 @@ async fn a_resolve_failure_propagates() {
     });
     let err = probe(&mut d, &Target::from("#go")).await.unwrap_err();
     assert!(matches!(err, CdpError::Protocol { .. }));
+}
+
+// --- frames ---------------------------------------------------------------
+
+/// A page with one iframe ("Employee Search", AX id `f1`) and the frame's
+/// own tree: a root and `n` buttons named "B1".."Bn".
+fn page_with_frame(n: usize) -> (Vec<AxNode>, FrameTree) {
+    let parent = vec![node("1", "RootWebArea", "Frames", &["f1"]), node("f1", "Iframe", "Employee Search", &[])];
+    let ids: Vec<String> = (1..=n).map(|i| format!("b{i}")).collect();
+    let mut nodes = vec![node("1", "RootWebArea", "", &ids.iter().map(String::as_str).collect::<Vec<_>>())];
+    nodes.extend(ids.iter().enumerate().map(|(i, id)| node(id, "button", &format!("B{}", i + 1), &[])));
+    let frame = FrameTree {
+        iframe_id: "f1".to_string(),
+        step: json!({ "css": "iframe[title='Employee Search']" }),
+        nodes,
+        unreadable: None,
+        frames: vec![],
+    };
+    (parent, frame)
+}
+
+#[test]
+fn a_frame_tree_prints_under_its_iframe_with_chained_locators() {
+    let (parent, frame) = page_with_frame(1);
+    let out = render_frames(&parent, &[frame], DEFAULT_LIMIT);
+    let lines: Vec<&str> = out.lines().collect();
+    let iframe_line = lines.iter().position(|l| l.trim_start().starts_with("Iframe")).expect("no iframe line");
+    let button_line = lines.iter().position(|l| l.contains("\"B1\"")).expect("no frame button line");
+    assert!(button_line > iframe_line, "{out}");
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    assert!(indent(lines[button_line]) > indent(lines[iframe_line]), "{out}");
+    let chain = json!([{ "css": "iframe[title='Employee Search']" }, { "role": "button", "name": "B1" }]);
+    assert!(lines[button_line].ends_with(&format!(" -> {chain}")), "{out}");
+}
+
+#[test]
+fn an_unreadable_frame_prints_one_line_saying_so() {
+    let (parent, mut frame) = page_with_frame(0);
+    frame.nodes.clear();
+    frame.unreadable = Some("no frame id".to_string());
+    let out = render_frames(&parent, &[frame], DEFAULT_LIMIT);
+    assert!(out.contains("(frame contents could not be read: no frame id)"), "{out}");
+}
+
+#[test]
+fn the_line_limit_counts_frame_lines() {
+    let (parent, frame) = page_with_frame(5);
+    // 2 parent lines (root, iframe) + the frame's root + 5 buttons = 8; a
+    // limit of 4 keeps 4 and says 4 more.
+    let out = render_frames(&parent, &[frame], 4);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 5, "{out}");
+    assert!(lines[4].starts_with("... and 4 more"), "{out}");
+}
+
+#[test]
+fn render_without_frames_is_unchanged() {
+    let (parent, _) = page_with_frame(1);
+    assert_eq!(render(&parent, DEFAULT_LIMIT), render_frames(&parent, &[], DEFAULT_LIMIT));
 }

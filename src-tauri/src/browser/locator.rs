@@ -339,15 +339,57 @@ async fn dedupe_by_backend<D: Driver>(d: &mut D, handles: Vec<Handle>) -> Result
     Ok(out)
 }
 
+/// Why a chain found nothing when it had to pass through a frame whose page
+/// cannot be reached: a frame from another site, a sandboxed one, or one
+/// with no document yet. `frame` is that frame step's `describe()`.
+pub fn frame_unreachable(frame: &str) -> String {
+    format!("the frame {frame} holds a page from another site (or has not loaded), which Auto Run cannot reach")
+}
+
 /// Every element the target matches right now. Empty is an answer, not an
 /// error: callers decide whether "nothing yet" means wait or fail.
 pub async fn resolve<D: Driver>(d: &mut D, target: &Target) -> Result<Vec<Handle>, CdpError> {
+    Ok(resolve_explained(d, target).await?.handles)
+}
+
+/// What a target matched, and - when it matched nothing because the chain
+/// had to pass through a frame it could not enter - which frame, in a
+/// sentence for the person (`frame_unreachable`).
+#[derive(Debug, Default)]
+pub struct Resolved {
+    pub handles: Vec<Handle>,
+    pub unreachable_frame: Option<String>,
+}
+
+/// `this` is an element. "frame" for an iframe/frame whose document the
+/// page can reach (same origin), "unreachable" for one it cannot (another
+/// site, sandboxed, not loaded), "element" for anything else. By tag name,
+/// not `instanceof`: the element may belong to another frame's realm.
+pub const FRAME_JS: &str = r#"function() {
+  if (this.tagName !== 'IFRAME' && this.tagName !== 'FRAME') return 'element';
+  let doc = null;
+  try { doc = this.contentDocument; } catch (e) { doc = null; }
+  return doc ? 'frame' : 'unreachable';
+}"#;
+
+/// `this` is a reachable frame element: its document, as the next root.
+pub const FRAME_DOC_JS: &str = r#"function() { return [this.contentDocument]; }"#;
+
+/// `resolve`, saying why when a frame stood in the way. A step that matches
+/// an iframe hands the NEXT step that frame's document to search - the way
+/// a page builds a component inside a same-origin frame (PeoplesHR's
+/// employee search). The last step is never swapped, so a chain can still
+/// point at the iframe itself.
+pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<Resolved, CdpError> {
     let doc = page::document(d).await?;
     if let Target::Legacy(sel) = target {
-        return page::call_elements(d, &doc, LEGACY_JS, &[json!(sel)]).await;
+        let handles = page::call_elements(d, &doc, LEGACY_JS, &[json!(sel)]).await?;
+        return Ok(Resolved { handles, unreachable_frame: None });
     }
+    let steps = target.steps();
+    let mut unreachable_frame = None;
     let mut roots = vec![doc];
-    for step in target.steps() {
+    for (i, step) in steps.iter().enumerate() {
         let mut next = vec![];
         for root in &roots {
             next.extend(find_in(d, root, step).await?);
@@ -358,10 +400,35 @@ pub async fn resolve<D: Driver>(d: &mut D, target: &Target) -> Result<Vec<Handle
         if let Some(n) = step.nth {
             next = next.into_iter().nth(n as usize).into_iter().collect();
         }
+        if i + 1 < steps.len() {
+            let mut entered = Vec::with_capacity(next.len());
+            for handle in next {
+                match page::call_value(d, &handle, FRAME_JS, &[]).await?.as_str() {
+                    Some("frame") => {
+                        // Chrome runs a function in the context its handle
+                        // came from. Read through the parent, the frame's
+                        // document would make every later search and probe
+                        // use the PARENT's globals (`document`, `instanceof
+                        // HTMLElement`, `innerWidth`). Resolving the node
+                        // again by its backend id hands back a handle that
+                        // lives in the frame's own context.
+                        for doc in page::call_elements(d, &handle, FRAME_DOC_JS, &[]).await? {
+                            let backend = page::backend_id(d, &doc).await?;
+                            entered.push(page::resolve_backend(d, backend).await?);
+                        }
+                    }
+                    Some("unreachable") => {
+                        unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
+                    }
+                    _ => entered.push(handle),
+                }
+            }
+            next = entered;
+        }
         roots = next;
         if roots.is_empty() {
             break;
         }
     }
-    Ok(roots)
+    Ok(Resolved { handles: roots, unreachable_frame })
 }

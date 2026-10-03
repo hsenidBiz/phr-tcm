@@ -73,6 +73,12 @@ fn fixture_url() -> String {
     format!("file:///{}", path.trim_start_matches('/').replace(' ', "%20"))
 }
 
+/// The page whose frames are built the way `<phr-employee-search>` builds
+/// its own: no `src`, filled with `document.write`.
+fn iframe_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-iframe.html")
+}
+
 /// Short enough that a failing test fails fast, long enough for the
 /// fixture's 700 ms of being disabled and covered.
 fn timing() -> Timing {
@@ -123,6 +129,15 @@ async fn open() -> Live {
     let mut live = Live { browser, cdp };
     let out = run(&mut live, json!({ "kind": "navigate", "url": fixture_url() })).await;
     assert!(out.ok, "the fixture did not load: {}", out.detail);
+    live
+}
+
+/// `open()`, then on to the frame fixture.
+async fn open_iframes() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": iframe_fixture_url() })).await;
+    assert!(out.ok, "the iframe fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#es-frame" } })).await);
     live
 }
 
@@ -1638,4 +1653,173 @@ Connection: close
         "the browser never followed the redirect: {:?}",
         seen.lock().unwrap()
     );
+}
+
+/// Spike: can Chrome's role lookup reach inside a same-origin frame when it
+/// is handed the frame's DOCUMENT, and does role `Iframe` find the frame
+/// element itself? The answers decide how a role step searches inside a
+/// frame, and what step the snapshot prints for an iframe.
+///
+/// Observed on Edge 153 (2026-10-03): (a) yes - handed the frame document,
+/// queryAXTree returns the frame's own buttons, so a role step searches
+/// inside a frame with no fallback; (b) yes - role "Iframe" (capitalised;
+/// "iframe" finds nothing) returns each visible iframe by its title, and
+/// not the hidden twin. Asserted, so a browser that changes either fails
+/// here first.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_spike_role_lookup_through_a_frame_document() {
+    let mut live = open_iframes().await;
+    let top = page::document(&mut live.cdp).await.expect("no document");
+    let frames = page::call_elements(&mut live.cdp, &top, "function() { return [document.querySelector('#es-frame')]; }", &[])
+        .await
+        .expect("no frame element");
+    let docs = page::call_elements(&mut live.cdp, &frames[0], "function() { return [this.contentDocument]; }", &[])
+        .await
+        .expect("no frame document");
+    let names = |r: &serde_json::Value| -> Vec<String> {
+        r["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|n| !n["ignored"].as_bool().unwrap_or(false))
+            .map(|n| n["name"]["value"].as_str().unwrap_or("").to_string())
+            .collect()
+    };
+    let inside = live
+        .cdp
+        .call("Accessibility.queryAXTree", json!({ "objectId": docs[0], "role": "button" }))
+        .await
+        .expect("queryAXTree on the frame document failed");
+    assert_eq!(names(&inside), vec!["Select".to_string()], "(a) the role lookup did not reach inside the frame");
+    let r = live
+        .cdp
+        .call("Accessibility.queryAXTree", json!({ "objectId": top, "role": "Iframe" }))
+        .await
+        .expect("queryAXTree for the iframe role failed");
+    assert_eq!(
+        names(&r),
+        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new(), "Padded frame".to_string()],
+        "(b) role Iframe did not list the visible frames by title"
+    );
+}
+
+/// The visible employee-search frame, as a chain's first step.
+fn es(inner: serde_json::Value) -> serde_json::Value {
+    json!([{ "css": "iframe[title='Employee Search']" }, inner])
+}
+
+/// Reading inside a frame needs no click, so it proves the resolver alone.
+/// The page also holds a hidden twin of the frame: it must not count.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_chain_reads_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#pick" })), "equals": "Select" })).await);
+    must(run(&mut live, json!({ "kind": "expect_count",
+        "selector": es(json!({ "role": "button", "name": "Select", "exact": true })), "equals": 1 })).await);
+}
+
+/// When the iframe is the chain's target it stays the iframe element.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_the_last_step_keeps_the_iframe_itself() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#es-frame" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": [{ "css": "#es-wrap" }, { "css": "iframe" }], "equals": 1 })).await);
+}
+
+/// A sandboxed frame cannot be entered. Every check through it says so -
+/// expect_hidden and a count of 0 must not pass just because nothing
+/// was found.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_an_unreachable_frame_is_named_not_reported_missing() {
+    let mut live = open_iframes().await;
+    let locked = json!([{ "css": "#locked" }, { "role": "button", "name": "Locked" }]);
+    let why = "holds a page from another site";
+    refused(run(&mut live, json!({ "kind": "expect_visible", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "expect_hidden", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "expect_count", "selector": locked, "equals": 0 })).await, why);
+    refused(run(&mut live, json!({ "kind": "click", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "wait_for", "selector": locked, "timeout_ms": 1500 })).await, why);
+}
+
+/// The frame sits below a tall spacer, 180px in, inside a 7px border: the
+/// click point has to add all of that or it lands beside the button.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_click_lands_on_the_element_inside_a_scrolled_bordered_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": es(json!({ "css": "#pick" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "picked" })).await);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_typing_reaches_an_input_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "fill",
+        "selector": es(json!({ "role": "textbox", "name": "Search employees" })), "value": "Ethan" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "typed:Ethan" })).await);
+}
+
+/// An overlay on the PAGE over the frame is in the way of a person's click
+/// as much as one inside the frame: wait, then say what covers it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_parent_overlay_over_the_frame_is_reported_as_covering() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#show-cover" } })).await);
+    let out = run(&mut live, json!({ "kind": "click", "selector": es(json!({ "css": "#pick" })) })).await;
+    refused(out.clone(), "covered by");
+    refused(out, "div#cover");
+    // Empty, so it has no height: only a hidden-inclusive look can read it.
+    must(run(&mut live, json!({ "kind": "expect_text",
+        "selector": es(json!({ "css": "#out", "visible": false })), "equals": "" })).await);
+}
+
+/// A text step inside a frame: its in-page filter checks `instanceof
+/// HTMLElement`, which only holds when the search runs in the FRAME's own
+/// context - so this fails if the resolver hands on a parent-side handle.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_text_step_finds_words_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": es(json!({ "text": "Select", "exact": true })), "equals": 1 })).await);
+}
+
+/// The chain the snapshot prints for an element inside a frame is the one a
+/// script pastes: it must reach that element and nothing else.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_the_snapshot_prints_paste_ready_chains() {
+    let mut live = open_iframes().await;
+    let text = snapshot(&mut live.cdp, DEFAULT_LIMIT).await.expect("no snapshot");
+    let chain_of = |needle: &str| -> serde_json::Value {
+        let line = text.lines().find(|l| l.contains(needle)).unwrap_or_else(|| panic!("no line with {needle} in:\n{text}"));
+        serde_json::from_str(line.rsplit(" -> ").next().unwrap()).unwrap()
+    };
+    let select = chain_of("button \"Select\"");
+    assert!(select.is_array(), "not a chain: {select}");
+    must(run(&mut live, json!({ "kind": "click", "selector": select })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "picked" })).await);
+    // A frame with neither id nor title still gets a chain that resolves.
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": chain_of("button \"Bare inner\""), "equals": 1 })).await);
+    // The sandboxed frame says it cannot be read rather than offering a
+    // chain that would fail.
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert!(!text.contains("button \"Locked\""), "{text}");
+}
+
+/// Padding sits between an iframe's border and its viewport. A click point
+/// that adds only the border lands on the padding - still the iframe, so no
+/// cover check notices - and the button never hears it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_click_inside_a_padded_frame_lands_on_the_element() {
+    let mut live = open_iframes().await;
+    let pad = |inner: serde_json::Value| json!([{ "css": "#pad-frame" }, inner]);
+    must(run(&mut live, json!({ "kind": "click", "selector": pad(json!({ "css": "#pad-btn" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": pad(json!({ "css": "#pout" })), "equals": "hit" })).await);
 }

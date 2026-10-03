@@ -8,7 +8,7 @@
 //! text with a locator on every line, rather than re-deriving any of it.
 
 use super::cdp::{CdpError, Driver};
-use super::locator::{resolve, Target, VISIBLE_JS};
+use super::locator::{resolve_explained, Target, FRAME_JS, VISIBLE_JS};
 use super::page;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -38,6 +38,25 @@ pub struct AxNode {
     pub children: Vec<String>,
     pub focusable: bool,
     pub disabled: bool,
+    /// The DOM node behind it (`backendDOMNodeId`), when Chrome gave one -
+    /// how an `Iframe` line finds the frame whose tree prints under it.
+    pub backend: Option<i64>,
+}
+
+/// One iframe's own accessibility tree, printed under the iframe's line.
+/// `iframe_id` is that `Iframe` node's id in the tree it sits in; `step` is
+/// the locator step that reaches the iframe, put in front of every locator
+/// printed inside it. Frames inside this frame are in `frames`, keyed by ids
+/// in THIS tree - each frame numbers its nodes on its own, so ids from
+/// different frames must never share one lookup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameTree {
+    pub iframe_id: String,
+    pub step: Value,
+    pub nodes: Vec<AxNode>,
+    /// Why the frame's tree could not be read; one line says so instead.
+    pub unreadable: Option<String>,
+    pub frames: Vec<FrameTree>,
 }
 
 /// Is a boolean AX property, by name, true on this raw node?
@@ -89,6 +108,7 @@ pub fn parse_nodes(v: &Value) -> Vec<AxNode> {
                 children,
                 focusable: property_bool(raw, "focusable"),
                 disabled: property_bool(raw, "disabled"),
+                backend: raw["backendDOMNodeId"].as_i64(),
             }
         })
         .collect()
@@ -121,12 +141,18 @@ fn truncate_name(name: &str) -> String {
 /// through `serde_json` rather than hand-formatted, so a name carrying a
 /// `"` or a `\` still comes out as valid JSON a `Target` can be read back
 /// from.
-fn locator_suffix(role: &str, name: &str) -> String {
+/// The line's own locator, behind the steps of any frames it sits in.
+fn locator_suffix(role: &str, name: &str, frames: &[Value]) -> String {
     let obj = if name.is_empty() { json!({ "role": role }) } else { json!({ "role": role, "name": name }) };
-    format!(" -> {obj}")
+    if frames.is_empty() {
+        return format!(" -> {obj}");
+    }
+    let mut chain = frames.to_vec();
+    chain.push(obj);
+    format!(" -> {}", Value::Array(chain))
 }
 
-fn format_line(node: &AxNode, depth: usize) -> String {
+fn format_line(node: &AxNode, depth: usize, frames: &[Value]) -> String {
     let indent = " ".repeat(depth.min(12));
     // The printed name is capped for readability, but the locator on the
     // end of the line has to reach the element by its REAL name - a
@@ -151,7 +177,7 @@ fn format_line(node: &AxNode, depth: usize) -> String {
     if node.disabled {
         line.push_str(" (disabled)");
     }
-    line.push_str(&locator_suffix(&node.role, &full_name));
+    line.push_str(&locator_suffix(&node.role, &full_name, frames));
     line
 }
 
@@ -161,22 +187,51 @@ fn format_line(node: &AxNode, depth: usize) -> String {
 /// reachable two ways): a node already visited anywhere in this walk is
 /// skipped rather than recursed into again, which would otherwise recurse
 /// forever on a malformed tree.
-fn walk(id: &str, depth: usize, by_id: &HashMap<&str, &AxNode>, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
+/// One tree being walked: its nodes by id, the frames inside it by their
+/// iframe's id, and the steps of the frames it itself sits in.
+struct Tree<'a> {
+    by_id: HashMap<&'a str, &'a AxNode>,
+    frames: HashMap<&'a str, &'a FrameTree>,
+    path: Vec<Value>,
+}
+
+fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
     if !seen.insert(id.to_string()) {
         return;
     }
-    let Some(node) = by_id.get(id) else { return };
+    let Some(node) = tree.by_id.get(id) else { return };
     let folded = node.ignored || FOLDED_ROLES.contains(&node.role.as_str());
     if folded {
         for child in &node.children {
-            walk(child, depth, by_id, out, seen);
+            walk(child, depth, tree, out, seen);
         }
         return;
     }
-    out.push(format_line(node, depth));
+    out.push(format_line(node, depth, &tree.path));
     for child in &node.children {
-        walk(child, depth + 1, by_id, out, seen);
+        walk(child, depth + 1, tree, out, seen);
     }
+    if let Some(frame) = tree.frames.get(id) {
+        walk_frame(frame, depth + 1, &tree.path, out);
+    }
+}
+
+/// A frame's own tree, under its iframe's line, every locator behind the
+/// frame's step.
+fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<String>) {
+    if let Some(why) = &frame.unreadable {
+        out.push(format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)));
+        return;
+    }
+    let Some(root) = frame.nodes.first() else { return };
+    let mut inner = path.to_vec();
+    inner.push(frame.step.clone());
+    let tree = Tree {
+        by_id: frame.nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
+        frames: frame.frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
+        path: inner,
+    };
+    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new());
 }
 
 /// Pure rendering: every rule (folding, password redaction, the locator
@@ -184,13 +239,23 @@ fn walk(id: &str, depth: usize, by_id: &HashMap<&str, &AxNode>, out: &mut Vec<St
 /// here so it can be tested against hand-built nodes with no browser at
 /// all. The root is `nodes[0]`, matching what `getFullAXTree` returns.
 pub fn render(nodes: &[AxNode], limit: usize) -> String {
+    render_frames(nodes, &[], limit)
+}
+
+/// `render`, with each frame's own tree printed under its iframe's line.
+/// The line limit counts every printed line, frames included.
+pub fn render_frames(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> String {
     let Some(root) = nodes.first() else {
         return "the page has nothing a locator could name".to_string();
     };
-    let by_id: HashMap<&str, &AxNode> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let tree = Tree {
+        by_id: nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
+        frames: frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
+        path: vec![],
+    };
     let mut lines = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    walk(&root.id, 0, &by_id, &mut lines, &mut seen);
+    walk(&root.id, 0, &tree, &mut lines, &mut seen);
     if lines.is_empty() {
         return "the page has nothing a locator could name".to_string();
     }
@@ -217,7 +282,94 @@ pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpE
         }
         Err(e) => return Err(e),
     };
-    Ok(render(&parse_nodes(&result), limit))
+    let nodes = parse_nodes(&result);
+    // Frames inside frames are followed three deep - written out rather
+    // than recursive, because a recursive async fn needs a boxed future,
+    // and the driver's futures do not promise to be `Send`.
+    let mut frames = frames_in(d, &nodes).await;
+    for frame in &mut frames {
+        frame.frames = frames_in(d, &frame.nodes).await;
+        for inner in &mut frame.frames {
+            inner.frames = frames_in(d, &inner.nodes).await;
+        }
+    }
+    Ok(render_frames(&nodes, &frames, limit))
+}
+
+/// The trees of the `Iframe` nodes in `nodes` (one level), each with the
+/// step that reaches its iframe. Never an error: a frame that cannot be
+/// read becomes one line saying why, so one bad frame cannot cost the
+/// whole snapshot.
+async fn frames_in<D: Driver>(d: &mut D, nodes: &[AxNode]) -> Vec<FrameTree> {
+    let mut out = vec![];
+    let iframes: Vec<&AxNode> = nodes.iter().filter(|n| n.role == "Iframe" && !n.ignored).collect();
+    for (k, node) in iframes.iter().enumerate() {
+        let Some(backend) = node.backend else { continue };
+        let (step, read) = frame_tree(d, node, k, backend).await;
+        let (nodes, unreadable) = match read {
+            Ok(inner) => (inner, None),
+            Err(why) => (vec![], Some(why)),
+        };
+        out.push(FrameTree { iframe_id: node.id.clone(), step, nodes, unreadable, frames: vec![] });
+    }
+    out
+}
+
+/// `this` is an iframe: its place among the visible iframes of its own
+/// document, which is what `{"css": "iframe", "nth": k}` counts.
+const IFRAME_INDEX_JS: &str = r#"function() {
+  const seen = (e) => { const r = e.getBoundingClientRect(); return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0; };
+  return Array.from(this.ownerDocument.querySelectorAll('iframe')).filter(seen).indexOf(this);
+}"#;
+
+/// The step that reaches this iframe (see `frame_step`), and its tree - or
+/// why it could not be read.
+async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64) -> (Value, Result<Vec<AxNode>, String>) {
+    let described = d.call("DOM.describeNode", json!({ "backendNodeId": backend })).await;
+    let attrs = described.as_ref().map(|v| v["node"]["attributes"].clone()).unwrap_or(Value::Null);
+    let handle = page::resolve_backend(d, backend).await.ok();
+    // The accessibility tree does not list iframes in page order, so the
+    // fallback `nth` is counted the way the CSS step will count it.
+    let mut index = k;
+    let mut reachable = None;
+    if let Some(h) = &handle {
+        if let Some(i) = page::call_value(d, h, IFRAME_INDEX_JS, &[]).await.ok().and_then(|v| v.as_u64()) {
+            index = i as usize;
+        }
+        reachable = page::call_value(d, h, FRAME_JS, &[]).await.ok().and_then(|v| v.as_str().map(str::to_string));
+    }
+    let step = frame_step(&node.name, &attrs, index);
+    if reachable.as_deref() != Some("frame") {
+        return (step, Err("the frame holds a page from another site (or has not loaded), which Auto Run cannot reach".to_string()));
+    }
+    let Some(frame_id) = described.ok().and_then(|v| v["node"]["frameId"].as_str().map(str::to_string)) else {
+        return (step, Err("Chrome gave no frame id for it".to_string()));
+    };
+    match d.call("Accessibility.getFullAXTree", json!({ "frameId": frame_id })).await {
+        Ok(v) => (step, Ok(parse_nodes(&v))),
+        Err(e) => (step, Err(e.to_string())),
+    }
+}
+
+/// The locator step for an iframe: by role and name when it has a name
+/// (Chrome's role `Iframe` matches visible iframes by their title - proven
+/// in `browser_live::frame_spike_role_lookup_through_a_frame_document`),
+/// else by its `id`, else by its `title`, else as the `k`th iframe.
+pub fn frame_step(name: &str, attrs: &Value, k: usize) -> Value {
+    if !name.trim().is_empty() {
+        return json!({ "role": "Iframe", "name": name, "exact": true });
+    }
+    let attr = |want: &str| -> Option<String> {
+        let list = attrs.as_array()?;
+        list.chunks(2).find(|p| p[0].as_str() == Some(want)).and_then(|p| p.get(1)?.as_str().map(str::to_string))
+    };
+    if let Some(id) = attr("id").filter(|s| !s.trim().is_empty()) {
+        return json!({ "css": format!("iframe#{id}") });
+    }
+    if let Some(title) = attr("title").filter(|s| !s.trim().is_empty()) {
+        return json!({ "css": format!("iframe[title='{}']", title.replace('\'', "\\'")) });
+    }
+    json!({ "css": "iframe", "nth": k })
 }
 
 /// `this` is the element. One call for everything `probe` prints besides
@@ -240,9 +392,13 @@ fn trim_chars(s: &str, n: usize) -> String {
 /// whether it is safe to use. Empty is reported, not treated as an error:
 /// a target that matches nothing is exactly what a caller needs to know.
 pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpError> {
-    let handles = resolve(d, target).await?;
+    let found = resolve_explained(d, target).await?;
+    let handles = found.handles;
     if handles.is_empty() {
-        return Ok(format!("matches: 0 - nothing on the page answers to {}", target.describe()));
+        return Ok(match found.unreachable_frame {
+            Some(why) => format!("matches: 0 - {why}"),
+            None => format!("matches: 0 - nothing on the page answers to {}", target.describe()),
+        });
     }
     let mut lines = vec![format!("matches: {}", handles.len())];
     for handle in handles.iter().take(10) {

@@ -8,7 +8,7 @@
 use super::cdp::{browser_silent, CdpError, Driver};
 use super::expect::{self, Check};
 use super::input::{self, Blocked};
-use super::locator::{resolve, Target};
+use super::locator::{resolve_explained, Target};
 use super::page;
 use super::timing::Timing;
 use serde_json::{json, Value};
@@ -571,8 +571,12 @@ async fn keep_waiting<D: Driver>(
     timing: &Timing,
     deadline: Instant,
 ) -> ActionOutcome {
-    let gave_up = || {
-        ActionOutcome::failed(format!("waited {timeout_ms}{NEVER_SAW}{}", target.describe()))
+    // A frame the chain could not enter is the reason it never appeared, and
+    // says so instead of "never saw".
+    let mut frame: Option<String> = None;
+    let gave_up = |frame: &Option<String>| match frame {
+        Some(why) => ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {why}", target.describe())),
+        None => ActionOutcome::failed(format!("waited {timeout_ms}{NEVER_SAW}{}", target.describe())),
     };
     // Whether any call has actually come back - a page that is merely slow
     // to show the element is not the same failure as a browser that has
@@ -580,11 +584,14 @@ async fn keep_waiting<D: Driver>(
     let mut looked = false;
     loop {
         page::release(d).await;
-        match resolve(d, target).await {
-            Ok(found) if !found.is_empty() => {
+        match resolve_explained(d, target).await {
+            Ok(found) if !found.handles.is_empty() => {
                 return ActionOutcome::passed(format!("found {}", target.describe()));
             }
-            Ok(_) => looked = true,
+            Ok(found) => {
+                looked = true;
+                frame = found.unreachable_frame;
+            }
             // The page refusing mid-navigation is the page answering, just
             // between two documents - it counts as a completed look.
             Err(e) if e.is_transient() => looked = true,
@@ -595,7 +602,7 @@ async fn keep_waiting<D: Driver>(
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
-            return if looked { gave_up() } else { harness_timeout(u64::from(timeout_ms), &target.describe()) };
+            return if looked { gave_up(&frame) } else { harness_timeout(u64::from(timeout_ms), &target.describe()) };
         }
         tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
     }
@@ -850,16 +857,16 @@ async fn keep_finding<D: Driver>(
     let mut last = input::STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        match resolve(d, target).await {
-            Ok(found) if found.len() == 1 || (!found.is_empty() && target.is_legacy()) => {
-                return Ok(found.into_iter().next().expect("checked non-empty"));
+        match resolve_explained(d, target).await {
+            Ok(r) if r.handles.len() == 1 || (!r.handles.is_empty() && target.is_legacy()) => {
+                return Ok(r.handles.into_iter().next().expect("checked non-empty"));
             }
-            Ok(found) => {
+            Ok(r) => {
                 looked = true;
-                last = if found.is_empty() {
-                    input::NOT_FOUND.to_string()
+                last = if !r.handles.is_empty() {
+                    input::matched_many(r.handles.len())
                 } else {
-                    input::matched_many(found.len())
+                    r.unreachable_frame.unwrap_or_else(|| input::NOT_FOUND.to_string())
                 };
             }
             Err(e) if e.is_transient() => {

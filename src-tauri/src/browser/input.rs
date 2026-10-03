@@ -13,7 +13,7 @@
 //! autocompletes) will not see keys.
 
 use super::cdp::{browser_silent, CdpError, Driver};
-use super::locator::{resolve, Target};
+use super::locator::{resolve_explained, Target};
 use super::page::{self, Handle};
 use super::timing::Timing;
 use serde_json::{json, Value};
@@ -84,12 +84,37 @@ pub const PROBE_JS: &str = r#"function() {
       !/^(checkbox|radio|file|button|submit|reset|image|hidden)$/.test(this.type)) ||
     (this instanceof HTMLTextAreaElement && !this.readOnly) ||
     this instanceof HTMLSelectElement || this.isContentEditable;
+  // Inside a same-origin frame everything above is measured in the frame.
+  // Walk out to the top window: shift the point and rect by each frame's
+  // place on its page (plus its border and padding), clip to each frame's visible box,
+  // and require each enclosing page to have that frame on top at the point
+  // - an overlay on the page over the frame covers the element too.
+  let w = window, ox = 0, oy = 0, outer = null;
+  let cl = l, cr = r, ct = t, cb = bt;
+  while (w.frameElement) {
+    const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
+    // The frame's viewport starts inside its border AND its padding.
+    const cs = pw.getComputedStyle(fe);
+    const dx = fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0);
+    const dy = fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
+    ox += dx; oy += dy;
+    cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
+    ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
+    if (outer === null) {
+      const there = pw.document.elementFromPoint(x + ox, y + oy);
+      if (!there || (there !== fe && !fe.contains(there))) outer = there || false;
+    }
+    w = pw;
+  }
+  const allOnscreen = onscreen && cr > cl && cb > ct;
+  const allHit = hit && allOnscreen && outer === null;
   return {
     visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
     enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
     editable: !!editable,
-    onscreen, hit, x, y, rect: [b.left, b.top, b.width, b.height],
-    covered_by: (onscreen && !hit) ? say(top) : '',
+    onscreen: allOnscreen, hit: allHit, x: x + ox, y: y + oy,
+    rect: [b.left + ox, b.top + oy, b.width, b.height],
+    covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
   };
 }"#;
 
@@ -235,9 +260,11 @@ async fn look<D: Driver>(
     need_editable: bool,
     prev_rect: Option<[f64; 4]>,
 ) -> Result<Look, CdpError> {
-    let handles = resolve(d, target).await?;
+    let found = resolve_explained(d, target).await?;
+    let handles = found.handles;
     if handles.is_empty() {
-        return Ok(Look::NotYet { why: NOT_FOUND.to_string(), rect: None });
+        let why = found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string());
+        return Ok(Look::NotYet { why, rect: None });
     }
     if handles.len() > 1 && !target.is_legacy() {
         return Ok(Look::NotYet {
