@@ -404,7 +404,19 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
             let mut entered = Vec::with_capacity(next.len());
             for handle in next {
                 match page::call_value(d, &handle, FRAME_JS, &[]).await?.as_str() {
-                    Some("frame") => entered.extend(page::call_elements(d, &handle, FRAME_DOC_JS, &[]).await?),
+                    Some("frame") => {
+                        // Chrome runs a function in the context its handle
+                        // came from. Read through the parent, the frame's
+                        // document would make every later search and probe
+                        // use the PARENT's globals (`document`, `instanceof
+                        // HTMLElement`, `innerWidth`). Resolving the node
+                        // again by its backend id hands back a handle that
+                        // lives in the frame's own context.
+                        for doc in page::call_elements(d, &handle, FRAME_DOC_JS, &[]).await? {
+                            let backend = page::backend_id(d, &doc).await?;
+                            entered.push(page::resolve_backend(d, backend).await?);
+                        }
+                    }
                     Some("unreachable") => {
                         unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
                     }

@@ -1743,3 +1743,47 @@ async fn frame_an_unreachable_frame_is_named_not_reported_missing() {
     refused(run(&mut live, json!({ "kind": "expect_count", "selector": locked, "equals": 0 })).await, why);
     refused(run(&mut live, json!({ "kind": "click", "selector": locked })).await, why);
 }
+
+/// The frame sits below a tall spacer, 180px in, inside a 7px border: the
+/// click point has to add all of that or it lands beside the button.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_click_lands_on_the_element_inside_a_scrolled_bordered_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": es(json!({ "css": "#pick" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "picked" })).await);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_typing_reaches_an_input_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "fill",
+        "selector": es(json!({ "role": "textbox", "name": "Search employees" })), "value": "Ethan" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "typed:Ethan" })).await);
+}
+
+/// An overlay on the PAGE over the frame is in the way of a person's click
+/// as much as one inside the frame: wait, then say what covers it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_parent_overlay_over_the_frame_is_reported_as_covering() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#show-cover" } })).await);
+    let out = run(&mut live, json!({ "kind": "click", "selector": es(json!({ "css": "#pick" })) })).await;
+    refused(out.clone(), "covered by");
+    refused(out, "div#cover");
+    // Empty, so it has no height: only a hidden-inclusive look can read it.
+    must(run(&mut live, json!({ "kind": "expect_text",
+        "selector": es(json!({ "css": "#out", "visible": false })), "equals": "" })).await);
+}
+
+/// A text step inside a frame: its in-page filter checks `instanceof
+/// HTMLElement`, which only holds when the search runs in the FRAME's own
+/// context - so this fails if the resolver hands on a parent-side handle.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_text_step_finds_words_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": es(json!({ "text": "Select", "exact": true })), "equals": 1 })).await);
+}

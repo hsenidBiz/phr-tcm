@@ -84,12 +84,34 @@ pub const PROBE_JS: &str = r#"function() {
       !/^(checkbox|radio|file|button|submit|reset|image|hidden)$/.test(this.type)) ||
     (this instanceof HTMLTextAreaElement && !this.readOnly) ||
     this instanceof HTMLSelectElement || this.isContentEditable;
+  // Inside a same-origin frame everything above is measured in the frame.
+  // Walk out to the top window: shift the point and rect by each frame's
+  // place on its page (plus its border), clip to each frame's visible box,
+  // and require each enclosing page to have that frame on top at the point
+  // - an overlay on the page over the frame covers the element too.
+  let w = window, ox = 0, oy = 0, outer = null;
+  let cl = l, cr = r, ct = t, cb = bt;
+  while (w.frameElement) {
+    const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
+    const dx = fr.left + fe.clientLeft, dy = fr.top + fe.clientTop;
+    ox += dx; oy += dy;
+    cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
+    ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
+    if (outer === null) {
+      const there = pw.document.elementFromPoint(x + ox, y + oy);
+      if (!there || (there !== fe && !fe.contains(there))) outer = there || false;
+    }
+    w = pw;
+  }
+  const allOnscreen = onscreen && cr > cl && cb > ct;
+  const allHit = hit && allOnscreen && outer === null;
   return {
     visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
     enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
     editable: !!editable,
-    onscreen, hit, x, y, rect: [b.left, b.top, b.width, b.height],
-    covered_by: (onscreen && !hit) ? say(top) : '',
+    onscreen: allOnscreen, hit: allHit, x: x + ox, y: y + oy,
+    rect: [b.left + ox, b.top + oy, b.width, b.height],
+    covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
   };
 }"#;
 
