@@ -353,7 +353,7 @@ li:focus-within > .nav-sub { transition-delay: 0s; }
 }
 .hero-visual:hover .window { transform: rotateX(0deg) scale(1); }
 
-/* The row of flasks along the foot of the banner. Decoration only: flasks.ts
+/* The row of flasks at the very bottom of the page. Decoration only: flasks.ts
    moves them with transforms, and when motion is off they rest on the line. */
 .flask-strip {
   position: relative; height: 96px; margin-top: 28px; overflow: hidden;

@@ -577,9 +577,9 @@ describe("reduced motion", () => {
   });
 });
 
-describe("the hero's bouncing flasks", () => {
+describe("the bouncing flasks at the foot of the page", () => {
   const REDUCE = "(prefers-reduced-motion: reduce)";
-  const strip = () => document.querySelector<HTMLElement>("header.hero .flask-strip")!;
+  const strip = () => document.querySelector<HTMLElement>("main > .flask-strip")!;
   const flasks = () => [...strip().querySelectorAll<HTMLElement>(".flask")];
 
   // Frames are requested but never run on their own: a test runs them by hand.
@@ -665,10 +665,12 @@ describe("the hero's bouncing flasks", () => {
     expect(el.textContent).toBe("");
   });
 
-  test("it sits inside the hero, after the window", () => {
+  test("it closes the page: the last thing in the content, after the footer, and not in the hero", () => {
     mount();
-    const hero = document.querySelector("header.hero")!;
-    expect(hero.lastElementChild).toBe(strip());
+    const main = document.querySelector("main")!;
+    expect(main.lastElementChild).toBe(strip());
+    expect(strip().previousElementSibling?.tagName).toBe("FOOTER");
+    expect(document.querySelector("header.hero .flask-strip")).toBeNull();
   });
 
   test("with full motion a frame is requested", () => {

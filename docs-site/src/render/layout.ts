@@ -5,7 +5,7 @@
 import type { SiteContent } from "../types";
 import { h, reducedMotion, rich } from "./dom";
 import { icon } from "./icons";
-import { startFlasks } from "./flasks";
+import { renderFlaskStrip, startFlasks } from "./flasks";
 import { PRODUCT, renderHero } from "./hero";
 import { createPalette, searchButton } from "./search";
 import { releaseStages, renderSection, type ControlRef } from "./section";
@@ -98,6 +98,9 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
       h("p", { class: "footer-hint" }, rich("Press [[Ctrl+K]] anywhere to search.")),
     ),
   );
+  // The flasks close the page, after everything else (decoration; owner,
+  // 2026-10-03: at the very bottom instead of above Quick start).
+  main.appendChild(renderFlaskStrip());
 
   const scrim = h("div", { class: "nav-scrim", "aria-hidden": "true" });
   const site = h(
@@ -280,8 +283,9 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
     for (const r of refs.values()) r.row.removeAttribute("data-pinned");
   });
 
-  // ---- the hero's flasks (decoration; they follow the motion setting) ---
-  const flaskStrip = heroParts[0].querySelector<HTMLElement>(".flask-strip");
+  // ---- the flasks at the foot of the page (decoration; they follow the
+  // motion setting, and only move while the strip is on screen) ----------
+  const flaskStrip = main.querySelector<HTMLElement>(":scope > .flask-strip");
   if (flaskStrip) cleanups.push(startFlasks(flaskStrip));
 
   // ---- scroll-spy and reveals ----------------------------------------
