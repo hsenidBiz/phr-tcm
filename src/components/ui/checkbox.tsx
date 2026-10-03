@@ -30,6 +30,7 @@ export function Checkbox({
   onCheckedChange,
   ariaLabel,
   className,
+  disabled,
 }: {
   checked: boolean;
   /** "Some but not all" - a dash and aria-checked="mixed". Only
@@ -39,6 +40,8 @@ export function Checkbox({
   onCheckedChange: (checked: boolean) => void;
   ariaLabel?: string;
   className?: string;
+  /** Greyed out and inert - for a box with nothing it could act on. */
+  disabled?: boolean;
 }) {
   const nameId = useId();
   return (
@@ -49,6 +52,7 @@ export function Checkbox({
         indeterminate={!checked && indeterminate}
         onCheckedChange={(next) => onCheckedChange(next)}
         aria-labelledby={ariaLabel ? nameId : undefined}
+        disabled={disabled}
         // The empty box keeps the stronger border it always had: at 16px the
         // field border XiodUI uses (`border-input`) is too faint to find.
         className={cn("border-border-strong", className)}

@@ -394,6 +394,240 @@ test("the Setup card's Areas button opens its dialog", async () => {
   expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
 
+// ---- Last result filter ----
+
+const rec = (case_id: number, verdict: string, proposed = "") => ({
+  case_id,
+  title: `case ${case_id}`,
+  verdict,
+  proposed,
+  note: "",
+  steps: [],
+});
+const savedRun = (id: string, started_at: string, cases: ReturnType<typeof rec>[]) => ({
+  id,
+  pbi_id: 42,
+  started_at,
+  cases,
+  mode: "unattended",
+  published: null,
+});
+
+/** Six cases over two title groups. Their last results: #1 Failed (a newer
+ * run overrides its older Passed), #2 Blocked, #3 Failed, #4 Passed, #5 never
+ * run, #6 Passed. #3 has no script. */
+function mockFilterList() {
+  mockList(
+    [
+      caseRow(1, "Login - alpha"),
+      caseRow(2, "Login - bravo"),
+      caseRow(3, "Login - charlie"),
+      caseRow(4, "Reports - delta"),
+      caseRow(5, "Reports - echo"),
+      caseRow(6, "Login - foxtrot"),
+    ],
+    [1, 2, 4, 5, 6],
+    [
+      savedRun("a", "1000", [
+        rec(1, "Passed"),
+        rec(2, "", "Blocked"),
+        rec(3, "Failed"),
+        rec(4, "Passed"),
+        rec(6, "Passed"),
+      ]),
+      savedRun("b", "2000", [rec(1, "", "Failed")]),
+    ],
+  );
+}
+
+const lastResultGroup = () => screen.findByRole("group", { name: "Filter by last result" });
+const rowOf = (title: string) => screen.getByText(title).closest("li") as HTMLElement;
+const visibleTitles = () => screen.queryAllByText(/^(Login|Reports) - /).map((e) => e.textContent);
+const press = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+
+test("the Last result row counts every case, and pressing buckets shows only them", async () => {
+  mockFilterList();
+  renderScreen();
+  const group = await lastResultGroup();
+  await waitFor(() =>
+    expect(within(group).getByRole("button", { name: "Failed (2)" })).toBeInTheDocument(),
+  );
+  expect(within(group).getByRole("button", { name: "Passed (2)" })).toBeInTheDocument();
+  expect(within(group).getByRole("button", { name: "Blocked (1)" })).toBeInTheDocument();
+  expect(within(group).getByRole("button", { name: "Not run (1)" })).toBeInTheDocument();
+  // Nothing pressed: every case shows, as it always did.
+  expect(visibleTitles()).toHaveLength(6);
+  expect(within(group).getByRole("button", { name: "Failed (2)" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+
+  press("Failed (2)");
+  expect(within(group).getByRole("button", { name: "Failed (2)" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - charlie"]);
+
+  // Multi-select: Blocked adds to Failed rather than replacing it.
+  press("Blocked (1)");
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - bravo", "Login - charlie"]);
+
+  press("Failed (2)");
+  press("Blocked (1)");
+  expect(visibleTitles()).toHaveLength(6);
+});
+
+test("the filter applies when grouped, and a group with nothing to show is hidden", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+  expect(await screen.findByText("Login (4)")).toBeInTheDocument();
+  expect(screen.getByText("Reports (2)")).toBeInTheDocument();
+
+  press("Failed (2)");
+  expect(screen.getByText("Login (2)")).toBeInTheDocument();
+  expect(screen.queryByText(/^Reports/)).not.toBeInTheDocument();
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - charlie"]);
+});
+
+test("Select all shown ticks only the visible cases that have a script", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  const all = screen.getByRole("checkbox", { name: "Select all shown" });
+
+  press("Failed (2)");
+  // Visible: #1 (scripted) and #3 (not).
+  fireEvent.click(all);
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Select #1" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  expect(all).toHaveAttribute("aria-checked", "true");
+
+  // Widen the filter: the ticked case stays, and now only some are ticked.
+  press("Passed (2)");
+  expect(all).toHaveAttribute("aria-checked", "mixed");
+  fireEvent.click(all);
+  expect(await screen.findByRole("button", { name: "Run 3 selected" })).toBeInTheDocument();
+
+  // Ticked all the way, a click clears just what is shown.
+  fireEvent.click(all);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /selected$/ })).not.toBeInTheDocument(),
+  );
+});
+
+test("Select all shown is off while no visible case has a script", async () => {
+  mockList(
+    [caseRow(1, "Login - alpha"), caseRow(3, "Login - charlie")],
+    [1],
+    [savedRun("a", "1000", [rec(1, "Passed"), rec(3, "Failed")])],
+  );
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  const all = screen.getByRole("checkbox", { name: "Select all shown" });
+  await waitFor(() => expect(all).not.toHaveAttribute("aria-disabled", "true"));
+  press("Failed (1)");
+  expect(all).toHaveAttribute("aria-disabled", "true");
+});
+
+test("pressing a filter that hides a ticked case unticks it", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #4" }));
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
+
+  press("Failed (2)"); // #4 (Passed) is hidden now
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
+
+  // And it stays off when the filter is lifted: it was dropped, not parked.
+  press("Failed (2)");
+  expect(screen.getByRole("checkbox", { name: "Select #4" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
+});
+
+test("a group's Select all covers only the rows of it that are shown", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+  await screen.findByText("Login (4)");
+
+  press("Failed (2)"); // Login shows #1 and #3; #2 and #6 are hidden
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
+
+  press("Failed (2)");
+  expect(screen.getByRole("checkbox", { name: "Select #2" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  expect(screen.getByRole("checkbox", { name: "Select #6" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  expect(screen.getByRole("checkbox", { name: "Select all in Login" })).toHaveAttribute(
+    "aria-checked",
+    "mixed",
+  );
+});
+
+test("a filter that shows nothing says so", async () => {
+  mockList([caseRow(1, "Login - alpha")], [1]);
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  press("Passed (0)");
+  expect(screen.getByText("No cases match this filter.")).toBeInTheDocument();
+  expect(screen.queryByText("Login - alpha")).not.toBeInTheDocument();
+  press("Passed (0)");
+  expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
+});
+
+test("each row names its last result; a case never run carries no mark", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  await waitFor(() =>
+    expect(
+      within(rowOf("Login - alpha")).getByRole("img", { name: "Last result: Failed" }),
+    ).toBeInTheDocument(),
+  );
+  expect(
+    within(rowOf("Login - bravo")).getByRole("img", { name: "Last result: Blocked" }),
+  ).toBeInTheDocument();
+  expect(
+    within(rowOf("Reports - delta")).getByRole("img", { name: "Last result: Passed" }),
+  ).toBeInTheDocument();
+  expect(
+    within(rowOf("Reports - echo")).queryByRole("img", { name: /Last result/ }),
+  ).not.toBeInTheDocument();
+  // The mark sits beside the row's own controls, it does not replace them.
+  expect(within(rowOf("Login - alpha")).getByRole("button", { name: "Run #1" })).toBeInTheDocument();
+});
+
+test("the Last result choice survives a tab switch", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  press("Failed (2)");
+  openTab("Past runs");
+  openTab("Test cases");
+  expect(await screen.findByRole("button", { name: "Failed (2)" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - charlie"]);
+});
+
 // ---- Setup card, header line, site address ----
 
 const RECIPE = {
