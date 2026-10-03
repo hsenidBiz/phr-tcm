@@ -1787,3 +1787,26 @@ async fn frame_a_text_step_finds_words_inside_the_frame() {
     let mut live = open_iframes().await;
     must(run(&mut live, json!({ "kind": "expect_count", "selector": es(json!({ "text": "Select", "exact": true })), "equals": 1 })).await);
 }
+
+/// The chain the snapshot prints for an element inside a frame is the one a
+/// script pastes: it must reach that element and nothing else.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_the_snapshot_prints_paste_ready_chains() {
+    let mut live = open_iframes().await;
+    let text = snapshot(&mut live.cdp, DEFAULT_LIMIT).await.expect("no snapshot");
+    let chain_of = |needle: &str| -> serde_json::Value {
+        let line = text.lines().find(|l| l.contains(needle)).unwrap_or_else(|| panic!("no line with {needle} in:\n{text}"));
+        serde_json::from_str(line.rsplit(" -> ").next().unwrap()).unwrap()
+    };
+    let select = chain_of("button \"Select\"");
+    assert!(select.is_array(), "not a chain: {select}");
+    must(run(&mut live, json!({ "kind": "click", "selector": select })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#out" })), "equals": "picked" })).await);
+    // A frame with neither id nor title still gets a chain that resolves.
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": chain_of("button \"Bare inner\""), "equals": 1 })).await);
+    // The sandboxed frame says it cannot be read rather than offering a
+    // chain that would fail.
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert!(!text.contains("button \"Locked\""), "{text}");
+}

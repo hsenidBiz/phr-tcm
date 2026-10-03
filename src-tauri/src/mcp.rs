@@ -350,7 +350,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "probe_autorun_locator",
-            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. Needs a supervised browser to be open.",
+            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
                     "type": ["object", "string"],
