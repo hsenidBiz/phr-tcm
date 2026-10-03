@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   GRAVITY,
   MAX_DT,
+  PEAK_SHARE,
   RESTITUTION,
   createState,
   restState,
@@ -43,8 +44,9 @@ describe("step", () => {
     const next = step(falling({ y: 0.1, vy: -hit }), 0.016, () => 0);
     expect(next.flasks[0].vy).toBeLessThan(hit);
     expect(next.flasks[0].vy).toBeGreaterThan(0);
-    expect(RESTITUTION).toBeGreaterThanOrEqual(0.55);
-    expect(RESTITUTION).toBeLessThanOrEqual(0.7);
+    // Gentle: a soft landing keeps well under half its speed.
+    expect(RESTITUTION).toBeGreaterThanOrEqual(0.35);
+    expect(RESTITUTION).toBeLessThanOrEqual(0.55);
   });
 
   test("a landing with a different random draw bounces to a different height", () => {
@@ -135,6 +137,23 @@ describe("step", () => {
     const copy = structuredClone(state);
     step(state, 0.016, () => 0.5);
     expect(state).toEqual(copy);
+  });
+
+  test("a bounce is gentle: after a landing it never rises past PEAK_SHARE of the room", () => {
+    // However hard it hit and whatever the kick, the next arc tops out low.
+    let state = falling({ y: 0.1, vy: -5000 }, 600, 96);
+    const room = 96 - state.flasks[0].h;
+    expect(PEAK_SHARE).toBeLessThanOrEqual(0.5);
+    for (let i = 0; i < 600; i++) {
+      state = step(state, 0.016, () => 1);
+      expect(state.flasks[0].y).toBeLessThanOrEqual(room * PEAK_SHARE + 1e-6);
+    }
+  });
+
+  test("a bounce is slow: a full-height arc takes over half a second", () => {
+    // Up to the peak and back down at this gravity: 2 * sqrt(2 * peak / g).
+    const peak = (96 - 28) * PEAK_SHARE;
+    expect(2 * Math.sqrt((2 * peak) / GRAVITY)).toBeGreaterThan(0.5);
   });
 
   test("a bounce never reaches the top of the strip", () => {

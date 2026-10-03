@@ -1,4 +1,4 @@
-// A row of flasks bouncing along the bottom of the opening banner. Purely
+// A row of flasks bouncing gently along the very bottom of the page. Purely
 // decoration: the strip is aria-hidden and takes no pointer or focus.
 //
 // Two halves. `step` is the physics, a pure function of the state, the time
@@ -21,13 +21,16 @@ export const STRIP_HEIGHT = 96;
 /** The drawing's shape: its viewBox is 16 wide by 21 tall. */
 const ASPECT = 16 / 21;
 
-/** Downward acceleration, px/s^2. */
-export const GRAVITY = 1800;
-/** The share of its speed a flask keeps off the ground. */
-export const RESTITUTION = 0.62;
+/** Downward acceleration, px/s^2. Low, so a bounce is slow and gentle
+ * (the owner, 2026-10-03: "it needs to be a gentle bounce"). */
+export const GRAVITY = 450;
+/** The share of its speed a flask keeps off the ground: a soft landing. */
+export const RESTITUTION = 0.45;
 /** A random extra upward speed on every landing, 0 to this, px/s. It is what
  * stops the bounces settling into one rhythm. */
-export const KICK_MAX = 300;
+export const KICK_MAX = 120;
+/** The highest a bounce ever goes, as a share of the room above the flask. */
+export const PEAK_SHARE = 0.45;
 /** A landing changes the sideways speed by up to this either way, px/s. */
 export const DRIFT_KICK = 60;
 /** The sideways speed never exceeds this, px/s. */
@@ -61,8 +64,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 /** The highest a flask's bottom may go: its top stays inside the strip. */
 const ceiling = (height: number, h: number) => Math.max(0, height - h);
 
-/** Fast enough to reach, at most, just under the top of the strip. */
-const maxLaunch = (height: number, h: number) => Math.sqrt(2 * GRAVITY * ceiling(height, h)) * 0.92;
+/** Fast enough to reach, at most, PEAK_SHARE of the room above the flask. */
+const maxLaunch = (height: number, h: number) => Math.sqrt(2 * GRAVITY * ceiling(height, h) * PEAK_SHARE);
 
 function stepFlask(f: Flask, dt: number, width: number, height: number, rand: () => number): Flask {
   let { vx, vy, vr } = f;
