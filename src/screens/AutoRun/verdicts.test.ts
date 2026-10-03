@@ -76,7 +76,25 @@ test("a confirmed verdict beats the proposal, and no word at all is Not run", ()
   ]);
   expect(last.get(1)).toBe("Passed");
   expect(last.get(2)).toBe("Blocked");
-  expect(last.get(3)).toBe("Not run");
+  // Neither a verdict nor a proposal: nothing was said about it.
+  expect(lastResultFor(last, 3)).toBe("Not run");
+});
+
+test("a run stopped before a case does not override an older real result", () => {
+  const older = run("1000", { case_id: 1, verdict: "Passed" }, { case_id: 2, verdict: "Failed" });
+  // The newer run holds both cases but only ever reached case 2.
+  const stopped = run(
+    "2000",
+    { case_id: 1, verdict: "", proposed: "" },
+    { case_id: 2, verdict: "", proposed: "Passed" },
+  );
+  const last = lastResults([older, stopped]);
+  expect(last.get(1)).toBe("Passed");
+  expect(last.get(2)).toBe("Passed");
+  // No run reached it at all.
+  expect(lastResultFor(lastResults([stopped, run("3000", { case_id: 9, verdict: "" })]), 9)).toBe(
+    "Not run",
+  );
 });
 
 test("a case in no run is Not run, and started_at is compared as a number", () => {

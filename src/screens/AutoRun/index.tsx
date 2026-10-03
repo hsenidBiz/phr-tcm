@@ -82,6 +82,9 @@ const TABS: { id: AutoRunTab; label: string }[] = [
 // summary. A 60-case import naming every one of them is unreadable.
 const MAX_IDS_IN_TOAST = 10;
 
+/** The filter that lets every case through. */
+const NO_FILTER: ReadonlySet<ResultBucket> = new Set();
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** One line of the Setup card: what it is, where it stands, one button.
@@ -402,6 +405,11 @@ export default function AutoRun({
   /** Each case's result in the newest run that holds it - the runs Past
    * runs lists, so the two tabs never disagree. */
   const last = useMemo(() => lastResults(runs.data ?? []), [runs.data]);
+  /** Until the runs are read there is nothing to filter by, and if they
+   * cannot be read there never will be: either way every case shows. */
+  const runsReady = runs.data !== undefined;
+  const runsFailed = runs.isError && !runsReady;
+  const activeFilter: ReadonlySet<ResultBucket> = runsReady ? lastFilter : NO_FILTER;
   const lastOf = (i: number) => lastResultFor(last, rows[i].id);
   /** How many of ALL the rows each result holds, whatever is pressed. */
   const lastCounts = RESULT_BUCKETS.reduce(
@@ -409,7 +417,7 @@ export default function AutoRun({
     {} as Record<ResultBucket, number>,
   );
   /** The rows the filter lets through, by index in `rows`. */
-  const shownIdx = rows.flatMap((_, i) => (lastFilter.size === 0 || lastFilter.has(lastOf(i)) ? [i] : []));
+  const shownIdx = rows.flatMap((_, i) => (activeFilter.size === 0 || activeFilter.has(lastOf(i)) ? [i] : []));
   const shownIds = new Set(shownIdx.map((i) => rows[i].id));
   /** Same title-prefix grouping View Test Cases uses, so a person reading
    * both screens is reading one idea. */
@@ -473,31 +481,34 @@ export default function AutoRun({
     });
   };
 
-  /** Presses or lifts one last-result bucket. A case the new filter hides
-   * leaves the selection with it, so a run only ever holds what the person
-   * can see. */
-  const toggleLast = (b: ResultBucket) => {
-    const next = new Set(lastFilter);
-    if (next.has(b)) next.delete(b);
-    else next.add(b);
-    setLastFilter(next);
-    const stays = new Set(
-      rows.flatMap((c, i) => (next.size === 0 || next.has(lastOf(i)) ? [c.id] : [])),
-    );
-    setSelected((prev) => new Set([...prev].filter((id) => stays.has(id))));
-  };
+  const toggleLast = (b: ResultBucket) =>
+    setLastFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(b)) next.delete(b);
+      else next.add(b);
+      return next;
+    });
+
+  /** A case the filter hides leaves the selection, so a run only ever holds
+   * what the person can see. Checked after every render rather than in the
+   * filter's click, because the runs refreshing (one just finished) can hide
+   * a ticked case without anyone pressing anything. Not while the case list
+   * itself is empty (loading): that is not the person's filter hiding them. */
+  useEffect(() => {
+    if (rows.length === 0) return;
+    setSelected((prev) => {
+      const kept = [...prev].filter((id) => shownIds.has(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+  });
 
   /** The scripted cases the filter shows - what Select all shown covers. */
   const shownRunnable = runnableIn(shownIdx);
   const shownTicked = shownRunnable.filter((id) => selected.has(id)).length;
 
   /** List order, not click order - the run reads top to bottom the way
-   * the screen does. Only shown rows: a result that changes under a ticked
-   * case (a run just finished) can hide it without the person pressing
-   * anything, and the run still must not hold what they cannot see. */
-  const selectedInOrder = rows
-    .filter((c) => selected.has(c.id) && shownIds.has(c.id))
-    .map((c) => c.id);
+   * the screen does. */
+  const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
 
   /** One case row, by its index in `rows` - grouped and flat both render
    * the same thing, and `scripts[i]` is indexed the same way. */
@@ -529,11 +540,8 @@ export default function AutoRun({
             A case never run carries nothing: a mark that says "none" on
             every fresh row is noise. */}
         {result !== "Not run" && (
-          <span
-            role="img"
-            aria-label={`Last result: ${result}`}
-            className={cn("shrink-0 text-xs font-medium", bucketTone[result])}
-          >
+          <span className={cn("shrink-0 text-xs font-medium", bucketTone[result])}>
+            <span className="sr-only">Last result: </span>
             {result}
           </span>
         )}
@@ -890,7 +898,12 @@ export default function AutoRun({
                   {/* Ticks what the filter below shows (scripted cases only), so
                       "run everything that failed" is two clicks. Off while
                       nothing shown could be run. */}
-                  <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                  <label
+                    className={cn(
+                      "flex items-center gap-2 text-xs",
+                      shownRunnable.length === 0 ? "text-faint" : "cursor-pointer text-muted",
+                    )}
+                  >
                     <Checkbox
                       checked={shownRunnable.length > 0 && shownTicked === shownRunnable.length}
                       indeterminate={shownTicked > 0 && shownTicked < shownRunnable.length}
@@ -900,17 +913,22 @@ export default function AutoRun({
                     />
                     Select all shown
                   </label>
-                  {rows.length > 0 && (
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted">Last result</span>
-                      <ResultToggleRow
-                        label="Filter by last result"
-                        pressed={lastFilter}
-                        onToggle={toggleLast}
-                        counts={lastCounts}
-                      />
-                    </span>
-                  )}
+                  {rows.length > 0 &&
+                    (runsFailed ? (
+                      <span className="text-xs text-muted">Past results could not be read</span>
+                    ) : (
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted">Last result</span>
+                        {/* Without numbers, and out of reach, until the runs are read. */}
+                        <ResultToggleRow
+                          label="Filter by last result"
+                          pressed={activeFilter}
+                          onToggle={toggleLast}
+                          counts={runsReady ? lastCounts : undefined}
+                          disabled={!runsReady}
+                        />
+                      </span>
+                    ))}
                   {/* The rare actions. Clear scripts is housekeeping shown wherever
                       Auto Run is (dev, or unlocked) - the whole tab is gated in one
                       place (`autoRunVisible` in lib/extras.ts), so no further gating

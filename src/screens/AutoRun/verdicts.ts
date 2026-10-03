@@ -57,11 +57,13 @@ export function matchesFilter(c: { verdict: string; proposed?: string | null }, 
 
 /**
  * Each case's last result: the bucket of its record in the NEWEST run that
- * holds it. A run that never reached a case says nothing about it, so a case
- * missing from the newest run keeps the result of the newest one that has it.
- * `started_at` is epoch milliseconds as text, so it is compared as a number;
+ * reached it. A record with a verdict or a proposal is a case the run
+ * reached; one with neither (a run stopped before it) says nothing, and
+ * neither does a run that does not hold the case at all, so the case keeps
+ * the result of the newest run that did reach it. `started_at` is epoch milliseconds as text, so it is compared as a number;
  * of two runs that started in the same millisecond, the later in the list
- * wins. A case in no run is not in the map - read it with `lastResultFor`.
+ * wins. A case no run ever reached is not in the map - read it with
+ * `lastResultFor`.
  */
 export function lastResults(
   runs: readonly {
@@ -75,6 +77,7 @@ export function lastResults(
     const started = Number(run.started_at);
     const when = Number.isFinite(started) ? started : 0;
     for (const c of run.cases) {
+      if (c.verdict === "" && (c.proposed ?? "") === "") continue;
       const seen = at.get(c.case_id);
       if (seen !== undefined && seen > when) continue;
       at.set(c.case_id, when);

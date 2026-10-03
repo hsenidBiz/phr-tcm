@@ -57,12 +57,16 @@ export function ResultToggleRow({
   pressed,
   onToggle,
   counts,
+  disabled = false,
 }: {
   /** The group's accessible name. */
   label: string;
   pressed: ReadonlySet<ResultBucket>;
   onToggle: (b: ResultBucket) => void;
-  counts: Record<ResultBucket, number>;
+  /** Left out while the numbers are not known yet: the buttons name just
+   * the bucket. */
+  counts?: Record<ResultBucket, number>;
+  disabled?: boolean;
 }) {
   return (
     <div role="group" aria-label={label} className="flex flex-wrap gap-1">
@@ -71,10 +75,11 @@ export function ResultToggleRow({
           key={b}
           type="button"
           aria-pressed={pressed.has(b)}
-          className={pill(pressed.has(b))}
+          disabled={disabled}
+          className={cn(pill(pressed.has(b)), disabled && "pointer-events-none opacity-50")}
           onClick={() => onToggle(b)}
         >
-          {b} ({counts[b]})
+          {counts ? `${b} (${counts[b]})` : b}
         </button>
       ))}
     </div>
