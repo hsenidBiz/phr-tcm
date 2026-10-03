@@ -420,6 +420,12 @@ pub fn safe_shot_name(name: &str) -> bool {
     ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
 }
 
+/// Whether a screenshot of that name is in the shots folder. Only a name
+/// `safe_shot_name` accepts is looked up at all.
+pub fn shot_exists(root: &Path, name: &str) -> bool {
+    safe_shot_name(name) && shots_dir(root).join(name).is_file()
+}
+
 pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
     save_shot_keeping(root, bytes, MAX_SHOTS)
 }

@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
-import PastRuns, { reportFileName } from "./PastRuns";
+import PastRuns from "./PastRuns";
 import type { ResultFilter } from "./verdicts";
 
 /** The screen holds the filter; this stands in for it. */
@@ -18,6 +18,7 @@ function WithFilter({ pbiId, onReview }: { pbiId: number | null; onReview: (id: 
   return <PastRuns pbiId={pbiId} onReview={onReview} filter={filter} onFilterChange={setFilter} />;
 }
 
+// The report opens in the browser; no dialog is ever involved.
 const saveDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -149,16 +150,13 @@ test("the filter shows only runs with a case in that bucket, and only those case
   expect(screen.getByText("Valid login")).toBeInTheDocument();
 });
 
-// Report: one run as an HTML file, written by Rust where the person picks.
-/** A Windows path as the save dialog hands it over - real backslashes. */
-const PICKED = "C:\\Reports\\auto-run-2026-08-06-1210.html";
-test("Report saves the run to the picked file and says so", async () => {
-  saveDialog.mockResolvedValue(PICKED);
+// Report: one run opened as a page in the browser, written and opened by Rust.
+test("Report opens the run's report in the browser and says so", async () => {
   const calls: unknown[] = [];
   renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd, args) => {
-    if (cmd === "auto_run_export_report") {
+    if (cmd === "auto_run_open_report") {
       calls.push(args);
-      return "auto-run-2026-08-06-1210.html";
+      return null;
     }
     return null;
   });
@@ -166,41 +164,30 @@ test("Report saves the run to the picked file and says so", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
 
   await waitFor(() => expect(calls).toHaveLength(1));
-  expect(saveDialog).toHaveBeenCalledWith({
-    defaultPath: reportFileName("1786000200000"),
-    filters: [{ name: "Web page", extensions: ["html"] }],
-  });
-  expect(calls[0]).toEqual({
-    runId: "run-1",
-    path: PICKED,
-    ranAt: new Date(1786000200000).toLocaleString(),
-  });
-  await waitFor(() =>
-    expect(toast.success).toHaveBeenCalledWith("Report saved as auto-run-2026-08-06-1210.html."),
-  );
+  expect(calls[0]).toEqual({ runId: "run-1" });
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Report opened in your browser"));
+  // Nothing is saved anywhere the person has to pick.
+  expect(saveDialog).not.toHaveBeenCalled();
+  expect(toast.error).not.toHaveBeenCalled();
 });
 
-test("a cancelled save dialog writes nothing and says nothing", async () => {
-  saveDialog.mockResolvedValue(null);
-  const calls: unknown[] = [];
-  renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd, args) => {
-    if (cmd === "auto_run_export_report") calls.push(args);
+test("a report that cannot be opened shows the error toast", async () => {
+  renderPastRuns([runOf({ pbi_id: 42 })], 42, (cmd) => {
+    if (cmd === "auto_run_open_report") {
+      throw "the report could not be opened in your browser - see Settings, Logs";
+    }
     return null;
   });
 
   fireEvent.click(await screen.findByRole("button", { name: /save a report of the run/i }));
 
-  await waitFor(() => expect(saveDialog).toHaveBeenCalled());
-  // Give a would-be command call its chance to land.
-  await new Promise((r) => setTimeout(r, 20));
-  expect(calls).toEqual([]);
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not open the report: the report could not be opened in your browser - see Settings, Logs",
+    ),
+  );
   expect(toast.success).not.toHaveBeenCalled();
-  expect(toast.error).not.toHaveBeenCalled();
-});
-
-test("the suggested file name is the run's local start time", () => {
-  const d = new Date(2026, 9, 2, 9, 5);
-  expect(reportFileName(String(d.getTime()))).toBe("auto-run-2026-10-02-0905.html");
+  expect(saveDialog).not.toHaveBeenCalled();
 });
 
 test("Past runs' filter buttons say they count runs, not cases", async () => {

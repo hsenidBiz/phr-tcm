@@ -3,7 +3,6 @@
 // Send; until then, nothing here has reached Azure DevOps at all.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { save } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { commands, type LocalRun_Serialize } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
@@ -38,17 +37,6 @@ function when(startedAt: string): string {
   if (!Number.isFinite(n) || n <= 0) return "unknown time";
   return new Date(n).toLocaleString();
 }
-
-/** The report's suggested file name: `auto-run-YYYY-MM-DD-HHmm.html`, from
- * when the run started, in local time. */
-export function reportFileName(startedAt: string): string {
-  const n = Number(startedAt);
-  const d = Number.isFinite(n) && n > 0 ? new Date(n) : new Date();
-  const two = (x: number) => String(x).padStart(2, "0");
-  return `auto-run-${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.html`;
-}
-
-const HTML_FILTER = [{ name: "Web page", extensions: ["html"] }];
 
 /** What a Past runs filter button counts: runs, not cases - the review
  * dialog's row, which looks the same, counts cases. */
@@ -118,19 +106,12 @@ export default function PastRuns({
     onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
   });
 
-  /** One run as a single HTML page, written by Rust where the person picks.
-   * Cancelling the save dialog does nothing. The run's time goes as this
-   * screen shows it, so the report reads in the person's own locale. */
-  const exportReport = useMutation({
-    mutationFn: async (run: LocalRun_Serialize) => {
-      const path = await save({ defaultPath: reportFileName(run.started_at), filters: HTML_FILTER });
-      if (!path) return null;
-      return unwrapStr(commands.autoRunExportReport(run.id, path, when(run.started_at)));
-    },
-    onSuccess: (name) => {
-      if (name) toast.success(`Report saved as ${name}.`);
-    },
-    onError: (e) => toast.error(`Could not save the report: ${e.message}`),
+  /** One run as a page opened in the person's browser: Rust writes it to
+   * the Auto Run folder and opens it, so there is nothing to pick or save. */
+  const openReport = useMutation({
+    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(run.id)),
+    onSuccess: () => toast.success("Report opened in your browser"),
+    onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });
 
   return (
@@ -204,14 +185,14 @@ export default function PastRuns({
                     </div>
                   ) : null}
                   {/* Any run, sent or not, supervised or not: a report is a
-                      copy to keep or pass on, and changes nothing. */}
+                      page to read, and changes nothing. */}
                   <Button
                     size="sm"
                     variant="outline"
                     aria-label={`Save a report of the run from ${when(run.started_at)}`}
-                    title="Save this run as an HTML report"
-                    disabled={exportReport.isPending}
-                    onClick={() => exportReport.mutate(run)}
+                    title="Open this run's report in your browser"
+                    disabled={openReport.isPending}
+                    onClick={() => openReport.mutate(run)}
                   >
                     <IconExportReport aria-hidden />
                     Report
