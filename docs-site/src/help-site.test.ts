@@ -577,6 +577,201 @@ describe("reduced motion", () => {
   });
 });
 
+describe("the hero's bouncing flasks", () => {
+  const REDUCE = "(prefers-reduced-motion: reduce)";
+  const strip = () => document.querySelector<HTMLElement>("header.hero .flask-strip")!;
+  const flasks = () => [...strip().querySelectorAll<HTMLElement>(".flask")];
+
+  // Frames are requested but never run on their own: a test runs them by hand.
+  let frames: Map<number, FrameRequestCallback>;
+  let nextId: number;
+  let rafSpy: ReturnType<typeof vi.spyOn>;
+  const runFrame = (t: number) => {
+    const pending = [...frames.entries()];
+    frames.clear();
+    for (const [, cb] of pending) cb(t);
+  };
+
+  // An observer the test can push entries through, for the strip.
+  let ioCallbacks: { cb: IntersectionObserverCallback; targets: Element[] }[];
+  const setInView = (inView: boolean) => {
+    for (const o of ioCallbacks) {
+      if (o.targets.includes(strip())) {
+        o.cb([{ target: strip(), isIntersecting: inView } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+      }
+    }
+  };
+
+  beforeEach(() => {
+    frames = new Map();
+    nextId = 1;
+    rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      const id = nextId++;
+      frames.set(id, cb);
+      return id;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id: number) => {
+      frames.delete(id);
+    });
+    ioCallbacks = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        entry: { cb: IntersectionObserverCallback; targets: Element[] };
+        constructor(cb: IntersectionObserverCallback) {
+          this.entry = { cb, targets: [] };
+          ioCallbacks.push(this.entry);
+        }
+        observe(t: Element) {
+          this.entry.targets.push(t);
+        }
+        unobserve() {}
+        disconnect() {}
+        takeRecords() {
+          return [];
+        }
+      },
+    );
+  });
+  afterEach(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+    // back to the file's quiet observer for every later test
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+        takeRecords() {
+          return [];
+        }
+      },
+    );
+  });
+
+  test("the strip is decorative: aria-hidden, no focusable part, and holds 5 to 7 flask drawings", () => {
+    mount();
+    const el = strip();
+    expect(el).not.toBeNull();
+    expect(el.getAttribute("aria-hidden")).toBe("true");
+    expect(flasks().length).toBeGreaterThanOrEqual(5);
+    expect(flasks().length).toBeLessThanOrEqual(7);
+    for (const f of flasks()) {
+      const svg = f.querySelector("svg");
+      expect(svg).not.toBeNull();
+      expect(svg!.getAttribute("stroke")).toBe("currentColor");
+    }
+    expect(el.querySelector("a, button, input, [tabindex]")).toBeNull();
+    expect(el.textContent).toBe("");
+  });
+
+  test("it sits inside the hero, after the window", () => {
+    mount();
+    const hero = document.querySelector("header.hero")!;
+    expect(hero.lastElementChild).toBe(strip());
+  });
+
+  test("with full motion a frame is requested", () => {
+    mount();
+    expect(rafSpy).toHaveBeenCalled();
+    expect(frames.size).toBe(1);
+  });
+
+  test("a frame moves the flasks, and asks for the next", () => {
+    mount();
+    runFrame(1000);
+    runFrame(1016);
+    runFrame(1032);
+    expect(frames.size).toBe(1);
+    expect(flasks().every((f) => /translate\(/.test(f.style.transform) && /rotate\(/.test(f.style.transform))).toBe(true);
+  });
+
+  test("with prefers-reduced-motion no frame is requested and the flasks rest on the ground", () => {
+    mockMatchMedia([REDUCE]);
+    mount();
+    expect(document.documentElement.dataset.motion).toBe("reduce");
+    expect(rafSpy).not.toHaveBeenCalled();
+    expect(frames.size).toBe(0);
+    for (const f of flasks()) {
+      expect(f.style.transform).toMatch(/translate\(-?[\d.]+px, (0|-0)(\.0)?px\) rotate\((0|-0)(\.0+)?deg\)/);
+    }
+  });
+
+  test("a change of the setting while the page is open takes effect, both ways", () => {
+    let listeners: (() => void)[] = [];
+    let reduce = false;
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return query === REDUCE && reduce;
+      },
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: (_t: string, fn: () => void) => {
+        if (query === REDUCE) listeners.push(fn);
+      },
+      removeEventListener: (_t: string, fn: () => void) => {
+        listeners = listeners.filter((l) => l !== fn);
+      },
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+
+    mount();
+    expect(frames.size).toBe(1);
+
+    reduce = true;
+    listeners.forEach((l) => l());
+    expect(frames.size).toBe(0);
+    runFrame(5000);
+    expect(frames.size).toBe(0);
+
+    reduce = false;
+    listeners.forEach((l) => l());
+    expect(frames.size).toBe(1);
+  });
+
+  test("when the hero leaves view the loop stops, and it resumes when it is back", () => {
+    mount();
+    expect(frames.size).toBe(1);
+    setInView(false);
+    expect(frames.size).toBe(0);
+    setInView(true);
+    expect(frames.size).toBe(1);
+  });
+
+  test("when the page is hidden the loop stops, and it resumes when it is shown", () => {
+    mount();
+    expect(frames.size).toBe(1);
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(frames.size).toBe(0);
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(frames.size).toBe(1);
+  });
+
+  test("resuming after a long pause does not jump: the first frame back takes no time", () => {
+    mount();
+    runFrame(1000);
+    runFrame(1016);
+    const before = flasks().map((f) => f.style.transform);
+    setInView(false);
+    setInView(true);
+    runFrame(900000); // a long time later
+    const after = flasks().map((f) => f.style.transform);
+    expect(after).toEqual(before);
+  });
+
+  test("destroying the page stops the loop", () => {
+    const site = mount();
+    expect(frames.size).toBe(1);
+    site.destroy();
+    handle = undefined;
+    expect(frames.size).toBe(0);
+  });
+});
+
 // A busy screen split into two groups, on one shot (so it gets an overview).
 const grouped: SiteContent = {
   ...fixture,

@@ -1,8 +1,10 @@
 // The opening: a one-line promise, the app floating in a window frame over
-// an accent glow, and the Quick start strip into the sections.
+// an accent glow with a row of bouncing flasks along its foot (decoration:
+// see flasks.ts), and the Quick start strip into the sections.
 
 import { SHOT_HEIGHT, SHOT_WIDTH, type SiteContent } from "../types";
 import { h, rich } from "./dom";
+import { renderFlaskStrip } from "./flasks";
 import { icon } from "./icons";
 import { placeholder } from "./shot";
 import { shotSrc, type Theme } from "./theme";
@@ -64,6 +66,7 @@ export function renderHero(
       h("div", { class: "hero-grid", "aria-hidden": "true" }),
       windowFrame,
     ),
+    renderFlaskStrip(),
   );
 
   const steps = intro.quickStart.map((step, i) => {

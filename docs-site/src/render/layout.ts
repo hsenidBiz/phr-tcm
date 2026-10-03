@@ -5,6 +5,7 @@
 import type { SiteContent } from "../types";
 import { h, reducedMotion, rich } from "./dom";
 import { icon } from "./icons";
+import { startFlasks } from "./flasks";
 import { PRODUCT, renderHero } from "./hero";
 import { createPalette, searchButton } from "./search";
 import { releaseStages, renderSection, type ControlRef } from "./section";
@@ -278,6 +279,10 @@ export function render(root: HTMLElement, content: SiteContent): SiteHandle {
     pinOnly(null);
     for (const r of refs.values()) r.row.removeAttribute("data-pinned");
   });
+
+  // ---- the hero's flasks (decoration; they follow the motion setting) ---
+  const flaskStrip = heroParts[0].querySelector<HTMLElement>(".flask-strip");
+  if (flaskStrip) cleanups.push(startFlasks(flaskStrip));
 
   // ---- scroll-spy and reveals ----------------------------------------
   const spyTargets = [heroParts[0], ...sections.map((s) => s.section)];
