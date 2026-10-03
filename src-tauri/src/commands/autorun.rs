@@ -385,37 +385,29 @@ pub fn auto_run_load_run(app: tauri::AppHandle, run_id: String) -> Result<Option
 /// Said when a report is asked for a run this machine no longer has.
 pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 
-/// Said when the report path is not one the save dialog would hand over.
-pub const REPORT_NOT_A_FULL_PATH: &str = "only a place picked with the save dialog can take the report";
-
-/// Said when the report path does not end in .html or .htm - the dialog's
-/// filter names one, so anything else is not a report file.
-pub const REPORT_NOT_HTML: &str = "a report can only be saved as an .html file";
-
-/// The pure half of [`auto_run_export_report`]: one run as a single HTML
-/// page (`autorun::report`), written atomically to `path`. "Is Auto Run
-/// offered here" is passed in, the way the Test files commands take it, so
-/// a locked build's refusal is testable. The scripts on this machine supply
-/// a failed action's words and a case's area; screenshots are read only
-/// through `store::load_shot`, which refuses any name outside the shots
-/// folder. Returns the file's name, for the toast - never its folder.
-pub fn export_report_at(
+/// The pure half of [`auto_run_open_report`]: one run as a single HTML page
+/// (`autorun::report`), written atomically to `<root>/reports/<run id>.html`
+/// - the same file, overwritten, on every open. The reports folder sits
+/// beside the shots folder, which is how the page links its pictures
+/// (`../shots/<name>`). "Is Auto Run offered here" is passed in, the way the
+/// Test files commands take it, so a locked build's refusal is testable.
+/// The run id is checked with `store::safe_run_id` before anything touches
+/// the disk, since it becomes a file name. The scripts on this machine
+/// supply a failed action's words and a case's area. Returns the file's
+/// path, for the opener.
+///
+/// `ran_at` is the run's start as the webview shows it (the person's own
+/// locale); the page escapes it and prints it as given, and blank falls
+/// back to the run's start in UTC.
+pub fn write_report_at(
     offered: bool,
     root: &std::path::Path,
     run_id: &str,
-    path: &std::path::Path,
     ran_at: &str,
-) -> Result<String, String> {
+) -> Result<std::path::PathBuf, String> {
     crate::commands::api_templates::refuse_unless(offered)?;
-    if !path.is_absolute() {
-        return Err(REPORT_NOT_A_FULL_PATH.to_string());
-    }
-    let html_ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
-    if !html_ext {
-        return Err(REPORT_NOT_HTML.to_string());
+    if !safe_run_id(run_id) {
+        return Err(format!("run id {run_id:?} is not a safe filename"));
     }
     let run = store::load_run(root, run_id)?.ok_or_else(|| REPORT_RUN_GONE.to_string())?;
     let scripts: Vec<CaseScript> = run
@@ -423,42 +415,46 @@ pub fn export_report_at(
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    let html = crate::autorun::report::build(&run, &scripts, ran_at, &|name| store::load_shot(root, name));
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "the report".to_string());
-    crate::ai_tools::atomic_write(path, &html).map_err(|e| {
-        crate::applog::warn(format!("auto run report {name} could not be written: {e}"));
-        format!("{name} could not be written - see Settings, Logs")
+    let html = crate::autorun::report::build(&run, &scripts, ran_at, &|name| store::shot_exists(root, name));
+    let dir = store::reports_dir(root);
+    let path = dir.join(format!("{run_id}.html"));
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        crate::applog::warn(format!("auto run report: the reports folder could not be made: {e}"));
+        REPORT_NOT_WRITTEN.to_string()
     })?;
-    crate::applog::info(format!("auto run report for {run_id} written to {name}"));
-    Ok(name)
+    crate::ai_tools::atomic_write(&path, &html).map_err(|e| {
+        crate::applog::warn(format!("auto run report for {run_id} could not be written: {e}"));
+        REPORT_NOT_WRITTEN.to_string()
+    })?;
+    crate::applog::info(format!("auto run report for {run_id} written"));
+    Ok(path)
 }
 
-/// Writes one run's report to the file the person picked. `ran_at` is the
-/// run's start time as the webview shows it (the person's own locale);
-/// blank prints it in UTC instead. Async, with the work on a blocking
-/// thread: encoding a run's pictures and writing the file must not hold
-/// the main thread, which would freeze the window while it runs.
+/// Said when the report page could not be written to disk.
+pub const REPORT_NOT_WRITTEN: &str = "the report could not be written - see Settings, Logs";
+
+/// Said when the browser could not be asked to open the report.
+pub const REPORT_NOT_OPENED: &str = "the report could not be opened in your browser - see Settings, Logs";
+
+/// Writes one run's report and opens it in the default browser. `ran_at` is
+/// the run's start time as the webview shows it. Async, with
+/// the write on a blocking thread: reading a run's scripts and writing the
+/// page must not hold the main thread, which would freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_export_report(
-    app: tauri::AppHandle,
-    run_id: String,
-    path: String,
-    ran_at: String,
-) -> Result<String, String> {
+pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String, ran_at: String) -> Result<(), String> {
     let offered = crate::ai_tools::autorun_offered();
     let root = root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        export_report_at(offered, &root, &run_id, std::path::Path::new(&path), &ran_at)
+    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &run_id, &ran_at))
+        .await
+        .map_err(|e| {
+            crate::applog::warn(format!("auto run report: the writer stopped: {e}"));
+            REPORT_NOT_WRITTEN.to_string()
+        })??;
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
+        crate::applog::warn(format!("the auto run report could not be opened: {e}"));
+        REPORT_NOT_OPENED.to_string()
     })
-    .await
-    .map_err(|e| {
-        crate::applog::warn(format!("auto run report: the writer stopped: {e}"));
-        "the report could not be written - see Settings, Logs".to_string()
-    })?
 }
 
 /// A run id the frontend can stamp on a new session.

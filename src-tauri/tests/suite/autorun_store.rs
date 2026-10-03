@@ -638,6 +638,48 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
     );
 }
 
+/// The reports opened from runs go when the runs do - and only the files
+/// directly in `reports/`: no folder in it, nothing beside it.
+#[test]
+fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let run = LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        mode: "unattended".into(),
+        published: None,
+        cases: vec![],
+        environment: None,
+    };
+    save_run(root, &run).unwrap();
+    std::fs::create_dir_all(root.join("reports").join("kept-folder")).unwrap();
+    std::fs::write(root.join("reports").join("run-1.html"), "<html></html>").unwrap();
+    std::fs::write(root.join("reports").join("run-2.html"), "<html></html>").unwrap();
+    std::fs::write(root.join("reports").join("kept-folder").join("inner.txt"), "stay").unwrap();
+    // Beside reports/, not Auto Run's to clear here.
+    std::fs::write(root.join("settings.json"), "{}").unwrap();
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(root.join("scripts").join("case-9.json"), "{}").unwrap();
+    let outside = dir.path().parent().unwrap().join(format!("outside-{}.html", std::process::id()));
+    std::fs::write(&outside, "keep").unwrap();
+
+    let removed = clear_runs(root).unwrap();
+    assert_eq!(removed, 1, "the count stays runs, not report files");
+    assert!(!root.join("reports").join("run-1.html").exists());
+    assert!(!root.join("reports").join("run-2.html").exists());
+    assert!(!root.join("shots").join(&shot).exists());
+    assert!(list_runs(root).is_empty());
+    // Only files were swept: the folder inside reports/ and what it holds stay.
+    assert_eq!(std::fs::read_to_string(root.join("reports").join("kept-folder").join("inner.txt")).unwrap(), "stay");
+    assert_eq!(std::fs::read_to_string(root.join("settings.json")).unwrap(), "{}");
+    assert_eq!(std::fs::read_to_string(root.join("scripts").join("case-9.json")).unwrap(), "{}");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+    let _ = std::fs::remove_file(&outside);
+}
+
 /// A `runs/` directory that cannot be listed is not the same thing as one
 /// that was never created: the first is a real failure (permissions, or -
 /// as reproduced here - something else sitting where the directory should
@@ -650,4 +692,149 @@ fn clear_runs_reports_an_unreadable_runs_directory_instead_of_zero() {
 
     let err = clear_runs(dir.path()).unwrap_err();
     assert!(err.contains("runs"), "the message should name the path that failed: {err}");
+}
+
+/// A directory link at `link` pointing at `target`: a junction on Windows
+/// (`mklink /J` needs no admin rights), a symlink elsewhere. False if the
+/// environment would not make one.
+fn make_dir_link(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// A file symlink at `link` pointing at `target`; false when the
+/// environment would not make one (on Windows that takes Developer Mode or
+/// admin rights).
+fn make_file_link(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// Clearing removes regular files only, in `shots/` and `reports/`: a
+/// nested folder and what is in it stays.
+#[test]
+fn clear_runs_leaves_nested_folders_in_shots_and_reports_alone() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    for sub in ["shots", "reports"] {
+        std::fs::create_dir_all(root.join(sub).join("nested")).unwrap();
+        std::fs::write(root.join(sub).join("nested").join("inner.txt"), "stay").unwrap();
+        std::fs::write(root.join(sub).join("top.bin"), "go").unwrap();
+    }
+    assert_eq!(clear_runs(root).unwrap(), 0);
+    for sub in ["shots", "reports"] {
+        assert!(!root.join(sub).join("top.bin").exists(), "{sub}: the file goes");
+        assert_eq!(std::fs::read_to_string(root.join(sub).join("nested").join("inner.txt")).unwrap(), "stay");
+    }
+}
+
+/// A `shots/` or `reports/` that is itself a link (a junction on Windows)
+/// is skipped whole: what it points at is not Auto Run's to clear.
+#[test]
+fn clear_runs_skips_a_shots_or_reports_folder_that_is_a_link() {
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    std::fs::create_dir_all(&root).unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("precious.html"), "stay").unwrap();
+    if !make_dir_link(&root.join("reports"), &elsewhere) || !make_dir_link(&root.join("shots"), &elsewhere) {
+        eprintln!("NOTE: a directory link could not be made here, so this part is not exercised");
+        return;
+    }
+    assert_eq!(clear_runs(&root).unwrap(), 0);
+    assert_eq!(std::fs::read_to_string(elsewhere.join("precious.html")).unwrap(), "stay");
+}
+
+/// A file symlink inside `reports/` is neither followed nor removed.
+/// Needs symlink rights: Developer Mode or admin on Windows.
+#[test]
+fn clear_runs_neither_follows_nor_removes_a_file_link() {
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    std::fs::create_dir_all(root.join("reports")).unwrap();
+    let target = dir.path().join("target.html");
+    std::fs::write(&target, "stay").unwrap();
+    std::fs::write(root.join("reports").join("plain.html"), "go").unwrap();
+    if !make_file_link(&root.join("reports").join("link.html"), &target) {
+        eprintln!("NOTE: a file symlink could not be made here (no symlink rights), so this part is not exercised");
+        return;
+    }
+    clear_runs(&root).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "stay");
+    assert!(std::fs::symlink_metadata(root.join("reports").join("link.html")).is_ok(), "the link itself is left");
+    assert!(!root.join("reports").join("plain.html").exists());
+}
+
+/// A picture name that is a link is not a picture of the run.
+#[test]
+fn shot_exists_wants_a_regular_file_not_a_link() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let name = save_shot_keeping(root, b"A", 10).unwrap();
+    assert!(v2_lib::autorun::store::shot_exists(root, &name));
+    assert!(!v2_lib::autorun::store::shot_exists(root, "shot-1-2.jpg"), "missing");
+    assert!(!v2_lib::autorun::store::shot_exists(root, "../x.jpg"), "not a shot name");
+    let linked = "shot-111-222.jpg";
+    let outside = dir.path().join("outside.jpg");
+    std::fs::write(&outside, "x").unwrap();
+    if make_file_link(&root.join("shots").join(linked), &outside) {
+        assert!(!v2_lib::autorun::store::shot_exists(root, linked));
+    } else {
+        eprintln!("NOTE: a file symlink could not be made here (no symlink rights), so that part is not exercised");
+    }
+}
+
+/// A file that cannot be removed does not stop the other passes: they all
+/// finish, then the failure comes back naming the file. (Windows: a file
+/// held open with no sharing cannot be deleted.)
+#[cfg(windows)]
+#[test]
+fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = TempDir::new();
+    let root = dir.path();
+    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    save_run(
+        root,
+        &LocalRun {
+            id: "run-1".into(),
+            pbi_id: 1,
+            started_at: "1".into(),
+            mode: "unattended".into(),
+            published: None,
+            cases: vec![],
+            environment: None,
+        },
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("reports")).unwrap();
+    let held_path = root.join("reports").join("held.html");
+    std::fs::write(&held_path, "x").unwrap();
+    std::fs::write(root.join("reports").join("free.html"), "x").unwrap();
+    let _held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&held_path).unwrap();
+
+    let err = clear_runs(root).unwrap_err();
+    assert!(err.contains("held.html"), "{err}");
+    // Runs and shots were cleared all the same; so was the other report.
+    assert!(list_runs(root).is_empty());
+    assert!(!root.join("shots").join(&shot).exists());
+    assert!(!root.join("reports").join("free.html").exists());
 }

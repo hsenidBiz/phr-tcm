@@ -2,16 +2,18 @@
 //! email: when it ran, where, what each case came to, and for each case
 //! that failed or was blocked, the step that stopped it with its pictures.
 //!
-//! The page is self-contained - inline CSS, pictures embedded as data URLs,
-//! no script and nothing fetched - so it opens the same anywhere, offline,
-//! and never phones home. Every value from the run is escaped: a case title
-//! is whatever someone typed into Azure DevOps.
+//! The page is opened in the browser from `<root>/reports/`: inline CSS, no
+//! script, nothing fetched. Every case has its own collapsible section with
+//! every step the run recorded, and the pictures are linked, not embedded -
+//! `../shots/<name>`, beside the reports folder - so a long unattended run
+//! stays a small file. Every value from the run is escaped: a case title is
+//! whatever someone typed into Azure DevOps.
 //!
 //! What never goes in: passwords, the values a script typed (`fill`'s
-//! value), cookies, or any file's bytes other than the run's own failure
-//! pictures - read only through `store`'s screenshot guard, so a name that
-//! is not a screenshot in the shots folder is refused, never read. The
-//! accounts are their keys, as the run recorded them, never logins.
+//! value), cookies, headers, or any file's bytes. A picture is linked only
+//! for a name `store`'s screenshot guard accepts and that is in the shots
+//! folder; any other name is a note, never a link. The accounts are their
+//! keys, as the run recorded them, never logins.
 
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, StepRecord};
@@ -20,11 +22,6 @@ use crate::browser::actions::{Action, ActionOutcome};
 /// The result buckets, in the order the report (and the Auto Run screen's
 /// filter row) lists them.
 pub const BUCKETS: [&str; 4] = ["Passed", "Failed", "Blocked", "Not run"];
-
-/// The largest picture embedded. A failure screenshot is a JPEG of one
-/// browser window, normally well under 300 KB; anything this big is not
-/// one, and would make the page slow to open and to mail.
-pub const MAX_SHOT_BYTES: usize = 3 * 1024 * 1024;
 
 /// Which bucket a case's result falls in: the person's confirmed `verdict`
 /// when set, else the machine's `proposed`; exactly "Passed", "Failed" or
@@ -116,6 +113,33 @@ pub fn without_query(url: &str) -> &str {
     }
 }
 
+/// A sentence the run recorded, with the query string and fragment taken
+/// off every `http://`, `https://` or `file://` address in it. The runner
+/// writes whole addresses into some of its sentences ("loaded <url>"), and a
+/// query string can carry a token; the report is a file people pass around.
+pub fn scrub_urls(text: &str) -> String {
+    const SCHEMES: [&str; 3] = ["http://", "https://", "file://"];
+    // ASCII lowercasing keeps every byte offset, so indexes carry over.
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        let next = SCHEMES.iter().filter_map(|s| lower[i..].find(s)).min();
+        let Some(rel) = next else {
+            out.push_str(&text[i..]);
+            break;
+        };
+        let start = i + rel;
+        out.push_str(&text[i..start]);
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace() || "\"'<>)]}".contains(c))
+            .map_or(text.len(), |n| start + n);
+        out.push_str(without_query(&text[start..end]));
+        i = end;
+    }
+    out
+}
+
 /// Text into HTML, element content or a quoted attribute alike.
 pub fn esc(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -185,68 +209,40 @@ fn stopped_action(case: &CaseRecord, step: &StepRecord, index: usize, script: Op
     }
 }
 
-/// One picture as an `<img>`, or a line saying why it is not there.
-/// `load` is only ever reached for a name the screenshot guard accepts.
-fn picture(name: &str, load: &dyn Fn(&str) -> Result<Vec<u8>, String>) -> String {
+/// One picture as a linked `<img>`, or a line saying why it is not there.
+/// The page lives in `<root>/reports/` and the pictures in `<root>/shots/`,
+/// so a picture is `../shots/<name>`. `exists` is only ever asked about a
+/// name the screenshot guard accepts - a name that could point anywhere but
+/// the shots folder is never linked and never looked up. `alt` says which
+/// step (and action) the picture is of.
+fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
     if !super::store::safe_shot_name(name) {
         return format!(
             "<p class=\"note\">A picture was skipped: {} is not a screenshot name.</p>",
             esc(name)
         );
     }
-    let bytes = match load(name) {
-        Ok(b) => b,
-        Err(_) => {
-            return format!(
-                "<p class=\"note\">The picture {} is no longer on this machine.</p>",
-                esc(name)
-            )
-        }
-    };
-    if bytes.len() > MAX_SHOT_BYTES {
+    if !exists(name) {
         return format!(
-            "<p class=\"note\">The picture {} was too large to include ({} KB).</p>",
-            esc(name),
-            bytes.len() / 1024
-        );
-    }
-    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        "image/png"
-    } else if bytes.starts_with(&[0xFF, 0xD8]) {
-        "image/jpeg"
-    } else {
-        return format!(
-            "<p class=\"note\">The picture {} could not be read as an image.</p>",
+            "<p class=\"note\">The picture {} was not found - it is no longer on this machine.</p>",
             esc(name)
         );
-    };
-    use base64::Engine;
+    }
     format!(
-        "<figure><img src=\"data:{mime};base64,{}\" alt=\"Screenshot {}\"><figcaption>{}</figcaption></figure>",
-        base64::engine::general_purpose::STANDARD.encode(&bytes),
+        "<figure><img loading=\"lazy\" src=\"../shots/{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>",
         esc(name),
+        esc(alt),
         esc(name)
     )
 }
 
-/// A Failed or Blocked case's block: the step that stopped it, the action
-/// in words, the page's message, and that step's pictures.
-fn failure_block(
-    case: &CaseRecord,
-    script: Option<&CaseScript>,
-    load: &dyn Fn(&str) -> Result<Vec<u8>, String>,
-) -> String {
+/// The "step that stopped it" summary at the top of a Failed or Blocked
+/// case's section: why, the step and action in words, the page's message.
+/// Its pictures are not repeated here - the step list below shows them.
+fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>) -> String {
     let mut h = String::new();
-    h.push_str("<section class=\"failure\">");
-    h.push_str(&format!(
-        "<h3><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{}</span></h3>",
-        case.case_id,
-        esc(&case.title),
-        css_key(case_bucket(case)),
-        case_bucket(case)
-    ));
     if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&case.reason)));
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
     }
     match stopping_point(case) {
         Some((step, index, outcome)) => {
@@ -256,35 +252,86 @@ fn failure_block(
                 "<dt>Action</dt><dd>{}</dd>",
                 esc(&stopped_action(case, step, index, script))
             ));
-            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&outcome.detail)));
+            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&scrub_urls(&outcome.detail))));
             h.push_str("</dl>");
-            // The failed action's own picture first, then the step's.
-            let mut names: Vec<&str> = Vec::new();
-            for o in &step.outcomes {
-                if !o.ok {
-                    if let Some(n) = o.screenshot.as_deref() {
-                        names.push(n);
-                    }
-                }
-            }
-            if let Some(n) = step.screenshot.as_deref() {
-                names.push(n);
-            }
-            let mut seen = std::collections::HashSet::new();
-            for n in names {
-                if seen.insert(n) {
-                    h.push_str(&picture(n, load));
-                }
-            }
         }
         None => h.push_str(
             "<p class=\"note\">No step failed on its own - this result was decided by the person reviewing the run.</p>",
         ),
     }
+    h
+}
+
+/// Every step of a case in the order it ran: its label, each action's
+/// outcome as a line marked with a tick or a cross and the sentence the run
+/// recorded (never anything from the script), then the step's picture and
+/// any picture an action took on failing. A picture named twice in one step
+/// is shown once.
+fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
+    if case.steps.is_empty() {
+        return "<p class=\"note\">No steps were recorded for this case.</p>".to_string();
+    }
+    let mut h = String::new();
+    for step in &case.steps {
+        let label = step_label(step.step_number);
+        h.push_str("<div class=\"step\">");
+        h.push_str(&format!("<h4>{}</h4>", esc(&label)));
+        if step.outcomes.is_empty() {
+            h.push_str("<p class=\"note\">No actions were recorded for this step.</p>");
+        } else {
+            h.push_str("<ul class=\"actions\">");
+            for o in &step.outcomes {
+                let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
+                h.push_str(&format!("<li class=\"{class}\">{mark} {}</li>", esc(&scrub_urls(&o.detail))));
+            }
+            h.push_str("</ul>");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (i, o) in step.outcomes.iter().enumerate() {
+            if let Some(n) = o.screenshot.as_deref() {
+                if seen.insert(n) {
+                    h.push_str(&picture(n, &format!("{label}, action {}", i + 1), exists));
+                }
+            }
+        }
+        if let Some(n) = step.screenshot.as_deref() {
+            if seen.insert(n) {
+                h.push_str(&picture(n, &label, exists));
+            }
+        }
+        h.push_str("</div>");
+    }
+    h
+}
+
+/// One case's collapsible section. Open for Failed and Blocked, closed for
+/// Passed and Not run - a reader lands on what needs them and can still
+/// expand the rest. `<details>` needs no script.
+fn case_section(
+    case: &CaseRecord,
+    script: Option<&CaseScript>,
+    exists: &dyn Fn(&str) -> bool,
+) -> String {
+    let b = case_bucket(case);
+    let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
+    let mut h = String::new();
+    h.push_str(&format!("<details class=\"case\"{open}>"));
+    h.push_str(&format!(
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span></summary>",
+        case.case_id,
+        esc(&case.title),
+        css_key(b)
+    ));
+    if matches!(b, "Failed" | "Blocked") {
+        h.push_str(&stopped_summary(case, script));
+    } else if !case.reason.is_empty() {
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
+    }
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
     }
-    h.push_str("</section>");
+    h.push_str(&steps_block(case, exists));
+    h.push_str("</details>");
     h
 }
 
@@ -308,8 +355,10 @@ fn web_link(url: &str) -> String {
     }
 }
 
-/// The page's Content-Security-Policy.
-pub const CSP: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline'";
+/// The page's Content-Security-Policy: no script, nothing fetched, and
+/// pictures only from a file on this machine (the shots folder, linked
+/// relative to the page).
+pub const CSP: &str = "default-src 'none'; img-src file:; style-src 'unsafe-inline'";
 
 const STYLE: &str = "body{font-family:Segoe UI,Arial,sans-serif;color:#1f2328;background:#ffffff;margin:24px;font-size:14px;line-height:1.45}\
 h1{font-size:22px;margin:0 0 12px}h2{font-size:17px;margin:24px 0 8px;border-bottom:1px solid #d0d7de;padding-bottom:4px}\
@@ -317,21 +366,23 @@ h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-conte
 dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
 th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
-.failure{border:1px solid #d0d7de;border-radius:6px;padding:10px 12px;margin:0 0 12px}.note{color:#59636e;font-style:italic}\
+.case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
+.note{color:#59636e;font-style:italic}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
+.actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\
 figure{margin:8px 0}figure img{max-width:100%;border:1px solid #d0d7de}figcaption{font-size:12px;color:#59636e}\
-@media print{body{margin:0}.failure,tr,figure{break-inside:avoid}a{color:inherit}}";
+@media print{body{margin:0}.case,.step,tr,figure{break-inside:avoid}a{color:inherit}}";
 
 /// The whole page. `ran_at` is the run's start as the person reads time
 /// (the webview formats it in their own locale); blank falls back to UTC.
 /// `scripts` supplies the words for a failed action and a case's area -
-/// the scripts on this machine now, as `failures` reads them too. `load`
-/// reads one screenshot by name; it is only called for a name the
-/// screenshot guard accepts.
+/// the scripts on this machine now, as `failures` reads them too. `exists`
+/// says whether a screenshot is in the shots folder; it is only called for
+/// a name the screenshot guard accepts.
 pub fn build(
     run: &LocalRun,
     scripts: &[CaseScript],
     ran_at: &str,
-    load: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+    exists: &dyn Fn(&str) -> bool,
 ) -> String {
     let script_for = |id: i32| scripts.iter().find(|s| s.case_id == id);
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
@@ -341,7 +392,7 @@ pub fn build(
     h.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     // Defence in depth: everything below is escaped and nothing is fetched,
     // but should either ever slip, the page still may run no script and
-    // load nothing beyond its own embedded pictures and inline style.
+    // load nothing beyond its linked pictures and inline style.
     h.push_str(&format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">"));
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
     h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
@@ -396,12 +447,10 @@ pub fn build(
     }
     h.push_str("</tbody></table>");
 
-    let failing: Vec<&CaseRecord> =
-        run.cases.iter().filter(|c| matches!(case_bucket(c), "Failed" | "Blocked")).collect();
-    if !failing.is_empty() {
-        h.push_str("<h2>Failed and blocked cases</h2>");
-        for case in failing {
-            h.push_str(&failure_block(case, script_for(case.case_id), load));
+    if !run.cases.is_empty() {
+        h.push_str("<h2>Cases in detail</h2>");
+        for case in &run.cases {
+            h.push_str(&case_section(case, script_for(case.case_id), exists));
         }
     }
 
