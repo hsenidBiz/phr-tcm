@@ -57,7 +57,15 @@ import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
-import type { ResultFilter } from "./verdicts";
+import { ResultToggleRow } from "./ResultFilterRow";
+import {
+  RESULT_BUCKETS,
+  bucketTone,
+  lastResultFor,
+  lastResults,
+  type ResultBucket,
+  type ResultFilter,
+} from "./verdicts";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness, type AutoRunTab } from "./useAutoRunReadiness";
@@ -73,6 +81,9 @@ const TABS: { id: AutoRunTab; label: string }[] = [
 // back to a count - the same shape as the assigned-work notification
 // summary. A 60-case import naming every one of them is unreadable.
 const MAX_IDS_IN_TOAST = 10;
+
+/** The filter that lets every case through. */
+const NO_FILTER: ReadonlySet<ResultBucket> = new Set();
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -384,15 +395,40 @@ export default function AutoRun({
     () => localStorage.getItem("tcm-v2-autorun-group") === "on",
   );
   const [collapsed, toggleCollapsed] = usePersistedStringSet("tcm-v2-autorun-collapsed");
+  /** The last results the Test cases tab shows. Empty is every case. Lives
+   * here, not in the tab, so it outlasts a trip to another tab and is gone
+   * once the screen is left. */
+  const [lastFilter, setLastFilter] = useState<ReadonlySet<ResultBucket>>(new Set());
 
   const rows = cases.data ?? [];
   const settled = useSettled(rows.length > 0);
+  /** Each case's result in the newest run that holds it - the runs Past
+   * runs lists, so the two tabs never disagree. */
+  const last = useMemo(() => lastResults(runs.data ?? []), [runs.data]);
+  /** Until the runs are read there is nothing to filter by, and if they
+   * cannot be read there never will be: either way every case shows. */
+  const runsReady = runs.data !== undefined;
+  const runsFailed = runs.isError && !runsReady;
+  const activeFilter: ReadonlySet<ResultBucket> = runsReady ? lastFilter : NO_FILTER;
+  const lastOf = (i: number) => lastResultFor(last, rows[i].id);
+  /** How many of ALL the rows each result holds, whatever is pressed. */
+  const lastCounts = RESULT_BUCKETS.reduce(
+    (acc, b) => ({ ...acc, [b]: rows.filter((_, i) => lastOf(i) === b).length }),
+    {} as Record<ResultBucket, number>,
+  );
+  /** The rows the filter lets through, by index in `rows`. */
+  const shownIdx = rows.flatMap((_, i) => (activeFilter.size === 0 || activeFilter.has(lastOf(i)) ? [i] : []));
+  const shownIds = new Set(shownIdx.map((i) => rows[i].id));
   /** Same title-prefix grouping View Test Cases uses, so a person reading
    * both screens is reading one idea. */
-  const groups = useMemo(
+  const allGroups = useMemo(
     () => (grouped ? groupIndices(rows.map((c) => c.title)) : []),
     [grouped, rows],
   );
+  /** A group keeps only its shown rows, and one with none is gone. */
+  const groups = allGroups
+    .map((g) => ({ ...g, indices: g.indices.filter((i) => shownIds.has(rows[i].id)) }))
+    .filter((g) => g.indices.length > 0);
   /** The Module values of the loaded cases, for the Areas dialog's
    * picker. A person can still type one that is not here. */
   const caseModules = useMemo(
@@ -445,6 +481,31 @@ export default function AutoRun({
     });
   };
 
+  const toggleLast = (b: ResultBucket) =>
+    setLastFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(b)) next.delete(b);
+      else next.add(b);
+      return next;
+    });
+
+  /** A case the filter hides leaves the selection, so a run only ever holds
+   * what the person can see. Checked after every render rather than in the
+   * filter's click, because the runs refreshing (one just finished) can hide
+   * a ticked case without anyone pressing anything. Not while the case list
+   * itself is empty (loading): that is not the person's filter hiding them. */
+  useEffect(() => {
+    if (rows.length === 0) return;
+    setSelected((prev) => {
+      const kept = [...prev].filter((id) => shownIds.has(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+  });
+
+  /** The scripted cases the filter shows - what Select all shown covers. */
+  const shownRunnable = runnableIn(shownIdx);
+  const shownTicked = shownRunnable.filter((id) => selected.has(id)).length;
+
   /** List order, not click order - the run reads top to bottom the way
    * the screen does. */
   const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
@@ -455,6 +516,7 @@ export default function AutoRun({
     const c = rows[i];
     const ready = hasScript(i);
     const defect = scripts[i]?.suspected_defect;
+    const result = lastOf(i);
     return (
       <li
         key={c.id}
@@ -474,6 +536,15 @@ export default function AutoRun({
             rows do - a truncated title is exactly the part that tells two
             similar cases apart. */}
         <span className="min-w-0 flex-1 break-words text-text">{c.title}</span>
+        {/* The result of the case's last run, in Past runs' words and colours.
+            A case never run carries nothing: a mark that says "none" on
+            every fresh row is noise. */}
+        {result !== "Not run" && (
+          <span className={cn("shrink-0 text-xs font-medium", bucketTone[result])}>
+            <span className="sr-only">Last result: </span>
+            {result}
+          </span>
+        )}
         {defect && (
           <SuspectedDefectBadge
             caseId={c.id}
@@ -824,6 +895,40 @@ export default function AutoRun({
                     />
                     Group by title
                   </label>
+                  {/* Ticks what the filter below shows (scripted cases only), so
+                      "run everything that failed" is two clicks. Off while
+                      nothing shown could be run. */}
+                  <label
+                    className={cn(
+                      "flex items-center gap-2 text-xs",
+                      shownRunnable.length === 0 ? "text-faint" : "cursor-pointer text-muted",
+                    )}
+                  >
+                    <Checkbox
+                      checked={shownRunnable.length > 0 && shownTicked === shownRunnable.length}
+                      indeterminate={shownTicked > 0 && shownTicked < shownRunnable.length}
+                      disabled={shownRunnable.length === 0}
+                      ariaLabel="Select all shown"
+                      onCheckedChange={() => toggleGroup(shownIdx)}
+                    />
+                    Select all shown
+                  </label>
+                  {rows.length > 0 &&
+                    (runsFailed ? (
+                      <span className="text-xs text-muted">Past results could not be read</span>
+                    ) : (
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted">Last result</span>
+                        {/* Without numbers, and out of reach, until the runs are read. */}
+                        <ResultToggleRow
+                          label="Filter by last result"
+                          pressed={activeFilter}
+                          onToggle={toggleLast}
+                          counts={runsReady ? lastCounts : undefined}
+                          disabled={!runsReady}
+                        />
+                      </span>
+                    ))}
                   {/* The rare actions. Clear scripts is housekeeping shown wherever
                       Auto Run is (dev, or unlocked) - the whole tab is gated in one
                       place (`autoRunVisible` in lib/extras.ts), so no further gating
@@ -854,6 +959,9 @@ export default function AutoRun({
                 {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
 
+                {rows.length > 0 && shownIdx.length === 0 && (
+                  <p className="text-xs text-muted">No cases match this filter.</p>
+                )}
                 {grouped ? (
                   groups.map(({ name, indices }) => {
                     const label = name || "Ungrouped";
@@ -903,7 +1011,7 @@ export default function AutoRun({
                     );
                   })
                 ) : (
-                  <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
+                  <ul className="space-y-1">{shownIdx.map(row)}</ul>
                 )}
 
                 {/* Actions on the selection live bottom-right, in the one shared

@@ -54,3 +54,40 @@ export function countBuckets(
 export function matchesFilter(c: { verdict: string; proposed?: string | null }, filter: ResultFilter): boolean {
   return filter === "All" || resultBucket(c) === filter;
 }
+
+/**
+ * Each case's last result: the bucket of its record in the NEWEST run that
+ * reached it. A record with a verdict or a proposal is a case the run
+ * reached; one with neither (a run stopped before it) says nothing, and
+ * neither does a run that does not hold the case at all, so the case keeps
+ * the result of the newest run that did reach it. `started_at` is epoch milliseconds as text, so it is compared as a number;
+ * of two runs that started in the same millisecond, the later in the list
+ * wins. A case no run ever reached is not in the map - read it with
+ * `lastResultFor`.
+ */
+export function lastResults(
+  runs: readonly {
+    started_at: string;
+    cases: readonly { case_id: number; verdict: string; proposed?: string | null }[];
+  }[],
+): Map<number, ResultBucket> {
+  const out = new Map<number, ResultBucket>();
+  const at = new Map<number, number>();
+  for (const run of runs) {
+    const started = Number(run.started_at);
+    const when = Number.isFinite(started) ? started : 0;
+    for (const c of run.cases) {
+      if (c.verdict === "" && (c.proposed ?? "") === "") continue;
+      const seen = at.get(c.case_id);
+      if (seen !== undefined && seen > when) continue;
+      at.set(c.case_id, when);
+      out.set(c.case_id, resultBucket(c));
+    }
+  }
+  return out;
+}
+
+/** A case's last result, Not run when no run holds it. */
+export function lastResultFor(last: ReadonlyMap<number, ResultBucket>, caseId: number): ResultBucket {
+  return last.get(caseId) ?? "Not run";
+}
