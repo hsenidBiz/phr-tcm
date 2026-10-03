@@ -8,7 +8,7 @@
 //! text with a locator on every line, rather than re-deriving any of it.
 
 use super::cdp::{CdpError, Driver};
-use super::locator::{resolve, Target, FRAME_JS, VISIBLE_JS};
+use super::locator::{resolve_explained, Target, FRAME_JS, VISIBLE_JS};
 use super::page;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -355,7 +355,7 @@ async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64)
 /// (Chrome's role `Iframe` matches visible iframes by their title - proven
 /// in `browser_live::frame_spike_role_lookup_through_a_frame_document`),
 /// else by its `id`, else by its `title`, else as the `k`th iframe.
-fn frame_step(name: &str, attrs: &Value, k: usize) -> Value {
+pub fn frame_step(name: &str, attrs: &Value, k: usize) -> Value {
     if !name.trim().is_empty() {
         return json!({ "role": "Iframe", "name": name, "exact": true });
     }
@@ -392,9 +392,13 @@ fn trim_chars(s: &str, n: usize) -> String {
 /// whether it is safe to use. Empty is reported, not treated as an error:
 /// a target that matches nothing is exactly what a caller needs to know.
 pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpError> {
-    let handles = resolve(d, target).await?;
+    let found = resolve_explained(d, target).await?;
+    let handles = found.handles;
     if handles.is_empty() {
-        return Ok(format!("matches: 0 - nothing on the page answers to {}", target.describe()));
+        return Ok(match found.unreachable_frame {
+            Some(why) => format!("matches: 0 - {why}"),
+            None => format!("matches: 0 - nothing on the page answers to {}", target.describe()),
+        });
     }
     let mut lines = vec![format!("matches: {}", handles.len())];
     for handle in handles.iter().take(10) {

@@ -1699,7 +1699,7 @@ async fn frame_spike_role_lookup_through_a_frame_document() {
         .expect("queryAXTree for the iframe role failed");
     assert_eq!(
         names(&r),
-        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new()],
+        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new(), "Padded frame".to_string()],
         "(b) role Iframe did not list the visible frames by title"
     );
 }
@@ -1742,6 +1742,7 @@ async fn frame_an_unreachable_frame_is_named_not_reported_missing() {
     refused(run(&mut live, json!({ "kind": "expect_hidden", "selector": locked })).await, why);
     refused(run(&mut live, json!({ "kind": "expect_count", "selector": locked, "equals": 0 })).await, why);
     refused(run(&mut live, json!({ "kind": "click", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "wait_for", "selector": locked, "timeout_ms": 1500 })).await, why);
 }
 
 /// The frame sits below a tall spacer, 180px in, inside a 7px border: the
@@ -1809,4 +1810,16 @@ async fn frame_the_snapshot_prints_paste_ready_chains() {
     // chain that would fail.
     assert!(text.contains("frame contents could not be read"), "{text}");
     assert!(!text.contains("button \"Locked\""), "{text}");
+}
+
+/// Padding sits between an iframe's border and its viewport. A click point
+/// that adds only the border lands on the padding - still the iframe, so no
+/// cover check notices - and the button never hears it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_click_inside_a_padded_frame_lands_on_the_element() {
+    let mut live = open_iframes().await;
+    let pad = |inner: serde_json::Value| json!([{ "css": "#pad-frame" }, inner]);
+    must(run(&mut live, json!({ "kind": "click", "selector": pad(json!({ "css": "#pad-btn" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": pad(json!({ "css": "#pout" })), "equals": "hit" })).await);
 }

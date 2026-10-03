@@ -31,6 +31,9 @@
 
   <iframe id="locked" title="Locked frame" sandbox srcdoc="<button>Locked</button>"></iframe>
   <iframe data-k="bare" style="width:300px;height:80px"></iframe>
+  <!-- Padding sits between the border and the frame's viewport: a click
+       point that adds only the border lands short of the button. -->
+  <iframe id="pad-frame" title="Padded frame" style="border:0;padding:40px 0 0 60px;width:300px;height:120px"></iframe>
 </main>
 <div id="cover"></div>
 <script>
@@ -47,4 +50,6 @@
   }
   for (const f of document.querySelectorAll('iframe[title="Employee Search"]')) fill(f, SEARCH);
   fill(document.querySelector('iframe[data-k="bare"]'), '<button>Bare inner</button>');
+  fill(document.getElementById('pad-frame'),
+    '<button id="pad-btn" style="width:40px;height:20px" onclick="document.getElementById(\x27pout\x27).textContent = \x27hit\x27">Pad</button><div id="pout"></div>');
 </script>
