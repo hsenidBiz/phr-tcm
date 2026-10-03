@@ -1703,3 +1703,43 @@ async fn frame_spike_role_lookup_through_a_frame_document() {
         "(b) role Iframe did not list the visible frames by title"
     );
 }
+
+/// The visible employee-search frame, as a chain's first step.
+fn es(inner: serde_json::Value) -> serde_json::Value {
+    json!([{ "css": "iframe[title='Employee Search']" }, inner])
+}
+
+/// Reading inside a frame needs no click, so it proves the resolver alone.
+/// The page also holds a hidden twin of the frame: it must not count.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_chain_reads_inside_the_frame() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": es(json!({ "css": "#pick" })), "equals": "Select" })).await);
+    must(run(&mut live, json!({ "kind": "expect_count",
+        "selector": es(json!({ "role": "button", "name": "Select", "exact": true })), "equals": 1 })).await);
+}
+
+/// When the iframe is the chain's target it stays the iframe element.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_the_last_step_keeps_the_iframe_itself() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#es-frame" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_count", "selector": [{ "css": "#es-wrap" }, { "css": "iframe" }], "equals": 1 })).await);
+}
+
+/// A sandboxed frame cannot be entered. Every check through it says so -
+/// expect_hidden and a count of 0 must not pass just because nothing
+/// was found.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_an_unreachable_frame_is_named_not_reported_missing() {
+    let mut live = open_iframes().await;
+    let locked = json!([{ "css": "#locked" }, { "role": "button", "name": "Locked" }]);
+    let why = "holds a page from another site";
+    refused(run(&mut live, json!({ "kind": "expect_visible", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "expect_hidden", "selector": locked })).await, why);
+    refused(run(&mut live, json!({ "kind": "expect_count", "selector": locked, "equals": 0 })).await, why);
+    refused(run(&mut live, json!({ "kind": "click", "selector": locked })).await, why);
+}

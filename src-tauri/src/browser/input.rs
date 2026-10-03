@@ -13,7 +13,7 @@
 //! autocompletes) will not see keys.
 
 use super::cdp::{browser_silent, CdpError, Driver};
-use super::locator::{resolve, Target};
+use super::locator::{resolve_explained, Target};
 use super::page::{self, Handle};
 use super::timing::Timing;
 use serde_json::{json, Value};
@@ -235,9 +235,11 @@ async fn look<D: Driver>(
     need_editable: bool,
     prev_rect: Option<[f64; 4]>,
 ) -> Result<Look, CdpError> {
-    let handles = resolve(d, target).await?;
+    let found = resolve_explained(d, target).await?;
+    let handles = found.handles;
     if handles.is_empty() {
-        return Ok(Look::NotYet { why: NOT_FOUND.to_string(), rect: None });
+        let why = found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string());
+        return Ok(Look::NotYet { why, rect: None });
     }
     if handles.len() > 1 && !target.is_legacy() {
         return Ok(Look::NotYet {

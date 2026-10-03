@@ -4,7 +4,7 @@ use crate::common;
 
 use common::ScriptedDriver;
 use serde_json::json;
-use v2_lib::browser::locator::{name_matches, resolve, LocatorStep, Target, CSS_JS, LEGACY_JS, VISIBLE_JS};
+use v2_lib::browser::locator::{frame_unreachable, name_matches, FRAME_JS, resolve, LocatorStep, Target, CSS_JS, LEGACY_JS, VISIBLE_JS};
 
 fn step(json: serde_json::Value) -> LocatorStep {
     serde_json::from_value(json).unwrap()
@@ -191,6 +191,11 @@ async fn a_chain_narrows_inside_the_previous_match() {
         "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
             Ok(json!({ "result": { "value": true } }))
         }
+        // Each match of a step that is not the last is asked whether it is
+        // a frame to enter; these dialogs are plain elements.
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == FRAME_JS => {
+            Ok(json!({ "result": { "value": "element" } }))
+        }
         "Runtime.callFunctionOn" => {
             assert_eq!(params["functionDeclaration"], CSS_JS);
             assert_eq!(params["objectId"], "dialog", "the css step must search inside the dialog");
@@ -234,6 +239,11 @@ async fn a_chain_deduplicates_elements_reached_through_more_than_one_root() {
         }
         "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
             Ok(json!({ "result": { "value": true } }))
+        }
+        // Each match of a step that is not the last is asked whether it is
+        // a frame to enter; these dialogs are plain elements.
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == FRAME_JS => {
+            Ok(json!({ "result": { "value": "element" } }))
         }
         "Runtime.callFunctionOn" => {
             assert_eq!(params["functionDeclaration"], CSS_JS);
@@ -290,4 +300,12 @@ async fn nothing_matching_is_an_empty_list_not_an_error() {
     });
     let t: Target = serde_json::from_value(json!([{ "role": "dialog" }, { "css": "button" }])).unwrap();
     assert!(resolve(&mut d, &t).await.unwrap().is_empty());
+}
+
+#[test]
+fn an_unreachable_frame_is_explained_in_a_sentence() {
+    assert_eq!(
+        frame_unreachable("iframe#locked"),
+        "the frame iframe#locked holds a page from another site (or has not loaded), which Auto Run cannot reach"
+    );
 }
