@@ -84,3 +84,23 @@ Only one retry is made, and only for these classes. An assertion that fails is n
 - Rust tests go in `tests/suite` only. vitest covers the webview pieces: the dialog option and the Retried label.
 - Each section's test names the exact sentences above.
 - Run one test command at a time.
+
+## 8. The built-in sign-in recipe dismisses the cookie bar after every sign-in
+
+From `docs/autorun/cookie-banner-recipe.md` (2026-10-05). PeoplesHR's cookie bar (`#cookieBanner`) returns whenever a case reuses a saved session, because the recipe clicks its × (`#btnCookieClose`) only in the sign-in `steps`.
+
+The built-in recipe (`autorun/builtin_recipe.json`) gains, as the FIRST entry of `after_sign_in`:
+
+`{ "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }`
+
+The existing entries stay unchanged, and a test pins the new first entry. It uses the ×, never Accept All, so a run records no consent. A project's own saved recipe is not changed by the app; the doc tells the person how to edit theirs.
+
+## 9. Further iframe follow-ups
+
+These come from the deferred list in `docs/autorun/backlog-2026-10.md`:
+- **Click point.** The click point is re-centred inside the box that is left after clipping through every enclosing frame. A button half-hidden by a frame's edge is clicked in its visible part.
+- **The "cannot reach" sentence.** When, at one chain step, one match is an unreachable frame and another frame was entered, the sentence is not recorded. It is recorded only when no frame at that step was entered.
+- **Deep frames.** Snapshot frames deeper than 3 print one line under the frame, `(frames nested deeper than 3 are not shown)`. They are no longer silently missing.
+- **`check_text`.** It also searches the text of same-origin frames at any depth, as the guide's "anywhere on the page" says. A cross-origin frame's text is not searched, and the guide says so.
+
+The extra protocol round trip per non-final match stays as it is, because it has not been measured.

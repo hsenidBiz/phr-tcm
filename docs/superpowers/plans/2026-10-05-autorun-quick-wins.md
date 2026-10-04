@@ -108,3 +108,23 @@
 
   Add vitest coverage, and keep ui-consistency and a11y green.
 - [ ] **Step 5:** Run the focused tests, `npx tsc --noEmit`, `npm test` and `cd src-tauri && cargo test --tests`, one at a time. Commit: `feat(v2): Auto Run retries a stalled module trip and a transient failure once`.
+
+### Task 4: Built-in recipe cookie dismissal and the further iframe follow-ups (§8, §9)
+
+**Files:**
+- `src-tauri/src/autorun/builtin_recipe.json`
+- `src-tauri/src/browser/input.rs` (`PROBE_JS`: re-centre the point after clipping)
+- `src-tauri/src/browser/locator.rs` (record the unreachable sentence only when no frame at that step was entered)
+- `src-tauri/src/browser/snapshot.rs` (the note for frames deeper than 3)
+- `src-tauri/src/browser/expect.rs` or wherever `check_text` reads page text (include same-origin frames)
+- `src-tauri/src/autorun/guide.rs` (the `check_text` sentence about cross-origin frames)
+- Tests: the recipe module, `browser_locator.rs`, `browser_snapshot.rs`, `browser_input.rs`, plus a live test using `tests/fixtures/autorun-iframe.html`, extended if needed.
+
+- [ ] **Step 1:** Write failing tests:
+  - the built-in recipe's first `after_sign_in` entry is the exact `#btnCookieClose` `when_visible` from spec §8;
+  - the probe's point lies inside the clipped box, with a live test where a button is half-hidden by the frame's edge and the click lands;
+  - a step with one entered frame and one unreachable frame records no sentence;
+  - the deep-frame note;
+  - `check_text` finds text that exists only inside a same-origin frame, with a live test.
+- [ ] **Step 2:** Implement, then update the guide sentence.
+- [ ] **Step 3:** Run the focused tests, the live tests once with `--ignored --test-threads=1`, then `cargo test --tests` and `npm test`, one at a time. Commit: `fix(v2): the built-in recipe dismisses the cookie bar after every sign-in, and frame follow-ups`.
