@@ -363,10 +363,10 @@ export const commands = {
 	 *  Replay to step button. The browser open is used; with none, the one last
 	 *  chosen is opened first, as Open browser opens it. One replay at a time.
 	 *  The pane hears `AutorunReplayProgress` before each step. Refusals and
-	 *  the end come back as the `ReplayEnd`; `Err` is a browser that would not
-	 *  open.
+	 *  the end come back as the `ReplayEnd` with its sentence, which the pane
+	 *  shows as it is; `Err` is a browser that would not open.
 	 */
-	autoRunReplayToStep: (organization: string, project: string, caseId: number, step: number, dbReadAccess: boolean) => typedError<ReplayEnd_Serialize, string>(__TAURI_INVOKE("auto_run_replay_to_step", { organization, project, caseId, step, dbReadAccess })),
+	autoRunReplayToStep: (organization: string, project: string, caseId: number, step: number, dbReadAccess: boolean) => typedError<ReplayAnswer_Serialize, string>(__TAURI_INVOKE("auto_run_replay_to_step", { organization, project, caseId, step, dbReadAccess })),
 	/**
 	 *  The replay's stop control: the replay going, if any, ends at its next
 	 *  look and says where it stopped.
@@ -3193,6 +3193,30 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer = ReplayAnswer_Serialize | ReplayAnswer_Deserialize;
+
+/**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer_Deserialize = {
+	end: ReplayEnd_Deserialize,
+	sentence: string,
+};
+
+/**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer_Serialize = {
+	end: ReplayEnd_Serialize,
+	sentence: string,
 };
 
 /**

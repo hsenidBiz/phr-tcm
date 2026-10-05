@@ -2480,6 +2480,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         &mut account,
         &mut lease,
         &mut guarded,
+        true,
         &timing(),
         &cancel,
         || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },

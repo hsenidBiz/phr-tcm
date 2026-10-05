@@ -97,13 +97,15 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     if crate::commands::autorun_replay::replay_is_running() {
         return Err(UNATTENDED_GOING.to_string());
     }
-    // The person's choice, remembered for a replay that finds no browser.
-    store::remember_browser(&root(&app)?, &browser_name);
     // A replay going in the browser this replaces ends first: it is heard
     // without the session's lock, which the replay holds.
     crate::autorun::replay_to::stop();
     let mut slot = SESSION.lock().await;
-    open_into(&app, &mut slot, Browser::from_name(&browser_name)).await
+    open_into(&app, &mut slot, Browser::from_name(&browser_name)).await?;
+    // The person's choice, once it opened, for a replay that finds no
+    // browser.
+    store::remember_browser(&root(&app)?, &browser_name);
+    Ok(())
 }
 
 /// Said when a supervised browser is asked for while an unattended run is
@@ -301,8 +303,8 @@ pub async fn auto_run_step(
 /// Replay to step button. The browser open is used; with none, the one last
 /// chosen is opened first, as Open browser opens it. One replay at a time.
 /// The pane hears `AutorunReplayProgress` before each step. Refusals and
-/// the end come back as the `ReplayEnd`; `Err` is a browser that would not
-/// open.
+/// the end come back as the `ReplayEnd` with its sentence, which the pane
+/// shows as it is; `Err` is a browser that would not open.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_replay_to_step(
@@ -312,21 +314,26 @@ pub async fn auto_run_replay_to_step(
     case_id: i32,
     step: i32,
     db_read_access: bool,
-) -> Result<crate::autorun::replay_to::ReplayEnd, String> {
+) -> Result<crate::autorun::replay_to::ReplayAnswer, String> {
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayRequest};
     use tauri_specta::Event;
     let _one = match OneReplay::claim() {
         Ok(one) => one,
-        Err(why) => return Ok(ReplayEnd::Refused(why)),
+        Err(why) => return Ok(ReplayEnd::Refused(why).into()),
     };
     let root = root(&app)?;
     let req = ReplayRequest { case_id, step, db_read_access };
     // Refused before anything opens.
     if let Err(why) = replay_to::check(&root, &organization, &project, &req) {
-        return Ok(ReplayEnd::Refused(why));
+        return Ok(ReplayEnd::Refused(why).into());
     }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = SESSION.lock().await;
+    // A Close that took the lock first is respected: no browser is opened
+    // again for a replay the person has already stopped.
+    if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
+        return Ok(stopped.into());
+    }
     open_if_none(&app, &mut slot).await?;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     let end = replay_to::replay_to_checked(
@@ -338,6 +345,9 @@ pub async fn auto_run_replay_to_step(
         &mut session.account,
         &mut session.lease,
         &mut session.guarded_case,
+        // The person's own replay, as their own step: it may lift an
+        // earlier case's guard.
+        true,
         &crate::browser::timing::Timing::default(),
         &replay_to::CANCEL,
         || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
@@ -356,7 +366,7 @@ pub async fn auto_run_replay_to_step(
         ReplayEnd::Refused(_) => "refused".to_string(),
     };
     crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: {how}"));
-    Ok(end)
+    Ok(end.into())
 }
 
 /// The replay's stop control: the replay going, if any, ends at its next

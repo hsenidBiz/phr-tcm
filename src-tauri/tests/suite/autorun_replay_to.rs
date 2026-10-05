@@ -16,8 +16,10 @@ use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
 use v2_lib::autorun::preconditions::{PreconditionDb, NEED_DB, NOT_CHECKED};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{
-    replay_to, replay_to_checked, OneReplay, ReplayEnd, ReplayRequest, ALREADY_RUNNING, CANCEL,
+    replay_to, replay_to_checked, stopped_before_opening, OneReplay, ReplayAnswer, ReplayEnd, ReplayRequest,
+    ALREADY_RUNNING, CANCEL,
 };
+use v2_lib::commands::autorun::guard_for_case;
 use v2_lib::autorun::runner::NEEDS_SCRIPT_AREA;
 use v2_lib::autorun::{store, CaseScript};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -110,6 +112,7 @@ async fn replay(
         account,
         &mut held,
         guarded,
+        true,
         &quick(),
         cancel,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
@@ -323,6 +326,7 @@ async fn a_precondition_not_met_stops_it_with_its_blocked_sentence_and_signs_nob
         &mut account,
         &mut held,
         &mut guarded,
+        true,
         &quick(),
         &cancel,
         || PreconditionDb::Ready(db.clone()),
@@ -353,6 +357,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
         &mut account,
         &mut held,
         &mut guarded,
+        true,
         &quick(),
         &cancel,
         || if r.db_read_access { PreconditionDb::Ready(db.clone()) } else { PreconditionDb::ReadingOff },
@@ -441,4 +446,76 @@ fn the_browser_last_chosen_is_remembered_and_edge_is_the_default() {
     assert_eq!(store::last_browser(dir.path()), "edge");
     store::remember_browser(dir.path(), "netscape");
     assert_eq!(store::last_browser(dir.path()), "edge");
+}
+
+/// An assistant's replay (`may_lift` false) may switch a guard on, never
+/// take one away: a guard held for no-save case 5 stays on while unflagged
+/// case 77 is replayed, and still belongs to case 5.
+#[tokio::test]
+async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let mut five = script(three_steps());
+    five.case_id = 5;
+    five.no_save = true;
+    store::save_script(dir.path(), &five).unwrap();
+    let (mut d, app) = app();
+    let mut guarded = None;
+    guard_for_case(&mut d, &mut guarded, dir.path(), "acme", "Web", 5, true).await.unwrap();
+    assert_eq!(guarded, Some(5));
+    let (mut account, cancel) = (None, AtomicBool::new(false));
+    let mut held = Held::supervised();
+    let end = replay_to_checked(
+        &mut d,
+        dir.path(),
+        "acme",
+        "Web",
+        &req(2),
+        &mut account,
+        &mut held,
+        &mut guarded,
+        false,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+    )
+    .await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert!(clicked(&app, "#s1"));
+    assert!(d.is_guarding_saves(), "the guard was lifted: {:?}", d.methods());
+    assert!(!d.methods().contains(&"Fetch.disable".to_string()), "{:?}", d.methods());
+    assert_eq!(guarded, Some(5));
+
+    // The person's own replay of the same case does lift it. (`replay`
+    // brings its own lease, so this one lets the account go first.)
+    drop(held);
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert!(!d.is_guarding_saves());
+    assert_eq!(guarded, None);
+}
+
+/// A Close that took the session's lock before the replay did: the replay
+/// ends before any browser is opened for it.
+#[test]
+fn a_stop_before_the_browser_opens_ends_the_replay_there() {
+    let cancel = AtomicBool::new(false);
+    assert_eq!(stopped_before_opening(&cancel), None);
+    cancel.store(true, Ordering::SeqCst);
+    let end = stopped_before_opening(&cancel).expect("the stop was ignored");
+    assert_eq!(end, ReplayEnd::Stopped { step: 1 });
+    assert_eq!(end.sentence(), "the replay was stopped at step 1");
+}
+
+/// The person's command answers with the sentence already said.
+#[test]
+fn the_answer_carries_the_finished_sentence() {
+    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None }.into();
+    assert_eq!(answer.sentence, "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
+    let answer: ReplayAnswer = ReplayEnd::Refused(ALREADY_RUNNING.into()).into();
+    assert_eq!(answer.sentence, ALREADY_RUNNING);
+    let json = serde_json::to_value(&answer).unwrap();
+    assert_eq!(json, json!({ "end": { "kind": "refused", "detail": ALREADY_RUNNING }, "sentence": ALREADY_RUNNING }));
 }

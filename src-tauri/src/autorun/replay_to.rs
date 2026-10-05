@@ -66,6 +66,27 @@ impl ReplayEnd {
     }
 }
 
+/// A replay's end with the sentence that says it, as the person's command
+/// answers: the pane shows `sentence` as it is.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ReplayAnswer {
+    pub end: ReplayEnd,
+    pub sentence: String,
+}
+
+impl From<ReplayEnd> for ReplayAnswer {
+    fn from(end: ReplayEnd) -> Self {
+        let sentence = end.sentence();
+        ReplayAnswer { end, sentence }
+    }
+}
+
+/// A stop asked for before the browser is opened for a replay - a Close
+/// that won the session's lock first - ends it there: nothing opens.
+pub fn stopped_before_opening(cancel: &AtomicBool) -> Option<ReplayEnd> {
+    cancel.load(Ordering::SeqCst).then_some(ReplayEnd::Stopped { step: 1 })
+}
+
 /// Whether a replay is going. Only `OneReplay` flips it.
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -137,8 +158,9 @@ fn closed(o: &ActionOutcome) -> bool {
     o.harness && o.detail.contains(&CdpError::Closed.to_string())
 }
 
-/// `replay_to_checked` with the default timing, no earlier guard to carry,
-/// and no database to ask: a case with preconditions is refused with
+/// `replay_to_checked` as the person's own replay (it may lift an earlier
+/// case's guard), with the default timing, no earlier guard to carry, and no
+/// database to ask: a case with preconditions is refused with
 /// `preconditions::NEED_DB` while Database Read Access is on, and carries
 /// the notice while it is off.
 #[allow(clippy::too_many_arguments)]
@@ -171,6 +193,7 @@ pub async fn replay_to<D: Driver>(
         account,
         lease,
         &mut guarded_case,
+        true,
         &Timing::default(),
         cancel,
         db,
@@ -181,7 +204,10 @@ pub async fn replay_to<D: Driver>(
 
 /// Replay case `req.case_id` in the supervised browser `d` up to the page
 /// before step `req.step`. `account`, `lease` and `guarded_case` are the
-/// supervised session's own, as `auto_run_step` uses them. `db` gives the
+/// supervised session's own, as `auto_run_step` uses them. `may_lift` is
+/// `guard_for_case`'s: true for the person's replay; false for an
+/// assistant's, which may switch the guard on for a no-save case but never
+/// lifts one held for another case, as a try never does. `db` gives the
 /// place preconditions are asked (`preconditions::for_run`), looked at only
 /// when the script has some. `progress(k, total)` is called before each
 /// step runs, `total` being `req.step - 1`. `cancel` is the stop control.
@@ -195,6 +221,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
     account: &mut Option<String>,
     lease: &mut Held,
     guarded_case: &mut Option<i32>,
+    may_lift: bool,
     timing: &Timing,
     cancel: &AtomicBool,
     db: impl FnOnce() -> PreconditionDb<P>,
@@ -222,7 +249,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
 
     // The no-save guard, through the same path as a person's step.
     if let Err(why) =
-        crate::commands::autorun::guard_for_case(d, guarded_case, root, organization, project, id, true).await
+        crate::commands::autorun::guard_for_case(d, guarded_case, root, organization, project, id, may_lift).await
     {
         return ReplayEnd::Refused(why);
     }
