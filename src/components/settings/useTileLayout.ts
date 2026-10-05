@@ -30,6 +30,13 @@ import { driftFrames, planClose, planOpen, type TileMove, type TileTiming } from
  * after it changes column - the measurements are keyed by the id, not the
  * node. Below the breakpoint there is one column and nothing moves; under
  * reduced motion the layout and the expansion change at once.
+ *
+ * When the right column has room for two cards across (roomy), the `spare`
+ * cards leave the left column for a second stack beside the moving ones,
+ * under the panel, so they are not left below the bottom of the window.
+ * They then change column with the others when the history opens, and are
+ * timed like them. The room is read from the grid's own width, which no
+ * card placement changes; crossing it settles at once, like the breakpoint.
  */
 
 /** Tailwind's `lg` - the width the Settings grid turns two columns at. */
@@ -60,9 +67,46 @@ const TIMING: TileTiming = {
  * the foot of the left or the right column of the wide layout. */
 export type TilePlacement = "single" | "left" | "right";
 
+/** The widest a card gets, the gap between the two columns, the gap between
+ * two cards side by side and the right track's floor, in rem (Settings.tsx:
+ * the grid's tracks, gap-8 and LEFT_TRACK_WIDTH). */
+const CARD_REM = 32;
+const COLUMN_GAP_REM = 2;
+const STACK_GAP_REM = 1;
+const RIGHT_FLOOR_REM = 24;
+
+/**
+ * Whether the right column of a grid `gridPx` wide holds two cards side by
+ * side. Each card is as wide as the left track - min(32rem, the grid less
+ * the gap and the right track's floor) - and the two sit 1rem apart.
+ */
+export function roomyFor(gridPx: number, remPx: number): boolean {
+  const card = Math.min(CARD_REM * remPx, gridPx - (COLUMN_GAP_REM + RIGHT_FLOOR_REM) * remPx);
+  if (card <= 0) return false;
+  const right = gridPx - card - COLUMN_GAP_REM * remPx;
+  return right >= 2 * card + STACK_GAP_REM * remPx;
+}
+
+/** The root font size, which the rem widths above are in. */
+function remPx(): number {
+  const size = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return size > 0 ? size : 16;
+}
+
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const cardSelector = (id: string) => `[${CARD_ATTR}="${id}"]`;
+
+/** `ids` top to bottom by where `rects` has them, left to right within a
+ * row: the order the schedule plans in. Two stacks side by side interleave. */
+function topDown(ids: readonly string[], rects: Map<string, DOMRect>): string[] {
+  return [...ids].sort((a, b) => {
+    const ra = rects.get(a);
+    const rb = rects.get(b);
+    if (!ra || !rb) return 0;
+    return ra.top - rb.top || ra.left - rb.left;
+  });
+}
 
 /** Every card's place on screen, by id. */
 function measure(root: HTMLElement): Map<string, DOMRect> {
@@ -217,11 +261,16 @@ function planBack(
   return { starts, drift, driftMs: ms };
 }
 
+const NONE: readonly string[] = [];
+
 type Pending = {
   /** open/close: Show more / Show less. switch: the Changelog/Logs toggle. */
   kind: "open" | "close" | "switch";
   rects: Map<string, DOMRect>;
   placement: TilePlacement;
+  /** The cards that change column this time, top to bottom: the moving
+   * ones, and the spare ones too while the column is roomy. */
+  moving: string[];
   done?: () => void;
 };
 
@@ -229,6 +278,7 @@ export function useTileLayout({
   rootRef,
   changelogRef,
   moving,
+  spare = NONE,
   fold,
   changelogShown,
 }: {
@@ -238,6 +288,9 @@ export function useTileLayout({
   changelogRef: RefObject<HTMLElement | null>;
   /** The ids of the cards that change column, top to bottom. */
   moving: readonly string[];
+  /** The ids of the cards that stack beside the moving ones while the right
+   * column is roomy, and sit in the left column otherwise. */
+  spare?: readonly string[];
   /** The folding box of the history, while it is open. */
   fold: () => HTMLElement | null;
   /** False while the right column shows something other than the
@@ -250,6 +303,20 @@ export function useTileLayout({
   const [side, setSide] = useState<"left" | "right">("right");
   const [expanded, setExpanded] = useState(false);
   const placement: TilePlacement = !wide ? "single" : changelogShown ? side : "right";
+  // Room for two cards across the right column, read from the grid's width.
+  // That width is the page's: where the cards sit cannot change it, so this
+  // never feeds back into itself.
+  const [roomy, setRoomy] = useState(false);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const read = () => setRoomy(roomyFor(root.clientWidth, remPx()));
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(read);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [rootRef]);
 
   const pending = useRef<Pending | null>(null);
   // What the fold reported during the commit that moved the cards: the
@@ -258,9 +325,9 @@ export function useTileLayout({
   const closed = useRef<FoldMotion | null>(null);
   const running = useRef<Animation[]>([]);
   const busy = useRef(false);
-  const latest = useRef({ placement, wide });
+  const latest = useRef({ placement, wide, roomy });
   useLayoutEffect(() => {
-    latest.current = { placement, wide };
+    latest.current = { placement, wide, roomy };
   });
 
   /** Stop any slide under way: the cards settle where they are laid out. */
@@ -280,6 +347,15 @@ export function useTileLayout({
     stop();
   }, [wide, stop]);
 
+  // The same across the roomy width: the spare stack comes or goes, and a
+  // slide planned against the other layout settles at once.
+  const wasRoomy = useRef(roomy);
+  useLayoutEffect(() => {
+    if (wasRoomy.current === roomy) return;
+    wasRoomy.current = roomy;
+    stop();
+  }, [roomy, stop]);
+
   /**
    * Collapse's grow is measured (Show more): plan the whole motion now,
    * while the cards are already laid out in the left column and the
@@ -294,7 +370,7 @@ export function useTileLayout({
       const column = panel?.parentElement;
       const box = fold();
       if (p?.kind !== "open" || !root || !panel || !column || !box) return 0;
-      const moves = journeys(root, p.rects, moving);
+      const moves = journeys(root, p.rects, p.moving);
       if (!moves) return 0;
       const full = panel.getBoundingClientRect().bottom;
       // The panel's foot with the history mounted but not grown yet (its
@@ -306,7 +382,7 @@ export function useTileLayout({
       opened.current = { starts: plan.starts, end: plan.fold + grow.ms };
       return plan.fold;
     },
-    [rootRef, changelogRef, moving, fold],
+    [rootRef, changelogRef, fold],
   );
 
   /** Collapse's closing copy starts to shrink (Show less). */
@@ -340,9 +416,11 @@ export function useTileLayout({
     let anims: Animation[];
     let until = 0;
     if (p.kind === "open") {
-      anims = glide(root, p.rects, moving, open?.starts ?? cascade(moving.length));
+      anims = glide(root, p.rects, p.moving, open?.starts ?? cascade(p.moving.length));
       until = open?.end ?? 0;
     } else if (p.kind === "close") {
+      // Planned in the order of the spots the cards return to.
+      const moving = topDown(p.moving, measure(root));
       const panel = changelogRef.current;
       const back = panel ? planBack(root, panel, p.rects, moving, shrink) : null;
       anims = back
@@ -350,7 +428,7 @@ export function useTileLayout({
         : glide(root, p.rects, moving, cascade(moving.length, true));
       until = shrink?.ms ?? 0;
     } else {
-      anims = glide(root, p.rects, moving, cascade(moving.length));
+      anims = glide(root, p.rects, p.moving, cascade(p.moving.length));
     }
     running.current = anims;
     void Promise.all([settled(anims), wait(until)]).then(() => {
@@ -363,13 +441,17 @@ export function useTileLayout({
     (kind: Pending["kind"], change: () => void, done?: () => void) => {
       const root = rootRef.current;
       if (root && latest.current.wide && !reducedMotion()) {
-        pending.current = { kind, rects: measure(root), placement: latest.current.placement, done };
+        const rects = measure(root);
+        // A card the screen does not show (Extras, while locked) has no
+        // journey, and leaving it in would void the whole plan.
+        const ids = (latest.current.roomy ? [...moving, ...spare] : [...moving]).filter((id) => rects.has(id));
+        pending.current = { kind, rects, placement: latest.current.placement, moving: topDown(ids, rects), done };
       } else {
         done?.();
       }
       change();
     },
-    [rootRef],
+    [rootRef, moving, spare],
   );
 
   /** Apply `change` (a state update that may move the cards), gliding the
@@ -397,5 +479,9 @@ export function useTileLayout({
     });
   }, [expanded, side, run]);
 
-  return { placement, expanded, toggle, flip, onGrow, onShrink };
+  /** True while the spare cards stack beside the moving ones under the
+   * panel: the wide layout, the cards on the right, and room for two. */
+  const spareStack = placement === "right" && roomy;
+
+  return { placement, spareStack, expanded, toggle, flip, onGrow, onShrink };
 }
