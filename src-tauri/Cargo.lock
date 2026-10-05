@@ -6089,6 +6089,7 @@ version = "2.1.1-beta.5"
 dependencies = [
  "base64 0.22.1",
  "calamine",
+ "chrono",
  "cpal",
  "csv",
  "encoding_rs",

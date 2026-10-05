@@ -34,6 +34,7 @@ pub mod sessions;
 pub mod signin;
 pub mod signin_recorder;
 pub mod store;
+pub mod test_made;
 pub mod transient;
 
 use crate::browser::actions::{Action, ActionOutcome};

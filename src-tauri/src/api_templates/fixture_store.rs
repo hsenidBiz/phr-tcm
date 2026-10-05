@@ -141,3 +141,21 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: FixtureRun
 pub fn current_outputs(root: &Path, org: &str, project: &str, id: &str) -> Option<BTreeMap<String, Value>> {
     load_runs(root, org, project, id).ok()?.into_iter().find(|r| r.ok).map(|r| r.outputs)
 }
+
+/// Removes a fixture and its run history: the person's, from the Fixtures
+/// tab, as removing a template is. What its runs made stays in the record
+/// of test-made drafts, for Clean up. A fixture that is not there is
+/// already removed.
+pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err(invalid_id(id));
+    }
+    for path in [fixture_path(root, org, project, id), runs_path(root, org, project, id)] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}

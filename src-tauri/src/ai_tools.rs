@@ -173,6 +173,9 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "save_api_fixture",
+    "run_api_fixture",
+    "list_api_fixtures",
     "record_app_quirk",
     "retire_app_quirk",
 ];

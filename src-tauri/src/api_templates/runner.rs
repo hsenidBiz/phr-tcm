@@ -24,7 +24,7 @@ use super::exec::{
 use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
 use super::flow::{check_stage_ref, Flow};
 use super::flow_store;
-use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Step};
+use super::{check, check_values, is_safe_relative_path, ApiTemplate, Effect, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
 use crate::autorun::accounts::Account;
@@ -152,7 +152,7 @@ pub struct RunRequest {
 /// One step's result. Also used for the parts of a run that come before
 /// the steps - `"Sign in"`, `"Anti-forgery token"`, `"Browser"` - when one
 /// of those is what stopped it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct StepReport {
     pub name: String,
     /// The step's `handler` query value, if it has one.
@@ -162,15 +162,18 @@ pub struct StepReport {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct RunReport {
     pub ok: bool,
     /// The template's id.
     pub template: String,
     /// The template's declared outputs - only on success.
+    // See `RunRecord::outputs` on why the value side is `unknown`.
+    #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
     pub outputs: BTreeMap<String, Value>,
     /// Everything captured before the run stopped: what a failed run
     /// already did in the application, which nothing undoes.
+    #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
     pub created: BTreeMap<String, Value>,
     pub steps: Vec<StepReport>,
     /// The name of whatever stopped the run (a step's name, or one of the
@@ -218,7 +221,8 @@ impl RunReport {
 /// the template's own checks, the values against its params, a safe
 /// anti-forgery page, the recipe and the account, a template's flow stage
 /// (`stage_problems`) - and, proving over an existing id, `replace: true`
-/// with a non-blank `why`.
+/// with a non-blank `why`. Running a delete template is refused here: only
+/// Clean up test-made drafts runs one.
 pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) -> Result<(), Vec<String>> {
     let t = &req.template;
     // A saved template carries the app's `proven` block, which `check`
@@ -227,6 +231,9 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
         Mode::Run => check(&ApiTemplate { proven: None, ..t.clone() }),
         Mode::Prove { .. } => check(t),
     };
+    if matches!(req.mode, Mode::Run) && t.effect == Effect::Delete {
+        problems.push(deletes_refusal(&t.id));
+    }
     problems.extend(check_values(t, &req.values));
     if !is_safe_relative_path(&t.antiforgery.page) {
         problems.push(format!(
@@ -327,6 +334,16 @@ fn stage_problems(root: &Path, req: &RunRequest) -> (Vec<String>, Option<String>
     }
     (Vec::new(), None)
 }
+
+/// The sentence a run of a delete template is refused with, outside Clean
+/// up test-made drafts.
+pub fn deletes_refusal(id: &str) -> String {
+    format!("template {id} deletes, and only Clean up test-made drafts runs a delete template")
+}
+
+/// Said when a prove, a run or a fixture run arrives while another one
+/// holds the process-wide slot (`claim`).
+pub const API_TEMPLATE_BUSY: &str = "another API template is running - wait for it to finish";
 
 /// Whether a template run is going, process-wide. Only `claim` sets it;
 /// only dropping the claim clears it - so a run that panics or returns
@@ -573,7 +590,7 @@ pub async fn run_template_within<B: Browsers>(
     retry_pauses: &[Duration],
 ) -> RunReport {
     let mut progress = Progress::new();
-    match account_lease(root, req, timing).await {
+    match account_lease(root, &req.account, timing).await {
         Err(why) => {
             progress.at(SIGN_IN, None);
             progress.fail(None, why);
@@ -596,7 +613,11 @@ pub async fn run_template_within<B: Browsers>(
             }
         },
     }
+    finish(req, progress)
+}
 
+/// The report of a run that has stopped or finished, and its app-log line.
+fn finish(req: &RunRequest, progress: Progress) -> RunReport {
     let t = &req.template;
     let ok = progress.finished && progress.failed.is_none();
     let outputs = if ok {
@@ -613,13 +634,101 @@ pub async fn run_template_within<B: Browsers>(
     RunReport { ok, template: t.id.clone(), outputs, created: progress.created, steps: progress.steps, failed: progress.failed }
 }
 
-/// The run's account, in the active environment, before any browser opens
-/// (`autorun::lease`): an unattended case or the Auto Run browser signed in
-/// as it is waited for, up to `timing`'s lease wait, and then the run is
-/// refused with the sentence that says who had it.
-async fn account_lease(root: &Path, req: &RunRequest, timing: &Timing) -> Result<lease::Lease, String> {
+/// The account's lease, in the active environment, before any browser
+/// opens (`autorun::lease`): an unattended case or the Auto Run browser
+/// signed in as it is waited for, up to `timing`'s lease wait, and then the
+/// run is refused with the sentence that says who had it. A fixture takes
+/// it once for all its steps.
+pub(crate) async fn account_lease(root: &Path, account: &str, timing: &Timing) -> Result<lease::Lease, String> {
     let env = crate::environments::active_id(root)?;
-    lease::acquire(&env, &req.account, lease::Holder::Template, timing.lease_wait()).await
+    lease::acquire(&env, account, lease::Holder::Template, timing.lease_wait()).await
+}
+
+/// The report of `req`'s template stopped before its browser signed in:
+/// at `Sign in` (the lease was refused) or, with `browser`, at `Browser`
+/// (the browser did not open). What a fixture's first step says when it
+/// never got that far.
+pub(crate) fn stopped_before_sign_in(req: &RunRequest, browser: bool, why: String) -> RunReport {
+    let mut progress = Progress::new();
+    if browser {
+        progress.fail(None, format!("the browser did not open: {why}"));
+    } else {
+        progress.at(SIGN_IN, None);
+        progress.fail(None, why);
+    }
+    finish(req, progress)
+}
+
+/// What one sign-in leaves for every template run after it in the same
+/// browser: the recipe and account it signed in with, the origin, and how
+/// the sign-in went (each template's token-page record says so).
+pub(crate) struct Session {
+    recipe: SignInRecipe,
+    account: Account,
+    origin: String,
+    sign_ins: Vec<Value>,
+}
+
+impl Session {
+    fn ctx<'a>(&self, root: &'a Path, req: &'a RunRequest, timing: &'a Timing) -> Ctx<'a> {
+        Ctx {
+            root,
+            req,
+            timing,
+            recipe: self.recipe.clone(),
+            account: self.account.clone(),
+            origin: self.origin.clone(),
+        }
+    }
+}
+
+/// Signs in once, in a browser already open, as `req`'s account - the
+/// first half of `drive`, for a fixture whose templates then each run in
+/// that same browser (`run_in_session`). On failure, the report of `req`'s
+/// template stopped at `Sign in`. Bounded by `limit`, like a run.
+pub(crate) async fn open_session<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    req: &RunRequest,
+    timing: &Timing,
+    limit: Duration,
+) -> Result<Session, RunReport> {
+    let mut progress = Progress::new();
+    let timed = tokio::time::timeout(limit, sign_in_once(d, root, req, timing, &mut progress)).await;
+    d.set_deadline(None);
+    match timed {
+        Ok(Some(session)) => Ok(session),
+        Ok(None) => Err(finish(req, progress)),
+        Err(_) => {
+            if progress.failed.is_none() {
+                progress.fail(None, RUN_TOO_LONG);
+            }
+            Err(finish(req, progress))
+        }
+    }
+}
+
+/// Runs `req.template` in a browser `open_session` signed in: its
+/// anti-forgery page, its token, then its steps - the second half of
+/// `drive`. `limit` bounds this one template, not whatever runs around it.
+pub(crate) async fn run_in_session<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    req: &RunRequest,
+    timing: &Timing,
+    session: &Session,
+    limit: Duration,
+    retry_pauses: &[Duration],
+) -> RunReport {
+    let mut progress = Progress::new();
+    progress.sign_ins = session.sign_ins.clone();
+    let ctx = session.ctx(root, req, timing);
+    let timed = tokio::time::timeout(limit, run_signed_in(d, &ctx, retry_pauses, &mut progress)).await;
+    if timed.is_err() && progress.failed.is_none() {
+        progress.fail(None, RUN_TOO_LONG);
+    }
+    d.set_deadline(None);
+    finish(req, progress)
 }
 
 /// Everything after the browser is open: sign in, fetch the token, run the
@@ -632,27 +741,52 @@ async fn drive<D: Driver>(
     retry_pauses: &[Duration],
     progress: &mut Progress,
 ) {
+    let Some(session) = sign_in_once(d, root, req, timing, progress).await else { return };
+    let ctx = session.ctx(root, req, timing);
+    run_signed_in(d, &ctx, retry_pauses, progress).await
+}
+
+/// Signs in as `req`'s account, through its recipe or a saved session.
+/// `None` when it could not, with the reason recorded in `progress`.
+async fn sign_in_once<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    req: &RunRequest,
+    timing: &Timing,
+    progress: &mut Progress,
+) -> Option<Session> {
     progress.at(SIGN_IN, None);
     let (recipe, account) = match prepare(root, &req.org, &req.project, &req.account) {
         Ok(x) => x,
-        Err(e) => return progress.fail(None, e),
+        Err(e) => {
+            progress.fail(None, e);
+            return None;
+        }
     };
     let Some(origin) = recipe.origins().into_iter().next() else {
-        return progress.fail(
+        progress.fail(
             None,
             "the sign-in recipe's start address is not a usable http or https address - fix it in Auto Run, Sign-in recipe",
         );
+        return None;
     };
     let ctx = Ctx { root, req, timing, recipe, account, origin };
 
     let signed = sign_in(d, root, &ctx.recipe, &ctx.account, timing).await;
     if !signed.ok {
-        return progress.fail(None, ctx.could_not_sign_in(&signed));
+        progress.fail(None, ctx.could_not_sign_in(&signed));
+        return None;
     }
     progress.signed_in(ctx.id(), &ctx.account.key, &signed);
+    Some(Session { recipe: ctx.recipe, account: ctx.account, origin: ctx.origin, sign_ins: progress.sign_ins.clone() })
+}
 
+/// A signed-in browser's part of a run: the token page, then each step,
+/// stopping at the first failure.
+async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Duration], progress: &mut Progress) {
+    let req = ctx.req;
     progress.at(TOKEN_PAGE, None);
-    let Some((mut doc, mut token)) = token(d, &ctx, progress).await else { return };
+    let Some((mut doc, mut token)) = token(d, ctx, progress).await else { return };
 
     // What a run left out of an optional param, its default stands in for.
     let mut vars: BTreeMap<String, Value> = crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
@@ -661,7 +795,7 @@ async fn drive<D: Driver>(
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
         d.set_deadline(Some(Instant::now() + step_limit(step)));
-        let mut result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
+        let mut result = run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
         d.set_deadline(None);
         // Refused before any handler read it: nothing was saved, so it is
         // sent again - after each of `retry_pauses`, with a fresh token
@@ -682,11 +816,11 @@ async fn drive<D: Driver>(
             tokio::time::sleep(*pause).await;
             progress.at(TOKEN_PAGE, None);
             // `self::` because the loop's own `token` (the string) shadows the function.
-            let Some((fresh_doc, fresh_token)) = self::token(d, &ctx, progress).await else { return };
+            let Some((fresh_doc, fresh_token)) = self::token(d, ctx, progress).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
             d.set_deadline(Some(Instant::now() + step_limit(step)));
-            result = run_step(d, &ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, attempt).await;
+            result = run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, attempt).await;
             d.set_deadline(None);
         }
         if attempt > 1 {

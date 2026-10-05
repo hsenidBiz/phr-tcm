@@ -1129,6 +1129,22 @@ export const commands = {
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
 	apiTemplatesImport: (organization: string, project: string, path: string) => typedError<TemplatesImportResult, string>(__TAURI_INVOKE("api_templates_import", { organization, project, path })),
+	/**
+	 *  Every saved fixture of the project, with its run history, for the
+	 *  Fixtures tab.
+	 */
+	apiFixturesList: (organization: string, project: string) => typedError<SavedFixture[], string>(__TAURI_INVOKE("api_fixtures_list", { organization, project })),
+	/**
+	 *  Runs a saved fixture: Run (its first build) and Rebuild are the same
+	 *  command. A headless browser, as a template run from the AI Bridge uses;
+	 *  the run holds the one-at-a-time template slot throughout.
+	 */
+	apiFixtureRun: (organization: string, project: string, id: string) => typedError<FixtureReport_Serialize, string>(__TAURI_INVOKE("api_fixture_run", { organization, project, id })),
+	/**
+	 *  Removes a fixture and its run history - the person's, as removing a
+	 *  template is. What it made stays in the record of test-made drafts.
+	 */
+	apiFixtureRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_fixture_remove", { organization, project, id })),
 	testFilesList: (organization: string, project: string) => typedError<TestFile[], string>(__TAURI_INVOKE("test_files_list", { organization, project })),
 	/**
 	 *  Copies the file the person picked at `path` into Test files. `replace`
@@ -2094,6 +2110,16 @@ export type CreatedItem = {
 };
 
 /**
+ *  One thing a fixture makes: its kind and the placeholders that name its
+ *  id and its name once the fixture has run.
+ */
+export type Creates = {
+	kind: string,
+	id: string,
+	name: string,
+};
+
+/**
  *  What the edit form sends back. `password: None` (or blank) keeps the
  *  password already in force, so the form never needs to be shown it.
  */
@@ -2462,6 +2488,68 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+export type Fixture = {
+	id: string,
+	name: string,
+	/**  An Auto Run account key, as a template run takes. */
+	account: string,
+	steps: FixtureStep[],
+	outputs?: { [key in string]: string },
+	creates?: Creates[],
+};
+
+/**  What a fixture run did. */
+export type FixtureReport = FixtureReport_Serialize | FixtureReport_Deserialize;
+
+/**  What a fixture run did. */
+export type FixtureReport_Deserialize = {
+	ok: boolean,
+	/**  The fixture's outputs - only when every step passed. */
+	outputs: { [key in string]: unknown },
+	/**  What the run made, as it was recorded as test-made. */
+	made: TestMade_Deserialize[],
+	/**  Each step's own report, in order, up to the one that stopped the run. */
+	steps: RunReport[],
+	/**
+	 *  Why the run stopped: `step <n>: <that template's sentence>`, or the
+	 *  reason it could not start.
+	 */
+	failed: string | null,
+	warnings: string[],
+};
+
+/**  What a fixture run did. */
+export type FixtureReport_Serialize = {
+	ok: boolean,
+	/**  The fixture's outputs - only when every step passed. */
+	outputs: { [key in string]: unknown },
+	/**  What the run made, as it was recorded as test-made. */
+	made: TestMade_Serialize[],
+	/**  Each step's own report, in order, up to the one that stopped the run. */
+	steps: RunReport[],
+	/**
+	 *  Why the run stopped: `step <n>: <that template's sentence>`, or the
+	 *  reason it could not start.
+	 */
+	failed: string | null,
+	warnings: string[],
+};
+
+/**  One running of a fixture, as its history keeps it. */
+export type FixtureRun = {
+	at: string,
+	ok: boolean,
+	/**  The 1-based step that failed, when one did. */
+	failed_step?: number | null,
+	detail?: string | null,
+	outputs?: { [key in string]: unknown },
+};
+
+export type FixtureStep = {
+	template: string,
+	params?: { [key in string]: string },
 };
 
 export type Flow = Flow_Serialize | Flow_Deserialize;
@@ -3749,6 +3837,25 @@ export type RunRecord = {
 	outputs?: { [key in string]: unknown },
 };
 
+export type RunReport = {
+	ok: boolean,
+	/**  The template's id. */
+	template: string,
+	/**  The template's declared outputs - only on success. */
+	outputs: { [key in string]: unknown },
+	/**
+	 *  Everything captured before the run stopped: what a failed run
+	 *  already did in the application, which nothing undoes.
+	 */
+	created: { [key in string]: unknown },
+	steps: StepReport[],
+	/**
+	 *  The name of whatever stopped the run (a step's name, or one of the
+	 *  `StepReport` names for the parts before the steps).
+	 */
+	failed: string | null,
+};
+
 /**
  *  A live run's identity plus every point's result row, so the runner can
  *  PATCH one case at a time as the tester advances.
@@ -3764,6 +3871,12 @@ export type RunStarted = {
 	 *  instead of discovering it at the end.
 	 */
 	unmatched: number[],
+};
+
+/**  A fixture together with its run history, as the tab lists it. */
+export type SavedFixture = {
+	fixture: Fixture,
+	runs: FixtureRun[],
 };
 
 /**  A template together with its run history, as the tab lists it. */
@@ -3980,6 +4093,20 @@ export type StepRecord_Serialize = {
 	 *  names only, never a path (unattended runs only).
 	 */
 	downloads?: string[],
+};
+
+/**
+ *  One step's result. Also used for the parts of a run that come before
+ *  the steps - `"Sign in"`, `"Anti-forgery token"`, `"Browser"` - when one
+ *  of those is what stopped it.
+ */
+export type StepReport = {
+	name: string,
+	/**  The step's `handler` query value, if it has one. */
+	handler: string | null,
+	status: number | null,
+	ok: boolean,
+	detail: string,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -4458,6 +4585,54 @@ export type TestFile = {
 	 *  the file system would not say.
 	 */
 	modified: string,
+};
+
+export type TestMade = TestMade_Serialize | TestMade_Deserialize;
+
+export type TestMade_Deserialize = {
+	/**  The id of the environment it was made in. */
+	environment: string,
+	/**
+	 *  What it is (`cycle`, `suite` and so on), as the fixture's `creates`
+	 *  names it - the kind a delete template deletes.
+	 */
+	kind: string,
+	/**  Its id in the application. */
+	id: string,
+	name: string,
+	/**  When it was made, ISO 8601 UTC. */
+	created_at: string,
+	/**  The id of the fixture that made it. */
+	fixture: string,
+	/**  The fixture run that made it. */
+	run_id: string,
+	/**  The case whose setup made it, when a setup did. */
+	case_id?: number | null,
+	/**  `present`, `deleted` or `delete failed: <the reason>`. */
+	status: string,
+};
+
+export type TestMade_Serialize = {
+	/**  The id of the environment it was made in. */
+	environment: string,
+	/**
+	 *  What it is (`cycle`, `suite` and so on), as the fixture's `creates`
+	 *  names it - the kind a delete template deletes.
+	 */
+	kind: string,
+	/**  Its id in the application. */
+	id: string,
+	name: string,
+	/**  When it was made, ISO 8601 UTC. */
+	created_at: string,
+	/**  The id of the fixture that made it. */
+	fixture: string,
+	/**  The fixture run that made it. */
+	run_id: string,
+	/**  The case whose setup made it, when a setup did. */
+	case_id?: number | null,
+	/**  `present`, `deleted` or `delete failed: <the reason>`. */
+	status: string,
 };
 
 export type TestPlan = {

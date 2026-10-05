@@ -21,16 +21,16 @@ use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay::Browsers;
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 
-const ORG: &str = "acme";
-const PROJECT: &str = "PMS";
+pub(crate) const ORG: &str = "acme";
+pub(crate) const PROJECT: &str = "PMS";
 const TOKEN: &str = "tok-123";
-const PAGE: &str = "/hr/pmsv10/performancecycle?mode=create";
+pub(crate) const PAGE: &str = "/hr/pmsv10/performancecycle?mode=create";
 const LOGIN: &str = "https://hr.example.internal/hr/security/login?ReturnUrl=%2Fhr%2Fpmsv10";
 
 /// What the page answers with, and what it was asked - shared between the
 /// driver (which the runner owns while it runs) and the test.
 #[derive(Default)]
-struct Script {
+pub(crate) struct Script {
     /// Answers to `location.href`, in turn; once empty, the address last
     /// navigated to.
     hrefs: VecDeque<String>,
@@ -63,7 +63,7 @@ struct Script {
     all_cookies_fail: bool,
 }
 
-struct App {
+pub(crate) struct App {
     inner: ScriptedDriver,
     script: Arc<Mutex<Script>>,
 }
@@ -154,11 +154,11 @@ impl Driver for App {
 
 /// Hands out one prepared `App` and counts opens and closes; keeps the
 /// closed driver so the test can read what it was asked.
-struct FakeBrowsers {
-    next: Option<App>,
-    opened: usize,
-    closed: usize,
-    last: Option<App>,
+pub(crate) struct FakeBrowsers {
+    pub(crate) next: Option<App>,
+    pub(crate) opened: usize,
+    pub(crate) closed: usize,
+    pub(crate) last: Option<App>,
 }
 
 impl Browsers for FakeBrowsers {
@@ -175,22 +175,22 @@ impl Browsers for FakeBrowsers {
     }
 }
 
-struct Rig {
-    browsers: FakeBrowsers,
-    script: Arc<Mutex<Script>>,
-    state: StatefulApp,
-    root: tempfile::TempDir,
+pub(crate) struct Rig {
+    pub(crate) browsers: FakeBrowsers,
+    pub(crate) script: Arc<Mutex<Script>>,
+    pub(crate) state: StatefulApp,
+    pub(crate) root: tempfile::TempDir,
 }
 
 impl Rig {
-    fn fetched(&self) -> Vec<Vec<Value>> {
+    pub(crate) fn fetched(&self) -> Vec<Vec<Value>> {
         self.script.lock().unwrap().fetched.clone()
     }
     /// How many times the recipe was run: its one click per sign-in.
-    fn sign_ins(&self) -> usize {
+    pub(crate) fn sign_ins(&self) -> usize {
         self.state.clicks.load(Ordering::SeqCst)
     }
-    fn navigations_to_the_page(&self) -> usize {
+    pub(crate) fn navigations_to_the_page(&self) -> usize {
         let d = self.browsers.last.as_ref().expect("the browser was closed");
         d.inner.calls_to("Page.navigate").iter().filter(|p| p["url"].as_str().unwrap_or("").ends_with(PAGE)).count()
     }
@@ -198,7 +198,7 @@ impl Rig {
 
 /// A root with the recipe and the account on disk, and a page that signs
 /// in (unless `broken` names a selector it lacks) and answers `responses`.
-fn rig(responses: Vec<Value>, broken: Option<&'static str>) -> Rig {
+pub(crate) fn rig(responses: Vec<Value>, broken: Option<&'static str>) -> Rig {
     let root = tempfile::tempdir().unwrap();
     save_recipe(root.path(), ORG, PROJECT, &recipe()).unwrap();
     save_accounts(root.path(), &[account()]).unwrap();
@@ -264,7 +264,7 @@ fn prove() -> Mode {
 }
 
 /// What the page's `FETCH_FN` hands back for a plain JSON answer.
-fn answer(status: u16, body: Value) -> Value {
+pub(crate) fn answer(status: u16, body: Value) -> Value {
     json!({
         "status": status,
         "contentType": "application/json; charset=utf-8",
@@ -293,7 +293,7 @@ fn step_records(records: &[Value]) -> Vec<&Value> {
 }
 
 /// The retry pauses the tests use: as many as the real ones, but short.
-const QUICK_PAUSES: [Duration; 3] = [Duration::from_millis(10); 3];
+pub(crate) const QUICK_PAUSES: [Duration; 3] = [Duration::from_millis(10); 3];
 
 async fn run(r: &mut Rig, t: ApiTemplate) -> RunReport {
     let req = request(t, prove());

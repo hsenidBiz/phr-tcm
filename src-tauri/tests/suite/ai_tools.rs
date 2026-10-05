@@ -564,7 +564,15 @@ fn auto_run_tools_are_offered_in_a_dev_build_or_once_unlocked() {
 /// unlocked or development one offers them as ordinary switchable tools.
 #[test]
 fn the_api_template_tools_are_offered_where_auto_run_is() {
-    for name in ["get_api_template_guide", "list_api_templates", "prove_api_template", "run_api_template"] {
+    for name in [
+        "get_api_template_guide",
+        "list_api_templates",
+        "prove_api_template",
+        "run_api_template",
+        "save_api_fixture",
+        "run_api_fixture",
+        "list_api_fixtures",
+    ] {
         assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
         assert!(!CORE_TOOLS.contains(&name), "{name} must be switchable");
         assert!(effective_disabled_for(&[], false).contains(&name.to_string()), "{name}");
@@ -611,6 +619,9 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "run_api_template",
             "save_api_flow",
             "get_api_flow_progress",
+            "save_api_fixture",
+            "run_api_fixture",
+            "list_api_fixtures",
             "record_app_quirk",
             "retire_app_quirk"
         ]

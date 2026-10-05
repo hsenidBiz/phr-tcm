@@ -2840,13 +2840,16 @@ mod api_template_routes {
 
     /// Every API template route. The flow ones start with `/api-template`
     /// too, so the path guard covers them without a line of their own.
-    const PATHS: [&str; 6] = [
+    const PATHS: [&str; 9] = [
         "/api-template-guide",
         "/api-templates",
         "/api-template-prove",
         "/api-template-run",
         "/api-template-flow-save",
         "/api-template-flow-progress",
+        "/api-template-fixtures",
+        "/api-template-fixture-save",
+        "/api-template-fixture-run",
     ];
 
     fn on() -> BridgeContext {

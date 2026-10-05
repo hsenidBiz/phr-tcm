@@ -11,6 +11,7 @@
 pub mod cookies;
 pub mod exec;
 pub mod fixture;
+pub mod fixture_run;
 pub mod fixture_store;
 pub mod flow;
 pub mod flow_page;

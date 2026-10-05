@@ -339,6 +339,17 @@ pub async fn route(
         // neither needs the API templates switch.
         ("POST", "/api-template-flow-save") => api_template_flow_save(ctx, body, stage_db).await,
         ("POST", "/api-template-flow-progress") => api_template_flow_progress(ctx, body, stage_db).await,
+        // Fixtures: saving one and running one need the API templates
+        // switch - a run writes to the application, and a save is what a
+        // run then follows. The list is a read and answers either way.
+        // None of these writes the record of test-made drafts itself: only
+        // the fixture runner adds to it, and only Clean up changes it.
+        ("GET", "/api-template-fixtures") => api_fixture_list(ctx),
+        ("POST", "/api-template-fixture-save") => api_fixture_save(ctx, body),
+        ("POST", "/api-template-fixture-run") => {
+            api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
+                .await
+        }
         // The database routes. Not Auto Run and not dev-only: they are
         // switchable like any ordinary tool, and what they may do is
         // decided by the connection the person chose and the write switch
@@ -443,9 +454,9 @@ pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
 pub const API_WRITES_OFF: &str =
     "API templates are switched off - turn them on under API templates on the AI Bridge tab";
 
-/// Said when a prove or a run arrives while another one holds the
-/// process-wide slot (`runner::claim`).
-const API_TEMPLATE_BUSY: &str = "another API template is running - wait for it to finish";
+// Said when a prove, a run or a fixture run arrives while another one
+// holds the process-wide slot (`runner::claim`).
+use crate::api_templates::runner::API_TEMPLATE_BUSY;
 
 /// The browsers a real prove or run opens: one, headless - nobody watches
 /// a template run.
@@ -1129,6 +1140,141 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
     }
     let text = serde_json::to_string(&report).unwrap_or_default();
     (if report.ok { 200 } else { 502 }, text)
+}
+
+const FIXTURE_SAVE_SHAPE: &str = "{ \"fixture\": { \"id\": \"<fixture id>\", \"name\": \"<name>\", \"account\": \"<account key>\", \"steps\": [ { \"template\": \"<template id>\", \"params\": { <param>: \"<text>\" } } ], \"outputs\"?: { <name>: \"{{steps.<n>.<output>}}\" }, \"creates\"?: [ { \"kind\", \"id\", \"name\" } ] } }";
+const FIXTURE_RUN_SHAPE: &str = "{ \"id\": \"<fixture id>\", \"browser\"?: \"edge\" | \"chrome\" }";
+
+/// The browser a call asks for: Edge unless it says `"chrome"`.
+fn browser_arg(v: &serde_json::Value) -> Result<crate::browser::launch::Browser, (u16, String)> {
+    match v.get("browser") {
+        None | Some(serde_json::Value::Null) => Ok(crate::browser::launch::Browser::Edge),
+        Some(serde_json::Value::String(s)) if matches!(s.trim().to_ascii_lowercase().as_str(), "edge" | "chrome") => {
+            Ok(crate::browser::launch::Browser::from_name(s))
+        }
+        Some(_) => Err((400, "\"browser\" is \"edge\" or \"chrome\"".to_string())),
+    }
+}
+
+/// `GET /api-template-fixtures`: every saved fixture of the project, with
+/// its current outputs (from its newest successful run) and its last run.
+/// A read: it answers with the API templates switch off.
+fn api_fixture_list(ctx: &BridgeContext) -> (u16, String) {
+    use crate::api_templates::fixture_store;
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let saved = match fixture_store::list(&root, &ctx.org, &ctx.project) {
+        Ok(s) => s,
+        Err(e) => {
+            crate::applog::warn(format!("api fixtures: the list could not be read: {e}"));
+            return (500, "the fixtures could not be listed - see Settings, Logs".to_string());
+        }
+    };
+    let fixtures: Vec<serde_json::Value> = saved
+        .iter()
+        .map(|s| {
+            let f = &s.fixture;
+            serde_json::json!({
+                "id": f.id,
+                "name": f.name,
+                "account": f.account,
+                "steps": f.steps,
+                "outputs": f.outputs,
+                "creates": f.creates,
+                "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
+                "last_run": s.runs.first(),
+            })
+        })
+        .collect();
+    (200, serde_json::json!({ "fixtures": fixtures }).to_string())
+}
+
+/// `POST /api-template-fixture-save`: checks the fixture against the saved
+/// templates (`fixture::validate`) and saves it, or answers 400 with every
+/// refusal sentence as it is, one per line. Needs the API templates switch.
+pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::api_templates::fixture::Fixture;
+    use crate::api_templates::fixture_store;
+    if !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {FIXTURE_SAVE_SHAPE}.")),
+    };
+    let Some(raw) = json_arg(v.get("fixture")) else {
+        return (400, format!("this call needs a \"fixture\". Expected {FIXTURE_SAVE_SHAPE}."));
+    };
+    let fixture: Fixture = match serde_json::from_value(raw) {
+        Ok(f) => f,
+        Err(e) => return (400, format!("that is not a fixture: {e} - call get_api_template_guide for the format")),
+    };
+    let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
+    match fixture_store::save(&root, &ctx.org, &ctx.project, &fixture) {
+        Ok(()) => {
+            crate::applog::info(format!("api fixture {}: {}", fixture.id, if existed { "replaced" } else { "saved" }));
+            templates_changed(&fixture.id);
+            (200, serde_json::json!({ "saved": fixture.id, "replaced": existed }).to_string())
+        }
+        Err(problems) => (400, problems.join("\n")),
+    }
+}
+
+/// `POST /api-template-fixture-run`: runs a saved fixture - a first build
+/// and a Rebuild alike - and answers with its sentence, outputs, what it
+/// made and its warnings: 200 when every step passed, 502 when one did not.
+/// Needs the API templates switch. The browser factory is handed in, as
+/// `api_template_run`'s is, so a test reaches all of it but a real browser.
+pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::api_templates::fixture_run::{run_saved, NotRun};
+    if !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {FIXTURE_RUN_SHAPE}.")),
+    };
+    let id = match v.get("id") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return (400, format!("this call needs an \"id\". Expected {FIXTURE_RUN_SHAPE}.")),
+    };
+    let which = match browser_arg(&v) {
+        Ok(b) => b,
+        Err(refused) => return refused,
+    };
+    let mut browsers = open(which);
+    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing).await {
+        Ok(r) => r,
+        Err(NotRun::Busy) => return (409, API_TEMPLATE_BUSY.to_string()),
+        Err(NotRun::Refused(why)) => return (400, why),
+    };
+    drop(browsers);
+    templates_changed(&id);
+    let made: Vec<serde_json::Value> =
+        report.made.iter().map(|m| serde_json::json!({ "kind": m.kind, "id": m.id, "name": m.name })).collect();
+    let out = serde_json::json!({
+        "ok": report.ok,
+        "sentence": report.message(),
+        "outputs": report.outputs,
+        "made": made,
+        "warnings": report.warnings,
+    });
+    (if report.ok { 200 } else { 502 }, out.to_string())
 }
 
 const FLOW_SAVE_SHAPE: &str = "{ \"flow\": <the flow>, \"sample\": <the subject of a real record>, \"replace\"?: true, \"why\"?: \"<reason>\" }";

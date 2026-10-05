@@ -6,6 +6,8 @@
 //! Offered wherever Auto Run itself is offered - `ai_tools::autorun_offered`
 //! - since the whole feature rides on the same signed-in browser session.
 
+use crate::api_templates::fixture_run::{self, FixtureReport};
+use crate::api_templates::fixture_store::{self, SavedFixture};
 use crate::api_templates::flow::Flow;
 use crate::api_templates::flow_store;
 use crate::api_templates::share::{self, TemplatesExportResult, TemplatesImportNote, TemplatesImportResult, TemplatesImportSkip};
@@ -72,6 +74,61 @@ pub fn api_templates_remove(
     let root = crate::commands::autorun::root(&app)?;
     store::remove(&root, &organization, &project, &id)?;
     crate::applog::info(format!("api template removed: {id}"));
+    Ok(())
+}
+
+/// Every saved fixture of the project, with its run history, for the
+/// Fixtures tab.
+#[tauri::command]
+#[specta::specta]
+pub fn api_fixtures_list(app: tauri::AppHandle, organization: String, project: String) -> Result<Vec<SavedFixture>, String> {
+    refuse_unless_offered()?;
+    let root = crate::commands::autorun::root(&app)?;
+    fixture_store::list(&root, &organization, &project)
+}
+
+/// Runs a saved fixture: Run (its first build) and Rebuild are the same
+/// command. A headless browser, as a template run from the AI Bridge uses;
+/// the run holds the one-at-a-time template slot throughout.
+#[tauri::command]
+#[specta::specta]
+pub async fn api_fixture_run(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: String,
+) -> Result<FixtureReport, String> {
+    refuse_unless_offered()?;
+    let root = crate::commands::autorun::root(&app)?;
+    let mut browsers =
+        crate::commands::autorun_replay::RealBrowsers::new(crate::browser::launch::Browser::Edge, false);
+    let timing = crate::commands::autorun_replay::replay_timing(false);
+    fixture_run::run_saved(&mut browsers, &root, &organization, &project, &id, &timing)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Removes a fixture and its run history - the person's, as removing a
+/// template is. What it made stays in the record of test-made drafts.
+#[tauri::command]
+#[specta::specta]
+pub fn api_fixture_remove(app: tauri::AppHandle, organization: String, project: String, id: String) -> Result<(), String> {
+    let root = crate::commands::autorun::root(&app)?;
+    remove_fixture_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id)
+}
+
+/// `api_fixture_remove` for a given data root, with "is Auto Run offered
+/// here" passed in, as `remove_flow_at` takes it.
+pub fn remove_fixture_at(
+    offered: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    id: &str,
+) -> Result<(), String> {
+    refuse_unless(offered)?;
+    fixture_store::remove(root, organization, project, id)?;
+    crate::applog::info(format!("api fixture removed: {id}"));
     Ok(())
 }
 

@@ -257,3 +257,546 @@ fn a_delete_template_must_say_which_kind_it_deletes() {
     assert!(create.get("deletes_kind").is_none());
     assert!(parse_draft(&create).is_ok());
 }
+
+// ---- placeholder rules folded in from the part 5 Task 1 review -----------
+
+#[test]
+fn a_step_index_must_be_all_digits() {
+    let mut f = fixture();
+    f.steps[1].params.insert("a".into(), "{{steps.+1.cycleId}}".into());
+    let p = problems(&f);
+    assert_eq!(p, vec!["step 2: {{steps.+1.cycleId}} does not come from an earlier step"], "{p:?}");
+}
+
+#[test]
+fn a_step_past_the_last_one_is_refused() {
+    let mut f = fixture();
+    f.steps[1].params.insert("a".into(), "{{steps.10.cycleId}}".into());
+    let p = problems(&f);
+    assert_eq!(p, vec!["step 2: {{steps.10.cycleId}} does not come from an earlier step"], "{p:?}");
+}
+
+#[test]
+fn whitespace_inside_the_braces_is_accepted() {
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "{{ prefix }} cycle".into());
+    f.steps[1].params.insert("cycleId".into(), "{{ steps.1.cycleId }}".into());
+    f.outputs.insert("spaced".into(), " {{ steps.1.cycleId }} ".into());
+    f.creates[0].id = "{{ steps.1.cycleId }}".into();
+    validate(&f, &lookup).unwrap();
+}
+
+#[test]
+fn a_malformed_step_reference_is_refused() {
+    let mut f = fixture();
+    f.steps[1].params.insert("a".into(), "{{steps.1}}".into());
+    let p = problems(&f);
+    assert_eq!(p, vec!["step 2: {{steps.1}} does not come from an earlier step"], "{p:?}");
+}
+
+#[test]
+fn a_placeholder_inside_other_text_is_checked_and_accepted() {
+    let mut f = fixture();
+    f.steps[1].params.insert("cycleName".into(), "copy of {{steps.1.cycleName}} for {{prefix}}".into());
+    validate(&f, &lookup).unwrap();
+    f.steps[1].params.insert("cycleName".into(), "copy of {{steps.2.cycleName}}".into());
+    assert_eq!(problems(&f), vec!["step 2: {{steps.2.cycleName}} does not come from an earlier step"]);
+}
+
+#[test]
+fn step_one_may_not_read_step_one() {
+    let mut f = fixture();
+    f.steps[0].params.insert("other".into(), "{{steps.1.cycleId}}".into());
+    let p = problems(&f);
+    assert_eq!(p, vec!["step 1: {{steps.1.cycleId}} does not come from an earlier step"], "{p:?}");
+}
+
+#[test]
+fn the_same_bad_placeholder_in_several_params_is_said_once() {
+    let mut f = fixture();
+    f.steps[1].params.insert("a".into(), "{{steps.3.cycleId}}".into());
+    f.steps[1].params.insert("b".into(), "{{steps.3.cycleId}}".into());
+    f.steps[1].params.insert("c".into(), "x {{steps.3.cycleId}} y".into());
+    assert_eq!(problems(&f), vec!["step 2: {{steps.3.cycleId}} does not come from an earlier step"]);
+}
+
+#[test]
+fn now_is_written_with_its_format_letters() {
+    use v2_lib::api_templates::fixture_run::{format_now, Clock};
+    let clock = Clock { year: 2026, month: 3, day: 7, hour: 9, minute: 5, second: 2 };
+    assert_eq!(format_now(&clock, "yyyyMMdd"), "20260307");
+    assert_eq!(format_now(&clock, "yyyy-MM-dd HH:mm:ss"), "2026-03-07 09:05:02");
+    assert_eq!(format_now(&clock, "run dd/MM"), "run 07/03", "other letters stay as they are");
+}
+
+#[test]
+fn removing_a_fixture_takes_its_history_and_needs_auto_run() {
+    use v2_lib::commands::api_templates::remove_fixture_at;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save(root, ORG, PROJECT, &template("make-cycle", "create", true)).unwrap();
+    store::save(root, ORG, PROJECT, &template("make-suite", "create", true)).unwrap();
+    fixture_store::save(root, ORG, PROJECT, &fixture()).unwrap();
+    fixture_store::append_run(root, ORG, PROJECT, "cycle-fixture", run(1, true)).unwrap();
+
+    assert_eq!(
+        remove_fixture_at(false, root, ORG, PROJECT, "cycle-fixture").unwrap_err(),
+        "not available in this build"
+    );
+    assert!(fixture_store::load(root, ORG, PROJECT, "cycle-fixture").unwrap().is_some());
+
+    remove_fixture_at(true, root, ORG, PROJECT, "cycle-fixture").unwrap();
+    assert_eq!(fixture_store::load(root, ORG, PROJECT, "cycle-fixture").unwrap(), None);
+    assert_eq!(fixture_store::current_outputs(root, ORG, PROJECT, "cycle-fixture"), None, "its history went too");
+    remove_fixture_at(true, root, ORG, PROJECT, "cycle-fixture").unwrap();
+}
+
+/// The guide's fixture sentences (design doc section 1, "The assistant's
+/// tools").
+#[test]
+fn the_guide_explains_fixtures() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(one_line.contains("## Fixtures"), "no Fixtures section");
+    for tool in ["save_api_fixture", "run_api_fixture", "list_api_fixtures"] {
+        assert!(one_line.contains(tool), "no {tool}");
+    }
+    assert!(one_line.contains("Build a fixture from proven templates"), "{one_line}");
+    assert!(one_line.contains("Name what it makes with `{{prefix}}`"), "{one_line}");
+    assert!(one_line.contains("use Rebuild (run the fixture again), never a hand fix"), "{one_line}");
+    assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// Running fixtures against the fake page the template runner's own tests
+/// use (`api_templates_runner`): one browser, one sign-in, each template's
+/// token page and steps in turn.
+mod running {
+    use crate::api_templates_runner::{answer, rig, Rig, ORG, PAGE, PROJECT, QUICK_PAUSES};
+    use crate::common::quick;
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+    use v2_lib::api_templates::fixture::{Creates, Fixture, FixtureRun, FixtureStep};
+    use v2_lib::api_templates::fixture_run::{prefix_warning, run_fixture_within, Clock, FixtureReport};
+    use v2_lib::api_templates::runner::{preflight, Mode, RunRequest, RUN_LIMIT};
+    use v2_lib::api_templates::{fixture_store, store, ApiTemplate, Proven};
+    use v2_lib::autorun::test_made;
+
+    const CLOCK: Clock = Clock { year: 2026, month: 10, day: 6, hour: 14, minute: 30, second: 0 };
+
+    fn proven(mut t: ApiTemplate) -> ApiTemplate {
+        t.proven = Some(Proven {
+            at: "2026-10-01 09:00:00".into(),
+            origin: "https://hr.example.internal".into(),
+            account: "admin".into(),
+            outputs: BTreeMap::new(),
+            environment: None,
+        });
+        t
+    }
+
+    /// Makes a cycle in one request; hands back its id and name.
+    fn make_cycle() -> ApiTemplate {
+        proven(
+            serde_json::from_value(json!({
+                "id": "make-cycle", "title": "Make a cycle", "module": "PMS", "effect": "create",
+                "description": "d", "sources": ["x:1"], "antiforgery": { "page": PAGE },
+                "params": [ { "name": "cycleName", "type": "string", "required": true } ],
+                "steps": [ { "name": "Cycle setup", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                             "query": { "handler": "SaveProgress" }, "form": { "CycleName": "{{cycleName}}" },
+                             "capture": { "cycleId": "$.cycleId", "cycleName": "$.cycleName" } } ],
+                "outputs": ["cycleId", "cycleName"]
+            }))
+            .unwrap(),
+        )
+    }
+
+    /// Adds a suite to a cycle given as a number.
+    fn add_suite() -> ApiTemplate {
+        proven(
+            serde_json::from_value(json!({
+                "id": "add-suite", "title": "Add a suite", "module": "PMS", "effect": "edit",
+                "description": "d", "sources": ["x:1"], "antiforgery": { "page": PAGE },
+                "params": [ { "name": "cycleId", "type": "number", "required": true } ],
+                "steps": [ { "name": "Suite", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                             "query": { "handler": "AddSuite" }, "form": { "CycleId": "{{cycleId}}" },
+                             "capture": { "suiteId": "$.suiteId" } } ],
+                "outputs": ["suiteId"]
+            }))
+            .unwrap(),
+        )
+    }
+
+    fn step(template: &str, params: &[(&str, &str)]) -> FixtureStep {
+        FixtureStep {
+            template: template.into(),
+            params: params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    fn fixture() -> Fixture {
+        Fixture {
+            id: "draft-cycle".into(),
+            name: "A draft cycle".into(),
+            account: "admin".into(),
+            steps: vec![
+                step("make-cycle", &[("cycleName", "{{prefix}} cycle {{now:yyyyMMdd}}")]),
+                step("add-suite", &[("cycleId", "{{steps.1.cycleId}}")]),
+            ],
+            outputs: [
+                ("cycle_id".to_string(), "{{steps.1.cycleId}}".to_string()),
+                ("suite_id".to_string(), "{{steps.2.suiteId}}".to_string()),
+            ]
+            .into(),
+            creates: vec![Creates {
+                kind: "cycle".into(),
+                id: "{{steps.1.cycleId}}".into(),
+                name: "{{steps.1.cycleName}}".into(),
+            }],
+        }
+    }
+
+    /// A rig whose root holds both templates and the fixture.
+    fn rig_with(responses: Vec<Value>, f: &Fixture, templates: &[ApiTemplate]) -> Rig {
+        let r = rig(responses, None);
+        for t in templates {
+            store::save(r.root.path(), ORG, PROJECT, t).unwrap();
+        }
+        fixture_store::save(r.root.path(), ORG, PROJECT, f).unwrap();
+        r
+    }
+
+    async fn run(r: &mut Rig, f: &Fixture) -> FixtureReport {
+        run_fixture_within(&mut r.browsers, r.root.path(), ORG, PROJECT, f, &quick(), RUN_LIMIT, &QUICK_PAUSES, CLOCK)
+            .await
+    }
+
+    fn history(r: &Rig, id: &str) -> Vec<FixtureRun> {
+        fixture_store::list(r.root.path(), ORG, PROJECT)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.fixture.id == id)
+            .map(|s| s.runs)
+            .unwrap_or_default()
+    }
+
+    fn the_cycle() -> Value {
+        answer(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle 20261006" }))
+    }
+
+    #[tokio::test]
+    async fn two_steps_pass_a_value_between_them_in_one_signed_in_browser() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.failed, None);
+        assert_eq!(report.message(), "every step passed (2 steps)");
+        assert_eq!(report.steps.len(), 2);
+        assert_eq!(
+            report.outputs,
+            BTreeMap::from([("cycle_id".to_string(), json!(274)), ("suite_id".to_string(), json!(9))])
+        );
+
+        let fetched = r.fetched();
+        assert_eq!(fetched.len(), 2);
+        // `{{prefix}}` is the active environment's prefix; `{{now:yyyyMMdd}}`
+        // the run's start, in local time.
+        assert_eq!(fetched[0][0]["body"]["fields"]["CycleName"], json!("AUTOTEST cycle 20261006"));
+        // Step 1's captured id reached step 2.
+        assert_eq!(fetched[1][0]["body"]["fields"]["CycleId"], json!("274"));
+
+        // One browser, one sign-in, each template on its own token page.
+        assert_eq!(r.browsers.opened, 1);
+        assert_eq!(r.browsers.closed, 1);
+        assert_eq!(r.sign_ins(), 1);
+        assert_eq!(r.navigations_to_the_page(), 2);
+
+        // The run is in the history and its outputs are current.
+        let runs = history(&r, "draft-cycle");
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].ok);
+        assert_eq!(runs[0].failed_step, None);
+        assert_eq!(fixture_store::current_outputs(r.root.path(), ORG, PROJECT, "draft-cycle").unwrap(), report.outputs);
+
+        // What it made is recorded as test-made, present, with no warning.
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let made = test_made::list(r.root.path());
+        assert_eq!(made, report.made);
+        assert_eq!(made.len(), 1);
+        let m = &made[0];
+        assert_eq!((m.kind.as_str(), m.id.as_str(), m.name.as_str()), ("cycle", "274", "AUTOTEST cycle 20261006"));
+        assert_eq!(m.status, "present");
+        assert_eq!(m.fixture, "draft-cycle");
+        assert_eq!(m.case_id, None);
+        assert!(m.run_id.starts_with("run-"), "{}", m.run_id);
+        let env = v2_lib::environments::active(r.root.path()).unwrap();
+        assert_eq!(m.environment, env.id);
+    }
+
+    /// Review Focus 1: a later step failing stops the run with that step's
+    /// own sentence, still records what step 1 made, and keeps the outputs
+    /// of the run before.
+    #[tokio::test]
+    async fn a_failed_step_stops_the_run_records_what_was_made_and_keeps_the_outputs() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(500, json!({ "error": "no" }))], &f, &[make_cycle(), add_suite()]);
+        let before = FixtureRun {
+            at: "2026-10-05 10:00:00".into(),
+            ok: true,
+            failed_step: None,
+            detail: None,
+            outputs: BTreeMap::from([("cycle_id".to_string(), json!(100)), ("suite_id".to_string(), json!(1))]),
+        };
+        fixture_store::append_run(r.root.path(), ORG, PROJECT, "draft-cycle", before.clone()).unwrap();
+
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert!(report.outputs.is_empty(), "a failed run has no outputs");
+        assert_eq!(report.steps.len(), 2);
+        let want = format!("step 2: {}", report.steps[1].message());
+        assert_eq!(report.failed.as_deref(), Some(want.as_str()));
+        assert!(want.starts_with("step 2: nothing had been captured yet; failed at Suite (AddSuite): "), "{want}");
+
+        let made = test_made::list(r.root.path());
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert_eq!((made[0].id.as_str(), made[0].status.as_str()), ("274", "present"));
+
+        let runs = history(&r, "draft-cycle");
+        assert_eq!(runs.len(), 2);
+        assert!(!runs[0].ok);
+        assert_eq!(runs[0].failed_step, Some(2));
+        assert_eq!(runs[0].detail.as_deref(), Some(want.as_str()));
+        assert_eq!(
+            fixture_store::current_outputs(r.root.path(), ORG, PROJECT, "draft-cycle").unwrap(),
+            before.outputs,
+            "the outputs before the failed Rebuild are still current"
+        );
+        assert_eq!(r.browsers.closed, 1, "the browser is closed on the way out");
+    }
+
+    /// A step that fails after capturing a declared output still made it:
+    /// its `created` map is read under that output's name.
+    #[tokio::test]
+    async fn what_a_failed_step_captured_is_still_recorded() {
+        let _act = crate::serial::activity_log();
+        let mut t = make_cycle();
+        t.steps.push(
+            serde_json::from_value(json!({
+                "name": "Evaluation rules", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+                "query": { "handler": "SaveEvalRulesProgress" }, "form": { "CycleId": "{{cycleId}}" }
+            }))
+            .unwrap(),
+        );
+        let f = Fixture { steps: vec![fixture().steps.remove(0)], outputs: BTreeMap::new(), ..fixture() };
+        let mut r = rig_with(vec![the_cycle(), answer(400, json!({ "success": false }))], &f, &[t]);
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert!(report.failed.as_deref().unwrap().starts_with("step 1: cycleId 274, cycleName AUTOTEST cycle 20261006 created; failed at Evaluation rules"), "{:?}", report.failed);
+        let made = test_made::list(r.root.path());
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert_eq!((made[0].id.as_str(), made[0].name.as_str()), ("274", "AUTOTEST cycle 20261006"));
+    }
+
+    /// Nothing captured: the entry's id does not resolve, so it is skipped.
+    #[tokio::test]
+    async fn an_entry_whose_id_was_never_captured_is_skipped() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![answer(500, json!({}))], &f, &[make_cycle(), add_suite()]);
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert!(report.failed.as_deref().unwrap().starts_with("step 1: "), "{:?}", report.failed);
+        assert!(report.made.is_empty());
+        assert!(test_made::list(r.root.path()).is_empty());
+        assert_eq!(history(&r, "draft-cycle")[0].failed_step, Some(1));
+    }
+
+    #[tokio::test]
+    async fn a_name_without_the_prefix_is_recorded_with_a_warning() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(
+            vec![answer(200, json!({ "cycleId": 275, "cycleName": "Hand made cycle" })), answer(200, json!({ "suiteId": 9 }))],
+            &f,
+            &[make_cycle(), add_suite()],
+        );
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.warnings, vec![prefix_warning("cycle", "Hand made cycle")]);
+        assert_eq!(
+            report.warnings[0],
+            "cycle Hand made cycle does not start with the test prefix, so Clean up will not find it"
+        );
+        let made = test_made::list(r.root.path());
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].name, "Hand made cycle", "recorded all the same");
+    }
+
+    /// A fixture step whose template became a delete template after the
+    /// fixture was saved is refused at run time with the save rule's own
+    /// sentence, before any browser opens - and the run is still recorded.
+    #[tokio::test]
+    async fn a_step_that_now_deletes_is_refused_before_anything_opens() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
+        let mut deleting = add_suite();
+        deleting.effect = v2_lib::api_templates::Effect::Delete;
+        deleting.deletes_kind = Some("suite".into());
+        store::save(r.root.path(), ORG, PROJECT, &deleting).unwrap();
+
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert_eq!(report.failed.as_deref(), Some("step 2: template add-suite deletes, and a fixture never deletes"));
+        assert_eq!(r.browsers.opened, 0, "nothing was opened");
+        assert!(report.steps.is_empty());
+        let runs = history(&r, "draft-cycle");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].detail, report.failed);
+    }
+
+    /// `run_api_template` (a run) refuses a delete template; proving one is
+    /// left as it is.
+    #[test]
+    fn a_run_of_a_delete_template_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::autorun::recipe::save_recipe(dir.path(), ORG, PROJECT, &crate::common::recipe()).unwrap();
+        v2_lib::autorun::accounts::save_accounts(dir.path(), &[crate::common::account()]).unwrap();
+        let mut t = add_suite();
+        t.effect = v2_lib::api_templates::Effect::Delete;
+        t.deletes_kind = Some("suite".into());
+        let mut values = serde_json::Map::new();
+        values.insert("cycleId".into(), json!(274));
+        let req = |mode| RunRequest {
+            org: ORG.into(),
+            project: PROJECT.into(),
+            account: "admin".into(),
+            values: values.clone(),
+            mode,
+            template: t.clone(),
+        };
+        let problems = preflight(dir.path(), &req(Mode::Run), None).unwrap_err();
+        assert_eq!(
+            problems,
+            vec!["template add-suite deletes, and only Clean up test-made drafts runs a delete template"]
+        );
+        let draft = ApiTemplate { proven: None, ..t.clone() };
+        let prove = RunRequest { template: draft, ..req(Mode::Prove { replace: false, why: None }) };
+        assert_eq!(preflight(dir.path(), &prove, None), Ok(()), "proving is Task 5's rule");
+    }
+
+    /// The bridge's run: the switch first, then the fixture's sentence,
+    /// outputs, what it made (kind, id and name) and warnings.
+    #[tokio::test]
+    async fn the_bridge_runs_a_saved_fixture() {
+        use v2_lib::ai_bridge::{api_fixture_run, BridgeContext, API_WRITES_OFF};
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let Rig { browsers, root, .. } =
+            rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        let off = BridgeContext { org: ORG.into(), project: PROJECT.into(), ..BridgeContext::default() };
+        let body = json!({ "id": "draft-cycle" }).to_string();
+        let (status, out) = api_fixture_run(&off, &body, |_| -> crate::api_templates_runner::FakeBrowsers {
+            panic!("opened with the switch off")
+        }, &quick())
+        .await;
+        assert_eq!((status, out.as_str()), (400, API_WRITES_OFF));
+
+        let on = BridgeContext { api_writes: true, ..off };
+        let (status, out) = api_fixture_run(&on, &body, |_| browsers, &quick()).await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "ok": true,
+                "sentence": "every step passed (2 steps)",
+                "outputs": { "cycle_id": 274, "suite_id": 9 },
+                "made": [ { "kind": "cycle", "id": "274", "name": "AUTOTEST cycle 20261006" } ],
+                "warnings": [],
+            })
+        );
+        assert_eq!(test_made::list(root.path()).len(), 1);
+    }
+
+    /// Save validates first and answers with the refusal sentences as they
+    /// are; list answers with the switch off.
+    #[tokio::test]
+    async fn the_bridge_saves_only_a_valid_fixture_and_lists_with_the_switch_off() {
+        use v2_lib::ai_bridge::{api_fixture_save, route, BridgeContext, API_WRITES_OFF};
+        let _root = crate::serial::autorun();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+        store::save(dir.path(), ORG, PROJECT, &make_cycle()).unwrap();
+        let off = BridgeContext { org: ORG.into(), project: PROJECT.into(), ..BridgeContext::default() };
+        let on = BridgeContext { api_writes: true, ..off.clone() };
+        let body = json!({ "fixture": fixture() }).to_string();
+
+        assert_eq!(api_fixture_save(&off, &body), (400, API_WRITES_OFF.to_string()));
+
+        let (status, out) = api_fixture_save(&on, &body);
+        assert_eq!(status, 400);
+        assert_eq!(out, "step 2: template add-suite is not proven\noutput suite_id: {{steps.2.suiteId}} does not come from a step");
+        assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), None);
+
+        store::save(dir.path(), ORG, PROJECT, &add_suite()).unwrap();
+        let (status, out) = route(&on, None, "POST", "/api-template-fixture-save", &body, "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), Some(fixture()));
+
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["fixtures"][0]["id"], "draft-cycle");
+        assert_eq!(v["fixtures"][0]["current_outputs"], Value::Null, "never built");
+        assert_eq!(v["fixtures"][0]["last_run"], Value::Null);
+    }
+}
+
+/// Review Focus 5: no bridge route and no MCP tool writes the record of
+/// test-made drafts or an approval itself. Only the fixture runner adds to
+/// the record and only Clean up changes a status; approvals are a person's.
+/// A source-scan tripwire, in the style of the other tripwires here: it
+/// lists every route and tool so a new one is in view, then checks that
+/// neither file reaches a writer.
+#[test]
+fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
+    let read = |p: &str| {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap().replace("\r\n", "\n")
+    };
+    let bridge = read("src/ai_bridge.rs");
+    let mcp = read("src/mcp.rs");
+
+    let route_body = &bridge[bridge.find("pub async fn route(").unwrap()..];
+    let route_body = &route_body[..route_body.find("\n}\n").unwrap()];
+    let routes: Vec<&str> = route_body
+        .split("(\"")
+        .skip(1)
+        .filter_map(|s| {
+            let (method, rest) = s.split_once("\", \"")?;
+            matches!(method, "GET" | "POST").then(|| rest.split('"').next().unwrap_or(""))
+        })
+        .collect();
+    for r in ["/api-template-fixtures", "/api-template-fixture-save", "/api-template-fixture-run", "/api-template-run"] {
+        assert!(routes.contains(&r), "{r} is not in the router: {routes:?}");
+    }
+
+    let list = &mcp[mcp.find("fn tools_list").unwrap()..];
+    let tools: Vec<&str> =
+        list.split("\"name\": \"").skip(1).filter_map(|s| s.split('"').next()).collect();
+    for t in ["save_api_fixture", "run_api_fixture", "list_api_fixtures"] {
+        assert!(tools.contains(&t), "{t} is not listed: {tools:?}");
+    }
+    assert!(routes.len() > 20 && tools.len() > 20, "the scan found too little: {routes:?} {tools:?}");
+
+    for (name, text) in [("src/ai_bridge.rs", &bridge), ("src/mcp.rs", &mcp)] {
+        for writer in ["test_made::record", "test_made::set_status", "test-made.json", "approvals/", "\"approvals\""] {
+            assert!(!text.contains(writer), "{name} reaches {writer}");
+        }
+    }
+}

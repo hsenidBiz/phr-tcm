@@ -53,7 +53,7 @@ pub struct FixtureRun {
     pub ok: bool,
     /// The 1-based step that failed, when one did.
     #[serde(default)]
-    pub failed_step: Option<usize>,
+    pub failed_step: Option<u32>,
     #[serde(default)]
     pub detail: Option<String>,
     // See `RunRecord::outputs` on why the value side is `unknown`.
@@ -69,6 +69,10 @@ pub const NEEDS_PREFIX: &str = "a fixture with creates must use {{prefix}} in a 
 fn steps_ref(name: &str) -> Option<(usize, &str)> {
     let rest = name.strip_prefix("steps.")?;
     let (m, capture) = rest.split_once('.')?;
+    // All ASCII digits: `usize`'s parse also takes `+1`.
+    if m.is_empty() || !m.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
     let m: usize = m.parse().ok()?;
     (!capture.is_empty()).then_some((m, capture))
 }
@@ -147,6 +151,10 @@ pub fn validate(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>) ->
     if !f.creates.is_empty() && !uses_prefix {
         problems.push(NEEDS_PREFIX.to_string());
     }
+
+    // The same bad placeholder in several params is one problem, said once.
+    let mut seen = std::collections::HashSet::new();
+    problems.retain(|p| seen.insert(p.clone()));
 
     if problems.is_empty() {
         Ok(())

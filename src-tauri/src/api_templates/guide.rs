@@ -307,6 +307,55 @@ has none for what you need, the Auto Run guide (`get_autorun_guide`) says
 how to find test users with the read-only database tools and offer them
 with `propose_accounts`. Never invent a password.
 
+## Fixtures
+
+A fixture makes a draft the same way every time, in seconds: an ordered
+list of saved templates run one after another in one browser, signed in
+once as the fixture's account. Build a fixture from proven templates: a
+step whose template is not proven is refused, and so is a template that
+deletes - a fixture never deletes.
+
+    {
+      "id": "pms-draft-cycle",
+      "name": "A draft performance cycle",
+      "account": "admin",
+      "steps": [
+        { "template": "pms-create-draft-cycle",
+          "params": { "cycleName": "{{prefix}} cycle {{now:yyyyMMdd HHmm}}" } },
+        { "template": "pms-add-competency",
+          "params": { "cycleId": "{{steps.1.cycleId}}" } }
+      ],
+      "outputs": { "cycle_id": "{{steps.1.cycleId}}" },
+      "creates": [
+        { "kind": "cycle", "id": "{{steps.1.cycleId}}", "name": "{{steps.1.cycleName}}" }
+      ]
+    }
+
+A step's params are text, and may hold `{{steps.<n>.<output>}}` (a declared
+output of an earlier step, `n` counting from 1), `{{now:<format>}}` (the
+run's start time in local time, with the letters `yyyy MM dd HH mm ss`) and
+`{{prefix}}` (the active environment's test name prefix). Text for a number,
+boolean or list param is read as one. `outputs` and each `creates` entry
+name one `{{steps.<n>.<output>}}` each.
+
+Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
+in a step's params. Everything a run makes is recorded as test-made - even
+when a later step fails - and Clean up only finds a name that starts with
+the prefix; the run warns about one that does not.
+
+`save_api_fixture { fixture }` checks the fixture and saves it, or answers
+with every problem, one sentence each. `run_api_fixture { id }` runs it and
+answers with its outputs, what it made and its warnings; it stops at the
+first failed step, with `step <n>: ` and that template's own sentence. A
+successful run's outputs become the fixture's current outputs; a failed one
+keeps the ones before. `list_api_fixtures` shows each fixture with its
+current outputs and last run. Saving and running need the API templates
+switch; listing does not. Each template step has its own 3-minute limit.
+
+When a shared draft is damaged, use Rebuild (run the fixture again), never
+a hand fix: the rebuild makes a fresh draft, scripts follow it through the
+fixture's outputs, and the damaged one is left for Clean up.
+
 ## When a run fails
 
 The first failing step stops the run. Nothing is rolled back - the
