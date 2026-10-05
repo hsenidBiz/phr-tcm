@@ -165,6 +165,15 @@ pub struct ReplayProgress {
     pub proposed: String,
 }
 
+/// Emitted as the supervised browser replays a case to a step: once before
+/// each step runs, `step` of `of` (the step before the one replayed to).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayProgress {
+    pub case_id: i32,
+    pub step: i32,
+    pub of: i32,
+}
+
 /// Emitted while a module path or a sign-in is being recorded: one per
 /// captured click, one per text field typed into (a sign-in only), one
 /// when the signed-in check is picked (a sign-in only), one per click or

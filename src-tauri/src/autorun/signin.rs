@@ -119,6 +119,33 @@ pub async fn sign_in<D: Driver>(
     sign_in_with(d, root, recipe, account, timing, true).await
 }
 
+/// The supervised browser's sign-in as `account_key`: its account lease
+/// first (`lease`), then `sign_in`, and the browser's signed-in account
+/// (`signed_in`) set from how it went. `Err` is the sentence for an account
+/// that cannot be signed in at all - none on this machine, no recipe, or
+/// one something else holds - and then the browser is left as it was. The
+/// account is this browser's from the lease on, whichever way the sign-in
+/// goes: one that fails partway may still have signed it in. Shared by the
+/// pane's own sign-in and a replay to a step.
+#[allow(clippy::too_many_arguments)]
+pub async fn sign_in_leased<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    org: &str,
+    project: &str,
+    account_key: &str,
+    lease: &mut super::lease::Held,
+    signed_in: &mut Option<String>,
+    timing: &Timing,
+) -> Result<SignInOutcome, String> {
+    let (recipe, account) = prepare(root, org, project, account_key)?;
+    lease.hold(root, &account.key).await?;
+    let out = sign_in(d, root, &recipe, &account, timing).await;
+    *signed_in = out.ok.then(|| account.key.clone());
+    crate::applog::info(format!("Auto-run sign-in as {}: {}", account.key, if out.ok { "ok" } else { "failed" }));
+    Ok(out)
+}
+
 /// Sign in through the recipe's own steps, never a saved session: the
 /// check a recorded recipe must pass has to prove the steps themselves
 /// work. A session that works is still saved afterwards, as any sign-in's

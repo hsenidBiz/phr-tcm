@@ -358,6 +358,21 @@ export const commands = {
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
+	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
+	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
+	 *  Replay to step button. The browser open is used; with none, the one last
+	 *  chosen is opened first, as Open browser opens it. One replay at a time.
+	 *  The pane hears `AutorunReplayProgress` before each step. Refusals and
+	 *  the end come back as the `ReplayEnd`; `Err` is a browser that would not
+	 *  open.
+	 */
+	autoRunReplayToStep: (organization: string, project: string, caseId: number, step: number, dbReadAccess: boolean) => typedError<ReplayEnd_Serialize, string>(__TAURI_INVOKE("auto_run_replay_to_step", { organization, project, caseId, step, dbReadAccess })),
+	/**
+	 *  The replay's stop control: the replay going, if any, ends at its next
+	 *  look and says where it stopped.
+	 */
+	autoRunStopReplay: () => __TAURI_INVOKE<void>("auto_run_stop_replay"),
+	/**
 	 *  Run one step's actions in order and report every outcome. Actions after
 	 *  an ordinary failure still run: the watcher learns more from "the click
 	 *  worked, the check did not" than from a run that stops at the first red.
@@ -1067,6 +1082,7 @@ export const commands = {
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
@@ -1498,6 +1514,16 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  Emitted as the supervised browser replays a case to a step: once before
+ *  each step runs, `step` of `of` (the step before the one replayed to).
+ */
+export type AutorunReplayProgress = {
+	case_id: number,
+	step: number,
+	of: number,
 };
 
 export type BackupImportResult = {
@@ -3180,6 +3206,71 @@ export type ReplayCase = {
 	/**  Absent or blank when the test case has no Module. */
 	module?: string | null,
 };
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd = ReplayEnd_Serialize | ReplayEnd_Deserialize;
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd_Deserialize = 
+/**
+ *  Every step before `step` ran: the browser is on the page before it.
+ *  `notice` is said beside it: the preconditions were not checked.
+ */
+{ kind: "ready"; detail: {
+	case_id: number,
+	step: number,
+	notice: string | null,
+} } | 
+/**
+ *  Step `step` failed, or the sign-in or the trip to the area before
+ *  step 1 did (then `step` is 1): `why` is the failure's sentence, and
+ *  `outcomes` what ran, a failure carrying its screenshot.
+ */
+{ kind: "stopped_at"; detail: {
+	step: number,
+	why: string,
+	outcomes: ActionOutcome_Deserialize[],
+} } | 
+/**
+ *  The stop control, or the browser closing, ended the replay before
+ *  step `step` finished.
+ */
+{ kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**  Nothing was replayed: the sentence says why. */
+{ kind: "refused"; detail: string };
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd_Serialize = 
+/**
+ *  Every step before `step` ran: the browser is on the page before it.
+ *  `notice` is said beside it: the preconditions were not checked.
+ */
+{ kind: "ready"; detail: {
+	case_id: number,
+	step: number,
+	notice: string | null,
+} } | 
+/**
+ *  Step `step` failed, or the sign-in or the trip to the area before
+ *  step 1 did (then `step` is 1): `why` is the failure's sentence, and
+ *  `outcomes` what ran, a failure carrying its screenshot.
+ */
+{ kind: "stopped_at"; detail: {
+	step: number,
+	why: string,
+	outcomes: ActionOutcome_Serialize[],
+} } | 
+/**
+ *  The stop control, or the browser closing, ended the replay before
+ *  step `step` finished.
+ */
+{ kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**  Nothing was replayed: the sentence says why. */
+{ kind: "refused"; detail: string };
 
 /**
  *  Emitted as an unattended run moves: once when a case's browser is

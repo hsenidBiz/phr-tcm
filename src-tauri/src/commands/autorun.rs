@@ -95,9 +95,38 @@ pub(crate) async fn supervised_session_is_open() -> bool {
 #[specta::specta]
 pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
-        return Err("an unattended run is going - wait for it, or stop it first".to_string());
+        return Err(UNATTENDED_GOING.to_string());
     }
+    // The person's choice, remembered for a replay that finds no browser.
+    store::remember_browser(&root(&app)?, &browser_name);
+    // A replay going in the browser this replaces ends first: it is heard
+    // without the session's lock, which the replay holds.
+    crate::autorun::replay_to::stop();
     let mut slot = SESSION.lock().await;
+    open_into(&app, &mut slot, Browser::from_name(&browser_name)).await
+}
+
+/// Said when a supervised browser is asked for while an unattended run is
+/// going.
+const UNATTENDED_GOING: &str = "an unattended run is going - wait for it, or stop it first";
+
+/// The supervised session, opened with the browser last chosen
+/// (`store::last_browser`) when none is open - the same opening as Open
+/// browser. Called with the session lock held.
+async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>) -> Result<(), String> {
+    if slot.is_some() {
+        return Ok(());
+    }
+    if crate::commands::autorun_replay::replay_is_running() {
+        return Err(UNATTENDED_GOING.to_string());
+    }
+    let which = Browser::from_name(&store::last_browser(&root(app)?));
+    open_into(app, slot, which).await
+}
+
+/// Open the supervised browser into `slot`, closing one already there.
+/// Called with the session lock held.
+async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Browser) -> Result<(), String> {
     // Looked at with the session lock held: a recording claims its slot and
     // then waits on this lock to look for a session, so the two can never
     // both miss each other.
@@ -105,7 +134,6 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     if let Some(old) = slot.take() {
         close_session(old);
     }
-    let which = Browser::from_name(&browser_name);
     let browser = launch_in(which)?;
     // The browser needs a moment to bind its port before it will answer.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
@@ -132,7 +160,7 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     // Downloads are kept while this browser is open, in a folder emptied
     // as it opens and as it closes: they belong to no run. Losing them is
     // no reason not to open the browser either.
-    let downloads_root = match keep_supervised_downloads(&app, &mut cdp).await {
+    let downloads_root = match keep_supervised_downloads(app, &mut cdp).await {
         Ok(root) => Some(root),
         Err(e) => {
             crate::applog::warn(format!("auto-run: downloads could not be switched on: {e}"));
@@ -191,6 +219,9 @@ fn close_session(s: Session) {
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_close_browser() -> Result<(), String> {
+    // A replay going in this browser is stopped first, without the lock it
+    // holds: it ends at its next look, and the browser closes after it.
+    crate::autorun::replay_to::stop();
     if let Some(s) = SESSION.lock().await.take() {
         close_session(s);
         crate::applog::info("Auto-run browser closed");
@@ -214,6 +245,7 @@ pub async fn close_autorun_browsers() {
     while crate::commands::autorun_record::recording_is_going() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
+    crate::autorun::replay_to::stop();
     if let Some(s) = SESSION.lock().await.take() {
         close_session(s);
         crate::applog::info("Auto-run browser closed as the app exits");
@@ -262,6 +294,77 @@ pub async fn auto_run_step(
         area,
     )
     .await
+}
+
+/// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
+/// browser and stop before `step` (`autorun::replay_to`), for the person's
+/// Replay to step button. The browser open is used; with none, the one last
+/// chosen is opened first, as Open browser opens it. One replay at a time.
+/// The pane hears `AutorunReplayProgress` before each step. Refusals and
+/// the end come back as the `ReplayEnd`; `Err` is a browser that would not
+/// open.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_replay_to_step(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+    step: i32,
+    db_read_access: bool,
+) -> Result<crate::autorun::replay_to::ReplayEnd, String> {
+    use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayRequest};
+    use tauri_specta::Event;
+    let _one = match OneReplay::claim() {
+        Ok(one) => one,
+        Err(why) => return Ok(ReplayEnd::Refused(why)),
+    };
+    let root = root(&app)?;
+    let req = ReplayRequest { case_id, step, db_read_access };
+    // Refused before anything opens.
+    if let Err(why) = replay_to::check(&root, &organization, &project, &req) {
+        return Ok(ReplayEnd::Refused(why));
+    }
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    let mut slot = SESSION.lock().await;
+    open_if_none(&app, &mut slot).await?;
+    let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    let end = replay_to::replay_to_checked(
+        &mut session.cdp,
+        &root,
+        &organization,
+        &project,
+        &req,
+        &mut session.account,
+        &mut session.lease,
+        &mut session.guarded_case,
+        &crate::browser::timing::Timing::default(),
+        &replay_to::CANCEL,
+        || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
+        |k, of| {
+            let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(&app);
+        },
+    )
+    .await;
+    if session.cdp.is_guarding_saves() {
+        answer_between_commands();
+    }
+    let how = match &end {
+        ReplayEnd::Ready { .. } => "ready".to_string(),
+        ReplayEnd::StoppedAt { step, .. } => format!("stopped at step {step}"),
+        ReplayEnd::Stopped { step } => format!("stopped before step {step} finished"),
+        ReplayEnd::Refused(_) => "refused".to_string(),
+    };
+    crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: {how}"));
+    Ok(end)
+}
+
+/// The replay's stop control: the replay going, if any, ends at its next
+/// look and says where it stopped.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_stop_replay() {
+    crate::autorun::replay_to::stop();
 }
 
 /// A supervised case's preconditions, checked where the case starts and
@@ -968,27 +1071,21 @@ pub async fn auto_run_sign_in(
     account_key: String,
 ) -> Result<crate::autorun::signin::SignInOutcome, String> {
     let root = root(&app)?;
-    let (recipe, account) = crate::autorun::signin::prepare(&root, &organization, &project, &account_key)?;
+    // Refused before the browser is waited for: no account, no recipe.
+    crate::autorun::signin::prepare(&root, &organization, &project, &account_key)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    // The account is this browser's from here, whichever way the sign-in
-    // goes: one that fails partway may still have signed it in.
-    session.lease.hold(&root, &account.key).await?;
-    let out = crate::autorun::signin::sign_in(
+    crate::autorun::signin::sign_in_leased(
         &mut session.cdp,
         &root,
-        &recipe,
-        &account,
+        &organization,
+        &project,
+        &account_key,
+        &mut session.lease,
+        &mut session.account,
         &crate::browser::timing::Timing::default(),
     )
-    .await;
-    session.account = out.ok.then(|| account.key.clone());
-    crate::applog::info(format!(
-        "Auto-run sign-in as {}: {}",
-        account.key,
-        if out.ok { "ok" } else { "failed" }
-    ));
-    Ok(out)
+    .await
 }
 
 /// Throw a saved session away, so the next sign-in goes through the form.

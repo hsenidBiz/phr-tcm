@@ -803,3 +803,35 @@ fn sweep_files(dir: &Path, only_ext: Option<&str>, problems: &mut Vec<String>) -
     }
     removed
 }
+
+/// The file that remembers the browser last chosen for Auto Run.
+const LAST_BROWSER: &str = "last-browser.txt";
+
+/// The browser last chosen for Auto Run - in the supervised pane's Open
+/// browser or the unattended run's dialog - by name (`edge` or `chrome`).
+/// `edge` when none was chosen yet, or the file cannot be read. A replay
+/// to a step that finds no browser open opens this one.
+pub fn last_browser(root: &Path) -> String {
+    let name = std::fs::read_to_string(root.join(LAST_BROWSER)).unwrap_or_default();
+    browser_name(&name)
+}
+
+/// Remember `name` as the browser last chosen. Best effort: a choice that
+/// cannot be written is logged, and the next replay opens Edge.
+pub fn remember_browser(root: &Path, name: &str) {
+    let written = std::fs::create_dir_all(root)
+        .map_err(|e| e.to_string())
+        .and_then(|()| crate::ai_tools::atomic_write(&root.join(LAST_BROWSER), &browser_name(name)));
+    if let Err(e) = written {
+        crate::applog::warn(format!("auto-run: the browser chosen could not be remembered: {e}"));
+    }
+}
+
+/// A browser's stored name, as `Browser::from_name` reads it.
+fn browser_name(name: &str) -> String {
+    match crate::browser::launch::Browser::from_name(name) {
+        crate::browser::launch::Browser::Chrome => "chrome",
+        crate::browser::launch::Browser::Edge => "edge",
+    }
+    .to_string()
+}

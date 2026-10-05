@@ -94,6 +94,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::UpdateProgress,
             events::SlowdownRequested,
             events::ReplayProgress,
+            events::AutorunReplayProgress,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
             events::GuideProgress
@@ -186,6 +187,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             environments::env_add_proposals,
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,
+            autorun::auto_run_replay_to_step,
+            autorun::auto_run_stop_replay,
             autorun::auto_run_step,
             autorun::auto_run_check_preconditions,
             autorun::auto_run_load_script,
