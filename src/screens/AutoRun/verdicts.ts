@@ -111,3 +111,18 @@ export function failingStep(c: {
   }
   return first;
 }
+
+/**
+ * The step a Replay to step button replays a case to: its failing step
+ * (`failingStep`), offered only while the case's result is Failed or
+ * Blocked - the person's verdict, else the proposal. A case the person
+ * called Passed gets none, whatever its steps say.
+ */
+export function replayStep(c: {
+  verdict: string;
+  proposed?: string | null;
+  steps?: Parameters<typeof failingStep>[0]["steps"];
+}): number | null {
+  const bucket = resultBucket(c);
+  return bucket === "Failed" || bucket === "Blocked" ? failingStep(c) : null;
+}

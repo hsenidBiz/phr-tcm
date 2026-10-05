@@ -20,8 +20,8 @@ import {
   RESULT_BUCKETS,
   bucketTone,
   countBuckets,
-  failingStep,
   matchesFilter,
+  replayStep,
   type ResultBucket,
   type ResultFilter,
 } from "./verdicts";
@@ -220,7 +220,7 @@ export default function PastRuns({
               </div>
               <ul className="space-y-1">
                 {run.cases.filter((c) => matchesFilter(c, filter)).map((c) => {
-                  const replayStep = onReplay && !otherPbi ? failingStep(c) : null;
+                  const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
                   return (
                     <li
                       key={`${run.id}-${c.case_id}`}
@@ -241,14 +241,14 @@ export default function PastRuns({
                         ) : (
                           <span className="text-xs font-medium text-faint">unset</span>
                         )}
-                        {replayStep !== null && (
+                        {replayTo !== null && (
                           <Button
                             size="sm"
                             variant="outline"
-                            aria-label={`Replay case ${c.case_id} to step ${replayStep}`}
-                            onClick={() => onReplay?.(c.case_id, c.title, replayStep)}
+                            aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                            onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                           >
-                            Replay to step {replayStep}
+                            Replay to step {replayTo}
                           </Button>
                         )}
                       </div>

@@ -1126,7 +1126,7 @@ test("Replay in Past runs opens the supervised pane on that case and starts the 
   await screen.findByText("Alpha check");
   openTab("Past runs");
 
-  fireEvent.click(await screen.findByRole("button", { name: "Replay case 1 to step 2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replay to step 2 for case 1" }));
 
   expect(await screen.findByRole("button", { name: "Stop replay" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "#1 Alpha check" })).toBeInTheDocument();
@@ -1143,7 +1143,7 @@ test("Replay in the review closes the review and shows the pane replaying", asyn
 
   fireEvent.click(await screen.findByRole("button", { name: "Review" }));
   const review = await screen.findByRole("listitem", { name: "Case #1 Alpha check" });
-  fireEvent.click(within(review).getByRole("button", { name: "Replay case 1 to step 2" }));
+  fireEvent.click(within(review).getByRole("button", { name: "Replay to step 2 for case 1" }));
 
   expect(await screen.findByRole("button", { name: "Stop replay" })).toBeInTheDocument();
   await waitFor(() =>

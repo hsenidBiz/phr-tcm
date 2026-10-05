@@ -27,6 +27,9 @@ const BROWSERS = [
 /** How the app's refusal begins when a no-save case's guard cannot start. */
 const GUARD_NOT_SET_UP = "the no-save guard could not be set up: ";
 
+/** The outcome a step the replay ran is saved with. */
+const REPLAYED_OUTCOME = "replayed before healing";
+
 /** How a replay's answer is coloured, by how it ended. */
 const REPLAY_TONE: Record<ReplayEnd["kind"], string> = {
   ready: "text-success",
@@ -315,24 +318,24 @@ export default function RunPane({
    * replay. 0 while nothing was replayed. */
   const [replayedTo, setReplayedTo] = useState(0);
 
-  useEffect(() => {
-    const un = events.autorunReplayProgress.listen((e) => {
-      const p = e.payload;
-      if (p.case_id !== caseId) return;
-      setReplay((r) => (r?.state === "going" ? { state: "going", at: { step: p.step, of: p.of } } : r));
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, [caseId]);
-
   /** Replay this case's steps before `step` in the supervised browser, and
    * leave the pane on `step` with that browser as its own: the replay signed
    * the case in, so the pane does not sign in over it. */
   const startReplay = async (step: number) => {
     const wasOpen = opened;
+    const forCase = caseId;
     setBusy(true);
     setReplay({ state: "going", at: null });
+    // Listening before the replay starts, so its first step is never missed.
+    // A listener that could not be set up costs the progress line, never the
+    // replay.
+    const unlisten = await events.autorunReplayProgress
+      .listen((e) => {
+        const p = e.payload;
+        if (p.case_id !== forCase) return;
+        setReplay((r) => (r?.state === "going" ? { state: "going", at: { step: p.step, of: p.of } } : r));
+      })
+      .catch(() => null);
     try {
       const r = await commands.autoRunReplayToStep(org, project, caseId, step, dbReadAccessOn());
       if (r.status === "error") {
@@ -368,6 +371,7 @@ export default function RunPane({
       setReplay(null);
       toast.error(`Could not open the browser: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
+      unlisten?.();
       setBusy(false);
     }
   };
@@ -389,7 +393,11 @@ export default function RunPane({
     note,
     steps: (script.data?.steps ?? []).map((s) => ({
       step_number: s.step_number,
-      outcomes: results[s.step_number] ?? [],
+      // A step the replay ran has no outcomes of its own to keep: it is
+      // saved as replayed, never as an empty step.
+      outcomes:
+        results[s.step_number] ??
+        (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
     })),
     // A case its preconditions blocked says so the way an unattended run
     // does: proposed Blocked, with the sentence. The verdict stays theirs.

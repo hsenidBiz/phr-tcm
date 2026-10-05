@@ -375,7 +375,7 @@ test("a case with a failed step offers Replay to that step; one without a known 
   const { onReplay } = renderPastRuns([FAILED_AT_2], 42);
 
   const failed = await screen.findByRole("listitem", { name: "Run of Valid login" });
-  const replay = within(failed).getByRole("button", { name: "Replay case 201 to step 2" });
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
   expect(replay).toHaveTextContent("Replay to step 2");
 
   expect(
@@ -395,5 +395,20 @@ test("a run for another PBI offers no Replay", async () => {
   renderPastRuns([{ ...FAILED_AT_2, pbi_id: 7 }], 42);
 
   expect(await screen.findByText("for PBI #7")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
+});
+
+test("a case the person called Passed offers no Replay, whatever its steps say", async () => {
+  renderPastRuns(
+    [
+      {
+        ...FAILED_AT_2,
+        cases: [{ ...FAILED_AT_2.cases[0], verdict: "Passed" }],
+      },
+    ],
+    42,
+  );
+
+  await screen.findByRole("listitem", { name: "Run of Valid login" });
   expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
 });

@@ -839,7 +839,7 @@ test("a case with a failed step offers Replay to that step; the others do not", 
 
   const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
   // Step 2 failed; step 3 was only skipped because of it.
-  const replay = within(failed).getByRole("button", { name: "Replay case 201 to step 2" });
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
   expect(replay).toHaveTextContent("Replay to step 2");
 
   for (const name of ["Case #202 Locked account", "Case #203 Password reset"]) {
@@ -855,4 +855,14 @@ test("a run for another PBI offers no Replay", async () => {
 
   await screen.findByRole("listitem", { name: "Case #201 Valid login" });
   expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
+});
+
+test("calling a failed case Passed takes its Replay away", async () => {
+  renderReview(RUN, { onReplay: vi.fn() });
+
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+
+  fireEvent.click(within(failed).getByRole("button", { name: "Passed" }));
+  await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument());
 });

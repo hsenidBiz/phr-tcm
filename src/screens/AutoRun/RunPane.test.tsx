@@ -836,3 +836,43 @@ test("a replay whose browser would not open says so and offers Open browser", as
   expect(await screen.findByRole("button", { name: "Open browser" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Stop replay" })).not.toBeInTheDocument();
 });
+
+test("the first progress is heard: the pane listens before the replay starts", async () => {
+  const { emit } = await import("@tauri-apps/api/event");
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: THREE };
+      if (cmd === "auto_run_replay_to_step") {
+        // Said the moment the replay begins, before anything else happens.
+        void emit("autorun-replay-progress", { case_id: 1, step: 1, of: 2 });
+        return new Promise(() => {});
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderReplay(3);
+
+  expect(await screen.findByText("replaying step 1 of 2")).toBeInTheDocument();
+});
+
+test("saving after a replay keeps each replayed step with one outcome, never an empty step", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+  await r.finish(READY);
+  await stepRow(3);
+
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+
+  await waitFor(() => expect(r.named("auto_run_save_run")).toHaveLength(1));
+  const run = (r.named("auto_run_save_run")[0].args as {
+    run: { cases: { steps: { step_number: number; outcomes: unknown[] }[] }[] };
+  }).run;
+  expect(run.cases[0].steps).toEqual([
+    { step_number: 1, outcomes: [{ ok: true, detail: "replayed before healing" }] },
+    { step_number: 2, outcomes: [{ ok: true, detail: "replayed before healing" }] },
+    { step_number: 3, outcomes: [] },
+  ]);
+});

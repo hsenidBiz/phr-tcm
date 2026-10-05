@@ -23,7 +23,7 @@ import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import VerdictPicker from "./VerdictPicker";
-import { countBuckets, failingStep, matchesFilter, type ResultFilter } from "./verdicts";
+import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -357,7 +357,7 @@ export default function RunReview(props: {
       <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
         {shown.map((c) => {
           const isExpanded = expanded.has(c.case_id);
-          const replayStep = onReplay && !mismatch ? failingStep(c) : null;
+          const replayTo = onReplay && !mismatch ? replayStep(c) : null;
           return (
             <li
               key={c.case_id}
@@ -369,14 +369,14 @@ export default function RunReview(props: {
                 <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                 <RetriedBadge first={c.retried} />
                 <NoticeBadge notice={c.notice} />
-                {replayStep !== null && (
+                {replayTo !== null && (
                   <Button
                     size="sm"
                     variant="outline"
-                    aria-label={`Replay case ${c.case_id} to step ${replayStep}`}
-                    onClick={() => onReplay?.(c.case_id, c.title, replayStep)}
+                    aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                    onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                   >
-                    Replay to step {replayStep}
+                    Replay to step {replayTo}
                   </Button>
                 )}
               </div>

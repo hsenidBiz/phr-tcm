@@ -6,7 +6,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { countBuckets, failingStep, lastResultFor, lastResults, matchesFilter, resultBucket } from "./verdicts";
+import {
+  countBuckets,
+  failingStep,
+  lastResultFor,
+  lastResults,
+  matchesFilter,
+  replayStep,
+  resultBucket,
+} from "./verdicts";
 
 const FIXTURE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -136,4 +144,18 @@ test("the failing step is the first case step with an action that ran and failed
       ],
     }),
   ).toBeNull();
+});
+
+test("a replay is offered only on a Failed or Blocked case with a failing step", () => {
+  const steps = [
+    { step_number: 1, outcomes: [{ ok: true, detail: "ok" }] },
+    { step_number: 2, outcomes: [{ ok: false, detail: "button not found" }] },
+  ];
+  expect(replayStep({ verdict: "", proposed: "Failed", steps })).toBe(2);
+  expect(replayStep({ verdict: "Blocked", proposed: "Failed", steps })).toBe(2);
+  // The person's verdict wins over the proposal.
+  expect(replayStep({ verdict: "Passed", proposed: "Failed", steps })).toBeNull();
+  expect(replayStep({ verdict: "", proposed: "", steps })).toBeNull();
+  // Failed, but no step is known to have failed.
+  expect(replayStep({ verdict: "Failed", steps: [] })).toBeNull();
 });
