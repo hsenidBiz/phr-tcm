@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.5",
+    date: "2026-10-06",
+    items: [
+      "A failed or blocked Auto Run case can be replayed to the step where it stopped, from the run review or Past runs, leaving the browser ready for that step. An assistant can ask for the same replay, and for a script that must not save, the app asks you to allow it first.",
+      "Auto Run scripts can name shared state a case changes, such as a published cycle, or needs unchanged. Auto Run then suggests an execution order, shows where the environment must be reset, and pauses a run there until you choose Continue or Stop.",
+      "Auto Run keeps its own execution order for each PBI. Change it from Execution order in the Test cases tab's More menu, or go back to the suggested order.",
+      "The app opens faster, with less to load before the first screen.",
+    ],
+  },
+  {
     version: "2.1.1-beta.4",
     date: "2026-10-05",
     items: [
