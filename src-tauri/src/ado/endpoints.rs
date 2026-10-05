@@ -991,6 +991,28 @@ impl AdoClient {
         Ok(cases)
     }
 
+    /// A test case's steps as they stood at `as_of` (ISO 8601 UTC), read with
+    /// the work item's `asOf` - a repair compares them with the steps now to
+    /// see what the case itself changed since its script was saved. Read only.
+    pub async fn get_test_case_steps_as_of(
+        &self,
+        organization: &str,
+        id: i32,
+        as_of: &str,
+    ) -> Result<Vec<crate::steps_xml::Step>, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/workitems/{}?fields=Microsoft.VSTS.TCM.Steps&asOf={}&api-version=7.1",
+            self.base_url,
+            organization,
+            id,
+            percent_encode_segment(as_of)
+        );
+        let fetched = self.get_json(url).await?;
+        Ok(crate::steps_xml::parse_steps_xml(
+            fetched["fields"]["Microsoft.VSTS.TCM.Steps"].as_str().unwrap_or_default(),
+        ))
+    }
+
     /// Which type bugs are filed as on this project's process, ported from
     /// v1 detect_bug_type: prefer Bug (ReproSteps), fall back to Issue
     /// (Description). Enumeration failure assumes Bug. Read only.

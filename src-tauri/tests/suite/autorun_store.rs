@@ -61,6 +61,7 @@ fn script() -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        saved_at: None,
     }
 }
 
@@ -193,6 +194,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        saved_at: None,
     }
 }
 
@@ -239,7 +241,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![] }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], saved_at: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -265,6 +267,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        saved_at: None,
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -292,6 +295,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        saved_at: None,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
@@ -541,6 +545,9 @@ fn an_unchecked_step_needs_a_reason_and_repairs_round_trip() {
         "steps": [{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://a.example/" }], "unchecked": "the PDF preview cannot be read" }] })).unwrap();
     v2_lib::autorun::store::save_scripts_atomically(dir.path(), std::slice::from_ref(&sc)).unwrap();
     let back = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    // Every save stamps when it happened; everything else round-trips.
+    assert!(back.saved_at.is_some(), "the save was not stamped");
+    sc.saved_at = back.saved_at.clone();
     assert_eq!(back, sc);
     assert_eq!(back.last_repair.as_deref(), Some("the toast lost its id"));
     sc.steps[0].unchecked = Some("   ".into());

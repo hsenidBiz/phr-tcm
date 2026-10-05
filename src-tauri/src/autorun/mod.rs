@@ -100,6 +100,14 @@ pub struct CaseScript {
     /// Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
+    /// When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
+    /// every save (`store::save_scripts_atomically`), whatever was sent. A
+    /// repair reads the test case as of this moment to see which steps the
+    /// case itself has changed since (`edits::check_edits_following_case`).
+    /// Absent on scripts saved before it existed; the file's own modified
+    /// time stands in for it then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_at: Option<String>,
 }
 
 /// One record a case relies on: `stage` of `flow` must be done for `value`,

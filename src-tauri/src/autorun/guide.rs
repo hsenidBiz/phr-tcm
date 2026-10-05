@@ -681,7 +681,12 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 
 - a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
 - a step named in `edits` that you did not actually touch - `step N was declared but not changed`
-- fewer checks in a changed step than the old one had - `an assertion is never removed or weakened by a repair`
+- fewer checks in a changed step than the old one had - `an assertion is never removed or weakened by a repair`.
+  The one exception is a step the TEST CASE itself changed or dropped since the
+  script was last saved (the save reads the case as it stood then): such a step
+  may follow the case, losing checks the case no longer asks for or going away
+  with it. It is still declared in `edits`, and the save still checks every
+  step of the case as it is now.
 - an `edits` entry with no reason - `an edit needs a reason`
 - a repair that tries to change which account the script signs in as - `the account a script runs as cannot be changed by a repair - a person picks it in the app`
 - a changed `area` without `"area": true` in the case's `edits` entry - `the area changed from ... but was not declared`; and `"area": true` when the area did not change - `the area was declared but not changed`

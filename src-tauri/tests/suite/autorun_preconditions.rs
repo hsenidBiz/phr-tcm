@@ -331,6 +331,8 @@ async fn every_save_path_refuses_a_precondition_it_cannot_check() {
     // A repair of a saved script cannot bring one in either.
     let saved: CaseScript = serde_json::from_value(script_with(11, good.clone())).unwrap();
     save_script_from_editor(&root, "acme", "Web", saved.clone()).unwrap();
+    // As written: every save stamps saved_at.
+    let saved = load_script(&root, 11).unwrap().unwrap();
     let body = json!({
         "scripts": [script_with(11, bad.clone())],
         "edits": [{ "case_id": 11, "steps": [], "why": "the cycle changed" }]
