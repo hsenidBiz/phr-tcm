@@ -367,14 +367,21 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
                             ariaLabel={`Add ${p.key}`}
                             onCheckedChange={(on) => pick([p.key], on)}
                           />
-                          <div className="min-w-0 flex-1 text-xs">
-                            <span className="id-mono break-all text-text">{p.key}</span>
-                            {details.map((d, i) => (
-                              <span key={i} className="text-muted">
-                                {i === 0 ? " " : " - "}
-                                <span className="break-all">{d}</span>
-                              </span>
-                            ))}
+                          {/* The login in a column of its own, so the names line up
+                              down the list instead of starting wherever each
+                              login ends. */}
+                          <div className="flex min-w-0 flex-1 items-baseline gap-3 text-xs">
+                            <span className="id-mono w-32 shrink-0 truncate font-medium text-text" title={p.key}>
+                              {p.key}
+                            </span>
+                            <span className="min-w-0 truncate">
+                              {details.map((d, i) => (
+                                <span key={i} className={i === 0 ? "text-text" : "text-muted"}>
+                                  {i === 0 ? "" : " - "}
+                                  {d}
+                                </span>
+                              ))}
+                            </span>
                           </div>
                           {value !== "" ? (
                             <Badge className="shrink-0 bg-accent/15 text-accent">Password set</Badge>
