@@ -220,19 +220,29 @@ fn read_bytes(path: &Path, shown_name: &str) -> Result<Vec<u8>, String> {
 
 fn read_grid(path: &Path, shown_name: &str, kind: Kind, sheet: Option<&str>) -> Result<Grid, String> {
     match kind {
-        Kind::Xlsx => {
-            let book: Xlsx<_> =
-                open_workbook(path).map_err(|e: calamine::XlsxError| not_a_sheet(shown_name, &e.to_string()))?;
-            read_book(book, shown_name, sheet)
-        }
-        Kind::Xls => {
-            let book: Xls<_> =
-                open_workbook(path).map_err(|e: calamine::XlsError| not_a_sheet(shown_name, &e.to_string()))?;
-            read_book(book, shown_name, sheet)
+        Kind::Xlsx | Kind::Xls => {
+            // A damaged workbook must be a sentence, never the end of the
+            // run: whatever calamine does with one, a panic included, comes
+            // back as "could not be read".
+            let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                read_workbook(path, shown_name, kind, sheet)
+            }));
+            read.unwrap_or_else(|_| Err(not_a_sheet(shown_name, "the file is damaged")))
         }
         Kind::Csv => read_csv(&read_bytes(path, shown_name)?, shown_name),
         Kind::Txt | Kind::Other => Err(not_a_sheet(shown_name, "it is not an .xlsx, .xls or .csv file")),
     }
+}
+
+fn read_workbook(path: &Path, shown_name: &str, kind: Kind, sheet: Option<&str>) -> Result<Grid, String> {
+    if kind == Kind::Xls {
+        let book: Xls<_> =
+            open_workbook(path).map_err(|e: calamine::XlsError| not_a_sheet(shown_name, &e.to_string()))?;
+        return read_book(book, shown_name, sheet);
+    }
+    let book: Xlsx<_> =
+        open_workbook(path).map_err(|e: calamine::XlsxError| not_a_sheet(shown_name, &e.to_string()))?;
+    read_book(book, shown_name, sheet)
 }
 
 fn read_book<R, B>(mut book: B, shown_name: &str, sheet: Option<&str>) -> Result<Grid, String>
@@ -280,11 +290,10 @@ fn shown(d: &Data) -> String {
 
 fn read_csv(bytes: &[u8], shown_name: &str) -> Result<Grid, String> {
     let text = decode(bytes);
-    let first_line = text.lines().next().unwrap_or("");
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
-        .delimiter(delimiter(first_line))
+        .delimiter(delimiter(&text))
         .from_reader(text.as_bytes());
     let mut rows = Vec::new();
     for record in reader.records() {
@@ -294,12 +303,25 @@ fn read_csv(bytes: &[u8], shown_name: &str) -> Result<Grid, String> {
     Ok(Grid { rows })
 }
 
-/// Comma, semicolon or tab: whichever the first line has most of, comma
-/// when it has none (a single column) or on a tie.
-fn delimiter(first_line: &str) -> u8 {
-    let mut best = (b',', 0usize);
-    for d in [b',', b';', b'\t'] {
-        let n = first_line.bytes().filter(|b| *b == d).count();
+/// Comma, semicolon or tab: whichever the first record has most of
+/// outside double quotes, comma when it has none (a single column) or on a
+/// tie. A quoted `"Smith, John"` is text, not two columns, and a quoted
+/// line break does not end the first record.
+fn delimiter(text: &str) -> u8 {
+    let (mut commas, mut semicolons, mut tabs) = (0usize, 0usize, 0usize);
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '\n' if !quoted => break,
+            ',' if !quoted => commas += 1,
+            ';' if !quoted => semicolons += 1,
+            '\t' if !quoted => tabs += 1,
+            _ => {}
+        }
+    }
+    let mut best = (b',', commas);
+    for (d, n) in [(b';', semicolons), (b'\t', tabs)] {
         if n > best.1 {
             best = (d, n);
         }

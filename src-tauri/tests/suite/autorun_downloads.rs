@@ -493,3 +493,75 @@ fn a_missing_file_says_it_could_not_be_read() {
     assert!(err.starts_with("\"gone.csv\" could not be read"), "{err}");
     assert!(!err.contains(&dir.path().to_string_lossy().to_string()), "{err}");
 }
+
+// ---------------------------------------------------------------- damaged files never crash
+
+#[test]
+fn a_truncated_xlsx_is_reported_not_a_crash() {
+    let whole = std::fs::read(fixture("template.xlsx")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("half.xlsx");
+    std::fs::write(&path, &whole[..whole.len() / 2]).unwrap();
+    let mut check = named("half.xlsx");
+    check.headers = exact(&["Employee No"]);
+    let err = check_file(&path, "half.xlsx", &check).unwrap_err();
+    assert!(err.starts_with("\"half.xlsx\" could not be read as a spreadsheet: "), "{err}");
+}
+
+#[test]
+fn a_corrupt_xls_is_reported_not_a_crash() {
+    // Fixed pseudo-random bytes, so the test is the same every run.
+    let mut x: u32 = 0x2545_F491;
+    let bytes: Vec<u8> = (0..8192)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 24) as u8
+        })
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("noise.xls");
+    std::fs::write(&path, &bytes).unwrap();
+    let mut check = named("noise.xls");
+    check.cells = vec![cell("A1", "x", false)];
+    let err = check_file(&path, "noise.xls", &check).unwrap_err();
+    assert!(err.starts_with("\"noise.xls\" could not be read as a spreadsheet: "), "{err}");
+}
+
+// ---------------------------------------------------------------- delimiter and encoding edges
+
+/// Commas inside a quoted header are text, not delimiters: this file is
+/// split on its one semicolon.
+#[test]
+fn commas_inside_quotes_do_not_choose_the_delimiter() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("quoted.csv");
+    std::fs::write(&path, "\"Smith, John, Jr\";B\n1;2\n").unwrap();
+    let mut check = named("quoted.csv");
+    check.headers = exact(&["Smith, John, Jr", "B"]);
+    check.cells = vec![cell("B2", "2", false)];
+    let size = human_size(std::fs::metadata(&path).unwrap().len());
+    assert_eq!(
+        check_file(&path, "quoted.csv", &check),
+        Ok(format!("downloaded \"quoted.csv\" ({size}), headers match, B2 is \"2\""))
+    );
+}
+
+#[test]
+fn a_windows_1252_euro_sign_reads_as_euro() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("price.txt");
+    std::fs::write(&path, b"Total: 12 \x80\r\n").unwrap();
+    let mut check = named("price.txt");
+    check.contains_text = strings(&["12 €"]);
+    assert_eq!(
+        check_file(&path, "price.txt", &check),
+        Ok(format!("downloaded \"price.txt\" ({}), it contains \"12 €\"", human_size(13)))
+    );
+}
+
+#[test]
+fn a_twelve_letter_column_is_refused() {
+    assert_eq!(parse_a1("ABCDEFGHIJKL1"), None);
+}
