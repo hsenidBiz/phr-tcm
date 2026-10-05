@@ -708,7 +708,7 @@ export const importFile: Screen = {
   tips: [
     "Only a case id updates a work item. A title that matches an existing case is a warning, never an update.",
     "While a file is watched, a line under **Import JSON** names it and how many cases it added. **Stop** stops following that file (**Remove all** there stops every one) and asks whether to keep the cases it added or remove them too. Cases you typed by hand are never removed.",
-    "Under each watched file, **Attach spec…** adds specification documents (Markdown or text files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page.",
+    "Under each watched file, **Attach spec…** adds specification documents (Markdown files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page. Nothing else can be a spec: any other file or link is refused with the reason.",
     "**General comments**, under the watched files, holds notes about the whole set, such as a question you asked a developer. They are saved into the file.",
     "When a watched file changes, a panel says what was added, changed or removed, and the rows it touched are outlined in the queue. **Show details** lists each change; the x closes the panel.",
     "With the queue empty, **Recent JSON Imports** lists files you imported before. **Open** imports one again as it is now; the x takes it off the list.",

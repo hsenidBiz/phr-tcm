@@ -567,11 +567,14 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
     let data: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-    let (specs, ignored) = specs::specs_from_value(&data);
+    let specs::SpecsRead { kept: specs, ignored, refused } = specs::specs_from_value(&data);
     let mut warnings = vec![];
     if ignored > 0 {
         warnings.push(format!("specs: {ignored} entr{} ignored - each entry must be a file path or a wiki URL.", if ignored == 1 { "y" } else { "ies" }));
     }
+    // One warning per refused entry, naming it: whoever listed it (the
+    // person or an assistant) sees exactly which one and why.
+    warnings.extend(refused.iter().map(|e| specs::refused_warning(e)));
 
     let raw_cases = match &data {
         serde_json::Value::Object(o) => o

@@ -3015,7 +3015,11 @@ fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
 /// Without a file (the draft came inline) it is the standard wrapper.
 fn draft_text_for(old: Option<&str>, cases: &[crate::model::TestCase]) -> Result<String, String> {
     match old {
-        Some(old) => crate::import_parser::merge_cases_into_draft(old, cases),
+        // A `specs` entry the rule refuses is taken out on the way back, so
+        // a tool's write never keeps one. The importer has already warned
+        // about each by name.
+        Some(old) => crate::import_parser::merge_cases_into_draft(old, cases)
+            .and_then(|t| crate::import_parser::specs::without_refused_specs(&t)),
         None => crate::import_parser::queue_to_json_string(cases),
     }
 }
@@ -4197,6 +4201,11 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         in the browser, and every `Spec:` citation in `reviewer_notes` links\n\
         to its heading there - so name the document in a citation the way its\n\
         file or wiki page is named.\n\n\
+        Only `.md` files and Azure DevOps wiki links may be listed in\n\
+        `specs`. Any other file - code such as `.cshtml` or `.cs`, text\n\
+        files, PDFs - may be read and cited in `reviewer_notes`, but never\n\
+        added to `specs`: it is refused if added, and the importer warns\n\
+        about each one it drops.\n\n\
         ## Findings\n\
         When something you read is WRONG - a case that contradicts its spec,\n\
         a spec that contradicts itself, code that does what neither says -\n\

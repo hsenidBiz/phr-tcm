@@ -601,6 +601,39 @@ async fn merge_carries_the_union_of_the_slices_specs() {
     assert_eq!(doc["test_cases"].as_array().unwrap().len(), 2, "{written}");
 }
 
+/// A slice that lists a `.cshtml` does not pass it on: the merged file keeps
+/// only .md files and wiki links, and the warnings name the dropped entry
+/// under the slice it came from.
+#[tokio::test]
+async fn merge_drops_a_refused_spec_and_warns() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    let slice_b = dir.path().join("slice-b.json");
+    std::fs::write(
+        &slice_a,
+        serde_json::json!({ "specs": ["Step13.md", "Views/Payroll/Index.cshtml"], "test_cases": [case_json("Case A1")] }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(&slice_b, serde_json::json!({ "specs": ["Step14.md"], "test_cases": [case_json("Case B1")] }).to_string())
+        .unwrap();
+    let output_path = dir.path().join("merged.json");
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
+    assert_eq!(doc["specs"], serde_json::json!(["Step13.md", "Step14.md"]), "{doc}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let expected = format!(
+        "{}: specs: Views/Payroll/Index.cshtml cannot be a spec - only .md files and Azure DevOps wiki links can be added",
+        slice_a.to_string_lossy()
+    );
+    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w.as_str() == Some(expected.as_str())), "{out}");
+}
+
 /// The merged file is what the slices become, and the response calls the
 /// slices "safe to remove". Their whole-set notes must therefore come along,
 /// each under the name of the slice it came from.

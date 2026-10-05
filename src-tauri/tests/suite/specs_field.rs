@@ -89,3 +89,79 @@ fn a_file_saved_with_a_bom_reads_and_saves_its_specs() {
     assert_eq!(doc["specs"], serde_json::json!(["A.md"]));
     assert_eq!(doc["comments"], "whole-set note");
 }
+
+// Only .md files and Azure DevOps wiki links can be specs. One rule,
+// `check_spec`, decides it for every reader and writer of the list.
+
+fn refusal(entry: &str) -> String {
+    format!("{entry} cannot be a spec - only .md files and Azure DevOps wiki links can be added")
+}
+
+#[test]
+fn check_spec_accepts_markdown_files_and_azure_devops_wiki_links() {
+    use v2_lib::import_parser::specs::check_spec;
+    for ok in [
+        "Spec.md",
+        "docs/Step13.MD",
+        r"..\specs\Rules.markdown",
+        r"C:\specs\Engine.md",
+        "/home/me/specs/Engine.Markdown",
+        "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine",
+        "https://contoso.visualstudio.com/Web/_wiki/wikis/Web.wiki/7/Login",
+        " https://dev.azure.com/o/p/_wiki/wikis/p.wiki?pagePath=%2FEngine ",
+    ] {
+        assert_eq!(check_spec(ok), Ok(()), "{ok}");
+    }
+}
+
+#[test]
+fn check_spec_refuses_everything_else_with_the_sentence() {
+    use v2_lib::import_parser::specs::check_spec;
+    for bad in [
+        "Views/Payroll/Index.cshtml",
+        "notes.txt",
+        r"C:\src\PayrollController.cs",
+        "spec.pdf",
+        ".md",
+        "Spec.md.cshtml",
+        "https://example.com/spec.md",
+        "https://dev.azure.com/o/p/_git/repo?path=/Spec.md",
+        "http://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine",
+        "https://dev.azure.com.evil.example/o/p/_wiki/wikis/p.wiki/12/Engine",
+        "file:///C:/specs/Spec.md",
+    ] {
+        assert_eq!(check_spec(bad), Err(refusal(bad)), "{bad}");
+    }
+}
+
+#[test]
+fn the_importer_drops_a_refused_entry_and_warns_by_name() {
+    let json = r#"{
+      "specs": ["Spec.md", "Views/Payroll/Index.cshtml", "https://example.com/x", 7],
+      "test_cases": [{ "title": "Sign in", "steps": [{"action": "Sign in", "expected": "Signed in"}] }]
+    }"#;
+    let parsed = v2_lib::import_parser::parse_json_text(json).unwrap();
+    assert_eq!(parsed.specs, vec!["Spec.md".to_string()]);
+    let w = &parsed.warnings;
+    assert!(w.contains(&format!("specs: {}", refusal("Views/Payroll/Index.cshtml"))), "{w:?}");
+    assert!(w.contains(&format!("specs: {}", refusal("https://example.com/x"))), "{w:?}");
+    // The non-string entry keeps its own warning, unchanged.
+    assert!(w.iter().any(|x| x.starts_with("specs: 1 entry ignored")), "{w:?}");
+    assert_eq!(read_specs(json), vec!["Spec.md".to_string()], "the spec pane reads the same list");
+    assert_eq!(
+        v2_lib::import_parser::specs::refused_spec_entries(json),
+        vec!["Views/Payroll/Index.cshtml".to_string(), "https://example.com/x".to_string()]
+    );
+}
+
+/// The Attach control's save (`save_specs`) checks the list with
+/// `check_specs` before anything else, and `patch_specs` - the write it
+/// goes through - refuses on its own too, so nothing writes a refused entry.
+#[test]
+fn saving_a_list_with_a_refused_entry_is_refused_whole() {
+    use v2_lib::import_parser::specs::check_specs;
+    let list = vec!["A.md".to_string(), "Views/Index.cshtml".to_string()];
+    assert_eq!(check_specs(&list), Err(refusal("Views/Index.cshtml")));
+    assert_eq!(patch_specs(FILE, &list), Err(refusal("Views/Index.cshtml")));
+    assert_eq!(check_specs(&["A.md".to_string(), "https://dev.azure.com/o/p/_wiki/wikis/w/1/X".to_string()]), Ok(()));
+}
