@@ -83,6 +83,13 @@ tauri-plugin-notification = "2.3.3"
 # 2.11.5 already satisfies.
 tauri-plugin-autostart = "=2.5.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# Auto Run's expect_download reads a downloaded spreadsheet (xlsx, xls) or
+# CSV to check its headers and cells - see autorun/downloads.rs. Read only.
+calamine = "0.36.1"
+csv = "1.4.0"
+# Windows-1252, for a CSV or text file that is not UTF-8. Already in the
+# build through calamine; named here because downloads.rs uses it directly.
+encoding_rs = "0.8.42"
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

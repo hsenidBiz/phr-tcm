@@ -9,6 +9,7 @@
 pub mod accounts;
 pub mod api_checks;
 pub mod defects;
+pub mod downloads;
 pub mod edits;
 pub mod failures;
 pub mod floor;
