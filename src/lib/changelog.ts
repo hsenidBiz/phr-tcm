@@ -19,6 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: "2.1.0",
     date: "2026-10-05",
     items: [
+      "Settings has a new Enable Advanced Features option that turns on Auto Run and API Templates, and the How To Use guide now covers both.",
       "Add as many databases of your own as you need under AI Bridge, each with its own name and login.",
       "On the AI Bridge tab, the Company database card is now called Database Read Access.",
       "The AI Bridge tab lays its cards out in columns that fit the window, without gaps between them.",
