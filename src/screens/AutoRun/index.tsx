@@ -538,13 +538,29 @@ export default function AutoRun({
   /** Both run buttons start from the plan, not from list order: the saved
    * order for this PBI, else the suggested one. A plan that cannot be had
    * leaves list order, as before. */
+  const [planning, setPlanning] = useState(false);
+  const planningRef = useRef(false);
+  const pbiIdNow = useRef<number | undefined>(undefined);
+  pbiIdNow.current = pbi?.id;
   const startPlanned = async (kind: "supervised" | "unattended") => {
-    const plan = pbi ? await fetchPlan(org, project, pbi.id, selectedInOrder) : null;
-    const order = plan?.order ?? selectedInOrder;
-    if (kind === "supervised") setRunning(order);
-    else {
-      setReplayPlan(plan);
-      setReplaying(order);
+    // One at a time: a second click while the plan is on its way would
+    // start a second run.
+    if (!pbi || planningRef.current) return;
+    planningRef.current = true;
+    setPlanning(true);
+    try {
+      const plan = await fetchPlan(org, project, pbi.id, selectedInOrder);
+      const order = plan?.order ?? selectedInOrder;
+      if (kind === "supervised") setRunning(order);
+      else {
+        setReplayPlan(plan);
+        setReplaying(order);
+      }
+    } catch (e) {
+      toast.error(`Could not work out the order: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      planningRef.current = false;
+      setPlanning(false);
     }
   };
 
@@ -1111,6 +1127,7 @@ export default function AutoRun({
                         <Button
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
+                          disabled={planning}
                           onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
@@ -1120,6 +1137,7 @@ export default function AutoRun({
                           size="sm"
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
+                          disabled={planning}
                           onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />

@@ -673,6 +673,9 @@ pub struct PlanView {
 /// Each case's marks come from its saved script; a case with no script
 /// has none. Scripts and orders are kept by work item id, so the
 /// organization and project name the selection's source and nothing more.
+/// `preview_order` stands in for the saved order for this one call (the
+/// Execution order dialog asks about a list the person has moved but not
+/// saved); nothing is written.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_plan(
@@ -681,15 +684,16 @@ pub fn auto_run_plan(
     project: String,
     pbi_id: i32,
     case_ids: Vec<i32>,
+    preview_order: Option<Vec<i32>>,
 ) -> Result<PlanView, String> {
     let _ = (organization, project);
-    Ok(plan_at(&root(&app)?, pbi_id, &case_ids))
+    Ok(plan_at(&root(&app)?, pbi_id, &case_ids, preview_order.as_deref()))
 }
 
 /// The pure half of [`auto_run_plan`], so a test can reach it without an
 /// `AppHandle`. A script that cannot be read counts as no marks (and is
 /// logged), so one bad file never stops the plan.
-pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32]) -> PlanView {
+pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_order: Option<&[i32]>) -> PlanView {
     use crate::autorun::plan::{plan_for, Marks};
     let selected: Vec<(i32, Marks)> = case_ids
         .iter()
@@ -705,14 +709,17 @@ pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32]) -> PlanVie
             (id, marks)
         })
         .collect();
-    let saved = store::load_order(root, pbi_id);
+    let saved = match preview_order {
+        Some(p) => Some(p.to_vec()),
+        None => store::load_order(root, pbi_id),
+    };
     let (plan, counts) = plan_for(&selected, saved.as_deref());
     PlanView {
         order: plan.order,
         phases: plan.phases,
         resets: plan.resets,
         counts: counts.map(|(a, b)| (a as u32, b as u32)),
-        saved: saved.is_some(),
+        saved: preview_order.is_none() && saved.is_some(),
     }
 }
 

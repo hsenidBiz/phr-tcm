@@ -488,8 +488,11 @@ export const commands = {
 	 *  Each case's marks come from its saved script; a case with no script
 	 *  has none. Scripts and orders are kept by work item id, so the
 	 *  organization and project name the selection's source and nothing more.
+	 *  `preview_order` stands in for the saved order for this one call (the
+	 *  Execution order dialog asks about a list the person has moved but not
+	 *  saved); nothing is written.
 	 */
-	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[]) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds })),
+	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds, previewOrder })),
 	/**
 	 *  Save Auto Run's own execution order for a PBI on this machine. Run
 	 *  Tests' order is separate and is not changed.

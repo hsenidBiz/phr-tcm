@@ -348,6 +348,51 @@ test("Run unattended starts from the planned order and shows no plan for a singl
   expect(replays[0].cases.map((c) => c.case_id)).toEqual([2, 1]);
 });
 
+test("a double click on a run button asks once and starts one run", async () => {
+  let plans = 0;
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => {
+    if (cmd !== "auto_run_plan") return null;
+    plans += 1;
+    return new Promise((r) => setTimeout(() => r(PLANNED([1])), 30));
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  const run = await screen.findByRole("button", { name: "Run 1 selected" });
+  fireEvent.click(run);
+  fireEvent.click(run);
+  expect(run).toBeDisabled();
+  await screen.findByRole("heading", { name: /#1 Alpha check/ });
+  expect(plans).toBe(1);
+});
+
+test("when the plan fails no run starts and the error is shown", async () => {
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => {
+    if (cmd === "auto_run_plan") throw "the store is unreadable";
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeEnabled();
+});
+
+test("a plan that is not these cases runs in list order", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
+    cmd === "auto_run_plan" ? PLANNED([2, 7]) : null,
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
+  const progress = await screen.findByText("case 1 of 2");
+  expect(progress.closest("h2")).toHaveTextContent("#1 Alpha check");
+});
+
 test("the Execution order item in More opens the dialog", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();

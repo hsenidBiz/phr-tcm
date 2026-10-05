@@ -369,7 +369,7 @@ fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
     store::save_script(dir.path(), &script(2, &[], &["x"])).unwrap();
     // Case 3 has no script.
 
-    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3]);
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], None);
     assert_eq!(view.order, vec![2, 1, 3]);
     assert_eq!(view.phases, vec![vec![2, 1, 3]]);
     assert!(view.resets.is_empty());
@@ -377,7 +377,7 @@ fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
     assert!(!view.saved);
 
     store::save_order(dir.path(), 100, &[1, 2, 3]).unwrap();
-    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3]);
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], None);
     assert_eq!(view.order, vec![1, 2, 3]);
     assert_eq!(view.phases, vec![vec![1], vec![2, 3]]);
     assert_eq!(view.resets, vec![reset(2, &[("x", &[1])])]);
@@ -385,7 +385,35 @@ fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
     assert!(view.saved);
 
     // Another PBI's order is its own.
-    let other = v2_lib::commands::autorun::plan_at(dir.path(), 200, &[1, 2, 3]);
+    let other = v2_lib::commands::autorun::plan_at(dir.path(), 200, &[1, 2, 3], None);
     assert_eq!(other.order, vec![2, 1, 3]);
     assert!(!other.saved);
+}
+
+/// A preview order stands in for the saved one for one call: its order, its
+/// resets and its counts, with stale ids dropped and missing ones appended.
+/// Nothing is written, and `saved` still reports only what is on disk.
+#[test]
+fn a_preview_order_is_planned_without_being_saved() {
+    let dir = TempDir::new();
+    store::save_script(dir.path(), &script(1, &["x"], &[])).unwrap();
+    store::save_script(dir.path(), &script(2, &[], &["x"])).unwrap();
+
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], Some(&[1, 99, 2]));
+    assert_eq!(view.order, vec![1, 2, 3]);
+    assert_eq!(view.phases, vec![vec![1], vec![2, 3]]);
+    assert_eq!(view.resets, vec![reset(2, &[("x", &[1])])]);
+    assert_eq!(view.counts, Some((1, 0)));
+    assert!(!view.saved);
+
+    let orders = dir.path().join("orders");
+    assert!(!orders.join("100.json").exists());
+
+    // With a saved order on disk, the preview wins and the file is untouched.
+    store::save_order(dir.path(), 100, &[2, 1, 3]).unwrap();
+    let before = std::fs::read(orders.join("100.json")).unwrap();
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], Some(&[1, 2, 3]));
+    assert_eq!(view.order, vec![1, 2, 3]);
+    assert_eq!(view.counts, Some((1, 0)));
+    assert_eq!(std::fs::read(orders.join("100.json")).unwrap(), before);
 }

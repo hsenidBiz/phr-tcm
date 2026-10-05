@@ -3,7 +3,7 @@
 // wherever the shared state has to be put back. Run Tests has its own
 // order and this does not touch it.
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type PlanView } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -32,6 +32,13 @@ export default function ExecutionOrderDialog({
   const titleOf = (id: number) => titles.get(id);
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [loaded, setLoaded] = useState(false);
+  /** The first plan's order, and whether an order of its own was saved: the
+   * baseline Save and Use suggested order are judged against. */
+  const [baseline, setBaseline] = useState<number[] | null>(null);
+  const [savedOnDisk, setSavedOnDisk] = useState(false);
+  const [failed, setFailed] = useState(false);
+  /** Counts the questions asked, so an old answer cannot overwrite a newer one. */
+  const asked = useRef(0);
   const [order, setOrder] = useState<SuiteCase[]>(cases);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -39,10 +46,16 @@ export default function ExecutionOrderDialog({
 
   useEffect(() => {
     let live = true;
-    void fetchPlan(org, project, pbiId, cases.map((c) => c.id)).then((p) => {
-      if (!live) return;
+    const mine = ++asked.current;
+    void fetchPlan(org, project, pbiId, cases.map((c) => c.id)).catch(() => null).then((p) => {
+      if (!live || mine !== asked.current) return;
       setPlan(p);
-      if (p) setOrder(p.order.map((id) => ({ id, title: titles.get(id) ?? "" })));
+      setFailed(p == null);
+      if (p) {
+        setOrder(p.order.map((id) => ({ id, title: titles.get(id) ?? "" })));
+        setBaseline(p.order);
+        setSavedOnDisk(p.saved);
+      }
       setLoaded(true);
     });
     return () => {
@@ -52,11 +65,19 @@ export default function ExecutionOrderDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const unchanged = plan != null && order.every((c, i) => c.id === plan.order[i]);
-  // The reset points belong to the order the planner worked out. A list
-  // that has been moved no longer matches them; they are worked out again
-  // from the saved order.
-  const showResets = plan != null && unchanged;
+  const unchanged = baseline != null && order.every((c, i) => c.id === baseline[i]);
+
+  /** The list was moved: work out its reset points again. The old lines
+   * stay on screen until the answer arrives. */
+  const moved = (next: SuiteCase[]) => {
+    setOrder(next);
+    const mine = ++asked.current;
+    void fetchPlan(org, project, pbiId, cases.map((c) => c.id), next.map((c) => c.id)).catch(() => null).then((p) => {
+      if (mine !== asked.current) return;
+      setFailed(p == null);
+      if (p) setPlan(p);
+    });
+  };
 
   const run = async (work: () => Promise<unknown>) => {
     setBusy(true);
@@ -88,21 +109,19 @@ export default function ExecutionOrderDialog({
         </p>
       )}
       {!loaded && <p className="text-xs text-muted">Working out the order…</p>}
-      {loaded && plan && !showResets && plan.resets.length > 0 && (
-        <p className="text-xs text-muted">Reset points are worked out again once the order is saved.</p>
-      )}
+      {failed && <p className="text-xs text-danger">Could not work out the order.</p>}
       {error && <p className="text-xs text-danger">{error}</p>}
       {loaded && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CaseOrderList
             cases={order}
             selected={selected}
-            onChange={setOrder}
+            onChange={moved}
             onSelect={setSelected}
             ariaLabel="Auto Run execution order"
             disabled={busy}
             noteBefore={(id) => {
-              if (!showResets) return null;
+              if (!plan) return null;
               const lines = plan.resets
                 .filter((r) => r.before_case_id === id)
                 .flatMap((r) => resetLines(r, titleOf));
@@ -123,13 +142,13 @@ export default function ExecutionOrderDialog({
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        {plan?.saved && (
+        {savedOnDisk && (
           <Button variant="outline" size="sm" disabled={busy} onClick={useSuggested}>
             <IconUndo aria-hidden />
             Use suggested order
           </Button>
         )}
-        <Button size="sm" disabled={busy || !loaded || unchanged} onClick={save}>
+        <Button size="sm" disabled={busy || !loaded || failed || unchanged} onClick={save}>
           <IconConfirm aria-hidden />
           Save order
         </Button>
