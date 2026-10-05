@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.3",
+    date: "2026-10-05",
+    items: [
+      "Auto Run scripts can reload the page, go back to the case's area, end the session, press keys such as Tab and Escape, and check which element has the focus.",
+    ],
+  },
+  {
     version: "2.1.1-beta.2",
     date: "2026-10-05",
     items: [
