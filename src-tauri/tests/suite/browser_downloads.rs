@@ -323,6 +323,43 @@ async fn one_guid_is_one_download_whichever_domain_says_so() {
     assert!(!dir.path().join("a (2).csv").exists());
 }
 
+/// The frames can arrive end first. The end is kept for its download and
+/// applied, rename included, the moment the begin arrives.
+#[tokio::test]
+async fn an_end_read_before_its_begin_is_applied_when_the_begin_arrives() {
+    let dir = temp();
+    std::fs::write(dir.path().join("g-1"), "Name,Age\n").unwrap();
+    let cdp = following(
+        dir.path(),
+        vec![
+            progress("g-1", "completed", 9),
+            progress("g-2", "canceled", 0),
+            begin("g-1", "report.csv"),
+            begin("g-2", "gone.csv"),
+        ],
+    )
+    .await;
+    let all = cdp.downloads();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].state, DownloadState::Completed);
+    assert_eq!(all[0].path, dir.path().join("report.csv"));
+    assert_eq!(all[0].bytes, 9);
+    assert_eq!(std::fs::read_to_string(&all[0].path).unwrap(), "Name,Age\n");
+    assert!(!dir.path().join("g-1").exists(), "the guid file is gone");
+    assert_eq!(all[1].state, DownloadState::Canceled);
+}
+
+/// A progress report read before its begin is not an end, and is dropped:
+/// the download starts in progress.
+#[tokio::test]
+async fn a_progress_report_read_before_its_begin_leaves_it_in_progress() {
+    let dir = temp();
+    let cdp = following(dir.path(), vec![progress("g-1", "inProgress", 50), begin("g-1", "big.csv")]).await;
+    let all = cdp.downloads();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].state, DownloadState::InProgress);
+}
+
 #[tokio::test]
 async fn nothing_is_followed_before_downloads_are_enabled() {
     let mut cdp = Cdp::over(Frames::new(vec![begin("g-1", "a.csv"), reply(1)]));

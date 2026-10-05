@@ -434,9 +434,11 @@ const SUPERVISED_DOWNLOADS: &str = "supervised";
 /// Where an unattended run's browsers save their downloads, beside the
 /// run's screenshots. An id that is not a safe file name (`safe_run_id`)
 /// never becomes part of a path: it gets a folder of its own inside
-/// `downloads/`, never the supervised one.
+/// `downloads/`, never the supervised one (matched without regard to case,
+/// as Windows matches folder names).
 pub fn downloads_dir(root: &Path, run_id: &str) -> PathBuf {
-    let folder = if safe_run_id(run_id) && run_id != SUPERVISED_DOWNLOADS { run_id } else { "unnamed-run" };
+    let ours = safe_run_id(run_id) && !run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS);
+    let folder = if ours { run_id } else { "unnamed-run" };
     all_downloads_dir(root).join(folder)
 }
 
@@ -473,7 +475,7 @@ fn sweep_downloads(root: &Path, problems: &mut Vec<String>) {
     }
     let Ok(entries) = std::fs::read_dir(&dir) else { return };
     for entry in entries.flatten() {
-        if entry.file_name() == SUPERVISED_DOWNLOADS {
+        if entry.file_name().to_string_lossy().eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
             continue;
         }
         let path = entry.path();

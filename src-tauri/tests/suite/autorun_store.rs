@@ -879,6 +879,12 @@ fn an_unsafe_run_id_never_leaves_the_downloads_folder() {
         assert_eq!(got.parent(), Some(root.join("downloads").as_path()), "{bad:?} gave {got:?}");
         assert_ne!(got, supervised_downloads_dir(root), "{bad:?} must not share the supervised folder");
     }
+    // The supervised folder's own name, in any case, is not a run's: Windows
+    // would open the same folder for each.
+    for name in ["supervised", "Supervised", "SUPERVISED", "sUpErViSeD"] {
+        let got = downloads_dir(root, name);
+        assert_eq!(got, root.join("downloads").join("unnamed-run"), "{name:?} gave {got:?}");
+    }
 }
 
 /// Clearing the runs clears their downloads: every run's folder and what

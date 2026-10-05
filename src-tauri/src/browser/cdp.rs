@@ -201,7 +201,21 @@ pub struct Cdp<T: Transport = WsTransport> {
 struct DownloadFolder {
     dir: PathBuf,
     entries: Vec<DownloadEntry>,
+    /// Ends (completed or canceled) read before their download's begin,
+    /// oldest first, applied once the begin arrives. Bounded like the
+    /// event buffer: a begin that never comes must not grow this forever.
+    early_ends: VecDeque<EarlyEnd>,
 }
+
+/// A download's end, read before its begin.
+struct EarlyEnd {
+    guid: String,
+    state: String,
+    received: Option<f64>,
+}
+
+/// How many early ends are remembered.
+const MAX_EARLY_ENDS: usize = 32;
 
 /// What a guarded connection does with each paused request.
 struct SaveGuard {
@@ -356,8 +370,9 @@ impl<T: Transport> Cdp<T> {
             }
             Err(e) => return Err(e),
         }
-        let entries = self.downloads.take().map(|f| f.entries).unwrap_or_default();
-        self.downloads = Some(DownloadFolder { dir: dir.to_path_buf(), entries });
+        let (entries, early_ends) =
+            self.downloads.take().map(|f| (f.entries, f.early_ends)).unwrap_or_default();
+        self.downloads = Some(DownloadFolder { dir: dir.to_path_buf(), entries, early_ends });
         Ok(())
     }
 
@@ -381,38 +396,44 @@ impl<T: Transport> Cdp<T> {
         if guid.is_empty() || !guid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return true;
         }
+        let dir = folder.dir.clone();
         if begins {
             // A browser that sends both domains' events says it twice.
             if !folder.entries.iter().any(|e| e.guid == guid) {
-                folder.entries.push(DownloadEntry {
+                let mut entry = DownloadEntry {
                     guid: guid.to_string(),
                     name: sanitise_name(ev.params["suggestedFilename"].as_str().unwrap_or("")),
-                    path: folder.dir.join(guid),
+                    path: dir.join(guid),
                     started_at: Instant::now(),
                     state: DownloadState::InProgress,
                     bytes: 0,
-                });
+                };
+                // Its end may have been read first: applied now, rename
+                // included.
+                if let Some(i) = folder.early_ends.iter().position(|e| e.guid == guid) {
+                    let end = folder.early_ends.remove(i).expect("position was just found");
+                    progress_download(&dir, &mut entry, &end.state, end.received);
+                }
+                folder.entries.push(entry);
             }
             return true;
         }
-        let dir = folder.dir.clone();
-        let Some(entry) = folder.entries.iter_mut().find(|e| e.guid == guid) else {
-            return true;
-        };
-        // Finished already: a second domain's echo of the same end.
-        if entry.state != DownloadState::InProgress {
-            return true;
-        }
-        if let Some(n) = ev.params["receivedBytes"].as_f64() {
-            entry.bytes = n.max(0.0) as u64;
-        }
-        match ev.params["state"].as_str().unwrap_or("") {
-            "completed" => {
-                entry.state = DownloadState::Completed;
-                name_finished(&dir, entry);
+        let state = ev.params["state"].as_str().unwrap_or("");
+        let received = ev.params["receivedBytes"].as_f64();
+        match folder.entries.iter_mut().find(|e| e.guid == guid) {
+            Some(entry) => progress_download(&dir, entry, state, received),
+            // An end read before its begin is kept for it. A mere progress
+            // report is not: the begin starts the download at no bytes, and
+            // the next report says how far it got.
+            None if matches!(state, "completed" | "canceled") => {
+                if !folder.early_ends.iter().any(|e| e.guid == guid) {
+                    if folder.early_ends.len() >= MAX_EARLY_ENDS {
+                        folder.early_ends.pop_front();
+                    }
+                    folder.early_ends.push_back(EarlyEnd { guid: guid.to_string(), state: state.to_string(), received });
+                }
             }
-            "canceled" => entry.state = DownloadState::Canceled,
-            _ => {}
+            None => {}
         }
         true
     }
@@ -695,6 +716,26 @@ impl<T: Transport> Cdp<T> {
     }
 }
 
+/// One `downloadProgress` applied to its download: bytes so far, and on
+/// `completed` the file named. A download already finished ignores it (a
+/// second domain's echo of the same end).
+fn progress_download(dir: &Path, entry: &mut DownloadEntry, state: &str, received: Option<f64>) {
+    if entry.state != DownloadState::InProgress {
+        return;
+    }
+    if let Some(n) = received {
+        entry.bytes = n.max(0.0) as u64;
+    }
+    match state {
+        "completed" => {
+            entry.state = DownloadState::Completed;
+            name_finished(dir, entry);
+        }
+        "canceled" => entry.state = DownloadState::Canceled,
+        _ => {}
+    }
+}
+
 /// A finished download, moved from its guid to its own name. A browser
 /// that names files itself (the Page domain's fallback) left it under its
 /// name already, so it is looked for there. A file that cannot be moved
@@ -702,6 +743,8 @@ impl<T: Transport> Cdp<T> {
 fn name_finished(dir: &Path, entry: &mut DownloadEntry) {
     let saved = dir.join(&entry.guid);
     if std::fs::symlink_metadata(&saved).is_ok_and(|m| m.is_file()) {
+        // Check-then-act, and safe: the browser writes only guid names here
+        // and this driver is the only one writing other names, one at a time.
         let to = dir.join(unique_name(dir, &entry.name));
         match std::fs::rename(&saved, &to) {
             Ok(()) => entry.path = to,

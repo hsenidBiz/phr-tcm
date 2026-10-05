@@ -14,7 +14,8 @@ use v2_lib::autorun::nav::{
 };
 use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
-    propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
+    propose, run_cases, run_cases_checked, run_selection, settle_downloads, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE,
+    SIGN_IN_STEP,
 };
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::preconditions::{PreconditionDb, NOT_CHECKED};
@@ -1795,4 +1796,43 @@ async fn every_cases_browser_saves_its_downloads_in_the_runs_folder() {
     for d in &browsers.returned {
         assert_eq!(d.download_dirs, [folder.clone()]);
     }
+}
+
+/// A download still on its way when a case ends.
+fn arriving() -> v2_lib::browser::downloads::DownloadEntry {
+    v2_lib::browser::downloads::DownloadEntry {
+        guid: "g-1".into(),
+        name: "Template.xlsx".into(),
+        path: "g-1".into(),
+        started_at: std::time::Instant::now(),
+        state: v2_lib::browser::downloads::DownloadState::InProgress,
+        bytes: 0,
+    }
+}
+
+/// A Stop pressed while a case's browser waits for a download ends the
+/// wait at the next look, not after the whole settle.
+#[tokio::test]
+async fn a_stop_ends_the_wait_for_a_download_at_once() {
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let cancel = AtomicBool::new(false);
+    let began = std::time::Instant::now();
+    let stop = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::SeqCst);
+    };
+    tokio::join!(settle_downloads(&mut d, &cancel), stop);
+    assert!(began.elapsed() < std::time::Duration::from_millis(1000), "took {:?}", began.elapsed());
+}
+
+/// Stopped before the settle, the browser closes without waiting at all.
+#[tokio::test]
+async fn a_stopped_case_does_not_wait_for_its_downloads() {
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let cancel = AtomicBool::new(true);
+    let began = std::time::Instant::now();
+    settle_downloads(&mut d, &cancel).await;
+    assert!(began.elapsed() < std::time::Duration::from_millis(50), "took {:?}", began.elapsed());
 }

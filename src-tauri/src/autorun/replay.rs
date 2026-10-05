@@ -490,12 +490,16 @@ const DOWNLOAD_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
 /// A download the last step started may still be arriving as the case
 /// ends. Its browser is kept a little while it does, so the file is kept
 /// under its own name rather than left half written under its guid. A case
-/// with nothing in progress, or one stopped, closes at once.
-async fn settle_downloads<D: Driver>(d: &mut D) {
+/// with nothing in progress closes at once, and a Stop ends the wait within
+/// `STOP_POLL`.
+pub async fn settle_downloads<D: Driver>(d: &mut D, cancel: &AtomicBool) {
     use crate::browser::downloads::DownloadState;
     let until = Instant::now() + DOWNLOAD_SETTLE;
-    while Instant::now() < until && d.downloads().iter().any(|e| e.state == DownloadState::InProgress) {
-        d.idle(std::time::Duration::from_millis(100)).await;
+    while !cancel.load(Ordering::SeqCst)
+        && Instant::now() < until
+        && d.downloads().iter().any(|e| e.state == DownloadState::InProgress)
+    {
+        d.idle(STOP_POLL).await;
     }
 }
 
@@ -545,9 +549,7 @@ async fn one_go<B: Browsers>(
                 &mut on_step,
             )
             .await;
-            if !go.cancel.load(Ordering::SeqCst) {
-                settle_downloads(&mut d).await;
-            }
+            settle_downloads(&mut d, go.cancel).await;
             browsers.close(d).await;
             drop(lease);
             Ok(rec)
