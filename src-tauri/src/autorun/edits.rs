@@ -147,11 +147,13 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     }
 
     // Rule 12: the records a case relies on are part of what the case
-    // means, not something a repair tunes until the case runs. Added,
-    // changed or left out, a repair that sends other preconditions than
-    // the saved script's is refused; the editor, an import or a fresh save
-    // changes them.
-    if old.preconditions != new.preconditions {
+    // means, not something a repair tunes until the case runs. A repair
+    // keeps every precondition the saved script has, exactly (flow, stage,
+    // value and why), and may add new ones: adding only blocks a case
+    // earlier, dropping or changing one weakens it. Only the editor or an
+    // import can drop or change one. An added one is validated like any
+    // save (`nav::check_project_rules`).
+    if old.preconditions.iter().any(|p| !new.preconditions.contains(p)) {
         return Err(PRECONDITIONS_KEPT.to_string());
     }
 

@@ -426,11 +426,11 @@ fn a_blank_area_or_one_in_another_case_is_no_change() {
     );
 }
 
-/// A repair cannot add, change or drop a precondition, declared or not:
-/// the records a case relies on are part of what it means. Sending them
-/// back as they are is fine.
+/// A repair keeps every precondition the saved script has, exactly, and
+/// may add new ones: dropping one, or changing its value or its reason,
+/// is refused, declared or not.
 #[test]
-fn a_repair_cannot_change_preconditions() {
+fn a_repair_may_add_preconditions_but_never_drop_or_change_one() {
     use v2_lib::autorun::edits::PRECONDITIONS_KEPT;
     assert_eq!(
         PRECONDITIONS_KEPT,
@@ -457,7 +457,15 @@ fn a_repair_cannot_change_preconditions() {
     changed.preconditions[0].value = json!(275);
     assert_eq!(check_edits(&old, &changed, Some(&declared)), Err(PRECONDITIONS_KEPT.to_string()));
 
+    let mut reasoned = fixed.clone();
+    reasoned.preconditions[0].why = Some("a new reason".into());
+    assert_eq!(check_edits(&old, &reasoned, Some(&declared)), Err(PRECONDITIONS_KEPT.to_string()));
+
+    // Added: to a script with none, or beside the one it has.
     let none = with(json!([]));
-    let added = with(publish);
-    assert_eq!(check_edits(&none, &added, None), Err(PRECONDITIONS_KEPT.to_string()));
+    let added = with(publish.clone());
+    assert_eq!(check_edits(&none, &added, None), Ok(()));
+    let mut another = fixed.clone();
+    another.preconditions.insert(0, serde_json::from_value(json!({ "flow": "pms-performance-cycle", "stage": "rules", "value": 274 })).unwrap());
+    assert_eq!(check_edits(&old, &another, Some(&declared)), Ok(()), "kept, with one added in front");
 }

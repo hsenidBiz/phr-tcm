@@ -386,9 +386,10 @@ sentence per problem, counting preconditions from 1:
 - `precondition 1: flow Performance cycle wizard has no stage published` - the flow has no stage with that id
 - `precondition 1: give the value the flow's checks take` - the value is missing, or not the type the subject takes
 
-Write a script's preconditions when you first save it. A repair sends
-them back exactly as they are: one that adds, changes or leaves out a
-precondition is refused, and a person changes them in the app.
+A repair keeps every precondition the script has, and may add new ones.
+Send each existing precondition back exactly as it is: a repair that
+leaves one out or changes it is refused, and only a person can drop or
+change one, in the app.
 
 ## Every expected result is checked
 
