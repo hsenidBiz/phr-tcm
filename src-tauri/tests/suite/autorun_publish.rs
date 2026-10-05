@@ -643,3 +643,49 @@ async fn a_failed_trip_to_the_module_is_named_for_the_module() {
         .collect();
     assert_eq!(names, vec!["case-7-module.jpg".to_string(), "case-7-module.jpg".to_string()]);
 }
+
+/// A case whose steps saved files sends only its pictures: no download is
+/// ever attached, named or read into a request (spec section 3).
+#[tokio::test]
+async fn a_cases_downloads_are_never_sent_only_its_pictures() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut run = reviewed_run(dir.path());
+    run.cases[0].steps[1].downloads = vec!["Template.xlsx".into()];
+    run.cases[0].steps[2].downloads = vec!["errors.csv".into()];
+    store::save_run(dir.path(), &run).unwrap();
+    let folder = store::downloads_dir(dir.path(), &run.id);
+    std::fs::create_dir_all(&folder).unwrap();
+    let marker = b"DOWNLOADED-CONTENT-7f3a";
+    std::fs::write(folder.join("Template.xlsx"), marker).unwrap();
+    std::fs::write(folder.join("errors.csv"), marker).unwrap();
+
+    // The pictures are the same with or without the downloads.
+    let p = pictures_for(&run.cases[0]);
+    assert!(p.iter().all(|(_, name)| name.starts_with("shot-")), "{p:?}");
+
+    let server = MockServer::start().await;
+    mount_full_run_mocks(&server).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", &run.id, &publish_cases())
+        .await
+        .unwrap();
+    let PublishResult::Sent(report) = result else { panic!("expected Sent") };
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+
+    let requests = server.received_requests().await.unwrap();
+    let attachments: Vec<String> = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().contains("/attachments"))
+        .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+        .map(|a| a["fileName"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(attachments, vec!["case-7-step-2.jpg", "case-7-step-2.jpg"], "only the case's picture");
+
+    use base64::Engine;
+    let marker_b64 = base64::engine::general_purpose::STANDARD.encode(marker);
+    for r in &requests {
+        let body = String::from_utf8_lossy(&r.body);
+        assert!(!body.contains("Template.xlsx") && !body.contains("errors.csv"), "a download was named: {body}");
+        assert!(!body.contains(&marker_b64) && !body.contains("DOWNLOADED-CONTENT"), "a download was sent: {body}");
+    }
+}

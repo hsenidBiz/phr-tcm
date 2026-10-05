@@ -32,6 +32,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_response",
     "api_request",
     "when_visible",
+    "expect_download",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -109,6 +110,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
 - `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
+- `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
 
 There is nothing else. An action of any other kind is rejected.
 
@@ -314,6 +316,76 @@ Looking up the real address, path and fields:
   return. If the expected result does not say what the data should be, do
   not invent it: check only what it does say, or mark the step
   `"unchecked"` with the reason.
+
+## Checking a downloaded file
+
+Some expected results are a file: "the template downloads with the
+right columns" (case 137540), "the error log lists the rows that failed"
+(case 137537). `expect_download` checks the file the browser saved. It is
+a check, so it satisfies a step's expected result like an `expect_`
+action. The file stays on this machine with the run and is never sent to
+Azure DevOps.
+
+Put the click that starts the download in the same step, just before
+the `expect_download`. It looks only at a download that
+started during this step: one that started in the step before is never
+this step's, even when it finishes during it. The first download the step started is
+the one checked, once it has finished.
+
+137540, a template's columns, checked with `headers.exact`:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Download Template" } },
+    { "kind": "expect_download", "name": "*Template*.xlsx", "headers": { "exact": ["Employee No", "Name", "Department"] } }
+
+137537, an upload's error log. Use one of these two, whichever fits the
+file the application gives; they are alternatives, not two checks on one
+download. A .csv or .txt log, checked with `contains_text`:
+
+    { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
+    { "kind": "expect_download", "name": "*Error*.csv", "contains_text": ["Row 4: Department is required"] }
+
+Or a workbook, checked with `cells`:
+
+    { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
+    { "kind": "expect_download", "name": "*Error*.xlsx", "sheet": "Errors", "cells": [ { "ref": "B2", "text": "Department is required", "match": "contains" } ] }
+
+The names, buttons and words above are examples: use the file name the
+application really gives, with `*` for the part that changes (a date, a
+number), and the words the case's expected result names.
+
+- `name` is required. It is matched against the whole file name,
+  ignoring case, exactly or with `*` standing for any run of characters.
+  End it with the file type (`.xlsx`, `.csv`): the keys below are only
+  accepted when the type is known before the file arrives.
+- `within_ms` is how long to wait for the download to start and finish:
+  15000 when left out, at most 120000.
+- `sheet`, `headers` and `cells` are only for a name ending in
+  .xlsx, .xls or .csv.
+  - `sheet` is the sheet by its name; the first sheet when left out. A
+    CSV has one sheet and ignores it.
+  - `headers` is the first row: `{ "exact": [...] }` (exactly these, in
+    this order) or `{ "contains": [...] }` (each of these, in any order).
+  - `cells` is a list of `{ "ref": "B2", "text": "...", "match": "exact" }`.
+    `match` is `exact` (the default) or `contains`, and text is compared
+    trimmed. A cell is compared as the value the file stores, not as a
+    spreadsheet formats it: a date reads as its serial number and 50% as
+    0.5, so check header and text cells, not dates or percentages.
+- `contains_text` is only for a name ending in .csv or .txt: each text
+  must appear somewhere in the file.
+- Saving refuses a key the file type cannot carry, a `within_ms` out of
+  range, a `ref` that is not a cell like B2, and an empty list.
+
+A passed check says `downloaded "<name>" (<size>)` and what it found; a
+failure says what the file held instead, or that no download started
+within the time. The content of a file over 50 MB is not read.
+
+Tried on its own with `try_autorun_action`, an `expect_download` is a
+step of its own: it sees only a download that starts while it waits, so
+let the person start the download while it waits. In a watched run or a
+try it waits at most 30 seconds, whatever `within_ms` says.
+
+Watched runs list no downloads, because their download folder is emptied
+when the browser closes; only an unattended run keeps its files.
 
 ## Who the case runs as
 

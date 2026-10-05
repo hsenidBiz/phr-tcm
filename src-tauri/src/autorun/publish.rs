@@ -151,6 +151,10 @@ pub fn step_marks_checked(
 /// executed step; duplicates by name removed (the same picture can be both
 /// a failure shot and a step-end shot), first [`MAX_PICTURES_PER_CASE`]
 /// kept. Returns `(step_number, shot name)` pairs.
+///
+/// These are the ONLY files a run sends: a step's downloads
+/// (`StepRecord::downloads`) are never attached, named or read here - a
+/// downloaded file stays on this machine.
 pub fn pictures_for(case: &CaseRecord) -> Vec<(i32, String)> {
     let mut out: Vec<(i32, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

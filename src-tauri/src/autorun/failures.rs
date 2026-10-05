@@ -127,7 +127,8 @@ fn scripted_action<'a>(script: Option<&'a CaseScript>, step_number: i32, index: 
 /// One step's lines: `sign-in: <detail>` for step 0 when it failed, one
 /// line for a step that never ran, or - for an ordinary step - one block
 /// per failed action and one `  action K: not run (...)` line per action
-/// skipped because an earlier action in the SAME step already failed.
+/// skipped because an earlier action in the SAME step already failed. A
+/// step that saved files then names them (`push_downloads`).
 fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<String>) {
     if step.step_number == SIGN_IN_STEP {
         if let Some(o) = step.outcomes.last() {
@@ -151,6 +152,7 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
         let detail = &step.outcomes[0].detail;
         let why = detail.strip_prefix("not run: ").unwrap_or(detail);
         out.push(format!("step {}: not run ({why})", step.step_number));
+        push_downloads(step, out);
         return;
     }
 
@@ -175,6 +177,15 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
         if let Some(shot) = &outcome.screenshot {
             out.push(format!("  picture: {shot}"));
         }
+    }
+    push_downloads(step, out);
+}
+
+/// `step N downloads: a.xlsx, b.csv` for a step that saved files: the names
+/// the run keeps them under, never their folder or their contents.
+fn push_downloads(step: &StepRecord, out: &mut Vec<String>) {
+    if !step.downloads.is_empty() {
+        out.push(format!("step {} downloads: {}", step.step_number, step.downloads.join(", ")));
     }
 }
 

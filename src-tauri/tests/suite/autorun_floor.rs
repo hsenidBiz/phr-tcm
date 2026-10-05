@@ -18,6 +18,19 @@ fn script(steps: serde_json::Value) -> CaseScript {
     serde_json::from_value(serde_json::json!({ "case_id": 1, "title": "t", "steps": steps })).unwrap()
 }
 
+/// A downloaded file's check is a check like the `expect_` actions on the
+/// page: it satisfies the step's expected result.
+#[test]
+fn an_expect_download_satisfies_its_expected_result() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [
+            { "kind": "click", "selector": { "css": "#export" } },
+            { "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }
+        ] }
+    ]));
+    assert!(check_floor(&sc, &case(&["The template downloads with its columns"])).is_empty());
+}
+
 #[test]
 fn a_step_with_an_expected_result_must_check_something_or_say_why() {
     let sc = script(serde_json::json!([

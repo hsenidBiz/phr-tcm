@@ -12,6 +12,7 @@ use v2_lib::autorun::accounts::Account;
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
+use v2_lib::browser::downloads::DownloadEntry;
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
@@ -56,6 +57,15 @@ pub struct ScriptedDriver {
     pub block_after: Option<(String, String)>,
     /// The sentence `take_save_blocked` hands over, once.
     pub save_blocked: Option<String>,
+    /// Every folder `enable_downloads` was handed, in order.
+    pub download_dirs: Vec<std::path::PathBuf>,
+    /// What `downloads` reports: a test pushes the entries a real browser
+    /// would have followed.
+    pub downloads: Vec<DownloadEntry>,
+    /// A download that the browser is heard to start once a call to the
+    /// named method is made, dated then - how a test says "the browser read
+    /// this download's start while that call was answered". Fires once.
+    pub downloads_on_call: Vec<(String, DownloadEntry)>,
 }
 
 impl ScriptedDriver {
@@ -77,6 +87,9 @@ impl ScriptedDriver {
             net: None,
             block_after: None,
             save_blocked: None,
+            download_dirs: vec![],
+            downloads: vec![],
+            downloads_on_call: vec![],
         }
     }
 
@@ -134,6 +147,19 @@ impl Driver for ScriptedDriver {
             }
             self.events.push_back(ev);
         }
+        let mut heard = vec![];
+        self.downloads_on_call.retain(|(m, e)| {
+            if m == method {
+                heard.push(e.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for mut e in heard {
+            e.started_at = Instant::now();
+            self.downloads.push(e);
+        }
         (self.handler)(method, &params)
     }
 
@@ -171,6 +197,15 @@ impl Driver for ScriptedDriver {
 
     fn take_save_blocked(&mut self) -> Option<String> {
         self.save_blocked.take()
+    }
+
+    async fn enable_downloads(&mut self, dir: &std::path::Path) -> Result<(), CdpError> {
+        self.download_dirs.push(dir.to_path_buf());
+        Ok(())
+    }
+
+    fn downloads(&self) -> Vec<DownloadEntry> {
+        self.downloads.clone()
     }
 
     /// Guarding since the last `Fetch.enable` that no `Fetch.disable`

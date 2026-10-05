@@ -14,6 +14,8 @@ use v2_lib::autorun::signin::SignInOutcome;
 use v2_lib::autorun::StepScript;
 use v2_lib::browser::actions::Action;
 use v2_lib::browser::cdp::CdpError;
+use v2_lib::browser::downloads::{DownloadEntry, DownloadState};
+use std::time::{Duration, Instant};
 
 #[test]
 fn a_project_with_no_recipe_runs_unrestricted_and_one_with_a_recipe_does_not() {
@@ -345,4 +347,242 @@ async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_se
     assert_eq!(out[0].detail, v2_lib::autorun::nav::no_address(4));
     assert_eq!(out[1].detail, "not run: this step opened a page by address, which this project does not allow");
     assert!(d.calls_to("Page.navigate").is_empty());
+}
+
+// ------------------------------------------------------------ expect_download
+
+const EXPORT: &str = "Employee No,Name\r\nE001,Ada\r\n";
+
+/// A download the browser followed: `name` is the page's suggested name,
+/// kept at `file` (which may be numbered), started `offset` from now - a
+/// positive one is during the step the test is about to run.
+fn followed(file: &std::path::Path, name: &str, offset: i64, state: DownloadState) -> DownloadEntry {
+    let now = Instant::now();
+    let started_at = if offset >= 0 {
+        now + Duration::from_millis(offset as u64)
+    } else {
+        now - Duration::from_millis(offset.unsigned_abs())
+    };
+    DownloadEntry {
+        guid: format!("g-{name}-{offset}"),
+        name: name.to_string(),
+        path: file.to_path_buf(),
+        started_at,
+        state,
+        bytes: std::fs::metadata(file).map(|m| m.len()).unwrap_or(0),
+    }
+}
+
+fn download_step(check: serde_json::Value) -> StepScript {
+    step(vec![serde_json::from_value(check).unwrap()])
+}
+
+#[tokio::test]
+async fn a_download_from_this_step_is_checked_once_it_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.downloads.push(followed(&file, "report.csv", 5000, DownloadState::Completed));
+    let mut acc: Option<String> = None;
+    let s = download_step(json!({ "kind": "expect_download", "name": "report*.csv", "within_ms": 2000,
+        "headers": { "exact": ["Employee No", "Name"] }, "cells": [{ "ref": "B2", "text": "Ada" }] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{}", out[0].detail);
+    assert_eq!(out[0].detail, "downloaded \"report.csv\" (28 bytes), headers match, B2 is \"Ada\"");
+}
+
+/// Review Focus 3: a download an earlier step started is never this
+/// step's, finished or not.
+#[tokio::test]
+async fn a_download_that_started_before_the_step_is_not_this_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    for state in [DownloadState::Completed, DownloadState::InProgress] {
+        let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+        d.downloads.push(followed(&file, "report.csv", -1000, state));
+        let mut acc: Option<String> = None;
+        let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }));
+        let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+        assert!(!out[0].ok);
+        assert_eq!(out[0].detail, "no download started within 0.3 s");
+    }
+    // Whole seconds read as whole seconds.
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 1000 }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert_eq!(out[0].detail, "no download started within 1 s");
+}
+
+#[tokio::test]
+async fn a_canceled_or_unfinished_download_fails_with_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    let cases = [
+        (DownloadState::Canceled, "the download \"report.csv\" was canceled"),
+        (DownloadState::InProgress, "the download \"report.csv\" did not finish within 0.3 s"),
+    ];
+    for (state, want) in cases {
+        let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+        d.downloads.push(followed(&file, "report.csv", 5000, state));
+        let mut acc: Option<String> = None;
+        let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }));
+        let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+        assert!(!out[0].ok);
+        assert_eq!(out[0].detail, want);
+    }
+}
+
+/// The first download of the step is the one checked: a wrong name fails,
+/// it does not wait for another.
+#[tokio::test]
+async fn a_download_with_the_wrong_name_fails_and_says_both_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("other.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.downloads.push(followed(&file, "other.csv", 5000, DownloadState::Completed));
+    let mut acc: Option<String> = None;
+    let s = download_step(json!({ "kind": "expect_download", "name": "Template*.xlsx", "within_ms": 2000 }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok);
+    assert_eq!(out[0].detail, "got \"other.csv\", expected a file named \"Template*.xlsx\"");
+}
+
+/// The step's record names the files saved during it, as they are kept on
+/// disk (numbered when the name was taken); an earlier step's download
+/// and a canceled one are not among them.
+#[tokio::test]
+async fn the_files_saved_during_a_step_are_on_its_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let earlier = dir.path().join("report.csv");
+    let this = dir.path().join("report (2).csv");
+    std::fs::write(&earlier, EXPORT).unwrap();
+    std::fs::write(&this, EXPORT).unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.downloads.push(followed(&earlier, "report.csv", -1000, DownloadState::Completed));
+    d.downloads.push(followed(&this, "report.csv", 5000, DownloadState::Completed));
+    d.downloads.push(followed(&dir.path().join("gone"), "late.csv", 5001, DownloadState::Canceled));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "expect_download", "name": "report.csv", "within_ms": 2000 }] }
+    ] }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let rec = v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &script, &quick(), &cancel, &mut |_| {})
+        .await;
+    let step = rec.steps.iter().find(|s| s.step_number == 1).unwrap();
+    assert!(step.outcomes[0].ok, "{}", step.outcomes[0].detail);
+    assert_eq!(step.downloads, ["report (2).csv"]);
+    // Written only when there are some, so older run files read the same.
+    let json = serde_json::to_value(step).unwrap();
+    assert_eq!(json["downloads"], json!(["report (2).csv"]));
+    let mut none = step.clone();
+    none.downloads.clear();
+    assert!(serde_json::to_value(&none).unwrap().get("downloads").is_none());
+}
+
+/// A Stop pressed while an unattended step waits for its download ends the
+/// wait at the next look: the case stops there, as a stopped case does.
+#[tokio::test]
+async fn a_stop_ends_a_download_wait_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [
+            { "kind": "expect_download", "name": "report.csv", "within_ms": 10000 },
+            { "kind": "check_text", "value": "Saved" }
+        ] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Done" }] }
+    ] }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let started = Instant::now();
+    let stop = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    };
+    let timing = quick();
+    let mut on_step = |_| {};
+    let (rec, ()) = tokio::join!(
+        v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &script, &timing, &cancel, &mut on_step),
+        stop
+    );
+    assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
+    let stopped = "not run: the run was stopped";
+    assert_eq!(rec.steps[0].outcomes[0].detail, stopped);
+    assert_eq!(rec.steps[0].outcomes[1].detail, stopped);
+    assert!(rec.steps[0].outcomes[0].screenshot.is_none() && rec.steps[0].screenshot.is_none());
+    assert_eq!(rec.steps[1].outcomes[0].detail, stopped);
+    assert_eq!((rec.proposed.as_str(), rec.reason.as_str()), ("", "stopped before it finished"));
+}
+
+/// Review follow-up 3: a download the browser was heard to start while the
+/// step read what had already arrived (its settle) is an earlier step's.
+/// The step's check and its record agree: it belongs to neither.
+#[tokio::test]
+async fn a_download_heard_during_the_settle_belongs_to_neither_the_check_nor_the_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.downloads_on_call
+        .push(("Runtime.evaluate".into(), followed(&file, "report.csv", 0, DownloadState::Completed)));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }] }
+    ] }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let rec = v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &script, &quick(), &cancel, &mut |_| {})
+        .await;
+    assert_eq!(d.downloads.len(), 1, "the settle heard the download");
+    assert_eq!(rec.steps[0].outcomes[0].detail, "no download started within 0.3 s");
+    assert!(rec.steps[0].downloads.is_empty(), "{:?}", rec.steps[0].downloads);
+}
+
+/// A watched run or a try has no Stop to hear: its wait runs its course.
+#[tokio::test]
+async fn a_watched_step_has_no_stop_to_end_its_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }));
+    let started = Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(300));
+    assert_eq!(out[0].detail, "no download started within 0.3 s");
+}
+
+/// A watched run or a try has no Stop, so its wait is capped: a script
+/// asking for two minutes waits the cap, and says the capped time.
+#[tokio::test]
+async fn a_watched_download_wait_is_capped_whatever_within_ms_says() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA, WATCHED_DOWNLOAD_WAIT_MS};
+    assert_eq!(WATCHED_DOWNLOAD_WAIT_MS, 30_000);
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 120000 }));
+    let mut run = InRun { watched_cap_ms: Some(300), ..Default::default() };
+    let started = Instant::now();
+    let out = run_step_in_run(
+        &mut d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &s,
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+    assert_eq!(out[0].detail, "no download started within 0.3 s");
 }

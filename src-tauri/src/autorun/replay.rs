@@ -30,7 +30,7 @@ pub const MODULE_STEP: i32 = -1;
 const AFTER_FAILED_STEP: &str = "not run: an earlier step of this case failed";
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached";
-const AFTER_STOP: &str = "not run: the run was stopped";
+use super::runner::AFTER_STOP;
 
 /// Added to a failed trip's sentence when the page log had something to
 /// say, so the person knows where to look.
@@ -79,6 +79,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         step_number: step.step_number,
         outcomes: step.actions.iter().map(|_| ActionOutcome::failed(why)).collect(),
         screenshot: None,
+        downloads: Vec::new(),
     }
 }
 
@@ -290,7 +291,7 @@ pub async fn run_case_as<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new() });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -328,10 +329,19 @@ pub async fn run_case_as<D: Driver>(
             } else if !out.ok {
                 skip = Some(AFTER_UNREACHED);
             }
-            steps.push(StepRecord { step_number: MODULE_STEP, outcomes: vec![out], screenshot: None });
+            steps.push(StepRecord {
+                step_number: MODULE_STEP,
+                outcomes: vec![out],
+                screenshot: None,
+                downloads: Vec::new(),
+            });
         }
     }
 
+    // Where each step that ran began, by its index in `steps`: the files
+    // the browser saved are put on the step they started in once the case
+    // is over, so one still arriving as its step ended is not left out.
+    let mut step_began: Vec<(usize, Instant)> = Vec::new();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
@@ -342,21 +352,39 @@ pub async fn run_case_as<D: Driver>(
             continue;
         }
         on_step(step.step_number);
+        let asked_at = Instant::now();
         // `return_to_area` goes where the run went before step 1.
         let area = match route {
             Some(r) => runner::AreaRoute::To(r),
             None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
         };
-        let outcomes =
-            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, lease, route, area)
-                .await
-            {
-                Ok(o) => o,
-                Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
-            };
+        let mut in_run = runner::InRun { cancel: Some(cancel), ..Default::default() };
+        let outcomes = match runner::run_step_in_run(
+            d,
+            root,
+            organization,
+            project,
+            step,
+            timing,
+            &mut current,
+            lease,
+            route,
+            area,
+            &mut in_run,
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
+        };
+        // The step's own start, the one its `expect_download` used.
+        step_began.push((steps.len(), in_run.began.unwrap_or(asked_at)));
         let mut outcomes = outcomes;
+        // A Stop that ended a wait inside the step: the case stops here, as
+        // it would have before the next step, with no picture to wait for.
+        let stopped_inside = outcomes.iter().any(|o| o.detail == AFTER_STOP);
         let harness = outcomes.iter().any(|o| !o.ok && o.harness);
-        let screenshot = if harness { None } else { runner::picture(d, root).await };
+        let screenshot = if harness || stopped_inside { None } else { runner::picture(d, root).await };
         // A save the page sent after the step's last action had already
         // passed (read while the picture was taken) is still this step's.
         if let Some(sentence) = d.take_save_blocked() {
@@ -366,10 +394,25 @@ pub async fn run_case_as<D: Driver>(
                 }
             }
         }
-        if outcomes.iter().any(|o| !o.ok) {
+        if stopped_inside {
+            stopped = true;
+            skip = Some(AFTER_STOP);
+        } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new() });
+    }
+
+    // The case's one wait for a download still arriving (`one_go` does not
+    // wait again), then each file is put on the step it started in.
+    let took = began.elapsed();
+    settle_downloads(d, cancel).await;
+    if !step_began.is_empty() {
+        let all = d.downloads();
+        for (i, &(at, from)) in step_began.iter().enumerate() {
+            let until = step_began.get(i + 1).map(|&(_, next)| next);
+            steps[at].downloads = runner::saved_between(&all, from, until);
+        }
     }
 
     let p = propose(script, &steps, signed_in, stopped);
@@ -381,7 +424,7 @@ pub async fn run_case_as<D: Driver>(
         steps,
         proposed: p.verdict.to_string(),
         reason: p.reason,
-        duration_ms: i32::try_from(began.elapsed().as_millis()).ok(),
+        duration_ms: i32::try_from(took.as_millis()).ok(),
         account: account.map(str::to_string),
         retried: None,
         notice: None,
@@ -483,6 +526,26 @@ struct Go<'a> {
     cancel: &'a AtomicBool,
 }
 
+/// How long a case's browser stays open, once its steps are done, for a
+/// download still on its way.
+const DOWNLOAD_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A download the last step started may still be arriving as the case
+/// ends. Its browser is kept a little while it does, so the file is kept
+/// under its own name rather than left half written under its guid. A case
+/// with nothing in progress closes at once, and a Stop ends the wait within
+/// `STOP_POLL`.
+pub async fn settle_downloads<D: Driver>(d: &mut D, cancel: &AtomicBool) {
+    use crate::browser::downloads::DownloadState;
+    let until = Instant::now() + DOWNLOAD_SETTLE;
+    while !cancel.load(Ordering::SeqCst)
+        && Instant::now() < until
+        && d.downloads().iter().any(|e| e.state == DownloadState::InProgress)
+    {
+        d.idle(STOP_POLL).await;
+    }
+}
+
 /// One go at a case in a fresh browser: opened, the case run, and the
 /// browser given back. `Err` is why the browser did not open: the case
 /// never ran, so the caller decides what record that leaves.
@@ -497,6 +560,12 @@ async fn one_go<B: Browsers>(
     match browsers.open().await {
         Err(why) => Err(why),
         Ok(mut d) => {
+            // The case's downloads are kept with the run. A browser that
+            // will not save them still runs the case: a step that checks a
+            // download then says none came.
+            if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
+                crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
+            }
             let mut on_step = |n: i32| {
                 let phase = match n {
                     SIGN_IN_STEP => "signing_in",
@@ -523,6 +592,8 @@ async fn one_go<B: Browsers>(
                 &mut on_step,
             )
             .await;
+            // `run_case_as` has already waited for a download still
+            // arriving, once, so the browser closes now.
             browsers.close(d).await;
             drop(lease);
             Ok(rec)

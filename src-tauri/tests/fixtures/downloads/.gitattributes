@@ -1,0 +1,3 @@
+# These stand for files a browser downloaded, byte for byte: line endings
+# and encodings are part of what the checks read, so git leaves them alone.
+* -text

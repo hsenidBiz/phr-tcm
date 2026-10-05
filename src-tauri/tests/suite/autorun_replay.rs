@@ -14,7 +14,8 @@ use v2_lib::autorun::nav::{
 };
 use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
-    propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
+    propose, run_cases, run_cases_checked, run_selection, settle_downloads, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE,
+    SIGN_IN_STEP,
 };
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::preconditions::{PreconditionDb, NOT_CHECKED};
@@ -609,7 +610,7 @@ fn propose_blames_the_browser_before_the_page() {
     let ordinary_fail = ActionOutcome::failed("nope");
     let mut harness_fail = ActionOutcome::failed("gone");
     harness_fail.harness = true;
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![] }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
 }
@@ -1411,7 +1412,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1427,7 +1428,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
         no_address(1)
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1439,7 +1440,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
     assert_eq!(p.reason, format!("step 1: {detail}"));
@@ -1459,6 +1460,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
             ActionOutcome::failed("not run: the module screen was not reached after the sign-in"),
         ],
         screenshot: None,
+        downloads: vec![],
     }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
@@ -1483,7 +1485,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }
     ] }]));
@@ -1517,7 +1519,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
-    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![] }];
     let p = propose(&signs_in, &steps, Some(true), false);
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
@@ -1599,7 +1601,7 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
         "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
     }))
     .unwrap();
-    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![] });
     run.cases.push(earlier);
 
     let mut browsers = FakeBrowsers {
@@ -1770,4 +1772,89 @@ async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, "preconditions need a database chosen on the AI Bridge tab");
     assert_eq!(run.cases[1].proposed, "Passed");
+}
+
+/// Every case's browser saves its downloads in the run's own folder, beside
+/// its screenshots.
+#[tokio::test]
+async fn every_cases_browser_saves_its_downloads_in_the_runs_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(common::FakePage::default().driver()), Some(common::FakePage::default().driver())].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-77");
+    let cases = vec![(1, "case 1".to_string()), (2, "case 2".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let folder = store::downloads_dir(root, "run-77");
+    assert_eq!(browsers.returned.len(), 2);
+    for d in &browsers.returned {
+        assert_eq!(d.download_dirs, [folder.clone()]);
+    }
+}
+
+/// A download still on its way when a case ends.
+fn arriving() -> v2_lib::browser::downloads::DownloadEntry {
+    v2_lib::browser::downloads::DownloadEntry {
+        guid: "g-1".into(),
+        name: "Template.xlsx".into(),
+        path: "g-1".into(),
+        started_at: std::time::Instant::now(),
+        state: v2_lib::browser::downloads::DownloadState::InProgress,
+        bytes: 0,
+    }
+}
+
+/// A Stop pressed while a case's browser waits for a download ends the
+/// wait at the next look, not after the whole settle.
+#[tokio::test]
+async fn a_stop_ends_the_wait_for_a_download_at_once() {
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let cancel = AtomicBool::new(false);
+    let began = std::time::Instant::now();
+    let stop = async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::SeqCst);
+    };
+    tokio::join!(settle_downloads(&mut d, &cancel), stop);
+    assert!(began.elapsed() < std::time::Duration::from_millis(1000), "took {:?}", began.elapsed());
+}
+
+/// Stopped before the settle, the browser closes without waiting at all.
+#[tokio::test]
+async fn a_stopped_case_does_not_wait_for_its_downloads() {
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let cancel = AtomicBool::new(true);
+    let began = std::time::Instant::now();
+    settle_downloads(&mut d, &cancel).await;
+    assert!(began.elapsed() < std::time::Duration::from_millis(50), "took {:?}", began.elapsed());
+}
+
+/// Review follow-up 4: a download stuck in progress costs a case one
+/// settle, not one in the case and another before its browser closes.
+#[tokio::test]
+async fn a_stuck_download_costs_a_case_one_settle() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-78");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let took = started.elapsed();
+    assert!(took >= std::time::Duration::from_secs(5), "the case did wait for the download: {took:?}");
+    assert!(took < std::time::Duration::from_secs(9), "two settles: {took:?}");
+    assert_eq!(browsers.closed, 1);
 }

@@ -19,6 +19,11 @@ describe("floorOf", () => {
     expect(out[0].state.kind).toBe("checked");
   });
 
+  it("counts an expect_download as a check", () => {
+    const out = floorOf(steps, scriptWith([{ kind: "expect_download", name: "Template*.xlsx" }]));
+    expect(out[0].state.kind).toBe("checked");
+  });
+
   it("still does not count driving or waiting actions", () => {
     const out = floorOf(steps, scriptWith([{ kind: "click", selector: "x" }, { kind: "sign_in", account: "a" }]));
     expect(out[0].state.kind).toBe("unchecked");

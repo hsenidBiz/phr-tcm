@@ -65,6 +65,7 @@ fn then_holds_plain_actions_only() {
         json!({ "kind": "check_text", "value": "Saved" }),
         json!({ "kind": "api_request", "path": "/api/x" }),
         json!({ "kind": "expect_response", "url_contains": "/api/x" }),
+        json!({ "kind": "expect_download", "name": "report.csv" }),
     ] {
         let kind = check["kind"].as_str().unwrap().to_string();
         assert_eq!(

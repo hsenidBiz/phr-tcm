@@ -41,6 +41,15 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
+        Action::ExpectDownload {
+            name: "a.csv".into(),
+            within_ms: None,
+            sheet: None,
+            headers: None,
+            cells: None,
+            contains_text: None,
+            stray: Default::default(),
+        },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -532,4 +541,62 @@ fn the_guide_says_which_frames_check_text_reads() {
     let line = g.lines().find(|l| l.contains("\"kind\": \"check_text\"")).expect("no check_text line");
     assert!(line.contains("same-origin frames included"), "{line}");
     assert!(line.contains("a frame holding a page from another site is not searched"), "{line}");
+}
+
+/// Spec 4: the guide documents `expect_download`, its keys and its two
+/// examples (137540's template columns, 137537's error log), says where
+/// the export is clicked, and says cells are compared as stored values.
+#[test]
+fn the_guide_teaches_expect_download_with_its_two_examples() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_download\"")).expect("no expect_download line");
+    let action: Action = serde_json::from_str(&line[3..line.find("}` -").unwrap() + 1]).unwrap();
+    action.validate().unwrap_or_else(|e| panic!("the list's example is refused: {e}"));
+
+    assert!(g.contains("## Checking a downloaded file"), "the guide has no downloads section");
+    let section = g.split_once("## Checking a downloaded file").unwrap().1;
+    let section = section.split("\n## ").next().unwrap();
+    for term in [
+        "137540",
+        "137537",
+        "within_ms",
+        "15000",
+        "120000",
+        "started during this step",
+        "\"exact\"",
+        "\"contains\"",
+        "sheet",
+        "cells",
+        "contains_text",
+        ".xlsx, .xls or .csv",
+        ".csv or .txt",
+        "in the step before",
+        "in the same step",
+        "serial number",
+        "Watched runs list no downloads, because their download folder is emptied",
+        "when the browser closes",
+        "at most 30 seconds",
+        "50%",
+    ] {
+        assert!(section.contains(term), "the downloads section never says {term:?}");
+    }
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    // Each example checks one download once: two checks in a row would read
+    // as one file checked twice, when the error log's are alternatives.
+    let lines: Vec<&str> = section.lines().collect();
+    for pair in lines.windows(2) {
+        assert!(
+            !(pair[0].contains("\"expect_download\"") && pair[1].contains("\"expect_download\"")),
+            "two expect_download examples run together: {pair:?}"
+        );
+    }
+    assert!(section.contains("Use one of these two"), "the error log's checks must read as alternatives");
+    let mut seen = 0;
+    for line in section.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
+        assert!(line.starts_with("    { \"kind\""), "an example line is not indented: {line}");
+        let action: Action = serde_json::from_str(line.trim().trim_end_matches(',')).unwrap_or_else(|e| panic!("{line}: {e}"));
+        action.validate().unwrap_or_else(|e| panic!("{line} is refused: {e}"));
+        seen += 1;
+    }
+    assert!(seen >= 3, "the section should show the click and both examples, saw {seen}");
 }

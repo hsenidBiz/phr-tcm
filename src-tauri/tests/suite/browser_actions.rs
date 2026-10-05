@@ -634,6 +634,15 @@ fn only_checks_and_expectations_are_checks() {
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         // A guard is a tidy-up, never a check - even holding one.
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
+        Action::ExpectDownload {
+            name: "report.csv".into(),
+            within_ms: None,
+            sheet: None,
+            headers: None,
+            cells: None,
+            contains_text: None,
+            stray: Default::default(),
+        },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -650,6 +659,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_attribute"
                 | "expect_response"
                 | "api_request"
+                | "expect_download"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -772,4 +782,158 @@ fn check_text_walks_into_same_origin_frames() {
     assert!(js.contains("contentDocument"), "{js}");
     assert!(js.contains("try"), "a frame from another site throws or answers null, and is skipped: {js}");
     assert!(js.contains("checkVisibility"), "a hidden frame's words are not on the page: {js}");
+}
+
+// ------------------------------------------------------------ expect_download
+
+/// The spec's example, without `contains_text`: a workbook is read as cells,
+/// and only a .csv or .txt file is read as text.
+fn spec_download() -> serde_json::Value {
+    json!({ "kind": "expect_download",
+            "name": "Template*.xlsx",
+            "within_ms": 15000,
+            "sheet": "Employees",
+            "headers": { "exact": ["Employee No", "Name", "Department"] },
+            "cells": [ { "ref": "B2", "text": "Employee Name", "match": "exact" } ] })
+}
+
+fn download_refusal(v: serde_json::Value) -> String {
+    let a: Action = serde_json::from_value(v).expect("the test wrote an expect_download that does not parse");
+    a.validate().expect_err("this expect_download should have been refused")
+}
+
+#[test]
+fn expect_download_takes_the_specs_shape_and_round_trips() {
+    let a: Action = serde_json::from_value(spec_download()).unwrap();
+    assert!(a.validate().is_ok(), "{:?}", a.validate());
+    assert!(a.is_check());
+    assert_eq!(a.kind(), "expect_download");
+    assert_eq!(serde_json::to_value(&a).unwrap(), spec_download());
+    // Only the name is needed; nothing left out is written back.
+    let lone: Action = serde_json::from_value(json!({ "kind": "expect_download", "name": "report.csv" })).unwrap();
+    assert!(lone.validate().is_ok());
+    assert_eq!(serde_json::to_value(&lone).unwrap(), json!({ "kind": "expect_download", "name": "report.csv" }));
+    // `match` defaults to exact; contains and text checks on a CSV are fine.
+    let csv: Action = serde_json::from_value(json!({ "kind": "expect_download", "name": "errors*.CSV",
+        "headers": { "contains": ["Row"] }, "cells": [ { "ref": "a2", "text": "Row 4" } ],
+        "contains_text": ["Row 4: Department is required"] }))
+    .unwrap();
+    assert!(csv.validate().is_ok(), "{:?}", csv.validate());
+    let txt: Action = serde_json::from_value(json!({ "kind": "expect_download", "name": "log.txt",
+        "contains_text": ["Department is required"] }))
+    .unwrap();
+    assert!(txt.validate().is_ok(), "{:?}", txt.validate());
+}
+
+#[test]
+fn expect_download_refuses_what_could_never_be_checked() {
+    // The name is required, and cannot be blank.
+    assert!(serde_json::from_value::<Action>(json!({ "kind": "expect_download" })).is_err());
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "  " })),
+        "expect_download needs a name, such as Template*.xlsx"
+    );
+    // within_ms: more than 0, at most 120000.
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 0 })),
+        "within_ms must be more than 0"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 120001 })),
+        "within_ms is at most 120000 (got 120001)"
+    );
+    let ok: Action =
+        serde_json::from_value(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 120000 })).unwrap();
+    assert!(ok.validate().is_ok());
+
+    // Spreadsheet keys on a file that is not a spreadsheet.
+    let sheet_keys = [
+        ("sheet", json!("Errors")),
+        ("headers", json!({ "exact": ["Row"] })),
+        ("cells", json!([{ "ref": "A1", "text": "Row" }])),
+    ];
+    for name in ["notes.txt", "report.pdf"] {
+        for (key, value) in &sheet_keys {
+            let mut v = json!({ "kind": "expect_download", "name": name });
+            v[*key] = value.clone();
+            if *key == "sheet" {
+                v["headers"] = json!({ "exact": ["Row"] });
+            }
+            assert_eq!(
+                download_refusal(v),
+                format!("expect_download can check {key} only in a file whose name ends in .xlsx, .xls or .csv, and \"{name}\" does not - name the file type (such as Template*.xlsx) so it is known before the file arrives, or check only name and within_ms"),
+            );
+        }
+    }
+    // Text on a file that is not text.
+    for name in ["Template.xlsx", "old.XLS"] {
+        assert_eq!(
+            download_refusal(json!({ "kind": "expect_download", "name": name, "contains_text": ["Row 4"] })),
+            format!("expect_download can check contains_text only in a file whose name ends in .csv or .txt, and \"{name}\" does not - name the file type (such as errors*.csv) so it is known before the file arrives, or check only name and within_ms"),
+        );
+    }
+    // A name with no fixed file type carries only name and within_ms.
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "export*", "contains_text": ["x"] })),
+        "expect_download can check contains_text only in a file whose name ends in .csv or .txt, and \"export*\" does not - name the file type (such as errors*.csv) so it is known before the file arrives, or check only name and within_ms",
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "export*.xls*", "headers": { "exact": ["A"] } })),
+        "expect_download can check headers only in a file whose name ends in .xlsx, .xls or .csv, and \"export*.xls*\" does not - name the file type (such as Template*.xlsx) so it is known before the file arrives, or check only name and within_ms",
+    );
+    let loose: Action =
+        serde_json::from_value(json!({ "kind": "expect_download", "name": "export*", "within_ms": 5000 })).unwrap();
+    assert!(loose.validate().is_ok());
+
+    // Empty lists, a bad reference, and checks that hold of anything.
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "cells": [] })),
+        "expect_download cells is an empty list - give at least one cell, or leave cells out"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "contains_text": [] })),
+        "expect_download contains_text is an empty list - give at least one text, or leave contains_text out"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "headers": { "exact": [] } })),
+        "expect_download headers is an empty list - name at least one header, or leave headers out"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "contains_text": ["Row", " "] })),
+        "expect_download contains_text 2 is empty - every file contains nothing"
+    );
+    for bad in ["2B", "B0", "", "A1:B2", "ZZZZ1"] {
+        assert_eq!(
+            download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "cells": [{ "ref": "A1", "text": "x" }, { "ref": bad, "text": "x" }] })),
+            format!("expect_download cells 2: \"{bad}\" is not a cell reference like B2"),
+        );
+    }
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "cells": [{ "ref": "A1", "text": " ", "match": "contains" }] })),
+        "expect_download cells 1: an empty text with match contains holds for any cell - give the text to find"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "sheet": " ", "cells": [{ "ref": "A1", "text": "x" }] })),
+        "expect_download sheet is empty - leave it out for the first sheet"
+    );
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "sheet": "Errors" })),
+        "expect_download sheet \"Errors\" is read only for headers or cells - add one, or leave sheet out"
+    );
+    // A misspelt key is refused rather than dropped without a word.
+    assert_eq!(
+        download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "header": { "exact": ["A"] } })),
+        "expect_download has no \"header\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+    );
+}
+
+/// Only the runner knows where the step began, so the driver alone never
+/// carries it out.
+#[tokio::test]
+async fn the_driver_alone_never_checks_a_download() {
+    let a: Action = serde_json::from_value(json!({ "kind": "expect_download", "name": "a.csv" })).unwrap();
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &a, &quick()).await;
+    assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
+    assert!(d.calls.is_empty());
 }

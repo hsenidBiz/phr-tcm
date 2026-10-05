@@ -16,14 +16,22 @@
 //! wait loop's pause keeps reading (`idle`), and the supervised browser
 //! has a task that does the same between commands.
 //!
+//! Downloads are followed the same way (`enable_downloads`): the browser's
+//! download events are read inside whichever call is in flight, so one that
+//! starts and ends during a click is never missed, and a finished file is
+//! renamed from its guid to its own name the moment its end is read.
+//!
 //! The socket sits behind `Transport` and the client behind `Driver`, so
 //! both layers are tested without starting a browser.
 
 use futures::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
+
+use super::downloads::{rename_patiently, sanitise_name, unique_name, DownloadEntry, DownloadState};
 
 /// How long any single protocol call may take.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -183,7 +191,31 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// request is never left paused. A request answered twice gets a refusal
     /// for the second answer, which nobody reads.
     unsent_answers: VecDeque<String>,
+    /// Where downloads go and what came of each (`enable_downloads`):
+    /// `None` while the browser's downloads are not followed.
+    downloads: Option<DownloadFolder>,
 }
+
+/// A browser's downloads: the folder they land in, and every download in
+/// start order.
+struct DownloadFolder {
+    dir: PathBuf,
+    entries: Vec<DownloadEntry>,
+    /// Ends (completed or canceled) read before their download's begin,
+    /// oldest first, applied once the begin arrives. Bounded like the
+    /// event buffer: a begin that never comes must not grow this forever.
+    early_ends: VecDeque<EarlyEnd>,
+}
+
+/// A download's end, read before its begin.
+struct EarlyEnd {
+    guid: String,
+    state: String,
+    received: Option<f64>,
+}
+
+/// How many early ends are remembered.
+const MAX_EARLY_ENDS: usize = 32;
 
 /// What a guarded connection does with each paused request.
 struct SaveGuard {
@@ -242,6 +274,7 @@ impl<T: Transport> Cdp<T> {
             deadline: None,
             guard: None,
             unsent_answers: VecDeque::new(),
+            downloads: None,
         }
     }
 
@@ -306,12 +339,112 @@ impl<T: Transport> Cdp<T> {
         self.guard.as_mut().and_then(|g| g.blocked.take())
     }
 
-    /// Wait this long. A guarded connection keeps reading while it waits,
-    /// so a request the page makes between two calls is answered at once
-    /// rather than left paused until the next call; an unguarded one just
-    /// sleeps, as every wait loop always did.
+    /// Save every download the page starts into `dir` (made if missing),
+    /// and follow each one: the browser saves it under its guid, and once it
+    /// completes it is renamed to its own name (`downloads::sanitise_name`,
+    /// numbered by `downloads::unique_name` when that is taken).
+    ///
+    /// Asks through the Browser domain, which names files by guid. A target
+    /// that refuses that is asked through the Page domain instead, which
+    /// saves under the browser's own name: then the file is found under its
+    /// name once it completes, and a repeat name is numbered by the browser.
+    /// Asked again with another folder, later downloads go there and the
+    /// ones so far are kept.
+    pub async fn enable_downloads(&mut self, dir: &Path) -> Result<(), CdpError> {
+        std::fs::create_dir_all(dir).map_err(|e| CdpError::Protocol {
+            method: "Browser.setDownloadBehavior".to_string(),
+            message: format!("the download folder could not be made: {e}"),
+        })?;
+        let path = dir.to_string_lossy().into_owned();
+        let asked = self
+            .call(
+                "Browser.setDownloadBehavior",
+                serde_json::json!({ "behavior": "allowAndName", "downloadPath": path, "eventsEnabled": true }),
+            )
+            .await;
+        match asked {
+            Ok(_) => {}
+            Err(CdpError::Protocol { .. }) => {
+                self.call("Page.setDownloadBehavior", serde_json::json!({ "behavior": "allow", "downloadPath": path }))
+                    .await?;
+            }
+            Err(e) => return Err(e),
+        }
+        let (entries, early_ends) =
+            self.downloads.take().map(|f| (f.entries, f.early_ends)).unwrap_or_default();
+        self.downloads = Some(DownloadFolder { dir: dir.to_path_buf(), entries, early_ends });
+        Ok(())
+    }
+
+    /// Every download followed so far, in start order. Empty unless
+    /// `enable_downloads` ran.
+    pub fn downloads(&self) -> Vec<DownloadEntry> {
+        self.downloads.as_ref().map(|f| f.entries.clone()).unwrap_or_default()
+    }
+
+    /// Note a download event (`Browser.*`, or the Page domain's twin). Says
+    /// whether it was one, so `on_event` keeps it out of the buffer.
+    fn follow_download(&mut self, ev: &Event) -> bool {
+        let begins = matches!(ev.method.as_str(), "Browser.downloadWillBegin" | "Page.downloadWillBegin");
+        let moves = matches!(ev.method.as_str(), "Browser.downloadProgress" | "Page.downloadProgress");
+        let Some(folder) = self.downloads.as_mut().filter(|_| begins || moves) else {
+            return false;
+        };
+        let guid = ev.params["guid"].as_str().unwrap_or("");
+        // The guid is the file's name on disk: anything but a plain id is
+        // not followed, so it can never name a path.
+        if guid.is_empty() || !guid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return true;
+        }
+        let dir = folder.dir.clone();
+        if begins {
+            // A browser that sends both domains' events says it twice.
+            if !folder.entries.iter().any(|e| e.guid == guid) {
+                let mut entry = DownloadEntry {
+                    guid: guid.to_string(),
+                    name: sanitise_name(ev.params["suggestedFilename"].as_str().unwrap_or("")),
+                    path: dir.join(guid),
+                    started_at: Instant::now(),
+                    state: DownloadState::InProgress,
+                    bytes: 0,
+                };
+                // Its end may have been read first: applied now, rename
+                // included.
+                if let Some(i) = folder.early_ends.iter().position(|e| e.guid == guid) {
+                    let end = folder.early_ends.remove(i).expect("position was just found");
+                    progress_download(&dir, &mut entry, &end.state, end.received);
+                }
+                folder.entries.push(entry);
+            }
+            return true;
+        }
+        let state = ev.params["state"].as_str().unwrap_or("");
+        let received = ev.params["receivedBytes"].as_f64();
+        match folder.entries.iter_mut().find(|e| e.guid == guid) {
+            Some(entry) => progress_download(&dir, entry, state, received),
+            // An end read before its begin is kept for it. A mere progress
+            // report is not: the begin starts the download at no bytes, and
+            // the next report says how far it got.
+            None if matches!(state, "completed" | "canceled") => {
+                if !folder.early_ends.iter().any(|e| e.guid == guid) {
+                    if folder.early_ends.len() >= MAX_EARLY_ENDS {
+                        folder.early_ends.pop_front();
+                    }
+                    folder.early_ends.push_back(EarlyEnd { guid: guid.to_string(), state: state.to_string(), received });
+                }
+            }
+            None => {}
+        }
+        true
+    }
+
+    /// Wait this long. A connection that is guarded or following downloads
+    /// keeps reading while it waits, so a request the page makes between
+    /// two calls is answered at once rather than left paused until the next
+    /// call, and a download's end is seen while a step waits for it; any
+    /// other just sleeps, as every wait loop always did.
     pub async fn idle(&mut self, wait: Duration) {
-        if self.guard.is_some() {
+        if self.guard.is_some() || self.downloads.is_some() {
             self.pump(wait).await;
         } else {
             tokio::time::sleep(wait).await;
@@ -492,6 +625,11 @@ impl<T: Transport> Cdp<T> {
                 .map_err(CdpError::Transport)?;
             return Ok(());
         }
+        // Read the moment it arrives, like a paused request: a download
+        // that starts and ends during one click is still followed.
+        if self.follow_download(&ev) {
+            return Ok(());
+        }
         // The record sees every event first and never claims one, so the
         // page log below is fed exactly as before.
         self.net_record.observe(&ev);
@@ -528,8 +666,9 @@ impl<T: Transport> Cdp<T> {
             if let Some(ev) = event_of(&raw) {
                 if ev.method == method {
                     // Handed straight to the caller, so it skips `on_event`:
-                    // the record must still hear of it.
+                    // the record and the downloads must still hear of it.
                     self.net_record.observe(&ev);
+                    self.follow_download(&ev);
                     return Ok(ev);
                 }
                 self.on_event(ev).await?;
@@ -574,6 +713,51 @@ impl<T: Transport> Cdp<T> {
             serde_json::json!({ "expression": expression, "returnByValue": true, "awaitPromise": true }),
         )
         .await
+    }
+}
+
+/// One `downloadProgress` applied to its download: bytes so far, and on
+/// `completed` the file named. A download already finished ignores it (a
+/// second domain's echo of the same end).
+fn progress_download(dir: &Path, entry: &mut DownloadEntry, state: &str, received: Option<f64>) {
+    if entry.state != DownloadState::InProgress {
+        return;
+    }
+    if let Some(n) = received {
+        entry.bytes = n.max(0.0) as u64;
+    }
+    match state {
+        "completed" => {
+            entry.state = DownloadState::Completed;
+            name_finished(dir, entry);
+        }
+        "canceled" => entry.state = DownloadState::Canceled,
+        _ => {}
+    }
+}
+
+/// A finished download, moved from its guid to its own name. A browser
+/// that names files itself (the Page domain's fallback) left it under its
+/// name already, so it is looked for there. A rename that fails is tried
+/// again for a moment (`rename_patiently`); this runs while an event is
+/// handled, so that moment holds up the connection, and only when a file
+/// is held. A file that still cannot be moved stays under its guid, and
+/// the log says why.
+fn name_finished(dir: &Path, entry: &mut DownloadEntry) {
+    let saved = dir.join(&entry.guid);
+    if std::fs::symlink_metadata(&saved).is_ok_and(|m| m.is_file()) {
+        // Check-then-act, and safe: the browser writes only guid names here
+        // and this driver is the only one writing other names, one at a time.
+        let to = dir.join(unique_name(dir, &entry.name));
+        match rename_patiently(&saved, &to, |a, b| std::fs::rename(a, b), std::thread::sleep) {
+            Ok(()) => entry.path = to,
+            Err(e) => crate::applog::warn(format!("Auto Run could not name a finished download: {e}")),
+        }
+    } else if dir.join(&entry.name).is_file() {
+        entry.path = dir.join(&entry.name);
+    }
+    if let Ok(meta) = std::fs::metadata(&entry.path) {
+        entry.bytes = meta.len();
     }
 }
 
@@ -651,6 +835,15 @@ pub trait Driver {
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
     }
+    /// See `Cdp::enable_downloads`. A driver that follows no downloads (a
+    /// test's fake) sends nothing and is ready at once.
+    fn enable_downloads(&mut self, _dir: &Path) -> impl Future<Output = Result<(), CdpError>> {
+        async { Ok(()) }
+    }
+    /// See `Cdp::downloads`. None for a driver that follows none.
+    fn downloads(&self) -> Vec<DownloadEntry> {
+        Vec::new()
+    }
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -707,5 +900,11 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn idle(&mut self, wait: Duration) {
         Cdp::idle(self, wait).await
+    }
+    async fn enable_downloads(&mut self, dir: &Path) -> Result<(), CdpError> {
+        Cdp::enable_downloads(self, dir).await
+    }
+    fn downloads(&self) -> Vec<DownloadEntry> {
+        Cdp::downloads(self)
     }
 }

@@ -7,7 +7,8 @@
 //! landed, never a foothold for driving Azure DevOps from here.
 
 use v2_lib::autorun::store::{
-    clear_runs, clear_scripts, list_runs, load_run, load_script, load_shot, new_run_id,
+    clear_runs, clear_scripts, downloads_dir, empty_supervised_downloads, list_runs, load_run, load_script,
+    load_shot, new_run_id, supervised_downloads_dir,
     safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
     SaveScriptsError,
 };
@@ -112,6 +113,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
                     harness: false,
                 }],
                 screenshot: None,
+                downloads: vec![],
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -415,7 +417,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()) }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()), downloads: vec![] }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,
@@ -624,7 +626,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()) }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()), downloads: vec![] }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,
@@ -858,4 +860,100 @@ fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() 
     assert!(list_runs(root).is_empty());
     assert!(!root.join("shots").join(&shot).exists());
     assert!(!root.join("reports").join("free.html").exists());
+}
+
+/// A run's downloads live beside its screenshots, in a folder of its own.
+#[test]
+fn a_runs_downloads_folder_is_named_for_the_run() {
+    let root = std::path::Path::new("C:/data/autorun");
+    assert_eq!(downloads_dir(root, "run-1700000000000"), root.join("downloads").join("run-1700000000000"));
+    assert_eq!(supervised_downloads_dir(root), root.join("downloads").join("supervised"));
+}
+
+/// A run id is a filename component: one that is not a safe one never
+/// takes the folder outside `downloads/`.
+#[test]
+fn an_unsafe_run_id_never_leaves_the_downloads_folder() {
+    let root = std::path::Path::new("C:/data/autorun");
+    for bad in ["..", "../x", r"a\b", "", "C:"] {
+        let got = downloads_dir(root, bad);
+        assert_eq!(got.parent(), Some(root.join("downloads").as_path()), "{bad:?} gave {got:?}");
+        assert_ne!(got, supervised_downloads_dir(root), "{bad:?} must not share the supervised folder");
+    }
+    // The supervised folder's own name, in any case, is not a run's: Windows
+    // would open the same folder for each.
+    for name in ["supervised", "Supervised", "SUPERVISED", "sUpErViSeD"] {
+        let got = downloads_dir(root, name);
+        assert_eq!(got, root.join("downloads").join("unnamed-run"), "{name:?} gave {got:?}");
+    }
+}
+
+/// Clearing the runs clears their downloads: every run's folder and what
+/// is in it.
+#[test]
+fn clear_runs_also_removes_every_runs_downloads() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    for run in ["run-1", "run-2"] {
+        let folder = downloads_dir(root, run);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("Template.xlsx"), "x").unwrap();
+        std::fs::write(folder.join("Template (2).xlsx"), "y").unwrap();
+    }
+    std::fs::write(root.join("downloads").join("stray.csv"), "z").unwrap();
+    assert_eq!(clear_runs(root).unwrap(), 0, "the count stays runs");
+    assert!(!downloads_dir(root, "run-1").exists());
+    assert!(!downloads_dir(root, "run-2").exists());
+    assert!(!root.join("downloads").join("stray.csv").exists());
+}
+
+/// The same rule as `shots/`: only files go, and a folder nested deeper
+/// stays with what is in it.
+#[test]
+fn clear_runs_leaves_a_folder_nested_inside_a_runs_downloads_alone() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let folder = downloads_dir(root, "run-1");
+    std::fs::create_dir_all(folder.join("nested")).unwrap();
+    std::fs::write(folder.join("nested").join("inner.txt"), "stay").unwrap();
+    std::fs::write(folder.join("top.csv"), "go").unwrap();
+    clear_runs(root).unwrap();
+    assert!(!folder.join("top.csv").exists());
+    assert_eq!(std::fs::read_to_string(folder.join("nested").join("inner.txt")).unwrap(), "stay");
+}
+
+/// A run's downloads folder that is a link is skipped whole.
+#[test]
+fn clear_runs_skips_a_downloads_folder_that_is_a_link() {
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("precious.xlsx"), "stay").unwrap();
+    if !make_dir_link(&downloads_dir(&root, "run-1"), &elsewhere) {
+        eprintln!("NOTE: a directory link could not be made here, so this part is not exercised");
+        return;
+    }
+    clear_runs(&root).unwrap();
+    assert_eq!(std::fs::read_to_string(elsewhere.join("precious.xlsx")).unwrap(), "stay");
+}
+
+/// The supervised browser's folder is emptied when it closes, and nothing
+/// of a run's goes with it.
+#[test]
+fn emptying_the_supervised_downloads_leaves_the_runs_alone() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let supervised = supervised_downloads_dir(root);
+    std::fs::create_dir_all(&supervised).unwrap();
+    std::fs::write(supervised.join("a.csv"), "x").unwrap();
+    let run = downloads_dir(root, "run-1");
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(run.join("b.csv"), "keep").unwrap();
+    assert_eq!(empty_supervised_downloads(root).unwrap(), 1);
+    assert!(!supervised.join("a.csv").exists());
+    assert_eq!(std::fs::read_to_string(run.join("b.csv")).unwrap(), "keep");
+    // Nothing there is nothing to do.
+    assert_eq!(empty_supervised_downloads(&root.join("missing")).unwrap(), 0);
 }

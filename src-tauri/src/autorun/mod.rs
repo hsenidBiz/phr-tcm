@@ -9,6 +9,7 @@
 pub mod accounts;
 pub mod api_checks;
 pub mod defects;
+pub mod downloads;
 pub mod edits;
 pub mod failures;
 pub mod floor;
@@ -156,6 +157,22 @@ pub struct StepRecord {
     /// A picture of the page when the step ended (unattended runs only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    /// The files the browser saved during the step, by the names they are
+    /// kept under in the run's download folder (`store::downloads_dir`):
+    /// names only, never a path (unattended runs only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<String>,
+}
+
+/// One file in a run's download folder, as Past runs and the review list
+/// it: its name and size, read from disk when asked (`store::download_files`),
+/// never kept in the run file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct DownloadFile {
+    pub name: String,
+    /// Bytes. A `u32` (specta refuses a 64-bit number across IPC); a file
+    /// over 4 GB reads as `u32::MAX`.
+    pub size: u32,
 }
 
 /// One case in a run. `verdict` is the HUMAN's word - "", "Passed",
