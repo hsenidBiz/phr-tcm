@@ -6,7 +6,8 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
 import AutoRun from "./index";
@@ -1032,4 +1033,35 @@ test("the setup, the case list and Past runs are one tab panel each, shown one a
   expect(within(only("Past runs")).getByRole("heading", { name: "Past runs" })).toBeInTheDocument();
 
   expect(document.querySelector('[class*="xl:grid-cols-"]')).toBeNull();
+});
+
+// A store answering (a script, the runs) redraws the screen. The check that
+// drops hidden cases from the selection runs after every one of those draws,
+// and it used to set the selection each time even with nothing to drop: one
+// more update queued per draw. With hundreds of scripts answering one after
+// another, React counted that chain as an endless loop (error #185) and the
+// screen crashed. Nothing to drop must mean no update at all.
+test("a redraw with no hidden case ticked queues no selection update", async () => {
+  mockList([caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")], [1, 2]);
+  let draws = 0;
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Profiler id="autorun" onRender={() => draws++}>
+        <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      </Profiler>
+    </QueryClientProvider>,
+  );
+  openTab("Test cases");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select #1" }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select #1" })).toBeChecked());
+  await new Promise((r) => setTimeout(r, 50));
+
+  const before = draws;
+  act(() => {
+    qc.setQueryData(["autorun-runs"], [{ id: "r1", started_at: "1", cases: [{ case_id: 2, verdict: "Passed" }] }]);
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(draws - before).toBe(1);
+  expect(screen.getByRole("checkbox", { name: "Select #1" })).toBeChecked();
 });

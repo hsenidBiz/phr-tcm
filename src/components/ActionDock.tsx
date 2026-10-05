@@ -26,7 +26,7 @@
  * copy is also unclickable and untabbable while it is out of the way -
  * sighted mouse users are the only audience for the visible state.
  */
-import { type ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/cn";
 import { useOnScreen } from "../hooks/useOnScreen";
@@ -73,15 +73,26 @@ export default function ActionDock({
   // Hidden while the real row is reachable, or while the caller says there
   // is nothing worth floating (no selection, no unsaved order).
   const hidden = onScreen || active === false;
+  // One ref callback for the row's whole life. A new one on every render
+  // made React detach and re-attach it after each draw, and the null-then-
+  // node it hands useOnScreen queued one more draw every time - on a screen
+  // redrawn hundreds of times in a row (Auto Run's scripts answering), that
+  // chain is what React stops as an endless loop (error #185).
+  const latestRowRef = useRef(rowRef);
+  latestRowRef.current = rowRef;
+  const attachRow = useCallback(
+    (el: HTMLDivElement | null) => {
+      dockRef(el);
+      latestRowRef.current?.(el);
+    },
+    [dockRef],
+  );
 
   return (
     <>
       <div
         {...rowProps}
-        ref={(el) => {
-          dockRef(el);
-          rowRef?.(el);
-        }}
+        ref={attachRow}
         className={cn("flex flex-wrap items-center justify-end gap-2", className)}
       >
         {children(false)}
