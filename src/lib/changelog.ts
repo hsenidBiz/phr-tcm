@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.1",
+    date: "2026-10-05",
+    items: [
+      "In Auto Run's Accounts, the logins the assistant proposes can be searched and ticked all at once, each on one line saying where its password comes from, with a password field only when you want to set one.",
+    ],
+  },
+  {
     version: "2.1.0",
     date: "2026-10-05",
     items: [
