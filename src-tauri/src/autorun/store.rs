@@ -442,6 +442,73 @@ pub fn downloads_dir(root: &Path, run_id: &str) -> PathBuf {
     all_downloads_dir(root).join(folder)
 }
 
+/// Said when a download asked for is not a plain name in the run's own
+/// download folder (a path, `..`, another run's file, a link out of it).
+pub const NOT_THIS_RUNS_DOWNLOAD: &str = "that file is not one of this run's downloads";
+
+/// Said when a download the run recorded is no longer in its folder.
+pub const DOWNLOAD_GONE: &str = "that download is no longer on this machine";
+
+/// A download's name as a run records it: a plain file name, with no
+/// separator, no `..`, no drive or stream colon, and not absolute.
+fn plain_download_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && !name.contains(['/', '\\', ':'])
+        && !name.contains("..")
+        && !Path::new(name).is_absolute()
+}
+
+/// The file `name` in run `run_id`'s own download folder, canonicalised:
+/// the only path Open hands to the default app. Refused with
+/// [`NOT_THIS_RUNS_DOWNLOAD`] unless the run id is a run's own (never the
+/// supervised folder or the fallback for an unsafe id), the name is plain,
+/// and the file, links resolved, sits directly in the run's canonical
+/// folder as an ordinary file. [`DOWNLOAD_GONE`] when it is not there.
+pub fn download_file(root: &Path, run_id: &str, name: &str) -> Result<PathBuf, String> {
+    let refused = || NOT_THIS_RUNS_DOWNLOAD.to_string();
+    if !safe_run_id(run_id) || run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) || !plain_download_name(name) {
+        return Err(refused());
+    }
+    let dir = downloads_dir(root, run_id);
+    let candidate = dir.join(name);
+    if std::fs::symlink_metadata(&candidate).is_err() {
+        return Err(DOWNLOAD_GONE.to_string());
+    }
+    let folder = std::fs::canonicalize(&dir).map_err(|_| refused())?;
+    let file = std::fs::canonicalize(&candidate).map_err(|_| refused())?;
+    if file.parent() != Some(folder.as_path()) || !std::fs::metadata(&file).is_ok_and(|m| m.is_file()) {
+        return Err(refused());
+    }
+    Ok(file)
+}
+
+/// The size of one of a run's downloads, `None` when it is not one
+/// ([`download_file`]) or is gone.
+pub fn download_size(root: &Path, run_id: &str, name: &str) -> Option<u64> {
+    download_file(root, run_id, name).ok().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len())
+}
+
+/// Every file in a run's download folder that [`download_file`] would open,
+/// with its size, sorted by name. Empty for a run with no folder or an id
+/// that is not a run's own.
+pub fn download_files(root: &Path, run_id: &str) -> Vec<super::DownloadFile> {
+    if !safe_run_id(run_id) || run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(downloads_dir(root, run_id)) else { return Vec::new() };
+    let mut out: Vec<super::DownloadFile> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            let size = download_size(root, run_id, &name)?;
+            Some(super::DownloadFile { name, size: u32::try_from(size).unwrap_or(u32::MAX) })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// Where the supervised browser saves its downloads. Emptied when that
 /// browser opens and when it closes (`empty_supervised_downloads`).
 pub fn supervised_downloads_dir(root: &Path) -> PathBuf {

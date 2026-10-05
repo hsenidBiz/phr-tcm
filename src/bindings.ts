@@ -503,6 +503,18 @@ export const commands = {
 	 *  page must not hold the main thread, which would freeze the window.
 	 */
 	autoRunOpenReport: (runId: string, ranAt: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_report", { runId, ranAt })),
+	/**
+	 *  Opens one of a run's downloads with the system's default app. Only a
+	 *  plain name in that run's own download folder is opened; anything else
+	 *  is refused with `that file is not one of this run's downloads`.
+	 */
+	autoRunOpenDownload: (runId: string, name: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_download", { runId, name })),
+	/**
+	 *  The files in a run's download folder with their sizes, read from disk
+	 *  now: a name the run recorded that is missing here is a file that is no
+	 *  longer on this machine.
+	 */
+	autoRunDownloadSizes: (runId: string) => typedError<DownloadFile[], string>(__TAURI_INVOKE("auto_run_download_sizes", { runId })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
 	/**
@@ -1992,6 +2004,20 @@ export type DetectedTool = {
 	 *  "global" row, where it would just repeat `registered_servers`.
 	 */
 	global_registered_servers: string[],
+};
+
+/**
+ *  One file in a run's download folder, as Past runs and the review list
+ *  it: its name and size, read from disk when asked (`store::download_files`),
+ *  never kept in the run file.
+ */
+export type DownloadFile = {
+	name: string,
+	/**
+	 *  Bytes. A `u32` (specta refuses a 64-bit number across IPC); a file
+	 *  over 4 GB reads as `u32::MAX`.
+	 */
+	size: number,
 };
 
 /**

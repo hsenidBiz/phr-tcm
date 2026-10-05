@@ -244,3 +244,81 @@ test("a case whose preconditions were not checked is labelled Not checked, with 
   const plain = screen.getByRole("listitem", { name: "Run of Locked account" });
   expect(within(plain).queryByText("Not checked")).not.toBeInTheDocument();
 });
+
+test("a case with downloads lists each with its size and opens it by name", async () => {
+  const opened: unknown[] = [];
+  renderPastRuns(
+    [
+      runOf({
+        pbi_id: 42,
+        cases: [
+          {
+            case_id: 201,
+            title: "Valid login",
+            verdict: "",
+            note: "",
+            proposed: "Passed",
+            steps: [
+              { step_number: 1, outcomes: [], downloads: ["Template.xlsx"] },
+              { step_number: 2, outcomes: [], downloads: ["errors.csv"] },
+            ],
+          },
+          { case_id: 202, title: "No files", verdict: "", note: "", proposed: "Passed", steps: [] },
+        ],
+      }),
+    ],
+    42,
+    (cmd, args) => {
+      if (cmd === "auto_run_download_sizes") return [{ name: "Template.xlsx", size: 5427 }];
+      if (cmd === "auto_run_open_download") {
+        opened.push(args);
+        return null;
+      }
+      return undefined;
+    },
+  );
+
+  const row = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const list = within(row).getByRole("list", { name: "Downloads" });
+  expect(within(list).getByText("Template.xlsx")).toBeInTheDocument();
+  expect(await within(list).findByText("5.3 KB")).toBeInTheDocument();
+  // Gone from the folder: said so, and it cannot be opened.
+  expect(within(list).getByText("no longer on this machine")).toBeInTheDocument();
+  expect(within(list).getByRole("button", { name: "Open errors.csv" })).toBeDisabled();
+
+  fireEvent.click(within(list).getByRole("button", { name: "Open Template.xlsx" }));
+  await waitFor(() => expect(opened).toEqual([{ runId: "run-1", name: "Template.xlsx" }]));
+
+  const other = screen.getByRole("listitem", { name: "Run of No files" });
+  expect(within(other).queryByRole("list", { name: "Downloads" })).not.toBeInTheDocument();
+});
+
+test("a download Rust refuses to open says why", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          {
+            case_id: 201,
+            title: "Valid login",
+            verdict: "",
+            note: "",
+            proposed: "Passed",
+            steps: [{ step_number: 1, outcomes: [], downloads: ["a.csv"] }],
+          },
+        ],
+      }),
+    ],
+    7,
+    (cmd) => {
+      if (cmd === "auto_run_download_sizes") return [{ name: "a.csv", size: 12 }];
+      if (cmd === "auto_run_open_download") throw "that file is not one of this run's downloads";
+      return undefined;
+    },
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open a.csv" }));
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Could not open a.csv: that file is not one of this run's downloads"),
+  );
+});

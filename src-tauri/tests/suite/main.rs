@@ -43,6 +43,7 @@ mod autorun_api_checks;
 mod autorun_bridge;
 mod autorun_commands;
 mod autorun_defects;
+mod autorun_download_files;
 mod autorun_downloads;
 mod autorun_edits;
 mod autorun_failures;

@@ -5,8 +5,8 @@
 //! reports folder (never embedded), a missing picture is a note rather than
 //! a failure, and a name that is not a screenshot is never linked.
 
-use v2_lib::autorun::report::{action_words, bucket, build, counts, scrub_urls, BUCKETS, CSP};
-use v2_lib::autorun::store::{save_run, save_script};
+use v2_lib::autorun::report::{action_words, bucket, build, build_with_downloads, counts, scrub_urls, BUCKETS, CSP};
+use v2_lib::autorun::store::{downloads_dir, save_run, save_script};
 use v2_lib::autorun::{CaseScript, LocalRun};
 use v2_lib::commands::autorun::{write_report_at, REPORT_RUN_GONE};
 
@@ -494,4 +494,67 @@ fn a_case_with_a_notice_shows_it_in_its_section() {
         "{section}"
     );
     assert!(!section_of(&html, 201).contains("Notice"));
+}
+
+/// `run_of`, with case 201's step 1 and step 2 each saving a file, and a
+/// name a page could have made hostile on case 204.
+fn run_with_downloads() -> LocalRun {
+    let mut run = run_of(SHOT);
+    run.cases[0].steps[1].downloads = vec!["Template.xlsx".into()];
+    run.cases[0].steps[2].downloads = vec!["errors.csv".into()];
+    run.cases[3].steps[0].downloads = vec!["<b>x</b>&.csv".into()];
+    run
+}
+
+fn sizes(name: &str) -> Option<u64> {
+    match name {
+        "Template.xlsx" => Some(5427),
+        "errors.csv" => Some(1126),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_case_with_downloads_has_one_downloads_line_naming_each_with_its_size() {
+    let html = build_with_downloads(&run_with_downloads(), &[script_201()], "x", &no_shots, &sizes);
+    assert!(
+        html.contains("<p><strong>Downloads:</strong> Template.xlsx (5.3 KB), errors.csv (1.1 KB)</p>"),
+        "{html}"
+    );
+    assert_eq!(html.matches("<strong>Downloads:</strong>").count(), 2, "one line per case with downloads");
+    // Names only: never a link to the file, never its folder.
+    assert!(!html.contains("downloads/"));
+    assert!(!html.contains("href=\"Template.xlsx"));
+}
+
+#[test]
+fn a_download_name_is_escaped_and_a_gone_file_says_so() {
+    let html = build_with_downloads(&run_with_downloads(), &[], "x", &no_shots, &sizes);
+    assert!(
+        html.contains("<strong>Downloads:</strong> &lt;b&gt;x&lt;/b&gt;&amp;.csv (no longer on this machine)</p>"),
+        "{html}"
+    );
+    assert!(!html.contains("<b>x</b>"));
+}
+
+#[test]
+fn a_case_with_no_downloads_has_no_downloads_line() {
+    let html = build(&run_of(SHOT), &[script_201()], "x", &no_shots);
+    assert!(!html.contains("Downloads:"));
+}
+
+#[test]
+fn the_written_report_reads_each_downloads_size_from_the_runs_folder() {
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    save_run(&root, &run_with_downloads()).unwrap();
+    let folder = downloads_dir(&root, "run-1786000200000");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Template.xlsx"), vec![0u8; 5427]).unwrap();
+    std::fs::write(folder.join("errors.csv"), vec![0u8; 1126]).unwrap();
+
+    let path = write_report_at(true, &root, "run-1786000200000", "x").unwrap();
+    let html = std::fs::read_to_string(path).unwrap();
+    assert!(html.contains("Template.xlsx (5.3 KB), errors.csv (1.1 KB)"), "{html}");
+    assert!(html.contains("&lt;b&gt;x&lt;/b&gt;&amp;.csv (no longer on this machine)"));
 }

@@ -164,6 +164,17 @@ pub struct StepRecord {
     pub downloads: Vec<String>,
 }
 
+/// One file in a run's download folder, as Past runs and the review list
+/// it: its name and size, read from disk when asked (`store::download_files`),
+/// never kept in the run file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct DownloadFile {
+    pub name: String,
+    /// Bytes. A `u32` (specta refuses a 64-bit number across IPC); a file
+    /// over 4 GB reads as `u32::MAX`.
+    pub size: u32,
+}
+
 /// One case in a run. `verdict` is the HUMAN's word - "", "Passed",
 /// "Failed", "Blocked". The machine never fills it in: the action
 /// outcomes are evidence shown to the person, not a vote. `proposed` is

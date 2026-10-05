@@ -573,3 +573,48 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         assert!(!text.contains("area:"), "{text}");
     }
 }
+
+#[test]
+fn describe_failures_names_each_steps_downloads_and_nothing_more() {
+    let run = LocalRun {
+        id: "run-dl".to_string(),
+        pbi_id: 1,
+        started_at: "4".to_string(),
+        cases: vec![CaseRecord {
+            proposed: "Failed".to_string(),
+            steps: vec![
+                StepRecord {
+                    step_number: 1,
+                    outcomes: vec![ActionOutcome::passed("clicked button \"Export\"")],
+                    screenshot: None,
+                    downloads: vec!["Template.xlsx".to_string()],
+                },
+                StepRecord {
+                    step_number: 2,
+                    outcomes: vec![ActionOutcome::failed("the download Template.xlsx has no header Email")],
+                    screenshot: None,
+                    downloads: vec!["errors.csv".to_string(), "errors (2).csv".to_string()],
+                },
+                StepRecord {
+                    step_number: 3,
+                    outcomes: vec![ActionOutcome::passed("ok")],
+                    screenshot: None,
+                    downloads: vec![],
+                },
+            ],
+            ..empty_case()
+        }],
+        mode: "unattended".to_string(),
+        published: None,
+        environment: None,
+    };
+    let out = describe_failures(&run, &[]);
+    assert!(out.contains("step 1 downloads: Template.xlsx"), "{out}");
+    assert!(out.contains("step 2 downloads: errors.csv, errors (2).csv"), "{out}");
+    // The failed action's lines come first, the step's files after them.
+    let failed_at = out.find("  page said: the download Template.xlsx").unwrap();
+    assert!(failed_at < out.find("step 2 downloads:").unwrap(), "{out}");
+    assert!(!out.contains("step 3 downloads"), "{out}");
+    // Names only: never the folder they are in.
+    assert!(!out.contains("downloads\\") && !out.contains("downloads/"), "{out}");
+}

@@ -14,6 +14,7 @@ import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
+import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import {
   RESULT_BUCKETS,
@@ -234,6 +235,8 @@ export default function PastRuns({
                       )}
                     </div>
                     {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
+                    {/* The files its steps saved; nothing for a case that saved none. */}
+                    <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
                   </li>
                 ))}
               </ul>

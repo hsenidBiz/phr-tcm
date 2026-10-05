@@ -13,7 +13,8 @@
 //! value), cookies, headers, or any file's bytes. A picture is linked only
 //! for a name `store`'s screenshot guard accepts and that is in the shots
 //! folder; any other name is a note, never a link. The accounts are their
-//! keys, as the run recorded them, never logins.
+//! keys, as the run recorded them, never logins. A case's downloads are a
+//! `Downloads:` line of names and sizes: never a link, never the folder.
 
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, StepRecord};
@@ -314,6 +315,29 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
     h
 }
 
+/// The files a case's steps saved, in the order the steps ran.
+pub fn case_downloads(case: &CaseRecord) -> Vec<&str> {
+    case.steps.iter().flat_map(|s| s.downloads.iter().map(String::as_str)).collect()
+}
+
+/// `<p><strong>Downloads:</strong> a.xlsx (5.3 KB), b.csv (1.1 KB)</p>`, or
+/// nothing for a case that saved no file. A name `size_of` has no size for
+/// is a file no longer on this machine.
+fn downloads_line(case: &CaseRecord, size_of: &dyn Fn(&str) -> Option<u64>) -> String {
+    let names = case_downloads(case);
+    if names.is_empty() {
+        return String::new();
+    }
+    let each: Vec<String> = names
+        .iter()
+        .map(|n| {
+            let size = size_of(n).map_or_else(|| "no longer on this machine".to_string(), crate::test_files::human_size);
+            format!("{} ({size})", esc(n))
+        })
+        .collect();
+    format!("<p><strong>Downloads:</strong> {}</p>", each.join(", "))
+}
+
 /// One case's collapsible section. Open for Failed and Blocked, closed for
 /// Passed and Not run - a reader lands on what needs them and can still
 /// expand the rest. `<details>` needs no script.
@@ -321,6 +345,7 @@ fn case_section(
     case: &CaseRecord,
     script: Option<&CaseScript>,
     exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
 ) -> String {
     let b = case_bucket(case);
     let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
@@ -349,6 +374,7 @@ fn case_section(
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
     }
+    h.push_str(&downloads_line(case, size_of));
     h.push_str(&steps_block(case, exists));
     h.push_str("</details>");
     h
@@ -403,6 +429,18 @@ pub fn build(
     scripts: &[CaseScript],
     ran_at: &str,
     exists: &dyn Fn(&str) -> bool,
+) -> String {
+    build_with_downloads(run, scripts, ran_at, exists, &|_| None)
+}
+
+/// [`build`], with `size_of` giving the size of each of the run's
+/// downloads (`None`: no longer on this machine).
+pub fn build_with_downloads(
+    run: &LocalRun,
+    scripts: &[CaseScript],
+    ran_at: &str,
+    exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
 ) -> String {
     let script_for = |id: i32| scripts.iter().find(|s| s.case_id == id);
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
@@ -470,7 +508,7 @@ pub fn build(
     if !run.cases.is_empty() {
         h.push_str("<h2>Cases in detail</h2>");
         for case in &run.cases {
-            h.push_str(&case_section(case, script_for(case.case_id), exists));
+            h.push_str(&case_section(case, script_for(case.case_id), exists, size_of));
         }
     }
 

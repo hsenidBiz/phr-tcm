@@ -20,6 +20,7 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
+import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import VerdictPicker from "./VerdictPicker";
 import { countBuckets, matchesFilter, type ResultFilter } from "./verdicts";
@@ -439,6 +440,10 @@ export default function RunReview(props: {
                   ))}
                 </ul>
               )}
+
+              {/* The files the case's steps saved, shown whether or not the
+                  steps are unfolded; nothing for a case that saved none. */}
+              <RunDownloads runId={run.id} steps={c.steps} />
             </li>
           );
         })}

@@ -799,3 +799,34 @@ test("a case whose preconditions were not checked is labelled Not checked, with 
   expect(label).toHaveClass("text-warning");
   expect(within(caseCard(201)).queryByText("Not checked")).not.toBeInTheDocument();
 });
+
+test("a case's downloads show under its steps with their sizes, and Open opens one", async () => {
+  const opened: unknown[] = [];
+  const run = structuredClone(RUN);
+  (run.cases[0].steps[1] as Record<string, unknown>).downloads = ["Template.xlsx", "x (2).csv"];
+  renderReview(run, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_download_sizes")
+        return [
+          { name: "Template.xlsx", size: 5427 },
+          { name: "x (2).csv", size: 512 },
+        ];
+      if (cmd === "auto_run_open_download") {
+        opened.push(args);
+        return null;
+      }
+      return undefined;
+    },
+  });
+
+  const card = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  const list = within(card).getByRole("list", { name: "Downloads" });
+  expect(await within(list).findByText("5.3 KB")).toBeInTheDocument();
+  expect(within(list).getByText("512 bytes")).toBeInTheDocument();
+  fireEvent.click(within(list).getByRole("button", { name: "Open x (2).csv" }));
+  await waitFor(() => expect(opened).toEqual([{ runId: "run-1", name: "x (2).csv" }]));
+
+  // A case that saved nothing has no list.
+  const other = screen.getByRole("listitem", { name: "Case #202 Locked account" });
+  expect(within(other).queryByRole("list", { name: "Downloads" })).not.toBeInTheDocument();
+});

@@ -621,7 +621,13 @@ pub fn write_report_at(
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    let html = crate::autorun::report::build(&run, &scripts, ran_at, &|name| store::shot_exists(root, name));
+    let html = crate::autorun::report::build_with_downloads(
+        &run,
+        &scripts,
+        ran_at,
+        &|name| store::shot_exists(root, name),
+        &|name| store::download_size(root, run_id, name),
+    );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));
     std::fs::create_dir_all(&dir).map_err(|e| {
@@ -661,6 +667,58 @@ pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String, ran_at:
         crate::applog::warn(format!("the auto run report could not be opened: {e}"));
         REPORT_NOT_OPENED.to_string()
     })
+}
+
+/// The pure half of [`auto_run_open_download`]: the one path Open may hand
+/// to the default app, a plain name in the run's own download folder
+/// (`store::download_file`). "Is Auto Run offered here" is passed in, as the
+/// report takes it.
+pub fn download_path_at(
+    offered: bool,
+    root: &std::path::Path,
+    run_id: &str,
+    name: &str,
+) -> Result<std::path::PathBuf, String> {
+    crate::commands::api_templates::refuse_unless(offered)?;
+    store::download_file(root, run_id, name)
+}
+
+/// The pure half of [`auto_run_download_sizes`].
+pub fn download_sizes_at(
+    offered: bool,
+    root: &std::path::Path,
+    run_id: &str,
+) -> Result<Vec<crate::autorun::DownloadFile>, String> {
+    crate::commands::api_templates::refuse_unless(offered)?;
+    Ok(store::download_files(root, run_id))
+}
+
+/// Said when the default app could not be asked to open a download.
+pub const DOWNLOAD_NOT_OPENED: &str = "the file could not be opened - see Settings, Logs";
+
+/// Opens one of a run's downloads with the system's default app. Only a
+/// plain name in that run's own download folder is opened; anything else
+/// is refused with `that file is not one of this run's downloads`.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_open_download(app: tauri::AppHandle, run_id: String, name: String) -> Result<(), String> {
+    let path = download_path_at(crate::ai_tools::autorun_offered(), &root(&app)?, &run_id, &name)?;
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
+        crate::applog::warn(format!("a run's download could not be opened: {e}"));
+        DOWNLOAD_NOT_OPENED.to_string()
+    })
+}
+
+/// The files in a run's download folder with their sizes, read from disk
+/// now: a name the run recorded that is missing here is a file that is no
+/// longer on this machine.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_download_sizes(
+    app: tauri::AppHandle,
+    run_id: String,
+) -> Result<Vec<crate::autorun::DownloadFile>, String> {
+    download_sizes_at(crate::ai_tools::autorun_offered(), &root(&app)?, &run_id)
 }
 
 /// A run id the frontend can stamp on a new session.
