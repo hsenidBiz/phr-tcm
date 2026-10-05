@@ -493,9 +493,15 @@ export default function AutoRun({
    * what the person can see. Checked after every render rather than in the
    * filter's click, because the runs refreshing (one just finished) can hide
    * a ticked case without anyone pressing anything. Not while the case list
-   * itself is empty (loading): that is not the person's filter hiding them. */
+   * itself is empty (loading): that is not the person's filter hiding them.
+   *
+   * Only an actual removal sets the selection. Setting it on every render,
+   * even to the same set, queued one more update per draw; with hundreds of
+   * scripts answering one after another, React took that chain for an
+   * endless loop (error #185) and the screen crashed. */
   useEffect(() => {
     if (rows.length === 0) return;
+    if ([...selected].every((id) => shownIds.has(id))) return;
     setSelected((prev) => {
       const kept = [...prev].filter((id) => shownIds.has(id));
       return kept.length === prev.size ? prev : new Set(kept);
