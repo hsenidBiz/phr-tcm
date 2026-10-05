@@ -9,7 +9,7 @@
  * builds this pattern by hand.
  *
  * The floating copy is portalled to `document.body`. Every screen that
- * needs one renders inside `AnimatedContent`, whose GSAP transform becomes
+ * needs one renders inside the screen fade, whose transform becomes
  * the containing block for a `fixed` descendant - so `right-6 bottom-*`
  * would pin to the SCROLL REGION instead of the window without the portal.
  *

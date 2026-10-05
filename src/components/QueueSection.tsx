@@ -2136,8 +2136,8 @@ export default function QueueSection({
 
       {/* Sticky Collapse all, bottom LEFT like every other screen's, once
           anything in the queue is unfolded (steps, diffs, or the inline
-          editor). Portalled because this renders inside AnimatedContent,
-          whose GSAP transform would make `fixed` mean the scroll region
+          editor). Portalled because this renders inside the screen fade,
+          whose transform would make `fixed` mean the scroll region
           instead of the viewport. */}
       {(expandedSteps.size + expandedDiffs.size > 0 || editingIdx != null) &&
         createPortal(

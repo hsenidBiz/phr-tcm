@@ -1,4 +1,5 @@
-import { isBetaVersion, type ChangelogEntry } from "../lib/changelog";
+import type { ChangelogEntry } from "../lib/changelog";
+import { isBetaVersion } from "../lib/changelogSeen";
 import BetaPill from "./BetaPill";
 
 /** "Version 1.26.0-beta.1 [Beta] 2026-10-01" - the heading of one version's

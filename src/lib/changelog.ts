@@ -8,6 +8,17 @@
  * entry carries the user-facing lines of the betas that led to it.
  */
 
+// The startup helpers live in their own module so App can use them without
+// loading the entries below; re-exported so imports from here keep working.
+import { compareVersions, isBetaVersion, updatedFrom } from "./changelogSeen";
+export {
+  compareVersions,
+  isBetaVersion,
+  markChangelogSeen,
+  SHOW_CHANGELOG_EVENT,
+  updatedFrom,
+} from "./changelogSeen";
+
 export type ChangelogEntry = {
   version: string;
   date: string; // YYYY-MM-DD
@@ -1787,46 +1798,6 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-/** Semver compare: -1 / 0 / 1 for a < b / a == b / a > b. A prerelease
- * (`1.26.0-beta.2`) sorts below its release (`1.26.0`), and its numeric
- * parts compare as numbers (`beta.10` > `beta.9`). Anything that is not
- * X.Y.Z (e.g. "dev") reads as 0.0.0, which keeps What's new shut in dev. */
-export function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => {
-    const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim());
-    if (!m) return { core: [0, 0, 0], pre: [] as string[] };
-    return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split(".") : [] };
-  };
-  const pa = parse(a);
-  const pb = parse(b);
-  for (let i = 0; i < 3; i++) {
-    if (pa.core[i] !== pb.core[i]) return pa.core[i] < pb.core[i] ? -1 : 1;
-  }
-  // No prerelease outranks any prerelease of the same X.Y.Z.
-  if (!pa.pre.length || !pb.pre.length) return pa.pre.length === pb.pre.length ? 0 : pa.pre.length ? -1 : 1;
-  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
-    const x = pa.pre[i];
-    const y = pb.pre[i];
-    if (x === undefined) return -1;
-    if (y === undefined) return 1;
-    const nx = /^\d+$/.test(x) ? Number(x) : null;
-    const ny = /^\d+$/.test(y) ? Number(y) : null;
-    if (nx !== null && ny !== null) {
-      if (nx !== ny) return nx < ny ? -1 : 1;
-    } else if (nx !== null || ny !== null) {
-      return nx !== null ? -1 : 1;
-    } else if (x !== y) {
-      return x < y ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-/** Whether `v` is a beta build's version (`X.Y.Z-beta.N`). */
-export function isBetaVersion(v: string): boolean {
-  return /^\d+\.\d+\.\d+-beta\.\d+$/.test(v.trim());
-}
-
 /** The changelog as the build running `current` shows it: a beta build
  * lists every entry, a release build only the releases - their entries
  * already carry what the betas before them changed. */
@@ -1841,37 +1812,10 @@ export function entriesSince(seen: string, current: string): ChangelogEntry[] {
   );
 }
 
-/** Dev-only trigger: the DevPanel dispatches this window event to preview
- * the post-update modal; App's DEV-gated listener responds. Lives here (not
- * in dev/) so App can import it without statically pulling the dev module. */
-export const SHOW_CHANGELOG_EVENT = "tcm-v2-dev-show-changelog";
-
-const SEEN_KEY = "tcm-v2-changelog-seen";
-
-/** What the post-update check should do for this launch:
- * - fresh install (nothing stored): remember the version, show nothing -
- *   installing is not updating;
- * - stored version older than current AND entries exist: show those entries;
- * - otherwise: nothing. */
+/** What the post-update check should show for this launch: the entries
+ * since the version last seen, when this launch follows an update (see
+ * `updatedFrom` for the rules), and nothing otherwise. */
 export function pendingChangelog(current: string): ChangelogEntry[] {
-  let seen: string | null = null;
-  try {
-    seen = localStorage.getItem(SEEN_KEY);
-  } catch {
-    return [];
-  }
-  if (!seen) {
-    markChangelogSeen(current);
-    return [];
-  }
-  if (compareVersions(current, seen) <= 0) return [];
-  return entriesSince(seen, current);
-}
-
-export function markChangelogSeen(version: string): void {
-  try {
-    localStorage.setItem(SEEN_KEY, version);
-  } catch {
-    // storage unavailable - the modal may show again next launch
-  }
+  const seen = updatedFrom(current);
+  return seen ? entriesSince(seen, current) : [];
 }
