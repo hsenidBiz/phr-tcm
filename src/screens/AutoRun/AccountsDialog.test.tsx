@@ -152,17 +152,21 @@ test("the proposals are listed under their heading, each saying where its passwo
   expect(await screen.findByRole("heading", { name: "Proposed by the assistant (2)" })).toBeInTheDocument();
   expect(screen.getByText("hr.admin")).toBeInTheDocument();
   expect(screen.getByText("Supervisor")).toBeInTheDocument();
-  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveAttribute("placeholder", "default password");
-  expect(screen.getByLabelText("Password for proposed hr.sup")).toHaveAttribute("placeholder", "default password");
+  expect(screen.getAllByText("Default password")).toHaveLength(2);
+  // No password field until one is asked for.
+  expect(screen.queryByLabelText("Password for proposed hr.admin")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Set password for hr.admin" })).toBeInTheDocument();
 });
 
-test("with no default password each proposal asks for one to be typed", async () => {
+test("with no default password each proposal needs one, and shows its field open from the start", async () => {
   mountWithProposals({ hasDefault: false });
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveAttribute(
-    "placeholder",
-    "no default password set - type one",
-  );
+  expect(screen.getAllByText("Needs a password")).toHaveLength(2);
+  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveValue("");
+  expect(screen.getByLabelText("Password for proposed hr.sup")).toHaveValue("");
+  // Nothing to fall back on, so nothing to set or to go back to.
+  expect(screen.queryByRole("button", { name: /^Set password/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Use (database|default) password/ })).not.toBeInTheDocument();
 });
 
 test("no proposal section at all when the assistant proposed nothing", async () => {
@@ -198,11 +202,12 @@ test("the proposals are read afresh each time the dialog opens", async () => {
 test("Add selected sends the picks with typed passwords (empty means the default) and brings them in as accounts", async () => {
   const m = mountWithProposals({});
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  const add = screen.getByRole("button", { name: "Add selected" });
+  const add = screen.getByRole("button", { name: "Add selected (0)" });
   expect(add).toBeDisabled();
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.sup" }));
   fireEvent.change(screen.getByLabelText("Password for proposed hr.sup"), { target: { value: "typed-1" } });
   m.state.accounts = [
     { key: "hr.admin", label: "HR Admin", username: "kim", password: "from-default" },
@@ -238,7 +243,7 @@ test("a key that is already an account asks Replace per key, and only a confirme
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.sup" }));
-  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
 
   expect(await screen.findByText("Replace hr.admin?")).toBeInTheDocument();
   expect(screen.getByText("Replace hr.sup?")).toBeInTheDocument();
@@ -263,7 +268,7 @@ test("keeping every key asks for nothing more and replaces nothing", async () =>
   });
   await screen.findByRole("heading", { name: "Proposed by the assistant (1)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
-  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
   await screen.findByText("Replace hr.admin?");
   fireEvent.click(screen.getByRole("button", { name: "Keep hr.admin" }));
   await waitFor(() => expect(screen.queryByText("Replace hr.admin?")).not.toBeInTheDocument());
@@ -284,7 +289,7 @@ test("a refused add shows the sentence inline and keeps what was picked and type
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.sup" }));
   fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "typed-a" } });
-  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
 
   expect(await screen.findByText('"hr.sup": no default password set - type one')).toBeInTheDocument();
   expect(m.adds).toHaveLength(1);
@@ -306,6 +311,7 @@ test("Dismiss asks the app to drop the whole proposal", async () => {
 test("a typed proposal password is masked, and shown only with Show passwords", async () => {
   mountWithProposals({});
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
   const pw = screen.getByLabelText("Password for proposed hr.admin") as HTMLInputElement;
   expect(pw.type).toBe("password");
   fireEvent.click(screen.getByRole("checkbox", { name: "Show passwords" }));
@@ -322,14 +328,14 @@ const FROM_DB: Proposal[] = [
 test("a proposal with a database password says so, and its field can still override it", async () => {
   mountWithProposals({ proposals: FROM_DB, hasDefault: true });
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
-  expect(screen.getAllByText("Password from the database")).toHaveLength(1);
-  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveAttribute(
-    "placeholder",
-    "Leave blank to use the database password",
-  );
+  expect(screen.getAllByText("From database")).toHaveLength(1);
+  // The one without falls back on the environment's default.
+  expect(screen.getAllByText("Default password")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
   expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveValue("");
-  // The one without keeps today's prompt.
-  expect(screen.getByLabelText("Password for proposed hr.sup")).toHaveAttribute("placeholder", "default password");
+  fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "mine" } });
+  expect(screen.getByText("Password set")).toBeInTheDocument();
+  expect(screen.queryByText("From database")).not.toBeInTheDocument();
 });
 
 test("Add selected with the field blank sends no password, and the account comes in", async () => {
@@ -338,7 +344,7 @@ test("Add selected with the field blank sends no password, and the account comes
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   m.state.accounts = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "set-in-rust" }];
   m.state.proposals = [FROM_DB[1]];
-  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
 
   await waitFor(() => expect(m.adds).toHaveLength(1));
   expect(m.adds[0]).toEqual({
@@ -346,15 +352,137 @@ test("Add selected with the field blank sends no password, and the account comes
     replace: [],
   });
   expect(await screen.findByLabelText("Key for account 1")).toHaveValue("hr.admin");
-  await waitFor(() => expect(screen.queryByText("Password from the database")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText("From database")).not.toBeInTheDocument());
 });
 
 test("a password typed over a database one is the one sent", async () => {
   const m = mountWithProposals({ proposals: FROM_DB });
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
   fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "typed-over" } });
-  fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
   await waitFor(() => expect(m.adds).toHaveLength(1));
   expect(m.adds[0].picks).toEqual([{ key: "hr.admin", label: "HR Admin", username: "kim", password: "typed-over" }]);
+});
+
+test("Set password then Use database password clears what was typed and closes the field", async () => {
+  const m = mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
+  fireEvent.change(screen.getByLabelText("Password for proposed hr.admin"), { target: { value: "typed" } });
+  fireEvent.click(screen.getByRole("button", { name: "Use database password for hr.admin" }));
+  expect(screen.queryByLabelText("Password for proposed hr.admin")).not.toBeInTheDocument();
+  expect(screen.getByText("From database")).toBeInTheDocument();
+  // Opened again, the field is empty: the typed value is gone, not hidden.
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.admin" }));
+  expect(screen.getByLabelText("Password for proposed hr.admin")).toHaveValue("");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
+  await waitFor(() => expect(m.adds).toHaveLength(1));
+  expect(m.adds[0].picks).toEqual([{ key: "hr.admin", label: "HR Admin", username: "kim", password: "" }]);
+});
+
+test("a login without a database password goes back to the default with Use default password", async () => {
+  mountWithProposals({ proposals: FROM_DB, hasDefault: true });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "Set password for hr.sup" }));
+  fireEvent.change(screen.getByLabelText("Password for proposed hr.sup"), { target: { value: "typed" } });
+  fireEvent.click(screen.getByRole("button", { name: "Use default password for hr.sup" }));
+  expect(screen.queryByLabelText("Password for proposed hr.sup")).not.toBeInTheDocument();
+  expect(screen.getByText("Default password")).toBeInTheDocument();
+});
+
+test("a login that needs a password shows its field open while the others wait for Set password", async () => {
+  mountWithProposals({ proposals: FROM_DB, hasDefault: false });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  expect(screen.getByText("From database")).toBeInTheDocument();
+  expect(screen.getByText("Needs a password")).toBeInTheDocument();
+  expect(screen.getByLabelText("Password for proposed hr.sup")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Password for proposed hr.admin")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Password for proposed hr.sup"), { target: { value: "typed" } });
+  expect(screen.getByText("Password set")).toBeInTheDocument();
+});
+
+// ---- Searching and selecting ----------------------------------------------
+
+const MANY: Proposal[] = [
+  { key: "hr.admin", label: "HR Admin", username: "kim", role: "E001", has_password: true },
+  { key: "hr.sup", label: "Supervisor", username: "lee", role: "E002", has_password: true },
+  { key: "pay.clerk", label: "Payroll Clerk", username: "ann", role: "E003", has_password: true },
+];
+
+const search = (text: string) =>
+  fireEvent.change(screen.getByRole("textbox", { name: "Search proposed logins" }), { target: { value: text } });
+
+test("the search box filters by name, key, role and username, and says when nothing matches", async () => {
+  mountWithProposals({ proposals: MANY });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
+  expect(screen.getByRole("textbox", { name: "Search proposed logins" })).toHaveAttribute("placeholder", "Search logins");
+
+  search("payroll");
+  expect(screen.getByRole("checkbox", { name: "Add pay.clerk" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Add hr.admin" })).not.toBeInTheDocument();
+
+  search("HR.");
+  expect(screen.getByRole("checkbox", { name: "Add hr.admin" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Add hr.sup" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Add pay.clerk" })).not.toBeInTheDocument();
+
+  search("e002");
+  expect(screen.getByRole("checkbox", { name: "Add hr.sup" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Add hr.admin" })).not.toBeInTheDocument();
+
+  search("ann");
+  expect(screen.getByRole("checkbox", { name: "Add pay.clerk" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Add hr.sup" })).not.toBeInTheDocument();
+
+  search("nobody");
+  expect(screen.getByText('No logins match "nobody".')).toBeInTheDocument();
+  // The heading still counts every proposal.
+  expect(screen.getByRole("heading", { name: "Proposed by the assistant (3)" })).toBeInTheDocument();
+});
+
+test("Select all shown ticks only the shown logins, and the picks stay across a search change", async () => {
+  const m = mountWithProposals({ proposals: MANY });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
+  search("hr.");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all shown" }));
+  expect(screen.getByRole("checkbox", { name: "Add hr.admin" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Add hr.sup" })).toBeChecked();
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+  search("");
+  expect(screen.getByRole("checkbox", { name: "Add hr.admin" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Add hr.sup" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Add pay.clerk" })).not.toBeChecked();
+  // Some but not all of what is shown: the box says so.
+  expect(screen.getByRole("checkbox", { name: "Select all shown" })).toHaveAttribute("aria-checked", "mixed");
+
+  // Clearing under a search clears only what it shows.
+  search("supervisor");
+  expect(screen.getByRole("checkbox", { name: "Select all shown" })).toBeChecked();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all shown" }));
+  search("");
+  expect(screen.getByRole("checkbox", { name: "Add hr.admin" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Add hr.sup" })).not.toBeChecked();
+
+  fireEvent.click(screen.getByRole("button", { name: "Add selected (1)" }));
+  await waitFor(() => expect(m.adds).toHaveLength(1));
+  expect(m.adds[0].picks.map((p) => p.key)).toEqual(["hr.admin"]);
+});
+
+test("Add selected counts the picks", async () => {
+  mountWithProposals({ proposals: MANY });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (3)" });
+  expect(screen.getByRole("button", { name: "Add selected (0)" })).toBeDisabled();
+  expect(screen.getByText("0 selected")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  expect(screen.getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add pay.clerk" }));
+  expect(screen.getByRole("button", { name: "Add selected (2)" })).toBeEnabled();
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
+  expect(screen.getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
 });
