@@ -462,7 +462,7 @@ export default function ExistingCases({
       </div>
 
       {/* Sticky merged collapse: folds the open editor and every unfolded
-          group. Portalled to body because AnimatedContent's GSAP transform
+          group. Portalled to body because the screen fade's transform
           would otherwise make `fixed` resolve against the scroll region
           (same reason as View Test Cases / Run Tests). */}
       {collapsible > 0 &&

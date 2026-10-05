@@ -711,7 +711,7 @@ export default function RunPanel({
       {/* Sticky Close all for open previews, bottom LEFT - the selection
           dock owns the right corner, so the two can show together without
           covering each other. PORTALLED to <body>: this screen renders
-          inside AnimatedContent, whose GSAP transform becomes the
+          inside the screen fade, whose transform becomes the
           containing block for any `fixed` descendant, so without the
           portal `bottom-6` would pin to the bottom of the SCROLLABLE REGION
           rather than the viewport. Same trap as ui/modal.tsx and

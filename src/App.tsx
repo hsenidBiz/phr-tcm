@@ -57,16 +57,10 @@ import { clearTourExpanded, setTourExpanded } from "./lib/sidebarState";
 import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
-import {
-  CHANGELOG,
-  isBetaVersion,
-  markChangelogSeen,
-  pendingChangelog,
-  SHOW_CHANGELOG_EVENT,
-  type ChangelogEntry,
-} from "./lib/changelog";
-import AnimatedContent from "./components/AnimatedContent";
-import ChangelogModal from "./components/ChangelogModal";
+// Only the helpers: the changelog's entries (lib/changelog.ts) are loaded
+// when an update has something to show, never at startup.
+import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } from "./lib/changelogSeen";
+import type { ChangelogEntry } from "./lib/changelog";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
@@ -85,13 +79,21 @@ import { hideSplash } from "./lib/splash";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
 import { isCaptureMode } from "./dev/capture";
-// The sign-in screen is the first thing every launch shows (tokens live in
-// memory only), so it is the one screen bundled up front. Every other screen
-// and the command palette load on demand: on a slow machine the whole bundle
-// is parsed before anything is drawn, and most of it is screens nobody has
-// opened yet. The tour waits for its anchors, so a screen arriving a moment
-// after the tab switch is fine there too.
-import SignIn from "./screens/SignIn";
+// Every screen and the command palette load on demand: on a slow machine the
+// whole startup bundle is parsed before anything is drawn, and most of it is
+// screens nobody has opened yet. The tour waits for its anchors, so a screen
+// arriving a moment after the tab switch is fine there too.
+//
+// The sign-in screen too, with its animation libraries: a kept session never
+// shows it. App renders it from its first render, behind the loading screen,
+// so its code is on the way while the session check runs, and a signed-out
+// launch keeps the loading screen up until it has arrived (see `authKnown`).
+// One shared promise, so that wait and React's own load are the same load.
+let signInLoad: Promise<typeof import("./screens/SignIn")> | null = null;
+const loadSignIn = () => (signInLoad ??= import("./screens/SignIn"));
+const SignIn = lazy(loadSignIn);
+// Shown only after an update, so it loads with the entries it lists.
+const ChangelogModal = lazy(() => import("./components/ChangelogModal"));
 const EditCases = lazy(() => import("./screens/EditCases"));
 const ImportFile = lazy(() => import("./screens/ImportFile"));
 const ManualEntry = lazy(() => import("./screens/ManualEntry"));
@@ -484,10 +486,20 @@ export default function App() {
   // screen flash past on every launch. An error answers too - the sign-in
   // screen is the right thing to show then.
   const authKnown = !status.isPending;
+  const signedInAtLaunch = Boolean(status.data?.signed_in);
   useEffect(() => {
     if (!authKnown) return;
-    hideSplash();
-    logUi(`startup: ready ${Math.round(performance.now())} ms after the page began loading`);
+    const ready = () => {
+      hideSplash();
+      logUi(`startup: ready ${Math.round(performance.now())} ms after the page began loading`);
+    };
+    // Signed out, the sign-in screen is what shows next, and it loads on
+    // demand: the loading screen waits for it rather than uncovering an
+    // empty window. A failed load still lets the loading screen go.
+    if (signedInAtLaunch) ready();
+    else loadSignIn().then(ready, ready);
+    // Once, when the answer arrives: a later sign-in or sign-out has
+    // nothing to uncover, so `signedInAtLaunch` is read but not watched.
   }, [authKnown]);
 
   // Checked on launch and then quietly once an hour, because this app is
@@ -640,7 +652,8 @@ export default function App() {
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version
-  // silently - see lib/changelog.ts for the rules.
+  // silently - see `updatedFrom` in lib/changelogSeen.ts for the rules. The
+  // entries load only when this launch follows an update.
   const [changelog, setChangelog] = useState<ChangelogEntry[] | null>(null);
   const shownChangelogRef = useRef(false);
   useEffect(() => {
@@ -648,8 +661,11 @@ export default function App() {
     if (!signedIn || shownChangelogRef.current || isCaptureMode()) return;
     shownChangelogRef.current = true;
     getVersion()
-      .then((v) => {
-        const pending = pendingChangelog(v);
+      .then(async (v) => {
+        const seen = updatedFrom(v);
+        if (!seen) return;
+        const { entriesSince } = await import("./lib/changelog");
+        const pending = entriesSince(seen, v);
         if (pending.length > 0) setChangelog(pending);
       })
       .catch(() => {
@@ -840,7 +856,9 @@ export default function App() {
   // multi-version stacking is visible. Compile-time eliminated in releases.
   useEffect(() => {
     if (!DEV_TOOLS) return;
-    const fire = () => setChangelog(CHANGELOG.slice(0, 2));
+    const fire = () => {
+      void import("./lib/changelog").then((m) => setChangelog(m.CHANGELOG.slice(0, 2)));
+    };
     window.addEventListener(SHOW_CHANGELOG_EVENT, fire);
     return () => window.removeEventListener(SHOW_CHANGELOG_EVENT, fire);
   }, []);
@@ -1219,13 +1237,8 @@ export default function App() {
               // on section switch; the flex classes keep the board's height
               // chain intact (the wrapper sits inside a flex-col main).
               // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <AnimatedContent
-                key={workSection}
-                distance={8}
-                duration={0.12}
-                threshold={0}
-                className="flex min-h-0 flex-1 flex-col"
-              >
+              // `t-screen-in` lives in index.css.
+              <div key={workSection} className="t-screen-in flex min-h-0 flex-1 flex-col">
                 {workSection === "board" ? (
                   <>
                     <h1 className="mb-4 text-lg font-semibold">Board</h1>
@@ -1258,12 +1271,12 @@ export default function App() {
                     </div>
                   </>
                 )}
-              </AnimatedContent>
+              </div>
             ) : (
               // key={section} remounts the wrapper on tab switch, so every
               // screen fades up briefly (120ms) instead of snapping in.
               // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <AnimatedContent key={section} distance={8} duration={0.12} threshold={0}>
+              <div key={section} className="t-screen-in">
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                   {section === "ai" && <BridgeStatusBadge />}
@@ -1334,7 +1347,7 @@ export default function App() {
                   <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
                 )}
                 {section === "settings" && <Settings org={org} project={project} />}
-              </AnimatedContent>
+              </div>
             )}
             </Suspense>
           </main>
@@ -1343,7 +1356,11 @@ export default function App() {
         </div>
       </QueryClientProvider>
 
-      {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}
+      {changelog && (
+        <Suspense fallback={null}>
+          <ChangelogModal entries={changelog} onClose={dismissChangelog} />
+        </Suspense>
+      )}
 
       {/* Only over a signed-in app: before sign-in the SignIn screen IS the
           prompt. "Not now" just closes it - cached data stays readable and
