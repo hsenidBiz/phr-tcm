@@ -3532,6 +3532,56 @@ mod api_template_routes {
         let (status, _, out) = list("/api-templates?id=tpl-999").await;
         assert_eq!(status, 404, "{out}");
         assert_eq!(out, "no template called \"tpl-999\" is saved for this project - list_api_templates shows the ones that are");
+
+        // With `id`, the filters and the paging are ignored.
+        let (status, v, out) = list("/api-templates?id=tpl-042&module=nothing-like-it&search=zzz&offset=5&limit=abc").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["templates"][0]["id"], "tpl-042", "{out}");
+        assert_eq!(v["paging"], json!({ "total": 1, "offset": 0, "returned": 1 }));
+    }
+
+    /// The path `list_api_templates` asks for, through the real MCP dispatch.
+    fn tool_target(arguments: serde_json::Value) -> String {
+        let asked = std::cell::RefCell::new(None);
+        let call = |method: &str, path: &str, _body: &str| {
+            if method == "GET" && path.starts_with("/api-templates") {
+                *asked.borrow_mut() = Some(path.to_string());
+            }
+            Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+        };
+        let req = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "list_api_templates", "arguments": arguments },
+        });
+        v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        asked.into_inner().expect("the tool asked for no list")
+    }
+
+    /// An `offset` or `limit` that is not a whole number - a boolean, a
+    /// list, a negative or fractional number - is refused by name, never
+    /// ignored.
+    #[tokio::test]
+    async fn paging_that_is_not_a_whole_number_is_refused_by_name() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_recipe_and_account();
+        let cases = [
+            (json!({ "offset": true }), "\"offset\" is a whole number, 0 or more"),
+            (json!({ "offset": [3] }), "\"offset\" is a whole number, 0 or more"),
+            (json!({ "offset": -1 }), "\"offset\" is a whole number, 0 or more"),
+            (json!({ "offset": 2.5 }), "\"offset\" is a whole number, 0 or more"),
+            (json!({ "limit": false }), "\"limit\" is a whole number, 1 or more"),
+            (json!({ "limit": { "n": 5 } }), "\"limit\" is a whole number, 1 or more"),
+            (json!({ "limit": 0 }), "\"limit\" is a whole number, 1 or more"),
+            (json!({ "limit": 7.5 }), "\"limit\" is a whole number, 1 or more"),
+        ];
+        for (arguments, want) in cases {
+            let target = tool_target(arguments.clone());
+            let (status, out) = route(&ctx(), None, "GET", &target, "", "1.0.0").await;
+            assert_eq!((status, out.as_str()), (400, want), "{arguments} asked {target}");
+        }
+        let target = tool_target(json!({ "offset": 0, "limit": "10" }));
+        let (status, out) = route(&ctx(), None, "GET", &target, "", "1.0.0").await;
+        assert_eq!(status, 200, "{target}: {out}");
     }
 }
 

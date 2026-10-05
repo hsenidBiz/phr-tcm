@@ -901,6 +901,10 @@ fn list_api_templates_forwards_filters_and_paging() {
     }
     let description = tool["description"].as_str().unwrap();
     assert!(description.contains("next_offset"), "says how to page: {description}");
+    assert!(
+        description.contains("With `id`, the other filters and the paging are ignored."),
+        "says what `id` overrides: {description}"
+    );
 }
 
 /// A failed run comes back as a tool error that still carries the run's

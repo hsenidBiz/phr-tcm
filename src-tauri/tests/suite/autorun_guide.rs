@@ -287,6 +287,13 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
     assert_eq!(payload.scripts.len(), 1, "expected one script in the declared-edit example");
     assert_eq!(payload.edits.len(), 1, "expected one edit in the declared-edit example");
     assert!(!payload.edits[0].why.is_empty(), "the example edit has no reason");
+    // The documented shape is the top-level list, said in words too: an
+    // `edits` put inside each script is what used to go missing.
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("`edits` is a TOP-LEVEL list beside `scripts`, as above - never inside a script - with one entry per case you are changing"),
+        "the guide never says where `edits` goes"
+    );
 }
 
 /// `check_edits` can refuse a save for six distinct reasons; the guide's

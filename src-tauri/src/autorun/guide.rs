@@ -561,7 +561,8 @@ showed you - that bare shape is only for a case with no script yet:
   ]
 }
 
-`edits` is one entry per case you are changing: the `case_id`, every
+`edits` is a TOP-LEVEL list beside `scripts`, as above - never inside
+a script - with one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one
 sentence of `why`. When the repair changes the script's `area` - and
 leaving out an `area` the saved script has is a change - the entry also

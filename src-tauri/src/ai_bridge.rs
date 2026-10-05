@@ -562,11 +562,16 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             },
         }
     };
+    // With `id`, the other filters and the paging are ignored, so an offset
+    // or limit sent beside it is not refused either.
+    let by_id = arg("id").is_some();
     let offset = match number("offset", 0) {
+        _ if by_id => 0,
         Ok(n) => n.unwrap_or(0),
         Err(refused) => return refused,
     };
     let limit = match number("limit", 1) {
+        _ if by_id => TEMPLATE_PAGE,
         Ok(n) => n.unwrap_or(TEMPLATE_PAGE).min(TEMPLATE_PAGE_MAX),
         Err(refused) => return refused,
     };
@@ -2294,7 +2299,10 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     let mut edit_values: Vec<serde_json::Value> = match edits_value {
         None => vec![],
         Some(serde_json::Value::Array(list)) => list,
-        // Not a list: refused in serde's own words for what it is.
+        // One entry on its own is a one-entry list, the same as one
+        // nested in a script.
+        Some(one @ serde_json::Value::Object(_)) => vec![one],
+        // Anything else: refused in serde's own words for what it is.
         Some(other) => {
             return Err(match serde_json::from_value::<Vec<crate::autorun::edits::Edit>>(other) {
                 Err(e) => bad_edits(e),
@@ -2495,7 +2503,11 @@ async fn save_autorun_scripts(
                     // A body with no declarations at all, refused for
                     // something a declaration would cover (the sentences
                     // that point at "edits"): say first that the list
-                    // itself is missing, which is the actual fix.
+                    // itself is missing, which is the actual fix. Only
+                    // then: when the bundle declares OTHER cases, the list
+                    // is there and this case's entry is what is missing,
+                    // which `check_edits`' own "case N: ... not declared"
+                    // sentence already says accurately.
                     if edits.is_empty() && why.contains("\"edits\"") {
                         return (
                             400,

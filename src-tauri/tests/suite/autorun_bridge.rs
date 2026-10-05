@@ -643,6 +643,150 @@ async fn a_repair_without_edits_says_edits_is_missing() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
 }
 
+/// When the bundle declares OTHER cases, a changed case left out of
+/// `edits` gets the per-case sentence: the list is there, this case's
+/// entry is what is missing.
+#[tokio::test]
+async fn with_other_cases_declared_an_undeclared_case_is_named_not_missing_edits() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[
+        (7, "Save a rating", &["", "A toast says Saved"]),
+        (9, "Delete a rating", &["", "A toast says Deleted"]),
+    ])
+    .await;
+    let first = serde_json::json!([case_7("#toast", "Saved")[0].clone(), case_9("Deleted")]).to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let body = serde_json::json!({
+        "scripts": [case_7(".toast", "Saved")[0].clone(), case_9("Removed")],
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(
+        out,
+        "case 9: step 2 was changed but not declared - name every step you change in \"edits\", or leave it as it was"
+    );
+}
+
+/// Two DIFFERENT declarations for one case are refused - the gate could
+/// only ever read one of them - whether both are top-level entries or one
+/// is nested in the script. The same declaration sent twice is one.
+#[tokio::test]
+async fn two_different_declarations_for_one_case_are_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let refusal = "case 7 is declared twice in \"edits\", with different contents - send one entry per case";
+    let top_level = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [edit_step_2("the toast has no id"), edit_step_2("the toast moved")],
+    });
+    let mut nested = case_7(".toast", "Saved");
+    nested[0]["edits"] = edit_step_2("the toast has no id");
+    let nested_and_top = serde_json::json!({ "scripts": nested, "edits": [edit_step_2("the toast moved")] });
+    for body in [top_level, nested_and_top] {
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+        assert_eq!((status, out.as_str()), (400, refusal), "{body}");
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0, "nothing was written");
+
+    let same_twice = serde_json::json!({ "scripts": nested, "edits": [edit_step_2("the toast has no id")] });
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &same_twice.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7 (repaired, 1 of 3 used)"), "{out}");
+}
+
+/// A top-level `edits` that is one object is a one-entry list, the same
+/// as one object nested in a script.
+#[tokio::test]
+async fn a_single_top_level_edit_object_is_a_one_entry_list() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let body = tool_body(serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": edit_step_2("the toast has no id, only a class"),
+    }));
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7 (repaired, 1 of 3 used)"), "{out}");
+
+    // Anything else that is not a list is still refused.
+    let body = serde_json::json!({ "scripts": case_7("#toast", "Saved"), "edits": "two steps" }).to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("that is not a list of declared edits"), "{out}");
+}
+
+/// The guide's whole body sent as `scripts`, with more `edits` beside it:
+/// the bundle's own declarations are merged with them when they are a
+/// list or one entry, and when they are anything else the call is refused
+/// before anything reaches the app - the edits beside it are never
+/// silently dropped.
+#[tokio::test]
+async fn a_bundles_own_edits_that_are_not_a_list_refuse_the_edits_beside_it() {
+    let scripts = case_7(".toast", "Saved");
+    let beside = serde_json::json!([edit_step_2("the toast moved")]);
+    for own in [serde_json::json!(42), serde_json::json!("two steps"), serde_json::json!(true)] {
+        let posted = std::cell::RefCell::new(false);
+        let call = |method: &str, path: &str, _body: &str| {
+            if (method, path) == ("POST", "/autorun-script") {
+                *posted.borrow_mut() = true;
+            }
+            Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+        };
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "save_autorun_script", "arguments": {
+                "scripts": serde_json::json!({ "scripts": scripts, "edits": own }).to_string(),
+                "edits": beside,
+            } },
+        });
+        let resp = v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{own}: {resp}");
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("the bundle sent as \"scripts\" has an \"edits\" that is not a list, and more \"edits\" were sent beside it - send one \"edits\" list beside \"scripts\", one entry per case"),
+            "{own}: {text}"
+        );
+        assert!(!*posted.borrow(), "{own}: nothing may reach the app");
+    }
+
+    // One entry of its own, and the same entry beside it: one declaration.
+    let body = tool_body(serde_json::json!({
+        "scripts": { "scripts": scripts, "edits": edit_step_2("the toast moved") },
+        "edits": beside,
+    }));
+    let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(sent["edits"], beside, "{body}");
+}
+
 /// Three repairs without a person looking is the cap. Saving the script
 /// from the app's own editor (which writes `repairs: 0`) is what starts
 /// the count again.
