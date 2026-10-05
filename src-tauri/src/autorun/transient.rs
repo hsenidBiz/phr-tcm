@@ -55,6 +55,11 @@ pub fn is_transient(case: &CaseRecord, script: Option<&CaseScript>) -> Option<St
         .iter()
         .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
         .find(|(_, _, o)| !o.ok && !o.detail.starts_with("not run:"))?;
+    // A save the guard stopped happens again on every try: the page sends
+    // it. Never worth another go.
+    if crate::browser::save_guard::is_blocked(&first.detail) {
+        return None;
+    }
     // The case's own sign-in is the runner's, not the script's: no action
     // of the script wrote it, so it is read on its own.
     let transient = first.harness

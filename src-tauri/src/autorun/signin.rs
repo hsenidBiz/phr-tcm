@@ -133,7 +133,37 @@ pub async fn sign_in_fresh<D: Driver>(
     sign_in_with(d, root, recipe, account, timing, false).await
 }
 
+/// A no-save case's guard is held from the moment the sign-in has arrived
+/// on its start page (`open_start`) until it ends, on every path out: from
+/// there on the sign-in is the runner's own, and what it sends (a login
+/// form, the home page's own requests) is not the script's shared draft.
+/// Leaving the page the case was on is NOT held: a save that page sends as
+/// it goes (a beacon or a keepalive request on pagehide) is still stopped.
 async fn sign_in_with<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    try_saved_session: bool,
+) -> SignInOutcome {
+    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session).await;
+    d.hold_saves(false);
+    out
+}
+
+/// The sign-in's way to its start page. Only once it has arrived there -
+/// the page the case was on is gone, with whatever it sent on the way out -
+/// is a no-save case's guard held.
+async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
+    let arrived = execute_in(d, go, timing, policy).await;
+    if arrived.ok {
+        d.hold_saves(true);
+    }
+    arrived
+}
+
+async fn sign_in_held<D: Driver>(
     d: &mut D,
     root: &Path,
     recipe: &SignInRecipe,
@@ -159,7 +189,7 @@ async fn sign_in_with<D: Driver>(
     if let Some(saved) = saved {
         match session::restore(d, &saved).await {
             Ok(ids) => {
-                let arrived = execute_in(d, &go, timing, &policy).await;
+                let arrived = open_start(d, &go, timing, &policy).await;
                 // Short-circuit exactly like the plain `&&` this replaces:
                 // the marker is never even asked for once the navigate
                 // itself has already failed.
@@ -219,7 +249,7 @@ async fn sign_in_with<D: Driver>(
         }
     }
 
-    if !run.keep(execute_in(d, &go, timing, &policy).await) {
+    if !run.keep(open_start(d, &go, timing, &policy).await) {
         let last = run.steps.last();
         let why = last.map(|s| s.detail.clone()).unwrap_or_default();
         let harness_failure = last.is_some_and(|s| s.harness);

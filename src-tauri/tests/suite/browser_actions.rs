@@ -13,7 +13,7 @@ use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
 
 fn quick() -> Timing {
-    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 10, highlight_ms: 0 }
+    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 10, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 /// Every script saved before locators existed has string selectors. They

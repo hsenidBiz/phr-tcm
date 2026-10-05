@@ -336,6 +336,10 @@ fn case_section(
     if let Some(first) = &case.retried {
         h.push_str(&format!("<p><strong>Retried:</strong> the first try failed: {}</p>", esc(&scrub_urls(first))));
     }
+    // Something the run skipped for this case, and the case went on.
+    if let Some(notice) = &case.notice {
+        h.push_str(&format!("<p><strong>Notice:</strong> {}</p>", esc(notice)));
+    }
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
     }

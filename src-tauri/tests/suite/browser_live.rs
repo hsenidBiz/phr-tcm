@@ -82,7 +82,7 @@ fn iframe_fixture_url() -> String {
 /// Short enough that a failing test fails fast, long enough for the
 /// fixture's 700 ms of being disabled and covered.
 fn timing() -> Timing {
-    Timing { action_ms: 4000, expect_ms: 3000, nav_ms: 15000, poll_ms: 100, highlight_ms: 0 }
+    Timing { action_ms: 4000, expect_ms: 3000, nav_ms: 15000, poll_ms: 100, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 fn action_of(value: serde_json::Value) -> Action {
@@ -1366,12 +1366,12 @@ async fn a_recorded_menu_path_is_saved_only_after_it_replays_in_a_fresh_browser(
 
     // Check in a fresh browser, then save; a wrong ending is refused.
     let mut second = open().await;
-    assert_eq!(check_path(&mut second.cdp, root.path(), &recipe, &kim(), &path, &timing()).await, Ok("/leave".to_string()));
+    assert_eq!(check_path(&mut second.cdp, root.path(), &recipe, &kim(), &path, &timing(), &mut v2_lib::autorun::lease::Held::setup()).await, Ok("/leave".to_string()));
     drop(second);
     let mut wrong = path.clone();
     wrong.arrived = "/nowhere".into();
     let mut third = open().await;
-    let err = check_path(&mut third.cdp, root.path(), &recipe, &kim(), &wrong, &Timing { nav_ms: 2000, ..timing() }).await.unwrap_err();
+    let err = check_path(&mut third.cdp, root.path(), &recipe, &kim(), &wrong, &Timing { nav_ms: 2000, ..timing() }, &mut v2_lib::autorun::lease::Held::setup()).await.unwrap_err();
     assert!(err.contains("the page ended on /leave, not /nowhere"), "{err}");
     put_path(root.path(), "acme", "Web", path).unwrap();
     assert_eq!(load_nav(root.path(), "acme", "Web").unwrap().modules.len(), 1);
@@ -1440,7 +1440,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     let recipe = draft.recipe(&fields, None).expect("the recording made no recipe");
     let before = app.logins.load(Ordering::SeqCst);
     let mut fresh = open().await;
-    check_sign_in(&mut fresh.cdp, root.path(), &recipe, &kim(), &timing()).await.expect("the recorded recipe did not sign in");
+    check_sign_in(&mut fresh.cdp, root.path(), &recipe, &kim(), &timing(), &mut v2_lib::autorun::lease::Held::setup()).await.expect("the recorded recipe did not sign in");
     assert_eq!(app.logins.load(Ordering::SeqCst), before + 1, "it signed in through the form");
     drop(fresh);
 
@@ -1448,7 +1448,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     let mut wrong = kim();
     wrong.password = "nope".into();
     let mut third_browser = open().await;
-    let err = check_sign_in(&mut third_browser.cdp, root.path(), &recipe, &wrong, &Timing { nav_ms: 3000, ..timing() })
+    let err = check_sign_in(&mut third_browser.cdp, root.path(), &recipe, &wrong, &Timing { nav_ms: 3000, ..timing() }, &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert!(err.starts_with("the recorded steps ran, but the signed-in check never appeared"), "{err}");
@@ -1926,4 +1926,239 @@ async fn frame_an_odd_id_or_title_prints_a_step_that_matches_its_frame() {
             assert_eq!(r["result"]["value"], json!(k.to_string()), "{attr} {value:?} printed {css}");
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// No-save scripts (run safety §1): the save is stopped inside the browser.
+
+/// A tiny server for `autorun-save.html`: it serves the page, answers the
+/// two POSTs, and remembers every request line it was sent - so a test can
+/// say what reached the SERVER, never what Rust believes it stopped.
+struct SaveServer {
+    port: u16,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl SaveServer {
+    fn start() -> SaveServer {
+        let page = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/autorun-save.html"))
+            .expect("the save fixture is missing");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        // The thread ends with the test process; the listener has no other owner.
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 4096];
+                let Ok(n) = stream.read(&mut buf) else { continue };
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let line = head.lines().next().unwrap_or("").to_string();
+                log.lock().unwrap().push(line.clone());
+                let (kind, body) = if line.starts_with("GET /save-page") {
+                    ("text/html; charset=utf-8", page.clone())
+                } else if line.starts_with("POST /api/Save") {
+                    ("text/plain", "saved".to_string())
+                } else if line.starts_with("POST /api/Search") {
+                    ("text/plain", "searched".to_string())
+                } else {
+                    let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    continue;
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        SaveServer { port, seen }
+    }
+
+    fn page(&self, query: &str) -> String {
+        format!("http://127.0.0.1:{}/save-page{query}", self.port)
+    }
+
+    /// Did a request starting with these words reach the server? Asked
+    /// after a moment, so a request still on its way is counted.
+    fn got(&self, start: &str) -> bool {
+        std::thread::sleep(Duration::from_millis(400));
+        self.seen.lock().unwrap().iter().any(|l| l.starts_with(start))
+    }
+}
+
+const SAVE_STOPPED: &str =
+    "this script must not save, but the page tried to send POST /api/Save - it was stopped before it reached the server";
+
+fn save_case(no_save: bool, url: &str, steps_after: serde_json::Value) -> CaseScript {
+    let mut steps = vec![json!({ "step_number": 1, "actions": [{ "kind": "navigate", "url": url }] })];
+    steps.extend(steps_after.as_array().cloned().unwrap_or_default());
+    serde_json::from_value(json!({ "case_id": 901, "title": "draft", "no_save": no_save, "steps": steps }))
+        .expect("the test wrote an invalid case script")
+}
+
+fn click_then_see(button: &str, text: &str) -> serde_json::Value {
+    json!([{ "step_number": 2, "actions": [
+        { "kind": "click", "selector": { "css": button } },
+        { "kind": "expect_text", "selector": { "css": "#out" }, "equals": text }
+    ] }])
+}
+
+async fn run_save_case(live: &mut Live, root: &Path, script: &CaseScript) -> v2_lib::autorun::CaseRecord {
+    v2_lib::autorun::replay::run_case(
+        &mut live.cdp,
+        root,
+        "acme",
+        "PMS",
+        script,
+        &timing(),
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_no_save_case_has_its_save_stopped_before_it_reaches_the_server() {
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let script = save_case(true, &server.page(""), click_then_see("#save", "saved"));
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert!(!server.got("POST /api/Save"), "the save reached the server: {:?}", server.seen.lock().unwrap());
+    assert!(server.got("GET /save-page"), "the page itself was held back too");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert_eq!(rec.reason, format!("step 2: {SAVE_STOPPED}"));
+    assert!(!rec.reason.contains("hunter2") && !rec.reason.contains("127.0.0.1"), "{}", rec.reason);
+    let step2 = &rec.steps[1].outcomes;
+    assert!(step2.iter().any(|o| o.detail == SAVE_STOPPED), "{step2:?}");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_no_save_case_lets_a_search_through() {
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let script = save_case(true, &server.page(""), click_then_see("#search", "searched"));
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+    assert!(server.got("POST /api/Search"));
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_project_word_blocks_its_own_path() {
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    v2_lib::autorun::nav::set_save_words(root.path(), "acme", "PMS", &["search".to_string()]).unwrap();
+    let mut live = open().await;
+    let script = save_case(true, &server.page(""), click_then_see("#search", "searched"));
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert!(!server.got("POST /api/Search"), "the search reached the server");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert!(rec.reason.contains("tried to send POST /api/Search - it was stopped"), "{}", rec.reason);
+}
+
+/// Review Focus 2: a page that saves the moment it opens, before any
+/// action of the script touches it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_save_the_page_fires_as_it_loads_is_stopped_and_fails_the_case() {
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let script = save_case(true, &server.page("?autosave=1"), json!([]));
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert!(!server.got("POST /api/Save"), "the page's own save reached the server");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert_eq!(rec.reason, format!("step 1: {SAVE_STOPPED}"));
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_script_without_the_flag_is_not_intercepted() {
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let script = save_case(false, &server.page(""), click_then_see("#save", "saved"));
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+    assert!(server.got("POST /api/Save"));
+    assert!(!live.cdp.is_guarding_saves());
+}
+
+/// Review Focus 1: between calls - nothing asking the browser anything -
+/// a guarded browser's requests are still answered, not left paused until
+/// the next call.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_guarded_browser_answers_requests_made_between_calls() {
+    let server = SaveServer::start();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("") })).await);
+    live.cdp.guard_saves(&[]).await.expect("the guard did not start");
+    page::eval_value(&mut live.cdp, "setTimeout(() => send('/api/Search'), 100); 1").await.unwrap();
+    // No call at all now: only the idle pump reads the paused request.
+    live.cdp.idle(Duration::from_millis(1500)).await;
+    assert!(server.got("POST /api/Search"), "the request was left paused between calls");
+    let out = page::eval_value(&mut live.cdp, "document.getElementById('out').textContent").await.unwrap();
+    assert_eq!(out.as_str(), Some("searched"));
+}
+
+const DRAFT_STOPPED: &str =
+    "this script must not save, but the page tried to send POST /api/SaveDraft - it was stopped before it reached the server";
+
+/// The App's recipe, with the draft server's origin allowed, so a script
+/// may open the draft and then sign in.
+fn recipe_with_draft(app: &App, server: &SaveServer) -> SignInRecipe {
+    let mut r = recipe_for(app);
+    r.allowed_origins = vec![format!("http://127.0.0.1:{}", server.port)];
+    r.validate().expect("the test wrote an invalid recipe");
+    r
+}
+
+/// Review fix 3: the sign-in's exemption starts only once it has arrived
+/// on its start page. A save the draft page sends as it is left (a beacon
+/// on pagehide) is still stopped - and the sign-in's own login POST, which
+/// a project word would otherwise catch, still goes through.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_save_sent_while_a_sign_in_leaves_the_draft_is_still_stopped() {
+    let app = App::start();
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("?unloadsave=1") })).await);
+    live.cdp.guard_saves(&["login".to_string()]).await.expect("the guard did not start");
+    let out = sign_in(&mut live.cdp, root.path(), &recipe_with_draft(&app, &server), &kim(), &timing()).await;
+    assert!(out.ok, "the sign-in itself was stopped: {} / {:?}", out.detail, out.steps);
+    assert_eq!(app.logins.load(Ordering::SeqCst), 1, "the login POST never reached the server");
+    assert!(!server.got("POST /api/SaveDraft"), "the draft's save reached the server: {:?}", server.seen.lock().unwrap());
+    assert_eq!(live.cdp.take_save_blocked().as_deref(), Some(DRAFT_STOPPED));
+}
+
+/// The same through a script: a `sign_in` in the middle of a no-save case,
+/// on the draft, fails the step with the sentence.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_mid_script_sign_in_that_leaves_a_saving_draft_fails_the_case() {
+    let app = App::start();
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "PMS", &recipe_with_draft(&app, &server)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+    let mut live = open().await;
+    let script = save_case(
+        true,
+        &server.page("?unloadsave=1"),
+        json!([{ "step_number": 2, "actions": [{ "kind": "sign_in", "account": "kim" }] }]),
+    );
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert!(!server.got("POST /api/SaveDraft"), "the draft's save reached the server");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert_eq!(rec.reason, format!("step 2: {DRAFT_STOPPED}"));
 }

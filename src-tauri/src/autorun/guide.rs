@@ -315,6 +315,86 @@ environment, so a key that exists in one may not exist in another.
   copy a password into a script or a template. If a case needs an account
   you cannot find, say so and ask which one to use.
 
+## Scripts that must not save
+
+Some cases work on a shared draft - a cycle, a form or a record other
+cases and other people rely on - and must look at it without changing it.
+Mark such a script:
+
+    { "case_id": 501, "title": "...", "no_save": true, "steps": [ ... ] }
+
+Set `"no_save": true` on any script that works on a shared draft and must
+not change it. While it runs, the app stops every save the page tries to
+send before it leaves the browser. A save is a POST, PUT, PATCH or DELETE
+whose address path (the query is ignored, and case does not matter)
+contains one of the built-in save words - save, update, delete, submit,
+approve, publish, assign - or one of the project's own save words, which
+a person adds on the Auto Run Setup tab. Every other request goes through
+unchanged. The sign-in is not checked: it is the app's own.
+
+When the page tries to save, the case fails at once with:
+
+    this script must not save, but the page tried to send POST /api/Save - it was stopped before it reached the server
+
+Such a failure is never a locator to repair: the script, or the page,
+tried to change the draft. Find the step that clicked a Save (or a button
+that saves as a side effect) and take it out of a no-save case, or tell
+the person the page saves by itself.
+
+A repair can turn `no_save` on, never off - leaving it out of a repair is
+turning it off, and that is refused. Only a person, saving the script in
+the app, can turn it off.
+
+## Preconditions
+
+Some cases rely on a record built beforehand: a performance cycle set up
+and published, a leave type with its rules. Add a precondition whenever a
+script relies on such a record, so a run where the record is missing says
+so before step 1 instead of failing halfway with a locator that was never
+wrong:
+
+    { "case_id": 502, "title": "...", "preconditions": [
+        { "flow": "pms-performance-cycle", "stage": "publish", "value": 274,
+          "why": "the case opens a published cycle" }
+      ], "steps": [ ... ] }
+
+- `flow` and `stage` are ids of an API template flow and one of its
+  stages. Find them with `list_api_templates`: it lists the project's flows
+  and each flow's stages.
+- `value` is the flow's subject, as the flow's checks take it: a whole
+  number for a number subject (the cycle's id), a string for a string one
+  (the cycle's name).
+- `why` is optional: one sentence on what the case needs the record for.
+
+Preconditions follow the Database Read Access switch on the AI Bridge
+tab: while it is off, no check runs, and the case goes on saying:
+
+    preconditions were not checked: Database Read Access is off on the AI Bridge tab
+
+While it is on, before the case signs in, the app runs each
+precondition's stage check on the active environment's database, so it
+needs a database chosen. When every stage is done the case runs.
+Otherwise it is Blocked before step 1, and never signs in, with one of:
+
+    precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle
+    precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs
+    preconditions need a database chosen on the AI Bridge tab
+
+A case Blocked by a precondition has nothing to repair: build the record,
+or tell the person it is missing.
+
+Every save checks each precondition and names what is missing, one
+sentence per problem, counting preconditions from 1:
+
+- `precondition 1: no flow pms-cycle` - no flow has that id
+- `precondition 1: flow Performance cycle wizard has no stage published` - the flow has no stage with that id
+- `precondition 1: give the value the flow's checks take` - the value is missing, or not the type the subject takes
+
+A repair keeps every precondition the script has, and may add new ones.
+Send each existing precondition back exactly as it is: a repair that
+leaves one out or changes it is refused, and only a person can drop or
+change one, in the app.
+
 ## Every expected result is checked
 
 Every step whose test case has a non-empty expected result must be
@@ -400,7 +480,10 @@ person has open on the Auto Run tab:
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script.
 - `try_autorun_action` runs one action in that same browser and says what
-  happened - a rehearsal, not a run; nothing is recorded.
+  happened - a rehearsal, not a run; nothing is recorded. Every try names
+  the case it is for, `case_id` beside the `action`, and is refused
+  without it: a case marked `no_save` is tried with its saves stopped,
+  as in a run.
 
 The person opens the browser and signs in - you cannot do either. You
 never navigate away from where they are unless the case's own step says
@@ -604,6 +687,7 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 - a changed `area` without `"area": true` in the case's `edits` entry - `the area changed from ... but was not declared`; and `"area": true` when the area did not change - `the area was declared but not changed`
 - the same step number written twice in one script - `step N appears more than once in the script`
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
+- a repair that leaves out or turns off `"no_save": true` - `this script is marked Must not save, and a repair cannot turn that off`
 
 A repair changes the locator, the waiting, or the navigation. It never
 changes what is asserted, and it never changes the order the steps run

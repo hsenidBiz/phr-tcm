@@ -9,12 +9,13 @@ import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { floorOf } from "./floor";
 
@@ -80,6 +81,18 @@ export default function ScriptEditor({
   const [picked, setPicked] = useState<string | null>(null);
   const account = picked ?? existing.data?.account ?? "";
   const known = (accounts.data ?? []).some((a) => a.key === account);
+  // null = untouched, so the saved script's flag shows until the person
+  // changes it. Only a save from here can turn it off.
+  const [pickedNoSave, setPickedNoSave] = useState<boolean | null>(null);
+  const noSave = pickedNoSave ?? existing.data?.no_save ?? false;
+
+  // Preconditions are not edited here, only removed: by their place in the
+  // saved script, taking effect on Save. Removing is what gets a script
+  // whose flow or stage has since been deleted saved again.
+  const [removedPre, setRemovedPre] = useState<number[]>([]);
+  const preconditions = (existing.data?.preconditions ?? [])
+    .map((p, i) => ({ p, n: i + 1 }))
+    .filter(({ n }) => !removedPre.includes(n));
 
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
@@ -133,6 +146,10 @@ export default function ScriptEditor({
       account: account === "" ? null : account,
       // Left out when blank: the module's default area.
       ...(area === "" ? {} : { area }),
+      ...(noSave ? { no_save: true } : {}),
+      // Carried through, less any removed here (the save checks them
+      // again).
+      ...(preconditions.length ? { preconditions: preconditions.map(({ p }) => p) } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -206,6 +223,15 @@ export default function ScriptEditor({
             </Select>
           </label>
 
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
+            Must not save
+          </label>
+          <p className="text-xs text-faint">
+            For a case that works on a shared draft: while it runs, any save the page tries to send
+            is stopped before it reaches the server, and the case fails.
+          </p>
+
           {existing.data && (existing.data.repairs ?? 0) > 0 && (
             <p className="text-xs text-warning">
               Repaired {existing.data.repairs} of 3 times by an assistant since you last saved.
@@ -236,6 +262,30 @@ export default function ScriptEditor({
                     {state.kind === "checked" && `Step ${step_number}: checked`}
                     {state.kind === "explained" && `Step ${step_number}: not checked - ${state.reason}`}
                     {state.kind === "unchecked" && `Step ${step_number}: NOT CHECKED`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {preconditions.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Preconditions</span>
+              <ul aria-label="Preconditions" className="space-y-1 text-xs">
+                {preconditions.map(({ p, n }) => (
+                  <li key={n} className="flex items-center justify-between gap-2">
+                    <span className="id-mono min-w-0 break-words text-text">
+                      {`${p.flow} / ${p.stage}: ${typeof p.value === "string" ? p.value : JSON.stringify(p.value)}`}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Remove precondition ${n}`}
+                      onClick={() => setRemovedPre((r) => [...r, n])}
+                    >
+                      <IconRemove aria-hidden />
+                      Remove
+                    </Button>
                   </li>
                 ))}
               </ul>

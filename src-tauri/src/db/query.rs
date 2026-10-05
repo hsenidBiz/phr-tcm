@@ -42,6 +42,34 @@ pub const NO_LOGIN_SAVED: &str =
 pub const WRITES_OFF: &str =
     "create, update and delete are switched off - turn them on under Database Read Access on the AI Bridge tab";
 
+/// The connection the database `id` stands for, resolved from `store` now
+/// (a login saved a moment ago is the one used), and a sqlcmd to run it
+/// with. Each refusal is a sentence a person can act on: nothing chosen
+/// (`NO_CONNECTION`, also for an id this build does not know, or no store
+/// at all), no login saved, a store that cannot be read, a connection that
+/// names no server or database, or no sqlcmd. None carries a credential.
+pub fn ready(
+    store: Option<&dyn super::SecretStore>,
+    id: Option<&str>,
+) -> Result<(Connection, std::path::PathBuf), String> {
+    let nothing_chosen = || NO_CONNECTION.to_string();
+    let store = store.ok_or_else(nothing_chosen)?;
+    let id = id
+        .map(str::trim)
+        .filter(|id| super::credentials::is_known(store, id))
+        .ok_or_else(nothing_chosen)?;
+    // `own` with nothing saved HAS been chosen, so it gets its own sentence
+    // - "pick one" would send the person back to a choice they already
+    // made. A store that cannot be read keeps its own sentence too.
+    let chosen = super::credentials::resolve(store, id)?.ok_or_else(|| NO_LOGIN_SAVED.to_string())?;
+    // The error names the missing key and nothing else - the rest of that
+    // string is a credential, and this sentence is shown to a person.
+    let connection = sqlcmd::parse_connection(&chosen)
+        .map_err(|why| format!("{why} - choose a connection under Database Read Access on the AI Bridge tab"))?;
+    let exe = sqlcmd::sqlcmd_path().ok_or_else(|| sqlcmd::NOT_INSTALLED.to_string())?;
+    Ok((connection, exe))
+}
+
 /// Tables a lookup returns when the call does not say.
 pub const LOOKUP_DEFAULT: usize = 10;
 

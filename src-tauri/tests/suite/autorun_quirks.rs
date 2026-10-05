@@ -412,6 +412,7 @@ fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 
@@ -428,6 +429,8 @@ fn script_for(case_id: i32) -> CaseScript {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
     }
 }
 

@@ -92,3 +92,11 @@ pub fn guide() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The account leases (`autorun::lease`): one sign-in per account at a
+/// time, process-wide. Taken by every test that takes, waits for or looks
+/// at a lease, so a count or a wait in one test never meets another's.
+pub fn account_leases() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

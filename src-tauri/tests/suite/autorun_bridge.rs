@@ -106,6 +106,75 @@ fn case_7(selector: &str, value: &str) -> serde_json::Value {
     }])
 }
 
+/// Through the assistant's save, a repair may add a precondition to a
+/// saved script - validated like any save, and counted as a repair - but
+/// never drop or change one it has.
+#[tokio::test]
+async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let flow: v2_lib::api_templates::flow::Flow =
+        serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+    v2_lib::api_templates::flow_store::save(dir.path(), "acme", "Web", &flow).unwrap();
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let send = |pre: serde_json::Value| {
+        let mut body = case_7("#toast", "Saved");
+        body[0]["preconditions"] = pre;
+        body.to_string()
+    };
+    let publish = serde_json::json!({ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 });
+    let rules = serde_json::json!({ "flow": "pms-performance-cycle", "stage": "rules", "value": 274 });
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([])), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    // Added to a saved script: a repair, and validated.
+    let bad = serde_json::json!([{ "flow": "pms-performance-cycle", "stage": "published", "value": 274 }]);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &send(bad), "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case 7: precondition 1: flow Performance cycle wizard has no stage published");
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([publish])), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+
+    // Sent back as it is, with one more beside it: another repair.
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &send(serde_json::json!([publish, rules])),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 2 of 3 used)");
+
+    // Dropped, or changed: refused, and the saved script keeps both.
+    let kept = v2_lib::autorun::edits::PRECONDITIONS_KEPT;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([rules])), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, kept));
+    let mut moved = publish.clone();
+    moved["value"] = serde_json::json!(275);
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &send(serde_json::json!([moved, rules])),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!((status, out.as_str()), (400, kept));
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.preconditions.len(), 2);
+    assert_eq!(saved.repairs, 2);
+}
+
 /// The declaration that goes with a change to case 7's step 2.
 fn edit_step_2(why: &str) -> serde_json::Value {
     serde_json::json!({ "case_id": 7, "steps": [2], "why": why })
@@ -1252,7 +1321,7 @@ async fn page_routes_need_the_supervised_browser() {
     assert_eq!(out, expected);
 
     let try_body =
-        serde_json::json!({ "action": { "kind": "click", "selector": "#save" } }).to_string();
+        serde_json::json!({ "action": { "kind": "click", "selector": "#save" }, "case_id": 7 }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &try_body, "1.0.0").await;
     assert_eq!(status, 409, "{out}");
     assert_eq!(out, expected);
@@ -1303,6 +1372,26 @@ async fn try_refuses_a_sign_in_and_an_invalid_action() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &unknown, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("teleport"), "{out}");
+}
+
+/// A try names the case it is for, so that case's no-save guard applies
+/// (run safety §1): without one, or with one that is not a number, it is
+/// refused before the browser is asked.
+#[tokio::test]
+async fn try_refuses_a_body_that_names_no_case() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let none = serde_json::json!({ "action": { "kind": "click", "selector": "#save" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &none, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "name the case this try is for (case_id), so its no-save guard applies");
+
+    let words = serde_json::json!({ "action": { "kind": "click", "selector": "#save" }, "case_id": "seven" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &words, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case_id must be a number");
 }
 
 /// The applog line for a tried action never carries a `fill`'s VALUE -
@@ -1399,6 +1488,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         mode: String::new(),
         published: None,

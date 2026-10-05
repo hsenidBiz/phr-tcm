@@ -28,6 +28,7 @@ use super::{check, check_values, is_safe_relative_path, ApiTemplate, Method, Ste
 use crate::activity_log::{self, Kind};
 use crate::applog;
 use crate::autorun::accounts::Account;
+use crate::autorun::lease;
 use crate::autorun::nav::path_of;
 use crate::autorun::recipe::{origin_of, SignInRecipe};
 use crate::autorun::replay::Browsers;
@@ -572,18 +573,28 @@ pub async fn run_template_within<B: Browsers>(
     retry_pauses: &[Duration],
 ) -> RunReport {
     let mut progress = Progress::new();
-    match browsers.open().await {
-        Err(why) => progress.fail(None, format!("the browser did not open: {why}")),
-        Ok(mut d) => {
-            // `close` sits outside the timed future on purpose: dropping
-            // that future on a timeout must not skip it.
-            let timed = tokio::time::timeout(limit, drive(&mut d, root, req, timing, retry_pauses, &mut progress)).await;
-            if timed.is_err() && progress.failed.is_none() {
-                progress.fail(None, RUN_TOO_LONG);
-            }
-            d.set_deadline(None);
-            browsers.close(d).await;
+    match account_lease(root, req, timing).await {
+        Err(why) => {
+            progress.at(SIGN_IN, None);
+            progress.fail(None, why);
         }
+        // Held for the whole run, the browser's close included, and let go
+        // on every path out of this arm: an end, an error, a timeout, a
+        // panic, or this future dropped.
+        Ok(_lease) => match browsers.open().await {
+            Err(why) => progress.fail(None, format!("the browser did not open: {why}")),
+            Ok(mut d) => {
+                // `close` sits outside the timed future on purpose: dropping
+                // that future on a timeout must not skip it.
+                let timed =
+                    tokio::time::timeout(limit, drive(&mut d, root, req, timing, retry_pauses, &mut progress)).await;
+                if timed.is_err() && progress.failed.is_none() {
+                    progress.fail(None, RUN_TOO_LONG);
+                }
+                d.set_deadline(None);
+                browsers.close(d).await;
+            }
+        },
     }
 
     let t = &req.template;
@@ -600,6 +611,15 @@ pub async fn run_template_within<B: Browsers>(
     };
     applog::info(format!("api template {}: {} {verdict}, {} steps", t.id, req.mode.label(), progress.sent));
     RunReport { ok, template: t.id.clone(), outputs, created: progress.created, steps: progress.steps, failed: progress.failed }
+}
+
+/// The run's account, in the active environment, before any browser opens
+/// (`autorun::lease`): an unattended case or the Auto Run browser signed in
+/// as it is waited for, up to `timing`'s lease wait, and then the run is
+/// refused with the sentence that says who had it.
+async fn account_lease(root: &Path, req: &RunRequest, timing: &Timing) -> Result<lease::Lease, String> {
+    let env = crate::environments::active_id(root)?;
+    lease::acquire(&env, &req.account, lease::Holder::Template, timing.lease_wait()).await
 }
 
 /// Everything after the browser is open: sign in, fetch the token, run the

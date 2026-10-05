@@ -150,6 +150,10 @@ export {
   // The site a project's runs sign in to and start from (Auto Run's
   // Setup card) - a globe, since what it opens is a web address.
   Globe as IconSiteAddress,
+  // The words that make a request a save, which a script marked Must not
+  // save has stopped in its browser (Auto Run's Setup card) - a shield
+  // with a bar, since what it edits is what gets stopped.
+  ShieldBan as IconSaveWords,
   // Choosing something on a page by clicking it in the browser - a
   // recorded sign-in's signed-in check.
   MousePointerClick as IconPickOnPage,

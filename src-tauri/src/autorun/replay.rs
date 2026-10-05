@@ -11,10 +11,13 @@
 
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
-use super::{recipe, signin, transient};
+use super::lease::{Held, Holder};
+use super::{preconditions, recipe, signin, transient};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
+use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
+use crate::browser::save_guard;
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
 use std::path::Path;
@@ -94,6 +97,9 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
     }
     let action = script.steps.iter().find(|s| s.step_number == n).and_then(|s| s.actions.get(i));
     match action {
+        // Another holder had the account: the case was never signed in as
+        // it, so the run could not carry it out - Blocked, not Failed.
+        Some(Action::SignIn { .. }) if super::lease::is_in_use(&o.detail) => Some(o.detail.as_str()),
         Some(Action::SignIn { .. }) => nav::unreached_after_sign_in(&o.detail),
         // The runner's own refusal (runner.rs, the `Navigate if
         // !direct_urls` arm) is written without going through
@@ -115,6 +121,20 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
             .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
             .filter(|(_, _, o)| was_run(o))
     };
+    // A no-save script whose page tried to save failed, wherever that
+    // happened - even on the way to the module, which would otherwise read
+    // as a run that could not start the case. Only the runner writes this
+    // sentence, and only for a no-save script.
+    if script.no_save {
+        if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok && save_guard::is_blocked(&o.detail)) {
+            let at = match n {
+                SIGN_IN_STEP => "while signing in".to_string(),
+                MODULE_STEP => "while going to the module".to_string(),
+                _ => format!("step {n}"),
+            };
+            return Proposal { verdict: "Failed", reason: format!("{at}: {}", o.detail) };
+        }
+    }
     if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok && o.harness) {
         let at = match n {
             SIGN_IN_STEP => "while signing in".to_string(),
@@ -168,7 +188,9 @@ pub async fn run_case<D: Driver>(
     cancel: &AtomicBool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    run_case_as(d, root, organization, project, script, script.account.as_deref(), None, timing, cancel, on_step).await
+    let mut lease = Held::new(Holder::Case { run: String::new() }, timing.lease_wait());
+    let account = script.account.as_deref();
+    run_case_as(d, root, organization, project, &mut lease, script, account, None, timing, cancel, on_step).await
 }
 
 /// Run one whole case: an optional sign-in as `account` (step
@@ -176,12 +198,19 @@ pub async fn run_case<D: Driver>(
 /// (`MODULE_STEP`), then every scripted step in order, stopping the case
 /// (but not the run) after the first step that fails or once `cancel` is
 /// set.
+///
+/// The case signs in only once it holds its account in `lease`, which
+/// waits for a case or a template run up to `timing`'s lease wait; a case
+/// that cannot get it is Blocked with the sentence that says who had it,
+/// and never signs in. The caller owns `lease` and lets it go once the
+/// case's browser is closed (`one_go`).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_case_as<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
     project: &str,
+    lease: &mut Held,
     script: &CaseScript,
     account: Option<&str>,
     route: Option<&Route>,
@@ -206,9 +235,50 @@ pub async fn run_case_as<D: Driver>(
         None
     };
 
+    // A no-save script never runs unguarded: the guard goes on before
+    // anything happens in the browser, or the case does not run at all.
+    if skip.is_none() && script.no_save {
+        let words = nav::load_nav(root, organization, project).map(|n| n.save_words);
+        let guarded = match words {
+            Err(why) => Err(why),
+            Ok(words) => d.guard_saves(&words).await.map_err(|e| e.to_string()),
+        };
+        if let Err(why) = guarded {
+            let mut record = blocked_before_start(script, account, save_guard::setup_failed(&why));
+            record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+            return record;
+        }
+    }
+
     if skip.is_none() {
         if let Some(key) = account {
             on_step(SIGN_IN_STEP);
+            // The account is this case's from before its sign-in to its
+            // end, whichever way the sign-in goes: one that fails partway
+            // may still have signed the account in.
+            // A Stop pressed while the case waits for its account ends the
+            // wait; one that lands as the account comes free still stops
+            // the case before it signs in.
+            let held = tokio::select! {
+                held = lease.hold(root, key) => Some(held),
+                () = stop_asked(cancel) => None,
+            };
+            match held {
+                Some(Ok(())) if !cancel.load(Ordering::SeqCst) => {}
+                Some(Err(why)) if !cancel.load(Ordering::SeqCst) => {
+                    let mut record = blocked_before_start(script, account, why);
+                    record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+                    return record;
+                }
+                _ => {
+                    stopped = true;
+                    skip = Some(AFTER_STOP);
+                }
+            }
+        }
+    }
+    if skip.is_none() {
+        if let Some(key) = account {
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
@@ -235,13 +305,27 @@ pub async fn run_case_as<D: Driver>(
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
             let mut out = nav::reach_module(d, r, from, timing, &who(script.case_id)).await;
-            if !out.ok && !out.harness {
+            // A save the module's page sent as it opened fails the case
+            // here, before step 1 acts on it.
+            if let Some(sentence) = d.take_save_blocked() {
+                out = ActionOutcome::failed(sentence);
+                out.screenshot = runner::picture(d, root).await;
+            } else if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
                 // Read after the picture: taking it read every event the
-                // page had sent by then.
-                log_the_page(d, script.case_id, &mut out);
+                // page had sent by then - a save among them is the reason.
+                match d.take_save_blocked() {
+                    Some(sentence) => {
+                        let shot = out.screenshot.take();
+                        out = ActionOutcome::failed(sentence);
+                        out.screenshot = shot;
+                    }
+                    None => log_the_page(d, script.case_id, &mut out),
+                }
             }
-            if !out.ok {
+            if save_guard::is_blocked(&out.detail) {
+                skip = Some(AFTER_FAILED_STEP);
+            } else if !out.ok {
                 skip = Some(AFTER_UNREACHED);
             }
             steps.push(StepRecord { step_number: MODULE_STEP, outcomes: vec![out], screenshot: None });
@@ -259,12 +343,22 @@ pub async fn run_case_as<D: Driver>(
         }
         on_step(step.step_number);
         let outcomes =
-            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, route).await {
+            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, lease, route).await {
                 Ok(o) => o,
                 Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
             };
+        let mut outcomes = outcomes;
         let harness = outcomes.iter().any(|o| !o.ok && o.harness);
         let screenshot = if harness { None } else { runner::picture(d, root).await };
+        // A save the page sent after the step's last action had already
+        // passed (read while the picture was taken) is still this step's.
+        if let Some(sentence) = d.take_save_blocked() {
+            if outcomes.iter().all(|o| o.ok) {
+                if let Some(last) = outcomes.last_mut() {
+                    *last = ActionOutcome::failed(sentence);
+                }
+            }
+        }
         if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
@@ -283,8 +377,19 @@ pub async fn run_case_as<D: Driver>(
         duration_ms: i32::try_from(began.elapsed().as_millis()).ok(),
         account: account.map(str::to_string),
         retried: None,
+        notice: None,
     }
 }
+
+/// Returns once `cancel` is set, looking every `STOP_POLL`.
+async fn stop_asked(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::SeqCst) {
+        tokio::time::sleep(STOP_POLL).await;
+    }
+}
+
+/// How often a case waiting for its account looks for a Stop.
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecord {
     CaseRecord {
@@ -298,6 +403,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 
@@ -316,6 +422,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         duration_ms: None,
         account: account.map(str::to_string),
         retried: None,
+        notice: None,
     }
 }
 
@@ -391,11 +498,16 @@ async fn one_go<B: Browsers>(
                 };
                 progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
             };
+            // The case's account, held until its browser is closed: a local
+            // here, so an end, a stop (this future dropped) and a panic all
+            // let it go too.
+            let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait());
             let rec = run_case_as(
                 &mut d,
                 go.root,
                 go.organization,
                 go.project,
+                &mut lease,
                 go.script,
                 go.account,
                 go.route,
@@ -405,6 +517,7 @@ async fn one_go<B: Browsers>(
             )
             .await;
             browsers.close(d).await;
+            drop(lease);
             Ok(rec)
         }
     }
@@ -429,15 +542,9 @@ pub async fn run_selection<B: Browsers>(
     run_cases(browsers, root, organization, project, run, &cases, None, false, timing, cancel, progress).await
 }
 
-/// Run a whole selection, one fresh browser each, saving the run after
-/// every case so a crash or a stop loses nothing. `run_account`, the
-/// account the person picked for the run, signs in every case - over the
-/// account a script names, which only decides when nothing was picked. A
-/// `sign_in` step inside a script still changes to the account it names.
-/// The module paths file
-/// is read once, first: an unreadable one stops the run before any
-/// browser opens. With `retry_transient`, a case whose failure looked
-/// transient (`transient::is_transient`) runs once more in a fresh browser.
+/// `run_cases_checked` with no database for preconditions: a case that
+/// has any is Blocked with `preconditions::NEED_DB`, and every other case
+/// runs as it always has.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases<B: Browsers>(
     browsers: &mut B,
@@ -450,6 +557,54 @@ pub async fn run_cases<B: Browsers>(
     retry_transient: bool,
     timing: &Timing,
     cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(ReplayProgress) + Send),
+) -> Result<(), String> {
+    let no_db: preconditions::PreconditionDb<preconditions::NoDb> =
+        preconditions::PreconditionDb::Missing(preconditions::NEED_DB.to_string());
+    run_cases_checked(
+        browsers,
+        root,
+        organization,
+        project,
+        run,
+        cases,
+        run_account,
+        retry_transient,
+        timing,
+        cancel,
+        &no_db,
+        progress,
+    )
+    .await
+}
+
+/// Run a whole selection, one fresh browser each, saving the run after
+/// every case so a crash or a stop loses nothing. `run_account`, the
+/// account the person picked for the run, signs in every case - over the
+/// account a script names, which only decides when nothing was picked. A
+/// `sign_in` step inside a script still changes to the account it names.
+/// The module paths file
+/// is read once, first: an unreadable one stops the run before any
+/// browser opens. With `retry_transient`, a case whose failure looked
+/// transient (`transient::is_transient`) runs once more in a fresh browser.
+/// A case with preconditions has them checked against `precondition_db`
+/// before its browser opens; one not met Blocks the case with its sentence
+/// (`preconditions::check_case`), it never signs in, and the run goes on.
+/// While Database Read Access is off (`PreconditionDb::ReadingOff`) none
+/// is checked, and such a case runs carrying the `notice` that says so.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_cases_checked<B: Browsers, P: StageDb>(
+    browsers: &mut B,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    run: &mut LocalRun,
+    cases: &[CaseToRun],
+    run_account: Option<&str>,
+    retry_transient: bool,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    precondition_db: &preconditions::PreconditionDb<P>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
     // Each error says for itself where the run got to, so the command can
@@ -486,7 +641,24 @@ pub async fn run_cases<B: Browsers>(
             Ok(Some(script)) => {
                 count = script.steps.len() as u32;
                 let account = run_account.or(script.account.as_deref());
-                match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
+                // Where the case starts, then the records it relies on -
+                // both before its browser opens, so a case that cannot
+                // start never signs in.
+                let mut notice = None;
+                let ready = match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
+                    Err(why) => Err(why),
+                    Ok(path) => {
+                        let checked =
+                            preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                                .await;
+                        notice = checked.notice;
+                        match checked.blocked {
+                            Some(why) => Err(why),
+                            None => Ok(path),
+                        }
+                    }
+                };
+                let mut record = match ready {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {
                         // A path but no recipe: the sign-in fails first and
@@ -511,7 +683,11 @@ pub async fn run_cases<B: Browsers>(
                             _ => first,
                         }
                     }
-                }
+                };
+                // Said on the record whichever way the case went, so the
+                // review and the report show the checks were skipped.
+                record.notice = notice;
+                record
             }
         };
         let mut record = record;

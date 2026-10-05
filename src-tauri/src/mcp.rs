@@ -360,13 +360,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "try_autorun_action",
-            "description": "Carry out ONE script action against the open browser, so you can find out whether a repair works before you write it down. Answers ok or failed with what the page did, and the picture taken if it failed. Nothing is recorded - this is a rehearsal, not a run. `sign_in` is refused: the person signs in. Needs a supervised browser to be open.",
+            "description": "Carry out ONE script action against the open browser, so you can find out whether a repair works before you write it down. Name the case the try is for with `case_id`: a case marked no_save is tried with its saves stopped, as in a run. Answers ok or failed with what the page did, and the picture taken if it failed. Nothing is recorded - this is a rehearsal, not a run. `sign_in` is refused: the person signs in. Needs a supervised browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
                     "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
                 },
-            }), &["action"]),
+                "case_id": {
+                    "type": "number",
+                    "description": "The case this try is for (required). A case marked no_save is tried with its saves stopped, as in a run.",
+                },
+            }), &["action", "case_id"]),
         },
         {
             "name": "get_autorun_failures",

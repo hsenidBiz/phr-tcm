@@ -365,7 +365,17 @@ export const commands = {
 	 *  which does the actual work; this command is just the IPC-facing shell
 	 *  around it.
 	 */
-	autoRunStep: (organization: string, project: string, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, step })),
+	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
+	/**
+	 *  A supervised case's preconditions, checked where the case starts and
+	 *  before its sign-in. `blocked`: the case is Blocked, with the sentence
+	 *  as its reason, and the pane never signs it in. `notice`: said before
+	 *  step 1, and the case goes on (the checks were skipped while
+	 *  `db_read_access`, the AI Bridge tab's Database Read Access switch, is
+	 *  off). Neither: the case goes on. The active environment's database is
+	 *  looked up only when the case's script has preconditions.
+	 */
+	autoRunCheckPreconditions: (organization: string, project: string, caseId: number, dbReadAccess: boolean) => typedError<PreconditionCheck, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId, dbReadAccess })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -405,6 +415,23 @@ export const commands = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -542,13 +569,20 @@ export const commands = {
 	/**  "Scripts may open pages by address", saved the moment it is flipped. */
 	autoRunSetDirectUrls: (organization: string, project: string, allowed: boolean) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_direct_urls", { organization, project, allowed })),
 	/**
+	 *  The project's own save words (Setup, Save words), replaced as a whole
+	 *  list. The built-in words are not in it and cannot be removed.
+	 */
+	autoRunSetSaveWords: (organization: string, project: string, words: string[]) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_save_words", { organization, project, words })),
+	/**
 	 *  Forget one area, by name. The module's other areas stay. The dialog
 	 *  asks first.
 	 */
 	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
-	 *  first step, and by the `sign_in` action in the middle of one.
+	 *  first step, and by the `sign_in` action in the middle of one. An account
+	 *  anything else holds (`autorun::lease`) is refused at once, with the
+	 *  sentence that says who has it, and the browser is left as it was.
 	 */
 	autoRunSignIn: (organization: string, project: string, accountKey: string) => typedError<SignInOutcome_Serialize, string>(__TAURI_INVOKE("auto_run_sign_in", { organization, project, accountKey })),
 	/**  Throw a saved session away, so the next sign-in goes through the form. */
@@ -580,8 +614,10 @@ export const commands = {
 	 *  script to its own); it must be a key in the Accounts list, or the run
 	 *  does not start. `retry_transient` runs a case whose failure looked
 	 *  transient once more, in a fresh browser (`autorun::transient`).
+	 *  `db_read_access` is the AI Bridge tab's Database Read Access switch:
+	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */
-	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient })),
+	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	/**
@@ -1532,6 +1568,13 @@ export type CaseRecord_Deserialize = {
 	 *  sentence. The steps above are the final try's only.
 	 */
 	retried?: string | null,
+	/**
+	 *  Something the run did not do for this case and the case went on
+	 *  without, said so a person reviewing it knows: today only that its
+	 *  preconditions were not checked while Database Read Access was off
+	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
+	 */
+	notice?: string | null,
 };
 
 /**
@@ -1563,6 +1606,13 @@ export type CaseRecord_Serialize = {
 	 *  sentence. The steps above are the final try's only.
 	 */
 	retried?: string | null,
+	/**
+	 *  Something the run did not do for this case and the case went on
+	 *  without, said so a person reviewing it knows: today only that its
+	 *  preconditions were not checked while Database Read Access was off
+	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
+	 */
+	notice?: string | null,
 };
 
 /**
@@ -1614,6 +1664,23 @@ export type CaseScript_Deserialize = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Deserialize[],
 };
 
 /**
@@ -1659,6 +1726,23 @@ export type CaseScript_Serialize = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Serialize[],
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -2288,6 +2372,10 @@ export type ModuleView = {
 export type NavView = {
 	direct_urls: boolean,
 	modules: ModuleView[],
+	/**  The project's own save words, which the Setup tab can remove. */
+	save_words: string[],
+	/**  The built-in ones, shown beside them and never removable. */
+	built_in_save_words: string[],
 };
 
 /**
@@ -2540,6 +2628,60 @@ export type PrWorkItem = {
 	/**  Hex (no '#') for the state dot, from the type's process states. */
 	state_color: string,
 	url: string,
+};
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition = Precondition_Serialize | Precondition_Deserialize;
+
+/**  What the check before a case's sign-in decided. */
+export type PreconditionCheck = {
+	/**  The Blocked sentence: the case never signs in. */
+	blocked: string | null,
+	/**  Said, and the case goes on (`NOT_CHECKED`). */
+	notice: string | null,
+};
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition_Deserialize = {
+	flow: string,
+	stage: string,
+	/**
+	 *  Absent reads as null, so a save can say the value is missing rather
+	 *  than fail to parse. See `FlowSaved::sample` on why this is declared
+	 *  to TypeScript as `unknown`.
+	 */
+	value?: unknown,
+	/**
+	 *  One sentence on why the case needs it, said after the Blocked
+	 *  sentence when the precondition is not met.
+	 */
+	why?: string | null,
+};
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition_Serialize = {
+	flow: string,
+	stage: string,
+	/**
+	 *  Absent reads as null, so a save can say the value is missing rather
+	 *  than fail to parse. See `FlowSaved::sample` on why this is declared
+	 *  to TypeScript as `unknown`.
+	 */
+	value: unknown,
+	/**
+	 *  One sentence on why the case needs it, said after the Blocked
+	 *  sentence when the precondition is not met.
+	 */
+	why?: string | null,
 };
 
 export type Project = {

@@ -478,3 +478,20 @@ fn a_retried_case_is_labelled_and_names_its_first_try() {
     let other = section_of(&html, 201);
     assert!(!other.contains("Retried"), "{other}");
 }
+
+/// A case whose preconditions were skipped while Database Read Access was
+/// off says so in its section; a case without a notice says nothing.
+#[test]
+fn a_case_with_a_notice_shows_it_in_its_section() {
+    let mut run = run_of(SHOT);
+    run.cases[3].notice = Some(v2_lib::autorun::preconditions::NOT_CHECKED.into());
+    let html = build(&run, &[script_201()], "x", &all_shots);
+    let section = section_of(&html, 204);
+    assert!(
+        section.contains(
+            "<p><strong>Notice:</strong> preconditions were not checked: Database Read Access is off on the AI Bridge tab</p>"
+        ),
+        "{section}"
+    );
+    assert!(!section_of(&html, 201).contains("Notice"));
+}

@@ -13,8 +13,10 @@ pub mod edits;
 pub mod failures;
 pub mod floor;
 pub mod guide;
+pub mod lease;
 pub mod nav;
 pub mod patterns;
+pub mod preconditions;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;
@@ -83,6 +85,39 @@ pub struct CaseScript {
     /// `repairs` or `last_repair`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspected_defect: Option<SuspectedDefect>,
+    /// The case works on a shared draft and must never change it: while it
+    /// runs, its browser stops every save the page tries to send
+    /// (`browser::save_guard`) and the case fails. Set in the editor (Must
+    /// not save), by an assistant's save or through import; only a person
+    /// saving from the editor can turn it off (`edits::check_edits`).
+    /// Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_save: bool,
+    /// Records the case relies on, built beforehand: each one a stage of an
+    /// API template flow that must be done for a value before step 1. The
+    /// run checks every one before it signs in (`preconditions`) and
+    /// blocks the case when one is not met. Every save validates them.
+    /// Written only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Precondition>,
+}
+
+/// One record a case relies on: `stage` of `flow` must be done for `value`,
+/// the flow's subject as its checks take it (a cycle's id, or its name).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Precondition {
+    pub flow: String,
+    pub stage: String,
+    /// Absent reads as null, so a save can say the value is missing rather
+    /// than fail to parse. See `FlowSaved::sample` on why this is declared
+    /// to TypeScript as `unknown`.
+    #[serde(default)]
+    #[specta(type = specta_typescript::Unknown)]
+    pub value: serde_json::Value,
+    /// One sentence on why the case needs it, said after the Blocked
+    /// sentence when the precondition is not met.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// One case's suspected application defect: the step, and what the
@@ -144,6 +179,12 @@ pub struct CaseRecord {
     /// sentence. The steps above are the final try's only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retried: Option<String>,
+    /// Something the run did not do for this case and the case went on
+    /// without, said so a person reviewing it knows: today only that its
+    /// preconditions were not checked while Database Read Access was off
+    /// (`preconditions::NOT_CHECKED`). Never a reason to block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// Recorded once a run has been sent to Azure DevOps, so a stale review

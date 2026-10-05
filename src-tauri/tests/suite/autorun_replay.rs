@@ -14,8 +14,10 @@ use v2_lib::autorun::nav::{
 };
 use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
-    propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
+    propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
+use v2_lib::autorun::lease::Held;
+use v2_lib::autorun::preconditions::{PreconditionDb, NOT_CHECKED};
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
@@ -47,7 +49,7 @@ impl Browsers for FakeBrowsers {
 }
 
 fn quick() -> Timing {
-    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0 }
+    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 fn new_run(id: &str) -> LocalRun {
@@ -691,7 +693,7 @@ async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
     save_accounts(root, &[common::account()]).unwrap();
-    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules }).unwrap();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules, save_words: vec![] }).unwrap();
     store::save_script(root, &one_check(Some("admin"))).unwrap();
     let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
     let mut browsers = browsers_of(vec![d]);
@@ -1038,7 +1040,8 @@ async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
     let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+    let mut held = Held::supervised();
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
         .await
         .unwrap();
     assert!(outcomes[0].ok && outcomes[0].detail.ends_with("; then Go to Leave"), "{outcomes:?}");
@@ -1502,7 +1505,8 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+    let mut held = Held::supervised();
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
         .await
         .unwrap();
     assert!(!outcomes[0].ok, "{outcomes:?}");
@@ -1555,7 +1559,7 @@ async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() 
 async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_navigate() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
     // `save_script` does not apply the rule: this is a file from before.
     store::save_script(
         root,
@@ -1615,4 +1619,155 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
     assert_eq!((one.confirmed, one.doubted), (1, 0), "the case this call ran confirms its note");
     assert!(one.last_confirmed.is_some());
     assert_eq!((two.confirmed, two.doubted), (0, 0), "the earlier record is not counted again");
+}
+
+// ------------------------------------------------------------ preconditions
+
+/// A script with one precondition: the cycle-flow's Publish stage for 274.
+fn needs_publish(case_id: i32, account: Option<&str>) -> CaseScript {
+    let mut sc = script(case_id, account, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+    ]));
+    sc.preconditions = vec![v2_lib::autorun::Precondition {
+        flow: "pms-performance-cycle".into(),
+        stage: "publish".into(),
+        value: serde_json::json!(274),
+        why: Some("the case opens a published cycle".into()),
+    }];
+    sc
+}
+
+fn save_cycle_flow(root: &Path) {
+    let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(common::cycle_flow_json()).unwrap();
+    v2_lib::api_templates::flow_store::save(root, "Acme", "Web", &flow).unwrap();
+}
+
+/// A precondition not met Blocks its case before a browser opens - so it
+/// never signs in - with the sentence as its reason, and the next case
+/// runs.
+#[tokio::test]
+async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_on() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, Some("lead"))).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let db = PreconditionDb::Ready(common::FakeStageDb::new().answer("/*publish*/", Ok(false)));
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(
+        &mut browsers,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &[to_run(1, None), to_run(2, None)],
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &db,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(browsers.opened, 1, "only the second case opened a browser");
+    let blocked = &run.cases[0];
+    assert_eq!(blocked.proposed, "Blocked");
+    assert_eq!(
+        blocked.reason,
+        "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle"
+    );
+    let PreconditionDb::Ready(fake) = &db else { unreachable!() };
+    let asked = fake.calls();
+    assert_eq!(asked.len(), 1, "only the case with a precondition asks the database: {asked:?}");
+    assert!(asked[0].contains("cycle_id = 274"), "{asked:?}");
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", run.cases[1]);
+}
+
+#[tokio::test]
+async fn every_precondition_done_lets_the_case_run() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    let db = PreconditionDb::Ready(common::FakeStageDb::new().answer("/*publish*/", Ok(true)));
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &db, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    assert_eq!(run.cases[0].notice, None, "checked, so nothing to say");
+}
+
+/// While Database Read Access is off no precondition is asked: the case
+/// with preconditions runs, carrying the notice, and the one without
+/// carries none.
+#[tokio::test]
+async fn with_reading_off_a_case_runs_unchecked_and_its_record_says_so() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let db: PreconditionDb<common::FakeStageDb> = PreconditionDb::ReadingOff;
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(
+        &mut browsers,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &[to_run(1, None), to_run(2, None)],
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &db,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(browsers.opened, 2, "neither case was Blocked");
+    assert_ne!(run.cases[0].proposed, "Blocked", "{:?}", run.cases[0]);
+    assert_eq!(
+        run.cases[0].notice.as_deref(),
+        Some("preconditions were not checked: Database Read Access is off on the AI Bridge tab")
+    );
+    assert_eq!(run.cases[0].notice.as_deref(), Some(NOT_CHECKED));
+    assert_eq!(run.cases[1].notice, None, "a script without preconditions is untouched");
+    assert_eq!(run.cases[1].proposed, "Passed");
+    // And it is on the saved run.
+    let saved = store::load_run(root, "run-x").unwrap().unwrap();
+    assert_eq!(saved.cases[0].notice.as_deref(), Some(NOT_CHECKED));
+}
+
+/// With no database to ask, a case with preconditions is Blocked and one
+/// without runs as it always has.
+#[tokio::test]
+async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, "preconditions need a database chosen on the AI Bridge tab");
+    assert_eq!(run.cases[1].proposed, "Passed");
 }

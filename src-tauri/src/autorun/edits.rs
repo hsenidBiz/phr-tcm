@@ -30,6 +30,14 @@ pub struct Edit {
     pub area: bool,
 }
 
+/// Said when a repair would turn `no_save` off.
+pub const NO_SAVE_KEPT: &str =
+    "this script is marked Must not save, and a repair cannot turn that off - send \"no_save\": true, or ask a person to change it in the app";
+
+/// Said when a repair would change a script's preconditions.
+pub const PRECONDITIONS_KEPT: &str =
+    "a repair cannot change a script's preconditions - save the script itself to change them";
+
 /// How many times a script may be repaired by an assistant before a person
 /// must open it in the app and save it there, which resets the count.
 pub const MAX_REPAIRS: u32 = 3;
@@ -129,6 +137,24 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
             "the account a script runs as cannot be changed by a repair - a person picks it in the app"
                 .to_string(),
         );
+    }
+
+    // Rule 11: a script that must not save keeps that promise through every
+    // repair - leaving `no_save` out of a repair IS turning it off. Only a
+    // person saving from the editor can. Turning it on is always allowed.
+    if old.no_save && !new.no_save {
+        return Err(NO_SAVE_KEPT.to_string());
+    }
+
+    // Rule 12: the records a case relies on are part of what the case
+    // means, not something a repair tunes until the case runs. A repair
+    // keeps every precondition the saved script has, exactly (flow, stage,
+    // value and why), and may add new ones: adding only blocks a case
+    // earlier, dropping or changing one weakens it. Only the editor or an
+    // import can drop or change one. An added one is validated like any
+    // save (`nav::check_project_rules`).
+    if old.preconditions.iter().any(|p| !new.preconditions.contains(p)) {
+        return Err(PRECONDITIONS_KEPT.to_string());
     }
 
     // Rule 10: where the case starts is part of the script. A repair that

@@ -1065,3 +1065,21 @@ test("a redraw with no hidden case ticked queues no selection update", async () 
   expect(draws - before).toBe(1);
   expect(screen.getByRole("checkbox", { name: "Select #1" })).toBeChecked();
 });
+
+test("the Save words row shows the built-in words and the project's own, and Edit opens its dialog", async () => {
+  const builtIn = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "auto_run_load_nav"
+      ? { direct_urls: true, modules: [], save_words: ["recalc"], built_in_save_words: builtIn }
+      : null,
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openTab("Setup");
+  const words = row("Save words");
+  await waitFor(() => expect(words).toHaveTextContent(`${builtIn.join(", ")}, recalc`));
+  fireEvent.click(within(words).getByRole("button", { name: "Edit save words" }));
+  expect(await screen.findByRole("heading", { name: "Save words" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove save word recalc" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove save word save" })).not.toBeInTheDocument();
+});

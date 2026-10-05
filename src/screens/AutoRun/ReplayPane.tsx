@@ -24,6 +24,7 @@ import {
   IconUnattended,
 } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 
 // Same two browsers, same values, as the supervised pane's picker - and the
@@ -249,6 +250,8 @@ export default function ReplayPane({
         browserName,
         watch,
         retryTransient,
+        // Preconditions follow Database Read Access: off, none is checked.
+        dbReadAccessOn(),
       );
       if (r.status === "error") {
         setError(r.error);

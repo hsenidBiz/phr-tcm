@@ -59,6 +59,8 @@ fn script() -> CaseScript {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
     }
 }
 
@@ -115,6 +117,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         mode: String::new(),
         published: None,
@@ -188,6 +191,8 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
     }
 }
 
@@ -234,7 +239,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![] }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -258,6 +263,8 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -283,6 +290,8 @@ fn a_step_with_no_actions_is_still_accepted() {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
@@ -408,6 +417,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         environment: None,
     };
@@ -613,6 +623,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         environment: None,
     };

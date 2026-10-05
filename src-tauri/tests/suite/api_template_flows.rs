@@ -804,13 +804,16 @@ mod gate_tests {
         assert!(recs[2]["template"].is_null());
 
         let tail: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
-        let mine: Vec<&String> = tail.iter().filter(|m| m.starts_with("db flow check on")).collect();
+        let mine: Vec<&String> = tail.iter().filter(|m| m.starts_with("db flow check")).collect();
         assert!(mine.len() >= 3, "{tail:?}");
         let mine = &mine[mine.len() - 3..];
+        assert_eq!(mine[0], "db flow check for gate: pms-performance-cycle/setup done");
+        assert_eq!(mine[2], "db flow check for progress: pms-performance-cycle/rules could not run");
         assert!(mine[0].ends_with("pms-performance-cycle/setup done"), "{}", mine[0]);
         assert!(mine[1].ends_with("pms-performance-cycle/rules not done"), "{}", mine[1]);
         assert!(mine[2].ends_with("pms-performance-cycle/rules could not run"), "{}", mine[2]);
         assert!(mine.iter().all(|m| !m.contains("SELECT") && !m.contains("Login failed")), "{mine:?}");
+        assert!(mine.iter().all(|m| !m.contains("fake-server") && !m.contains("fake-db")), "the app log names the server: {mine:?}");
     }
 
     struct Hangs;

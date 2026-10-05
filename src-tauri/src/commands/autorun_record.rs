@@ -6,6 +6,7 @@
 //! supervised browser. NOTHING here calls Azure DevOps.
 
 use crate::autorun::accounts::Account;
+use crate::autorun::lease::Held;
 use crate::autorun::nav::{self, ModulePath};
 use crate::autorun::recipe::SignInRecipe;
 use crate::autorun::recorder::{self, Captured, Ended};
@@ -233,7 +234,9 @@ pub async fn prepare_to_record<D: Driver>(
     recipe: &SignInRecipe,
     who: &Account,
     timing: &Timing,
+    lease: &mut Held,
 ) -> Result<String, String> {
+    lease.hold(root, &who.key).await?;
     let signed = signin::sign_in(d, root, recipe, who, timing).await;
     if !signed.ok {
         crate::applog::warn(format!(
@@ -344,15 +347,20 @@ async fn check_in_fresh_browser(
     cancelled: &'static str,
 ) -> Result<String, String> {
     let (recipe, who) = signin::prepare(root, organization, project, account)?;
+    // The account first: one something else holds is refused before any
+    // browser opens. Held until the check's browser is closed.
+    let mut lease = Held::setup();
+    lease.hold(root, &who.key).await?;
     let (mut cdp, browser) = open_browser(which, false).await?;
     let out = unless_cancelled(
-        nav::check_path(&mut cdp, root, &recipe, &who, path, &super::autorun_replay::replay_timing(false)),
+        nav::check_path(&mut cdp, root, &recipe, &who, path, &super::autorun_replay::replay_timing(false), &mut lease),
         cancelled,
     )
     .await;
     drop(cdp);
     // `Owned`: the check's browser is killed here whichever way it ended.
     drop(browser);
+    drop(lease);
     out
 }
 
@@ -381,9 +389,13 @@ pub async fn auto_run_record_start(
     // recorded and checked a path that could never be saved.
     nav::check_area_free(&nav::load_nav(&root, &organization, &project)?, &area, &module)?;
     let (recipe, who) = signin::prepare(&root, &organization, &project, &account)?;
+    // The account first: one something else holds is refused before any
+    // browser opens. Held until the recording browser is closed.
+    let mut lease = Held::setup();
+    lease.hold(&root, &who.key).await?;
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
-    let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default()).await?;
+    let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default(), &mut lease).await?;
 
     let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
@@ -394,6 +406,7 @@ pub async fn auto_run_record_start(
             .await;
             drop(cdp);
             drop(browser);
+            drop(lease);
             out
         })
     })

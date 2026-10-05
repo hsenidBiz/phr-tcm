@@ -50,6 +50,7 @@ fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
         duration_ms: Some(900),
         account: None,
         retried: None,
+        notice: None,
     }
 }
 

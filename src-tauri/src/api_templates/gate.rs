@@ -72,7 +72,8 @@ pub enum StageState {
 
 /// Why a check is being run - recorded with it.
 pub struct CheckFor<'a> {
-    /// `"gate"`, `"prove"`, `"progress"` or `"save"`.
+    /// `"gate"`, `"prove"`, `"progress"`, `"save"` or `"precondition"`
+    /// (an Auto Run case's, checked before its sign-in).
     pub purpose: &'static str,
     pub template: Option<&'a str>,
 }
@@ -138,14 +139,22 @@ pub async fn stage_state_within<D: StageDb>(
     }
     activity_log::record(Kind::Db, entry);
 
-    // No SQL here, and no error text: the activity log has both.
+    // No SQL, no error text and no server here: the activity log has all
+    // three. The app log ships in a bug report, so it says only which
+    // stage was asked, why, and what came back.
     let said = match state {
         StageState::Done => "done",
         StageState::NotDone => "not done",
         StageState::CouldNotRun => "could not run",
     };
-    crate::applog::info(format!("db flow check on {label}: {}/{} {said}", flow.id, stage.id));
+    crate::applog::info(format!("db flow check for {}: {}/{} {said}", why.purpose, flow.id, stage.id));
     state
+}
+
+/// What a person is told when a stage's check could not run. No SQL and no
+/// error text: both are in the activity log, which this points at.
+pub fn could_not_run(stage: &Stage) -> String {
+    format!("the check for {} could not be run - see the activity folder in Settings, Logs", stage.title)
 }
 
 /// The saved templates that perform `stage` of `flow`, in the order given.
@@ -206,10 +215,7 @@ pub async fn gate<D: StageDb>(
     }
 
     if let Some((s, _)) = states.iter().find(|(_, st)| *st == StageState::CouldNotRun) {
-        return Err(format!(
-            "the check for {} could not be run - see the activity folder in Settings, Logs",
-            s.title
-        ));
+        return Err(could_not_run(s));
     }
 
     let done: HashMap<&str, bool> = states.iter().map(|(s, st)| (s.id.as_str(), *st == StageState::Done)).collect();

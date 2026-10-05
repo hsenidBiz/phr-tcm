@@ -78,11 +78,16 @@ pub struct NavFile {
     pub direct_urls: bool,
     #[serde(default)]
     pub modules: Vec<ModulePath>,
+    /// The project's own save words, beside the built-in ones
+    /// (`browser::save_guard`): a no-save script's browser stops a writing
+    /// request whose path holds any of them. Kept trimmed and lowercased.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub save_words: Vec<String>,
 }
 
 impl Default for NavFile {
     fn default() -> Self {
-        NavFile { direct_urls: true, modules: vec![] }
+        NavFile { direct_urls: true, modules: vec![], save_words: vec![] }
     }
 }
 
@@ -102,6 +107,10 @@ pub struct ModuleView {
 pub struct NavView {
     pub direct_urls: bool,
     pub modules: Vec<ModuleView>,
+    /// The project's own save words, which the Setup tab can remove.
+    pub save_words: Vec<String>,
+    /// The built-in ones, shown beside them and never removable.
+    pub built_in_save_words: Vec<String>,
 }
 
 pub fn view(nav: &NavFile) -> NavView {
@@ -118,6 +127,8 @@ pub fn view(nav: &NavFile) -> NavView {
                 recorded: m.recorded.clone(),
             })
             .collect(),
+        save_words: nav.save_words.clone(),
+        built_in_save_words: crate::browser::save_guard::SAVE_WORDS.iter().map(|w| w.to_string()).collect(),
     }
 }
 
@@ -321,6 +332,17 @@ pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<
     let mut nav = load_nav(root, org, project)?;
     let key = module_key(area);
     nav.modules.retain(|m| module_key(m.name()) != key);
+    save_nav(root, org, project, &nav)?;
+    Ok(nav)
+}
+
+/// Replace the project's own save words. Each is checked
+/// (`save_guard::check_words`) before the file is touched, so a refused
+/// list leaves the words already saved exactly as they were.
+pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -> Result<NavFile, String> {
+    let words = crate::browser::save_guard::check_words(words)?;
+    let mut nav = load_nav(root, org, project)?;
+    nav.save_words = words;
     save_nav(root, org, project, &nav)?;
     Ok(nav)
 }
@@ -631,7 +653,7 @@ pub async fn go_to_module<D: Driver>(
                 harness: false,
             });
         }
-        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
     }
 }
 
@@ -784,13 +806,16 @@ pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> 
 }
 
 /// The project's rules for a script, against its own file: no address
-/// while the switch is off (`check_no_addresses`), and only recorded areas
-/// (`check_areas`). The one call every save path makes (the Script editor,
-/// a JSON import, the assistant's `save_autorun_script`).
+/// while the switch is off (`check_no_addresses`), only recorded areas
+/// (`check_areas`), and preconditions that name a flow, a stage and a
+/// value the project has (`preconditions::check_saved`). The one call every
+/// save path makes (the Script editor, a JSON import, the assistant's
+/// `save_autorun_script`, a repair included).
 pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
     let nav = load_nav(root, org, project)?;
     check_no_addresses(&nav, scripts)?;
-    check_areas(&nav, scripts)
+    check_areas(&nav, scripts)?;
+    super::preconditions::check_saved(root, org, project, scripts)
 }
 
 /// What an assistant's guide gains for this project: the module-screen
@@ -846,6 +871,10 @@ pub const SIGN_IN_FAILED: &str =
 /// in as `account` in a fresh browser, go home, click each click, and land
 /// on `arrived`. Ok carries the path reached; Err is the dialog's sentence.
 ///
+/// The sign-in is cleared with `lease` first (`Held::hold`): an account
+/// something else holds is refused at once, with the sentence that says
+/// who. The caller keeps `lease` until the check's browser is closed.
+///
 /// A failed sign-in's own words can name the application's address (a
 /// navigate that would not load says which), and the dialog names none: the
 /// person gets one of two fixed sentences, chosen by whether the browser or
@@ -857,7 +886,9 @@ pub async fn check_path<D: Driver>(
     account: &Account,
     path: &ModulePath,
     timing: &Timing,
+    lease: &mut super::lease::Held,
 ) -> Result<String, String> {
+    lease.hold(root, &account.key).await?;
     let signed = super::signin::sign_in(d, root, recipe, account, timing).await;
     if !signed.ok {
         // `sign_in` already hides the password in its detail; hiding it

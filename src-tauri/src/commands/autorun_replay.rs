@@ -146,6 +146,8 @@ impl Drop for RealBrowsers {
 /// script to its own); it must be a key in the Accounts list, or the run
 /// does not start. `retry_transient` runs a case whose failure looked
 /// transient once more, in a fresh browser (`autorun::transient`).
+/// `db_read_access` is the AI Bridge tab's Database Read Access switch:
+/// while it is off no precondition is checked (`autorun::preconditions`).
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -159,6 +161,7 @@ pub async fn auto_run_replay(
     browser_name: String,
     watch: bool,
     retry_transient: bool,
+    db_read_access: bool,
 ) -> Result<LocalRun, String> {
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
@@ -189,8 +192,17 @@ pub async fn auto_run_replay(
         .collect();
     let timing = replay_timing(watch);
     let mut browsers = RealBrowsers::new(Browser::from_name(&browser_name), watch);
+    // Where the cases' preconditions are asked: nowhere while Database
+    // Read Access is off, otherwise the active environment's database,
+    // resolved once for the run. A case without preconditions never looks
+    // at it, so one that is not set up stops no other case.
+    let precondition_db = {
+        use tauri::Manager;
+        let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+        crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
+    };
 
-    let outcome = replay::run_cases(
+    let outcome = replay::run_cases_checked(
         &mut browsers,
         &root,
         &organization,
@@ -201,6 +213,7 @@ pub async fn auto_run_replay(
         retry_transient,
         &timing,
         &CANCEL,
+        &precondition_db,
         &mut |p: ReplayProgress| {
             let _ = p.emit(&app);
         },

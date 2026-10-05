@@ -564,7 +564,7 @@ async fn point_and_pause<D: Driver>(
 ) -> Result<(), CdpError> {
     page::call_value(d, &ready.handle, HIGHLIGHT_JS, &[]).await?;
     if timing.highlight_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(timing.highlight_ms)).await;
+        d.idle(Duration::from_millis(timing.highlight_ms)).await;
     }
     Ok(())
 }
@@ -703,7 +703,7 @@ async fn keep_waiting<D: Driver>(
         if Instant::now() >= deadline {
             return if looked { gave_up(&frame) } else { harness_timeout(u64::from(timeout_ms), &target.describe()) };
         }
-        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
     }
 }
 
@@ -1010,7 +1010,7 @@ async fn keep_finding<D: Driver>(
                 harness_timeout(timing.action_ms, &target.describe())
             });
         }
-        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
     }
 }
 

@@ -10,6 +10,7 @@
 
 use super::autorun_record::{claim_the_recorder, open_browser, take_cancel_pending, unless_cancelled, RecorderClaim};
 use crate::autorun::accounts::{find_account, Account};
+use crate::autorun::lease::Held;
 use crate::autorun::recipe::{check_start_url, load_recipe, save_recipe, SignInRecipe};
 use crate::autorun::recorder::{self, Ended};
 use crate::autorun::signin::{redact, sign_in_fresh};
@@ -156,14 +157,19 @@ pub async fn listen<D: Driver>(
 }
 
 /// Sign in as `who` with the recorded recipe, through its own steps only.
-/// `Err` is the dialog's sentence; the full words go to the log.
+/// `Err` is the dialog's sentence; the full words go to the log. The
+/// sign-in is cleared with `lease` first (`Held::hold`): an account
+/// something else holds is refused at once. The caller keeps `lease` until
+/// the check's browser is closed.
 pub async fn check_sign_in<D: Driver>(
     d: &mut D,
     root: &Path,
     recipe: &SignInRecipe,
     who: &Account,
     timing: &Timing,
+    lease: &mut Held,
 ) -> Result<(), String> {
+    lease.hold(root, &who.key).await?;
     let out = sign_in_fresh(d, root, recipe, who, timing).await;
     if out.ok {
         return Ok(());
@@ -359,11 +365,17 @@ where
     rec::check_marker_for(&recipe.signed_in, &who)?;
     drop_a_finished_recording().await;
     let _claim = claim_the_recorder().await?;
+    // The account first: one something else holds is refused before any
+    // browser opens. Held until the check's browser is closed.
+    let mut lease = Held::setup();
+    lease.hold(root, &who.key).await?;
     let (mut page, browser) = open().await?;
-    let out = unless_cancelled(check_sign_in(&mut page, root, &recipe, &who, timing), CHECK_CANCELLED).await;
+    let out =
+        unless_cancelled(check_sign_in(&mut page, root, &recipe, &who, timing, &mut lease), CHECK_CANCELLED).await;
     drop(page);
     // The check's browser is closed here whichever way it ended.
     drop(browser);
+    drop(lease);
     if let Err(why) = out {
         crate::applog::info(format!("Auto-run recorded sign-in not saved: {}", redact(&why, &who)));
         return Err(why);

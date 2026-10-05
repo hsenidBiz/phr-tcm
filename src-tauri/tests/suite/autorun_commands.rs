@@ -246,7 +246,7 @@ fn with_navigate(case_id: i32) -> serde_json::Value {
 fn with_addresses_switched_off_the_editor_and_an_import_refuse_a_navigate_and_write_nothing() {
     let dir = TempDir::new();
     let root = dir.path().join("data");
-    save_nav(&root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    save_nav(&root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
     let script: CaseScript = serde_json::from_value(with_navigate(7)).unwrap();
 
     let err = save_script_from_editor(&root, "acme", "Web", script.clone()).unwrap_err();
