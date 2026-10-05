@@ -436,9 +436,77 @@ fn a_fixture_that_performs_every_stage_in_order_is_accepted() {
         step("flow-publish", &[("cycleId", "{{ steps.1.cycleId }}")]),
     ]);
     validate(&f, &flow_lookup, &flows).unwrap();
-    // A template on no flow is unaffected, and so is one whose flow is not saved.
+    // A template on no flow is unaffected.
     validate(&fixture(), &flow_lookup, &flows).unwrap();
-    validate(&f, &flow_lookup, &no_flow).unwrap();
+}
+
+/// Every stage acts on the one record the flow's creating step made: here
+/// step 4 approves record A while steps 2 and 3 made and submitted B.
+#[test]
+fn stages_acting_on_two_records_are_refused() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} A")]),
+        step("flow-setup", &[("cycleName", "{{prefix}} B")]),
+        step("flow-rules", &[("cycleId", "{{steps.2.cycleId}}")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    let p = flow_problems(&f);
+    let sentence = |n: usize, id: &str, title: &str| {
+        format!("step {n}: template {id} performs {title} of flow Performance cycle wizard, so its cycleId must be one {{{{steps.<m>.<output>}}}} of an earlier step on that flow")
+    };
+    assert_eq!(p, vec![sentence(3, "flow-rules", "Evaluation rules"), sentence(4, "flow-publish", "Publish")]);
+}
+
+/// A subject that is another output of the creating step is not the record.
+#[test]
+fn a_subject_that_is_not_the_records_output_is_refused() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} A")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleName}}")]),
+    ]);
+    assert_eq!(
+        flow_problems(&f),
+        vec!["step 2: template flow-rules performs Evaluation rules of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow"]
+    );
+}
+
+/// A one-record chain with a step on no flow between its stages.
+#[test]
+fn a_one_record_chain_is_accepted() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} A")]),
+        step("make-cycle", &[("cycleName", "{{steps.1.cycleName}} copy")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleId}}")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    validate(&f, &flow_lookup, &flows).unwrap();
+}
+
+/// A template whose flow, or whose stage, is gone is refused at save.
+#[test]
+fn a_step_on_a_removed_flow_or_stage_is_refused() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} A")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    assert_eq!(
+        validate(&f, &flow_lookup, &no_flow).unwrap_err(),
+        vec![
+            "step 1: template flow-setup belongs to flow cycle-flow, which is no longer saved",
+            "step 2: template flow-rules belongs to flow cycle-flow, which is no longer saved",
+        ]
+    );
+    let without_rules = |id: &str| {
+        flows(id).map(|mut fl| {
+            fl.stages.retain(|s| s.id != "rules");
+            fl.stages.iter_mut().for_each(|s| s.requires.retain(|r| r != "rules"));
+            fl
+        })
+    };
+    assert_eq!(
+        validate(&f, &flow_lookup, &without_rules).unwrap_err(),
+        vec!["step 2: template flow-rules belongs to flow cycle-flow, but stage rules is no longer in flow cycle-flow"]
+    );
 }
 
 #[test]
@@ -759,6 +827,44 @@ mod running {
         let runs = history(&r, "draft-cycle");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].detail, report.failed);
+    }
+
+    /// A flow removed after the fixture was saved: the run refuses the step
+    /// with the save rule's sentence before any browser opens.
+    #[tokio::test]
+    async fn a_flow_removed_after_saving_is_refused_before_any_browser() {
+        let _act = crate::serial::activity_log();
+        let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(json!({
+            "id": "cycle-flow", "title": "Performance cycle wizard", "module": "PMS",
+            "subject": { "name": "cycleId", "type": "number" },
+            "stages": [
+                { "id": "setup", "title": "Cycle setup", "creates": true, "check": "SELECT 1 FROM t WHERE id = {{cycleId}}" },
+                { "id": "rules", "title": "Suites", "requires": ["setup"], "check": "SELECT 1 FROM r WHERE id = {{cycleId}}" }
+            ]
+        }))
+        .unwrap();
+        let on = |mut t: ApiTemplate, stage: &str| {
+            t.stage = Some(v2_lib::api_templates::flow::StageRef { flow: "cycle-flow".into(), id: stage.into() });
+            t
+        };
+        let templates = [on(make_cycle(), "setup"), on(add_suite(), "rules")];
+        let f = Fixture { outputs: BTreeMap::new(), ..fixture() };
+        let r0 = rig(vec![], None);
+        v2_lib::api_templates::flow_store::save(r0.root.path(), ORG, PROJECT, &flow).unwrap();
+        for t in &templates {
+            store::save(r0.root.path(), ORG, PROJECT, t).unwrap();
+        }
+        fixture_store::save(r0.root.path(), ORG, PROJECT, &f).unwrap();
+        let mut r = r0;
+        v2_lib::api_templates::flow_store::remove(r.root.path(), ORG, PROJECT, "cycle-flow").unwrap();
+
+        let report = run(&mut r, &f).await;
+        assert_eq!(
+            report.failed.as_deref(),
+            Some("step 1: template make-cycle belongs to flow cycle-flow, which is no longer saved; step 2: template add-suite belongs to flow cycle-flow, which is no longer saved")
+        );
+        assert_eq!(r.browsers.opened, 0, "nothing was opened");
+        assert_eq!(history(&r, "draft-cycle").len(), 1);
     }
 
     /// Whether the fixture's account lease is free again: one can be taken

@@ -100,24 +100,27 @@ fn is_step_value(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, v
         && comes_from(f, templates, &names[0], f.steps.len())
 }
 
-/// The step (1-based, before `n`) a whole `{{steps.<m>.<capture>}}` value
-/// reads from.
-fn step_of(value: &str, n: usize) -> Option<usize> {
+/// The step (1-based, before `n`) and the capture a whole
+/// `{{steps.<m>.<capture>}}` value reads.
+fn step_ref_of(value: &str, n: usize) -> Option<(usize, String)> {
     let v = value.trim();
     let names = exec::placeholders(v);
     if names.len() != 1 || !v.starts_with("{{") || !v.ends_with("}}") || v.matches("{{").count() != 1 {
         return None;
     }
-    steps_ref(&names[0]).map(|(m, _)| m).filter(|m| *m >= 1 && *m < n)
+    steps_ref(&names[0]).filter(|(m, _)| *m >= 1 && *m < n).map(|(m, c)| (m, c.to_string()))
 }
 
-/// A step whose template performs a stage of a flow that is not the
-/// creating stage: with no database to ask, the fixture must perform the
-/// flow's earlier stages itself. Its subject must be one value captured by
-/// an earlier step on the same flow, and every stage the gate would ask
-/// about (`flow::required_before`) must be performed by an earlier step.
-/// A template on no flow, or on a flow that is not saved (the run refuses
-/// that template itself), is not this rule's.
+/// A step whose template performs a stage of a flow. Its flow must still
+/// be saved with that stage in it. For a stage that is not the creating
+/// stage: with no database to ask, the fixture must perform the flow's
+/// earlier stages itself - every stage the gate would ask about
+/// (`flow::required_before`) performed by an earlier step - and every stage
+/// must act on the one record the flow's creating step made. So its
+/// subject (the flow's `subject.name`, which the creating stage's template
+/// captures and outputs, `check_stage_ref`) is exactly
+/// `{{steps.<m>.<subject>}}` with step m that creating step, and every
+/// earlier step on the flow is step m itself or takes that same value.
 fn flow_problems(
     f: &Fixture,
     n: usize,
@@ -126,9 +129,17 @@ fn flow_problems(
     flows: &dyn Fn(&str) -> Option<Flow>,
 ) -> Vec<String> {
     let Some(r) = &t.stage else { return vec![] };
-    let Some(flow) = flows(&r.flow) else { return vec![] };
-    let Some(stage) = flow.stages.iter().find(|s| s.id == r.id) else { return vec![] };
-    if creating_stage(&flow).is_some_and(|s| s.id == stage.id) {
+    let Some(flow) = flows(&r.flow) else {
+        return vec![format!("step {n}: template {} belongs to flow {}, which is no longer saved", t.id, r.flow)];
+    };
+    let Some(stage) = flow.stages.iter().find(|s| s.id == r.id) else {
+        return vec![format!(
+            "step {n}: template {} belongs to flow {}, but stage {} is no longer in flow {}",
+            t.id, r.flow, r.id, r.flow
+        )];
+    };
+    let creating = creating_stage(&flow).map(|s| s.id.clone());
+    if creating.as_deref() == Some(stage.id.as_str()) {
         return vec![];
     }
     // The stages the earlier steps perform on this flow, by step.
@@ -153,12 +164,15 @@ fn flow_problems(
         ));
     }
     let subject = &flow.subject.name;
-    let from_the_flow = f.steps[n - 1]
-        .params
-        .get(subject)
-        .and_then(|v| step_of(v, n))
-        .is_some_and(|m| on_flow(m).is_some());
-    if !from_the_flow {
+    let subject_of = |k: usize| f.steps[k - 1].params.get(subject).and_then(|v| step_ref_of(v, k));
+    let creates = |m: usize| creating.is_some() && on_flow(m) == creating;
+    let one_record = match subject_of(n) {
+        Some((m, x)) if &x == subject && creates(m) => (1..n)
+            .filter(|k| on_flow(*k).is_some())
+            .all(|k| k == m || (!creates(k) && subject_of(k) == Some((m, x.clone())))),
+        _ => false,
+    };
+    if !one_record {
         problems.push(format!(
             "step {n}: template {} performs {} of flow {}, so its {subject} must be one {{{{steps.<m>.<output>}}}} of an earlier step on that flow",
             t.id, stage.title, flow.title

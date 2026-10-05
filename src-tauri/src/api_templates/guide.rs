@@ -341,8 +341,10 @@ value stops the run at that step; it is never sent as text.
 
 A fixture performs a flow's stages itself, in order: a step whose template
 performs a later stage of a flow needs earlier steps that perform every
-stage before it, and takes the flow's subject as one
-`{{steps.<m>.<output>}}` of an earlier step on that flow.
+stage before it, and takes the flow's subject as
+`{{steps.<m>.<subject>}}`, step m being the step that performs the flow's
+creating stage - so every stage acts on the one record that step made. A
+step whose flow, or whose stage, is no longer saved is refused.
 
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even
