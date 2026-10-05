@@ -9,6 +9,7 @@ import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconConfirm, IconUndo } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import { logUi } from "../../lib/uiLog";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "../ManageCases/CaseOrderList";
 import { fetchPlan, resetLines } from "./plan";
@@ -86,7 +87,10 @@ export default function ExecutionOrderDialog({
       await work();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // The raw error can name the profile folder: it goes to the app log,
+      // and the person gets a sentence.
+      logUi(`auto-run: the execution order for PBI ${pbiId} was not saved: ${e instanceof Error ? e.message : String(e)}`);
+      setError("Could not save the order. Try again, or see Settings → Logs.");
       setBusy(false);
     }
   };

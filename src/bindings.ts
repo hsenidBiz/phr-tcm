@@ -494,8 +494,10 @@ export const commands = {
 	 */
 	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds, previewOrder })),
 	/**
-	 *  Save Auto Run's own execution order for a PBI on this machine. Run
-	 *  Tests' order is separate and is not changed.
+	 *  Save Auto Run's own execution order for a PBI on this machine. Only
+	 *  the cases given move: the rest of an order already saved keeps its
+	 *  places (`store::merge_order`). Run Tests' order is separate and is not
+	 *  changed.
 	 */
 	autoRunSaveOrder: (pbiId: number, caseIds: number[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_order", { pbiId, caseIds })),
 	/**
@@ -707,6 +709,18 @@ export const commands = {
 	 *  Refused when that run is not waiting at a reset point.
 	 */
 	autoRunAnswerReset: (runId: string, continueRun: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_answer_reset", { runId, continueRun })),
+	/**
+	 *  The reset point the unattended run is waiting at, if any, as the Reset
+	 *  needed panel shows it. A screen opened after the pause began (the person
+	 *  left Auto Run and came back) asks this to show the panel again.
+	 */
+	autoRunWaitingReset: () => __TAURI_INVOKE<{
+	run_id: string,
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
+	remaining: number[],
+} | null>("auto_run_waiting_reset"),
 	/**
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.

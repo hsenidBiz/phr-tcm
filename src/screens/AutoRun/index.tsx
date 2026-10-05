@@ -17,7 +17,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { commands, type PbiHit, type PlanView } from "../../bindings";
+import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -51,6 +51,7 @@ import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
+import ResetNeededPanel from "./ResetNeededPanel";
 import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
@@ -395,6 +396,45 @@ export default function AutoRun({
   const [replayPlan, setReplayPlan] = useState<PlanView | null>(null);
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
+  /** An unattended run paused at a reset point while its own dialog is not
+   * open: the person left Auto Run (a shortcut or the palette navigates
+   * even over a dialog) and came back, or the pause came while away. The
+   * run waits with no time limit, so it is found again here. */
+  const [waitingReset, setWaitingReset] = useState<AutorunResetNeeded | null>(null);
+  const [answeringReset, setAnsweringReset] = useState(false);
+  useEffect(() => {
+    // The run's own dialog shows the panel while it is open.
+    if (replaying != null) {
+      setWaitingReset(null);
+      return;
+    }
+    let live = true;
+    commands
+      .autoRunWaitingReset()
+      .then((r) => {
+        if (live && r) setWaitingReset(r);
+      })
+      .catch(() => {});
+    const un = events.autorunResetNeeded.listen((e) => {
+      if (live) setWaitingReset(e.payload);
+    });
+    return () => {
+      live = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [replaying]);
+  const answerWaitingReset = async (continueRun: boolean) => {
+    if (!waitingReset) return;
+    setAnsweringReset(true);
+    try {
+      const r = await commands.autoRunAnswerReset(waitingReset.run_id, continueRun);
+      if (r.status === "error") logUi(`auto-run: the reset answer was refused: ${r.error}`);
+    } catch (e) {
+      logUi(`auto-run: the reset answer failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setWaitingReset(null);
+    setAnsweringReset(false);
+  };
   /** The Execution order dialog, with the cases it orders. */
   const [orderingOpen, setOrderingOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
@@ -1307,6 +1347,20 @@ export default function AutoRun({
             />
           );
         })()}
+
+      {waitingReset && replaying == null && (
+        // Only Continue or Stop ends the pause: the run waits for one.
+        <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-lg p-4">
+          <ResetNeededPanel
+            reset={waitingReset}
+            remaining={waitingReset.remaining}
+            titleOf={(id) => rows.find((c) => c.id === id)?.title}
+            busy={answeringReset}
+            onContinue={() => void answerWaitingReset(true)}
+            onStop={() => void answerWaitingReset(false)}
+          />
+        </Modal>
+      )}
 
       {replaying != null &&
         (() => {

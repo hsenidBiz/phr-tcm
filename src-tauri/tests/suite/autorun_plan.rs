@@ -217,10 +217,10 @@ fn names_that_differ_in_case_or_spacing_are_one_name_shown_as_first_spelled() {
     assert_eq!(plan.resets, vec![reset(2, &[("Cycle Published", &[1])])]);
 }
 
-/// The spelling shown comes from list order, so a saved order and the
-/// suggestion name a reset the same way.
+/// The spelling shown comes from the ids in ascending order, so a saved
+/// order and the suggestion name a reset the same way.
 #[test]
-fn a_saved_order_shows_names_in_the_first_spelling_in_list_order() {
+fn a_saved_order_shows_names_in_the_first_spelling_by_ascending_id() {
     let cases = vec![
         (1, m(&[], &["cycle published"])),
         (2, m(&["Cycle Published"], &[])),
@@ -231,6 +231,19 @@ fn a_saved_order_shows_names_in_the_first_spelling_in_list_order() {
     assert_eq!(counts, Some((1, 0)));
     // Walking that order alone would show the changer's spelling.
     assert_eq!(phases(&[2, 3, 1], &map(&cases)).resets[0].names, vec!["Cycle Published".to_string()]);
+}
+
+/// The run dialog, the pause, the record and the report may each be sent
+/// the cases in a different order: a name is spelled the same whichever.
+#[test]
+fn a_names_spelling_does_not_depend_on_the_order_the_ids_arrive_in() {
+    // N (7) needs "Cycle published"; C (3) changes "cycle published".
+    let needer = (7, m(&[], &["Cycle published"]));
+    let changer = (3, m(&["cycle published"], &[]));
+    let one = plan_for(&[needer.clone(), changer.clone()], Some(&[3, 7])).0;
+    let other = plan_for(&[changer, needer], Some(&[3, 7])).0;
+    assert_eq!(one.resets, vec![reset(7, &[("cycle published", &[3])])]);
+    assert_eq!(other.resets, one.resets);
 }
 
 /// A case with no entry in the marks has none.
@@ -416,4 +429,53 @@ fn a_preview_order_is_planned_without_being_saved() {
     assert_eq!(view.order, vec![1, 2, 3]);
     assert_eq!(view.counts, Some((1, 0)));
     assert_eq!(std::fs::read(orders.join("100.json")).unwrap(), before);
+}
+
+// ------------------------------------------------------------ saving from the dialog
+
+/// The dialog may order only the cases ticked now: they take the places
+/// they held in the saved order, and every other case keeps its own.
+#[test]
+fn saving_part_of_the_order_keeps_the_rest_where_it_was() {
+    assert_eq!(store::merge_order(&[1, 2, 3, 4, 5], &[4, 2]), vec![1, 4, 3, 2, 5]);
+    assert_eq!(store::merge_order(&[1, 2, 3], &[3, 2, 1]), vec![3, 2, 1]);
+    let dir = tempfile::tempdir().unwrap();
+    store::save_order(dir.path(), 100, &[1, 2, 3, 4, 5]).unwrap();
+    store::save_order_merged(dir.path(), 100, &[5, 1]).unwrap();
+    assert_eq!(store::load_order(dir.path(), 100), Some(vec![5, 2, 3, 4, 1]));
+}
+
+/// Cases the saved order never had go at the end, in the order given.
+#[test]
+fn cases_new_to_the_saved_order_go_at_the_end() {
+    assert_eq!(store::merge_order(&[1, 2, 3], &[9, 3, 1, 8]), vec![3, 2, 1, 9, 8]);
+    let dir = tempfile::tempdir().unwrap();
+    store::save_order(dir.path(), 100, &[1, 2, 3]).unwrap();
+    store::save_order_merged(dir.path(), 100, &[7, 2]).unwrap();
+    assert_eq!(store::load_order(dir.path(), 100), Some(vec![1, 2, 3, 7]));
+}
+
+/// With no saved order, what the dialog sends is the order.
+#[test]
+fn with_no_saved_order_the_dialogs_order_is_saved_as_given() {
+    let dir = tempfile::tempdir().unwrap();
+    store::save_order_merged(dir.path(), 100, &[3, 1, 2]).unwrap();
+    assert_eq!(store::load_order(dir.path(), 100), Some(vec![3, 1, 2]));
+}
+
+/// A failed save or clear says so without the profile folder's path: that
+/// goes to the log.
+#[test]
+fn an_order_that_cannot_be_written_or_removed_is_said_without_its_path() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the order file should be cannot be removed as a file.
+    std::fs::create_dir_all(dir.path().join("orders").join("100.json")).unwrap();
+    assert_eq!(store::clear_order(dir.path(), 100), Err(store::ORDER_NOT_CLEARED.to_string()));
+    // A file where the orders folder should be stops a save.
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(other.path().join("orders"), "x").unwrap();
+    let err = store::save_order(other.path(), 100, &[1]).unwrap_err();
+    assert_eq!(err, store::ORDER_NOT_SAVED);
+    let root = other.path().to_string_lossy().to_string();
+    assert!(!err.contains(&root));
 }

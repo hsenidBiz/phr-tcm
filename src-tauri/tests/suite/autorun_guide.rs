@@ -652,6 +652,8 @@ fn the_guide_teaches_marking_shared_state() {
         "When you save a script that has marks, send its marks back as they are, or the person's marks are lost.",
         "`set_autorun_order`",
         "does not change Run Tests' order.",
+        "Without a saved order, Auto Run already works out a suggested order from the marks.",
+        "A saved order replaces the suggestion for every later run until the person picks Use suggested order, so set one only when a particular order is wanted.",
     ] {
         assert!(flat.contains(term), "the marks section never says {term:?}\n{flat}");
     }

@@ -723,12 +723,16 @@ pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_or
     }
 }
 
-/// Save Auto Run's own execution order for a PBI on this machine. Run
-/// Tests' order is separate and is not changed.
+/// Save Auto Run's own execution order for a PBI on this machine. Only
+/// the cases given move: the rest of an order already saved keeps its
+/// places (`store::merge_order`). Run Tests' order is separate and is not
+/// changed.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_order(app: tauri::AppHandle, pbi_id: i32, case_ids: Vec<i32>) -> Result<(), String> {
-    store::save_order(&root(&app)?, pbi_id, &case_ids)
+    // The dialog may order only the cases ticked now: the rest of the saved
+    // order is kept.
+    store::save_order_merged(&root(&app)?, pbi_id, &case_ids)
 }
 
 /// "Use suggested order": forget the PBI's own order, so the suggested

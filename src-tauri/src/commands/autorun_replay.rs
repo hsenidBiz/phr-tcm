@@ -287,6 +287,15 @@ pub fn auto_run_answer_reset(run_id: String, continue_run: bool) -> Result<(), S
     reset_wait::waits().answer(&run_id, continue_run)
 }
 
+/// The reset point the unattended run is waiting at, if any, as the Reset
+/// needed panel shows it. A screen opened after the pause began (the person
+/// left Auto Run and came back) asks this to show the panel again.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_waiting_reset() -> Option<crate::events::AutorunResetNeeded> {
+    reset_wait::waits().waiting()
+}
+
 /// How long the app's exit waits for a run stopped at a reset point to
 /// save itself.
 const EXIT_SAVE_WAIT: Duration = Duration::from_secs(3);

@@ -25,6 +25,9 @@ const STOP_POLL: Duration = Duration::from_millis(50);
 
 struct Pending {
     run_id: String,
+    /// What the panel shows, kept so a screen opened after the event was
+    /// sent can find the pause again (`waiting`).
+    needed: AutorunResetNeeded,
     answer: oneshot::Sender<bool>,
 }
 
@@ -90,10 +93,10 @@ impl ResetWaits {
     /// answer reaches it, even before anything awaits it. One run goes at a
     /// time, so anything already here belongs to a run that is gone: it is
     /// replaced, and its wait reads that as Stop.
-    pub fn begin(&self, run_id: &str) -> Waiting<'_> {
+    pub fn begin(&self, run_id: &str, needed: AutorunResetNeeded) -> Waiting<'_> {
         let (tx, rx) = oneshot::channel();
         if let Ok(mut slot) = self.pending.lock() {
-            *slot = Some(Pending { run_id: run_id.to_string(), answer: tx });
+            *slot = Some(Pending { run_id: run_id.to_string(), needed, answer: tx });
         }
         // A poisoned lock drops `tx` here, and the wait reads Stop.
         Waiting { answer: rx, _ending: Ending { waits: self, run_id: run_id.to_string() } }
@@ -102,8 +105,9 @@ impl ResetWaits {
     /// Wait for the answer to run `run_id`'s reset: `true` is Continue,
     /// `false` is Stop. The run's own Stop (`cancel`) answers Stop, and so
     /// does `stop_for_exit`. No time limit.
-    pub async fn wait(&self, run_id: &str, cancel: &AtomicBool) -> bool {
-        self.begin(run_id).answered(cancel).await
+    pub async fn wait(&self, needed: AutorunResetNeeded, cancel: &AtomicBool) -> bool {
+        let run_id = needed.run_id.clone();
+        self.begin(&run_id, needed).answered(cancel).await
     }
 
     /// The person's answer for run `run_id`. Refused with `NOT_WAITING` for
@@ -120,9 +124,10 @@ impl ResetWaits {
         pending.answer.send(continue_run).map_err(|_| NOT_WAITING.to_string())
     }
 
-    /// The run waiting at a reset point right now, if any.
-    pub fn waiting(&self) -> Option<String> {
-        self.pending.lock().ok().and_then(|s| s.as_ref().map(|p| p.run_id.clone()))
+    /// The reset point a run is waiting at right now, as the panel shows
+    /// it, if any.
+    pub fn waiting(&self) -> Option<AutorunResetNeeded> {
+        self.pending.lock().ok().and_then(|s| s.as_ref().map(|p| p.needed.clone()))
     }
 
     /// The app is closing: a run waiting at a reset point is answered Stop,
@@ -166,7 +171,7 @@ impl ResetGate for AppGate<'_> {
             remaining: remaining.to_vec(),
         };
         // In place before the panel shows, so its answer always lands.
-        let waiting = self.waits.begin(&self.run_id);
+        let waiting = self.waits.begin(&self.run_id, needed.clone());
         (self.notify)(&needed);
         waiting.answered(cancel).await
     }

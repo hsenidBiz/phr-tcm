@@ -144,3 +144,23 @@ test("a case whose title is unknown falls back to its number alone", async () =>
   mount({ ...PLAN, resets: [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [99]]] }] });
   expect(await screen.findByText('Reset: revert "Cycle" (changed by #99)')).toBeInTheDocument();
 });
+
+test("a save that fails shows a sentence, never the raw error with its path", async () => {
+  const logged: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_plan") return { ...PLAN, saved: true };
+    if (cmd === "log_ui") {
+      logged.push((args as { message: string }).message);
+      return null;
+    }
+    if (cmd === "auto_run_clear_order") throw "could not remove C:/Users/someone/AppData/orders/42.json: denied";
+    return null;
+  });
+  const onClose = vi.fn();
+  render(<ExecutionOrderDialog org="acme" project="Web" pbiId={42} cases={CASES} onClose={onClose} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use suggested order" }));
+  expect(await screen.findByText("Could not save the order. Try again, or see Settings → Logs.")).toBeInTheDocument();
+  expect(screen.queryByText(/AppData/)).not.toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
+  await waitFor(() => expect(logged.some((m) => m.includes("42.json"))).toBe(true));
+});

@@ -5,7 +5,7 @@
 //! again from the same inputs, so the two always agree.
 //!
 //! Names compare by `marks::normalise`. The spelling shown for a name is
-//! the first one seen in list order, trimmed.
+//! the first one seen walking the selected ids in ascending order, trimmed.
 
 use super::marks::normalise;
 use super::CaseScript;
@@ -158,7 +158,7 @@ fn reaches(after: &[Vec<usize>], from: usize, to: usize) -> bool {
 /// missing from `marks` has none.
 ///
 /// A name is shown in the first spelling seen walking `order`; `plan_for`
-/// shows the first spelling in list order instead.
+/// shows the first spelling walking the ids in ascending order instead.
 pub fn phases(order: &[i32], marks: &HashMap<i32, Marks>) -> Plan {
     phases_spelled(order, marks, &spellings(order, marks))
 }
@@ -226,10 +226,13 @@ fn phases_spelled(order: &[i32], marks: &HashMap<i32, Marks>, shown: &HashMap<St
 pub fn plan_for(selected_in_list_order: &[(i32, Marks)], saved: Option<&[i32]>) -> (Plan, Option<(usize, usize)>) {
     let cases = first_of_each(selected_in_list_order);
     let marks: HashMap<i32, Marks> = cases.iter().map(|(id, m)| (*id, (*m).clone())).collect();
-    // Spelled from list order, so a saved order and the suggestion show a
-    // name the same way.
-    let list: Vec<i32> = cases.iter().map(|(id, _)| *id).collect();
-    let shown = spellings(&list, &marks);
+    // Spelled from the ids in ascending order, so a saved order and the
+    // suggestion show a name the same way, and so does every caller - the
+    // run dialog, the run itself, its record and its report - whatever
+    // order the ids arrive in.
+    let mut ascending: Vec<i32> = cases.iter().map(|(id, _)| *id).collect();
+    ascending.sort_unstable();
+    let shown = spellings(&ascending, &marks);
     let suggested = phases_spelled(&suggest(selected_in_list_order), &marks, &shown);
     let Some(saved) = saved else {
         return (suggested, None);

@@ -579,7 +579,10 @@ marks are lost.
 
 `set_autorun_order` sets the order Auto Run runs a PBI's cases in, with
 each case that needs a name unchanged before the cases that change it, and
-does not change Run Tests' order.
+does not change Run Tests' order. Without a saved order, Auto Run already
+works out a suggested order from the marks. A saved order replaces the
+suggestion for every later run until the person picks Use suggested order,
+so set one only when a particular order is wanted.
 
 ## Every expected result is checked
 

@@ -218,11 +218,11 @@ fn app_gate<'a>(
     AppGate { waits, run_id: run_id.to_string(), notify }
 }
 
-/// Wait until a reset is waiting in `waits`.
+/// Wait until a reset is waiting in `waits`; its run's id.
 async fn until_waiting(waits: &ResetWaits) -> String {
     for _ in 0..400 {
-        if let Some(id) = waits.waiting() {
-            return id;
+        if let Some(needed) = waits.waiting() {
+            return needed.run_id;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -432,4 +432,28 @@ fn the_run_plans_again_from_the_scripts_and_its_order_wins_over_the_order_sent()
     assert_eq!(list.iter().map(|c| c.case_id).collect::<Vec<_>>(), vec![30, 20, 10]);
     assert_eq!(resets.len(), 1);
     assert_eq!(resets[0].before_case_id, 10);
+}
+
+#[tokio::test]
+async fn waiting_gives_the_panels_payload_until_the_pause_is_answered() {
+    let waits = ResetWaits::new();
+    assert_eq!(waits.waiting(), None);
+    let needed = AutorunResetNeeded {
+        run_id: "run-w".into(),
+        before_case_id: 2,
+        names: vec!["cycle published".into()],
+        changed_by: vec![("cycle published".into(), vec![1])],
+        remaining: vec![2, 3],
+    };
+    let cancel = AtomicBool::new(false);
+    let answer = async {
+        // A screen that comes back finds the pause, with all it showed.
+        until_waiting(&waits).await;
+        assert_eq!(waits.waiting(), Some(needed.clone()));
+        waits.answer("run-w", false).unwrap();
+        assert_eq!(waits.waiting(), None, "nothing waits once it is answered");
+    };
+    let (go_on, ()) = tokio::join!(waits.wait(needed.clone(), &cancel), answer);
+    assert!(!go_on);
+    assert_eq!(waits.waiting(), None);
 }

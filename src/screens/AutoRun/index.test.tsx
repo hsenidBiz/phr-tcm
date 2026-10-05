@@ -1270,3 +1270,78 @@ test("Replay in the review closes the review and shows the pane replaying", asyn
   );
   await waitFor(() => expect(replays).toHaveLength(1));
 });
+
+/** A run paused before case 2 to put "cycle published" back. */
+const WAITING = {
+  run_id: "run-7",
+  before_case_id: 2,
+  names: ["cycle published"],
+  changed_by: [["cycle published", [1]]],
+  remaining: [2, 9],
+};
+
+/** The screen's own answers, plus a run waiting at a reset point when
+ * `waiting` says so. Answers to the pause go to `answers`. */
+function mockWaiting(waiting: { current: unknown }, answers: { runId: string; continueRun: boolean }[]) {
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "pbi_test_cases_full") return [caseRow(1, "Publish the cycle"), caseRow(2, "Edit a draft cycle")];
+      if (cmd === "auto_run_list_runs") return [];
+      if (cmd === "auto_run_list_accounts") return [];
+      if (cmd === "auto_run_waiting_reset") return waiting.current;
+      if (cmd === "auto_run_answer_reset") {
+        answers.push(args as { runId: string; continueRun: boolean });
+        waiting.current = null;
+        return null;
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+}
+
+test("coming back to Auto Run finds a run paused at a reset point, and Continue answers it", async () => {
+  const waiting = { current: WAITING as unknown };
+  const answers: { runId: string; continueRun: boolean }[] = [];
+  mockWaiting(waiting, answers);
+  const first = renderScreen();
+  await screen.findByRole("region", { name: "Reset needed" });
+  // The person leaves Auto Run and comes back: the pause is found again.
+  first.unmount();
+  renderScreen();
+  const panel = await screen.findByRole("region", { name: "Reset needed" });
+  expect(
+    within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
+  ).toBeInTheDocument();
+  // A case the list does not show falls back to its id.
+  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "#2 Edit a draft cycle",
+    "#9",
+  ]);
+  fireEvent.click(within(panel).getByRole("button", { name: "Continue after reset" }));
+  await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: true }]));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+});
+
+test("Stop on a paused run found again answers Stop", async () => {
+  const answers: { runId: string; continueRun: boolean }[] = [];
+  mockWaiting({ current: WAITING }, answers);
+  renderScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this reset" }));
+  await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: false }]));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+});
+
+test("a pause that comes while the run's own dialog is closed shows the panel", async () => {
+  mockWaiting({ current: null }, []);
+  renderScreen();
+  await screen.findByText("Publish the cycle");
+  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-reset-needed", WAITING);
+  });
+  expect(await screen.findByRole("region", { name: "Reset needed" })).toBeInTheDocument();
+});

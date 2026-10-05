@@ -233,6 +233,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_replay::auto_run_replay,
             autorun_replay::auto_run_replay_cancel,
             autorun_replay::auto_run_answer_reset,
+            autorun_replay::auto_run_waiting_reset,
             autorun_record::auto_run_record_start,
             autorun_record::auto_run_record_stop,
             autorun_record::auto_run_record_cancel,
