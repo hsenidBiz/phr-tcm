@@ -41,7 +41,7 @@ Patterns are extra save words for one project. They are matched as case-insensit
 
 `CaseScript` gains `preconditions: [{ "flow": <flow id>, "stage": <stage id>, "value": <the subject value>, "why"?: <one sentence> }]`. The subject value is the flow's subject, for example the cycle's name or id, as the flow's checks take it.
 
-Before sign-in, the runner (unattended and supervised) runs each precondition's stage check through the flow machinery (`api_templates::gate::stage_state`) against the active environment's database. The app runs these checks itself: they do not need the assistant's Database Read Access switch, but they do need a database chosen.
+Before sign-in, the runner (unattended and supervised) runs each precondition's stage check through the flow machinery (`api_templates::gate::stage_state`) against the active environment's database. They follow the Database Read Access switch on the AI Bridge tab (owner decision, 2026-10-05): while it is off, no check is run, the case is not Blocked for it, and the person is told the checks were skipped (see the table). While it is on, they need a database chosen.
 
 | Outcome | Result |
 |---|---|
@@ -49,6 +49,7 @@ Before sign-in, the runner (unattended and supervised) runs each precondition's 
 | A check reports not done | Blocked: `precondition not met: <stage title> for <value> (<flow title>)`, followed by ` - <why>` when the precondition gives one. |
 | A check could not run | Blocked: `precondition could not be checked: <reason>`. The reason uses the gate's existing wording, with no SQL or connection detail. |
 | No database is chosen | Blocked: `preconditions need a database chosen on the AI Bridge tab`. |
+| Database Read Access is off | Not checked, and the case goes on. The case carries the note `preconditions were not checked: Database Read Access is off on the AI Bridge tab`, shown in the supervised pane before step 1, and in the unattended run's record, review and report. |
 
 Saving validates every precondition: the flow and stage must exist, and the value must be present. The refusal sentences name what is missing.
 
