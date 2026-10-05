@@ -60,6 +60,8 @@ mod autorun_record_signin;
 mod autorun_recorder;
 mod autorun_reload_session;
 mod autorun_replay;
+mod autorun_replay_ask;
+mod autorun_replay_to;
 mod autorun_report;
 mod autorun_runner;
 mod autorun_signin;

@@ -165,6 +165,44 @@ pub struct ReplayProgress {
     pub proposed: String,
 }
 
+/// Emitted as the supervised browser replays a case to a step: once before
+/// each step runs, `step` of `of` (the step before the one replayed to).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayProgress {
+    pub case_id: i32,
+    pub step: i32,
+    pub of: i32,
+}
+
+/// Emitted when a replay changes the supervised browser under the panes:
+/// it opened one (`opened`, nobody signed in yet), or signed it in as
+/// `account` - the account's key, never its login. A pane showing another
+/// case hears that its own sign-in no longer holds.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunSessionChanged {
+    pub opened: bool,
+    pub account: Option<String>,
+}
+
+/// Emitted when the assistant asks to replay case `case_id` (`title`) up
+/// to step `step` and its script must not save: the app shows the Allow
+/// prompt for request `id` (`autorun::replay_ask`), and nothing runs until
+/// the person answers it with `auto_run_answer_replay_request`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayRequest {
+    pub id: String,
+    pub case_id: i32,
+    pub title: String,
+    pub step: i32,
+}
+
+/// Emitted when replay request `id` stops waiting: answered, timed out, or
+/// its caller gone. The Allow prompt for it closes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayRequestEnded {
+    pub id: String,
+}
+
 /// Emitted while a module path or a sign-in is being recorded: one per
 /// captured click, one per text field typed into (a sign-in only), one
 /// when the signed-in check is picked (a sign-in only), one per click or

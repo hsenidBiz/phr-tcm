@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type ActionOutcome, type CaseRecord, type SignInOutcome } from "../../bindings";
+import { commands, events, type ActionOutcome, type CaseRecord, type ReplayEnd, type SignInOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
@@ -27,11 +27,30 @@ const BROWSERS = [
 /** How the app's refusal begins when a no-save case's guard cannot start. */
 const GUARD_NOT_SET_UP = "the no-save guard could not be set up: ";
 
+/** The outcome a step the replay ran is saved with. */
+const REPLAYED_OUTCOME = "replayed before healing";
+
+/** How a replay's answer is coloured, by how it ended. */
+const REPLAY_TONE: Record<ReplayEnd["kind"], string> = {
+  ready: "text-success",
+  stopped_at: "text-danger",
+  stopped: "text-muted",
+  refused: "text-warning",
+  blocked: "text-warning",
+};
+
+/** Where a record keeps the sign-in's outcomes and the trip to the module's,
+ * as an unattended run's does (`autorun::replay`'s SIGN_IN_STEP and
+ * MODULE_STEP): never under step 1. */
+const SIGN_IN_STEP = 0;
+const MODULE_STEP = -1;
+
 export default function RunPane({
   org,
   project,
   pbiId,
   cases,
+  replayTo,
   onClose,
 }: {
   org: string;
@@ -40,6 +59,11 @@ export default function RunPane({
   /** The selection, run one after another in this order. One case is a
    * selection of one - there is no separate single-case path. */
   cases: { id: number; title: string }[];
+  /** Set when the pane opens for Replay to step N (Past runs, the review):
+   * the first case's saved steps before this one are replayed at once, in a
+   * browser the replay opens itself when none is open, and the person
+   * carries on from this step by hand. */
+  replayTo?: number;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -139,8 +163,13 @@ export default function RunPane({
   useEffect(() => {
     openedRef.current = opened;
   }, [opened]);
+  /** Whether a replay this pane started is still going. */
+  const replayGoing = useRef(false);
   useEffect(() => {
     return () => {
+      // A replay this pane started ends with it. Stopping it is all: a
+      // browser the pane never opened is left alone.
+      if (replayGoing.current) void commands.autoRunStopReplay().catch(() => {});
       if (openedRef.current && !closedRef.current) {
         closedRef.current = true;
         void commands.autoRunCloseBrowser().catch(() => {});
@@ -173,6 +202,12 @@ export default function RunPane({
   const runStep = async (stepNumber: number) => {
     const step = script.data?.steps.find((s) => s.step_number === stepNumber);
     if (!step) return;
+    // A replay signed the browser in as another account (or opened it with
+    // nobody signed in): this case signs in again before its next step.
+    const own = script.data?.account ?? "";
+    if (mustSignIn.current && own !== "") {
+      if (!(await signInAs(own, false))) return;
+    }
     setBusy(true);
     try {
       const r = await commands.autoRunStep(org, project, caseId, step);
@@ -197,7 +232,14 @@ export default function RunPane({
     }
   };
 
-  const signInAs = async (account: string, afresh: boolean) => {
+  /** Whether this case must sign in again before its next step: a replay
+   * changed the browser's account under it (`autorun-session-changed`).
+   * Cleared by a sign-in as the case's own account that succeeds. */
+  const mustSignIn = useRef(false);
+  const [resign, setResign] = useState<string | null>(null);
+
+  /** Sign the browser in as `account`. True when it signed in. */
+  const signInAs = async (account: string, afresh: boolean): Promise<boolean> => {
     // The Rust side takes one SESSION mutex per browser command, so this
     // result cannot land ON TOP of a browser close - it just queues behind
     // one. What it CAN do is land AFTER the pane has already moved on to
@@ -213,12 +255,19 @@ export default function RunPane({
       const r = await commands.autoRunSignIn(org, project, account);
       const out: SignInOutcome =
         r.status === "error" ? { ok: false, detail: r.error, used_saved_session: false, steps: [] } : r.data;
-      if (launchRef.current === forLaunch) setSignIn({ state: "done", account, out });
+      if (launchRef.current !== forLaunch) return false;
+      setSignIn({ state: "done", account, out });
+      if (out.ok && account === (script.data?.account ?? "")) {
+        mustSignIn.current = false;
+        setResign(null);
+      }
+      return out.ok;
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       if (launchRef.current === forLaunch) {
         setSignIn({ state: "done", account, out: { ok: false, detail, used_saved_session: false, steps: [] } });
       }
+      return false;
     } finally {
       // A result for a launch the pane has already moved past must not
       // clear busy: a newer launch's own sign-in (or step) may genuinely
@@ -289,16 +338,164 @@ export default function RunPane({
     await signInAs(account, false);
   };
 
+  /** A replay to a step: going (with the step it is on, once the first
+   * progress arrives), or ended with the sentence the app answered, said as
+   * it is. */
+  const [replay, setReplay] = useState<
+    | { state: "going"; at: { step: number; of: number } | null }
+    | { state: "ended"; kind: ReplayEnd["kind"]; sentence: string }
+    | null
+  >(null);
+  /** The step a replay stopped before: every step below it ran in the
+   * replay. 0 while nothing was replayed. */
+  const [replayedTo, setReplayedTo] = useState(0);
+
+  /** Replay this case's steps before `step` in the supervised browser, and
+   * leave the pane on `step` with that browser as its own: the replay signed
+   * the case in, so the pane does not sign in over it. */
+  const startReplay = async (step: number) => {
+    const wasOpen = opened;
+    const forCase = caseId;
+    replayGoing.current = true;
+    setBusy(true);
+    setReplay({ state: "going", at: null });
+    // Listening before the replay starts, so its first step is never missed.
+    // A listener that could not be set up costs the progress line, never the
+    // replay.
+    const unlisten = await events.autorunReplayProgress
+      .listen((e) => {
+        const p = e.payload;
+        if (p.case_id !== forCase) return;
+        setReplay((r) => (r?.state === "going" ? { state: "going", at: { step: p.step, of: p.of } } : r));
+      })
+      .catch(() => null);
+    try {
+      const r = await commands.autoRunReplayToStep(org, project, caseId, step, dbReadAccessOn());
+      if (r.status === "error") {
+        setReplay(null);
+        toast.error(`Could not open the browser: ${r.error}`);
+        return;
+      }
+      const { end, sentence } = r.data;
+      setReplay({ state: "ended", kind: end.kind, sentence });
+      // A refusal never touched the browser this pane would close: whatever
+      // is open belongs to someone else, and the pane leaves it alone.
+      if (end.kind === "refused") return;
+      openedRef.current = true;
+      if (!wasOpen) {
+        const launch = launchRef.current + 1;
+        signedFor.current = launch;
+        launchRef.current = launch;
+        setLaunches(launch);
+        setOpened(true);
+      }
+      if (end.kind === "ready") {
+        setReplayedTo(end.detail.step);
+        const notice = end.detail.notice;
+        if (notice) setPre((p) => ({ ...p, notice }));
+      } else if (end.kind === "stopped_at") {
+        const { phase, step: k, why, outcomes } = end.detail;
+        if (phase === "sign_in") {
+          // The sign-in's own record and its box, with Sign in again.
+          setResults((prev) => ({ ...prev, [SIGN_IN_STEP]: outcomes }));
+          setSignIn({
+            state: "done",
+            account: script.data?.account ?? "",
+            out: { ok: false, detail: why, used_saved_session: false, steps: [] },
+          });
+          setReplayedTo(1);
+        } else if (phase === "area") {
+          setResults((prev) => ({ ...prev, [MODULE_STEP]: outcomes }));
+          setReplayedTo(1);
+        } else {
+          setReplayedTo(k);
+          if (outcomes.length > 0) setResults((prev) => ({ ...prev, [k]: outcomes }));
+        }
+      } else if (end.kind === "blocked") {
+        // As a watched start blocks a case: never signed in, no step runs,
+        // and a saved verdict carries Blocked with the sentence.
+        setPre({ state: "blocked", reason: end.detail, notice: "" });
+      } else {
+        setReplayedTo(end.detail.step);
+      }
+    } catch (e) {
+      setReplay(null);
+      toast.error(`Could not open the browser: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      replayGoing.current = false;
+      unlisten?.();
+      setBusy(false);
+    }
+  };
+
+  // A pane opened for a replay starts it once, at once - a tick after it
+  // mounts, so a mount rehearsed and undone (React's StrictMode) never
+  // starts one that its own unmount then stops.
+  const replayStarted = useRef(false);
+  useEffect(() => {
+    if (replayTo === undefined || replayStarted.current) return;
+    const t = setTimeout(() => {
+      replayStarted.current = true;
+      void startReplay(replayTo);
+    }, 0);
+    return () => clearTimeout(t);
+    // Once per pane: startReplay is recreated every render.
+  }, [replayTo]);
+
+  // Another replay - the assistant's, say - may open the shared browser or
+  // sign it in as another account. The pane shows that browser as its own
+  // and never opens one over it; a change of account away from this case's
+  // own is said, and this case signs in again before its next step. This
+  // pane's own replay is not news: its answer says what it did.
+  const ownAccount = useRef("");
+  useEffect(() => {
+    ownAccount.current = script.data?.account ?? "";
+  }, [script.data?.account]);
+  useEffect(() => {
+    const un = events.autorunSessionChanged.listen((e) => {
+      if (replayGoing.current) return;
+      const { opened: isOpen, account } = e.payload;
+      const own = ownAccount.current;
+      if (isOpen && !openedRef.current) {
+        const launch = launchRef.current + 1;
+        signedFor.current = launch;
+        launchRef.current = launch;
+        openedRef.current = true;
+        setLaunches(launch);
+        setOpened(true);
+        if (own !== "" && account !== own) mustSignIn.current = true;
+      }
+      if (account && own !== "" && account !== own) {
+        mustSignIn.current = true;
+        setResign(`the Auto Run browser was signed in as ${account} by a replay - sign in again before the next step`);
+      }
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
   /** The verdict in front of the person right now, as a record. */
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
     title,
     verdict,
     note,
-    steps: (script.data?.steps ?? []).map((s) => ({
-      step_number: s.step_number,
-      outcomes: results[s.step_number] ?? [],
-    })),
+    steps: [
+      // A replay that stopped signing in or going to the area keeps those
+      // outcomes where an unattended run keeps them, first.
+      ...[SIGN_IN_STEP, MODULE_STEP].flatMap((n) =>
+        results[n] ? [{ step_number: n, outcomes: results[n] }] : [],
+      ),
+      ...(script.data?.steps ?? []).map((s) => ({
+        step_number: s.step_number,
+        // A step the replay ran has no outcomes of its own to keep: it is
+        // saved as replayed, never as an empty step.
+        outcomes:
+          results[s.step_number] ??
+          (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
+      })),
+    ],
     // A case its preconditions blocked says so the way an unattended run
     // does: proposed Blocked, with the sentence. The verdict stays theirs.
     ...(pre.state === "blocked" ? { proposed: "Blocked", reason: pre.reason } : {}),
@@ -353,7 +550,9 @@ export default function RunPane({
 
       if (!(await writeRun([...records, record]))) return;
       closedRef.current = true;
-      await commands.autoRunCloseBrowser().catch(() => {});
+      // Only a browser this pane opened, or took as its own: a refused
+      // replay leaves the shared one to whoever holds it.
+      if (openedRef.current) await commands.autoRunCloseBrowser().catch(() => {});
       onClose();
     } finally {
       inFlight.current = false;
@@ -420,13 +619,36 @@ export default function RunPane({
       // it would drop every banked verdict with no way back.
       if (!(await writeRun(pending))) return;
       closedRef.current = true;
-      await commands.autoRunCloseBrowser().catch(() => {});
+      // Only a browser this pane opened, or took as its own: a refused
+      // replay leaves the shared one to whoever holds it.
+      if (openedRef.current) await commands.autoRunCloseBrowser().catch(() => {});
       onClose();
     } finally {
       inFlight.current = false;
       setSaving(false);
     }
   };
+
+  /** One action outcome per line, a failure in danger with its screenshot. */
+  const outcomeLines = (list: ActionOutcome[]) =>
+    list.map((o, i) => (
+      <p
+        key={i}
+        className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
+      >
+        {o.detail}
+        {o.screenshot && (
+          <button
+            type="button"
+            aria-label={`View screenshot for action ${i + 1}`}
+            className="ml-2 text-muted underline hover:text-accent"
+            onClick={() => openShot(o.screenshot!)}
+          >
+            View screenshot
+          </button>
+        )}
+      </p>
+    ));
 
   return (
     <Modal onClose={close} className="w-full max-w-2xl space-y-3 p-4">
@@ -439,7 +661,34 @@ export default function RunPane({
         )}
       </h2>
 
+      {replay?.state === "going" && (
+        <div className="flex items-center justify-between gap-2 rounded border border-border/60 px-2 py-1 text-xs">
+          <span role="status" className="text-muted">
+            {replay.at ? `replaying step ${replay.at.step} of ${replay.at.of}` : "Starting the replay"}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void commands.autoRunStopReplay().catch(() => {})}
+          >
+            Stop replay
+          </Button>
+        </div>
+      )}
+      {replay?.state === "ended" && (
+        <p role="status" className={cn("rounded border border-border/60 px-2 py-1 text-xs", REPLAY_TONE[replay.kind])}>
+          {replay.sentence}
+        </p>
+      )}
+      {resign && (
+        <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
+          {resign}
+        </p>
+      )}
+
       {!opened ? (
+        // A replay opens its own browser: nothing to pick while it goes.
+        replay?.state === "going" ? null : (
         <div className="space-y-2">
           <p className="text-xs text-muted">
             A real browser window opens with a fresh profile. Keep it beside this one and
@@ -473,6 +722,7 @@ export default function RunPane({
             </Button>
           </div>
         </div>
+        )
       ) : (
         <div className="space-y-2">
           {pre.state === "checking" && (
@@ -514,43 +764,44 @@ export default function RunPane({
             </div>
           )}
           <ul className="max-h-72 space-y-2 overflow-y-auto">
-            {(script.data?.steps ?? []).map((s) => (
-              <li key={s.step_number} className="rounded-md border border-border p-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
-                  <span className="text-[11px] text-faint">
-                    {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
-                  </span>
-                  <Button
-                    className="ml-auto"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || pre.state !== "idle"}
-                    onClick={() => runStep(s.step_number)}
-                  >
-                    Run step {s.step_number}
-                  </Button>
-                </div>
-                {(results[s.step_number] ?? []).map((o, i) => (
-                  <p
-                    key={i}
-                    className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
-                  >
-                    {o.detail}
-                    {o.screenshot && (
-                      <button
-                        type="button"
-                        aria-label={`View screenshot for action ${i + 1}`}
-                        className="ml-2 text-muted underline hover:text-accent"
-                        onClick={() => openShot(o.screenshot!)}
-                      >
-                        View screenshot
-                      </button>
-                    )}
-                  </p>
-                ))}
+            {results[MODULE_STEP] && (
+              <li className="rounded-md border border-border p-2">
+                <span className="text-xs font-medium text-muted">Going to the area</span>
+                {outcomeLines(results[MODULE_STEP])}
               </li>
-            ))}
+            )}
+            {(script.data?.steps ?? []).map((s) => {
+              // After a replay: the steps below where it stopped ran in it,
+              // and the one it stopped before is the person's to run next.
+              const replayed = s.step_number < replayedTo;
+              const next = replayedTo > 0 && s.step_number === replayedTo;
+              return (
+                <li
+                  key={s.step_number}
+                  aria-current={next ? "step" : undefined}
+                  className={cn("rounded-md border p-2", next ? "border-accent" : "border-border")}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
+                    <span className="text-[11px] text-faint">
+                      {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
+                    </span>
+                    {replayed && <span className="text-[11px] text-success">replayed</span>}
+                    {next && <span className="text-[11px] text-accent">next</span>}
+                    <Button
+                      className="ml-auto"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || pre.state !== "idle"}
+                      onClick={() => runStep(s.step_number)}
+                    >
+                      Run step {s.step_number}
+                    </Button>
+                  </div>
+                  {outcomeLines(results[s.step_number] ?? [])}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

@@ -79,6 +79,7 @@ function renderReview(
     /** Extra command handling for tests that need `auto_run_save_run` or
      * `auto_run_publish` to do something other than answer null. */
     extra?: (cmd: string, args: unknown) => unknown;
+    onReplay?: (caseId: number, title: string, step: number) => void;
   } = {},
 ) {
   mockIPC((cmd, args) => {
@@ -102,6 +103,7 @@ function renderReview(
         stepIds={overrides.stepIds ?? {}}
         sharedSteps={overrides.sharedSteps ?? {}}
         onClose={onClose}
+        onReplay={overrides.onReplay}
       />
     </QueryClientProvider>,
   );
@@ -829,4 +831,38 @@ test("a case's downloads show under its steps with their sizes, and Open opens o
   // A case that saved nothing has no list.
   const other = screen.getByRole("listitem", { name: "Case #202 Locked account" });
   expect(within(other).queryByRole("list", { name: "Downloads" })).not.toBeInTheDocument();
+});
+
+test("a case with a failed step offers Replay to that step; the others do not", async () => {
+  const onReplay = vi.fn();
+  renderReview(RUN, { onReplay });
+
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  // Step 2 failed; step 3 was only skipped because of it.
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
+  expect(replay).toHaveTextContent("Replay to step 2");
+
+  for (const name of ["Case #202 Locked account", "Case #203 Password reset"]) {
+    expect(within(screen.getByRole("listitem", { name })).queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
+  }
+
+  fireEvent.click(replay);
+  expect(onReplay).toHaveBeenCalledWith(201, "Valid login", 2);
+});
+
+test("a run for another PBI offers no Replay", async () => {
+  renderReview(RUN, { onReplay: vi.fn(), pbiId: 7 });
+
+  await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
+});
+
+test("calling a failed case Passed takes its Replay away", async () => {
+  renderReview(RUN, { onReplay: vi.fn() });
+
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  expect(within(failed).getByRole("button", { name: "Replay to step 2 for case 201" })).toBeInTheDocument();
+
+  fireEvent.click(within(failed).getByRole("button", { name: "Passed" }));
+  await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument());
 });

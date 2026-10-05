@@ -596,6 +596,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "get_autorun_page",
             "probe_autorun_locator",
             "try_autorun_action",
+            "replay_autorun_to_step",
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
@@ -708,6 +709,7 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         "get_autorun_page",
         "probe_autorun_locator",
         "try_autorun_action",
+        "replay_autorun_to_step",
         "save_autorun_script",
         "mark_autorun_suspected_defect",
     ] {

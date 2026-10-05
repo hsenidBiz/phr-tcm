@@ -41,10 +41,48 @@ pub const PAGE_LOG_NOTE: &str = " What the page was doing then is in Settings, L
 /// why. They go to the application log - what a bug report ships - and
 /// not into the run, where a long list would bury the sentence the person
 /// reads (PeoplesHR, 2026-10-02: a first case stuck on a spinner).
-fn log_the_page<D: Driver>(d: &D, case_id: i32, out: &mut ActionOutcome) {
-    if nav::log_page(d, &who(case_id), &out.detail) {
+fn log_the_page<D: Driver>(d: &D, who: &str, out: &mut ActionOutcome) {
+    if nav::log_page(d, who, &out.detail) {
         out.detail.push_str(PAGE_LOG_NOTE);
     }
+}
+
+/// The run's own trip to the case's module before step 1, as the one
+/// outcome its "Go to X" line records: `nav::reach_module` from where the
+/// browser is (`from`), then what the page did on the way. A save the
+/// module's page sent as it opened is the outcome, with a picture; a trip
+/// that failed on the page gets a picture, and the page log goes to the
+/// application log under `who`. Shared by the unattended run and the
+/// supervised browser's replay to a step (`replay_to`), so the two travel
+/// the same way.
+pub async fn trip_to_module<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    route: &Route,
+    from: nav::TripFrom,
+    timing: &Timing,
+    who: &str,
+) -> ActionOutcome {
+    let mut out = nav::reach_module(d, route, from, timing, who).await;
+    // A save the module's page sent as it opened fails the case here,
+    // before step 1 acts on it.
+    if let Some(sentence) = d.take_save_blocked() {
+        out = ActionOutcome::failed(sentence);
+        out.screenshot = runner::picture(d, root).await;
+    } else if !out.ok && !out.harness {
+        out.screenshot = runner::picture(d, root).await;
+        // Read after the picture: taking it read every event the page had
+        // sent by then - a save among them is the reason.
+        match d.take_save_blocked() {
+            Some(sentence) => {
+                let shot = out.screenshot.take();
+                out = ActionOutcome::failed(sentence);
+                out.screenshot = shot;
+            }
+            None => log_the_page(d, who, &mut out),
+        }
+    }
+    out
 }
 
 /// How the application log names a case of an unattended run.
@@ -305,25 +343,7 @@ pub async fn run_case_as<D: Driver>(
             // The case's own sign-in just above, when it had one; otherwise
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
-            let mut out = nav::reach_module(d, r, from, timing, &who(script.case_id)).await;
-            // A save the module's page sent as it opened fails the case
-            // here, before step 1 acts on it.
-            if let Some(sentence) = d.take_save_blocked() {
-                out = ActionOutcome::failed(sentence);
-                out.screenshot = runner::picture(d, root).await;
-            } else if !out.ok && !out.harness {
-                out.screenshot = runner::picture(d, root).await;
-                // Read after the picture: taking it read every event the
-                // page had sent by then - a save among them is the reason.
-                match d.take_save_blocked() {
-                    Some(sentence) => {
-                        let shot = out.screenshot.take();
-                        out = ActionOutcome::failed(sentence);
-                        out.screenshot = shot;
-                    }
-                    None => log_the_page(d, script.case_id, &mut out),
-                }
-            }
+            let out = trip_to_module(d, root, r, from, timing, &who(script.case_id)).await;
             if save_guard::is_blocked(&out.detail) {
                 skip = Some(AFTER_FAILED_STEP);
             } else if !out.ok {

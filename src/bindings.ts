@@ -358,6 +358,28 @@ export const commands = {
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
+	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
+	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
+	 *  Replay to step button. The browser open is used; with none, the one last
+	 *  chosen is opened first, as Open browser opens it. One replay at a time.
+	 *  The pane hears `AutorunReplayProgress` before each step. Refusals and
+	 *  the end come back as the `ReplayEnd` with its sentence, which the pane
+	 *  shows as it is; `Err` is a browser that would not open.
+	 */
+	autoRunReplayToStep: (organization: string, project: string, caseId: number, step: number, dbReadAccess: boolean) => typedError<ReplayAnswer_Serialize, string>(__TAURI_INVOKE("auto_run_replay_to_step", { organization, project, caseId, step, dbReadAccess })),
+	/**
+	 *  The replay's stop control: the replay going, if any, ends at its next
+	 *  look and says where it stopped.
+	 */
+	autoRunStopReplay: () => __TAURI_INVOKE<void>("auto_run_stop_replay"),
+	/**
+	 *  The person's Allow or Deny on the assistant's request to replay a
+	 *  must-not-save script (`autorun::replay_ask`). Refused with
+	 *  `that replay request is no longer waiting` for a request that already
+	 *  timed out or was answered: a late Allow starts nothing.
+	 */
+	autoRunAnswerReplayRequest: (id: string, allow: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_answer_replay_request", { id, allow })),
+	/**
 	 *  Run one step's actions in order and report every outcome. Actions after
 	 *  an ordinary failure still run: the watcher learns more from "the click
 	 *  worked, the check did not" than from a run that stops at the first red.
@@ -1067,6 +1089,10 @@ export const commands = {
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
+	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
+	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
+	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
@@ -1498,6 +1524,48 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  Emitted as the supervised browser replays a case to a step: once before
+ *  each step runs, `step` of `of` (the step before the one replayed to).
+ */
+export type AutorunReplayProgress = {
+	case_id: number,
+	step: number,
+	of: number,
+};
+
+/**
+ *  Emitted when the assistant asks to replay case `case_id` (`title`) up
+ *  to step `step` and its script must not save: the app shows the Allow
+ *  prompt for request `id` (`autorun::replay_ask`), and nothing runs until
+ *  the person answers it with `auto_run_answer_replay_request`.
+ */
+export type AutorunReplayRequest = {
+	id: string,
+	case_id: number,
+	title: string,
+	step: number,
+};
+
+/**
+ *  Emitted when replay request `id` stops waiting: answered, timed out, or
+ *  its caller gone. The Allow prompt for it closes.
+ */
+export type AutorunReplayRequestEnded = {
+	id: string,
+};
+
+/**
+ *  Emitted when a replay changes the supervised browser under the panes:
+ *  it opened one (`opened`, nobody signed in yet), or signed it in as
+ *  `account` - the account's key, never its login. A pane showing another
+ *  case hears that its own sign-in no longer holds.
+ */
+export type AutorunSessionChanged = {
+	opened: boolean,
+	account: string | null,
 };
 
 export type BackupImportResult = {
@@ -3170,6 +3238,30 @@ export type RelinkOutcome = {
 };
 
 /**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer = ReplayAnswer_Serialize | ReplayAnswer_Deserialize;
+
+/**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer_Deserialize = {
+	end: ReplayEnd_Deserialize,
+	sentence: string,
+};
+
+/**
+ *  A replay's end with the sentence that says it, as the person's command
+ *  answers: the pane shows `sentence` as it is.
+ */
+export type ReplayAnswer_Serialize = {
+	end: ReplayEnd_Serialize,
+	sentence: string,
+};
+
+/**
  *  A case from the frontend's selection: enough to run it (`case_id`),
  *  enough to report on it before its script has even loaded (`title`), and
  *  its Module field for the module paths.
@@ -3180,6 +3272,95 @@ export type ReplayCase = {
 	/**  Absent or blank when the test case has no Module. */
 	module?: string | null,
 };
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd = ReplayEnd_Serialize | ReplayEnd_Deserialize;
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd_Deserialize = 
+/**
+ *  Every step before `step` ran: the browser is on the page before it.
+ *  `notice` is said beside it: the preconditions were not checked.
+ */
+{ kind: "ready"; detail: {
+	case_id: number,
+	step: number,
+	notice: string | null,
+} } | 
+/**
+ *  The replay failed in `phase`: step `step` when it is `Step`; the
+ *  case's sign-in or its trip to the area before step 1 otherwise (then
+ *  `step` is 1, the step it never reached). `why` is the failure's
+ *  sentence, and `outcomes` what ran, a failure carrying its screenshot.
+ */
+{ kind: "stopped_at"; detail: {
+	phase: ReplayPhase,
+	step: number,
+	why: string,
+	outcomes: ActionOutcome_Deserialize[],
+} } | 
+/**
+ *  A precondition of the case is not met: nothing was signed in, and
+ *  the case is Blocked with this sentence as its reason, as a watched
+ *  start blocks it.
+ */
+{ kind: "blocked"; detail: string } | 
+/**
+ *  The stop control, or the browser closing, ended the replay before
+ *  step `step` finished.
+ */
+{ kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**  Nothing was replayed: the sentence says why. */
+{ kind: "refused"; detail: string };
+
+/**  How a replay ended. `sentence` says it. */
+export type ReplayEnd_Serialize = 
+/**
+ *  Every step before `step` ran: the browser is on the page before it.
+ *  `notice` is said beside it: the preconditions were not checked.
+ */
+{ kind: "ready"; detail: {
+	case_id: number,
+	step: number,
+	notice: string | null,
+} } | 
+/**
+ *  The replay failed in `phase`: step `step` when it is `Step`; the
+ *  case's sign-in or its trip to the area before step 1 otherwise (then
+ *  `step` is 1, the step it never reached). `why` is the failure's
+ *  sentence, and `outcomes` what ran, a failure carrying its screenshot.
+ */
+{ kind: "stopped_at"; detail: {
+	phase: ReplayPhase,
+	step: number,
+	why: string,
+	outcomes: ActionOutcome_Serialize[],
+} } | 
+/**
+ *  A precondition of the case is not met: nothing was signed in, and
+ *  the case is Blocked with this sentence as its reason, as a watched
+ *  start blocks it.
+ */
+{ kind: "blocked"; detail: string } | 
+/**
+ *  The stop control, or the browser closing, ended the replay before
+ *  step `step` finished.
+ */
+{ kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**  Nothing was replayed: the sentence says why. */
+{ kind: "refused"; detail: string };
+
+/**
+ *  Where a replay that stopped on a failure was: signing the case in,
+ *  going to its area, or running one of its steps. The sign-in and the
+ *  trip are not step 1: a record keeps their outcomes under the sign-in
+ *  step and the module step, as an unattended run's does.
+ */
+export type ReplayPhase = "sign_in" | "area" | "step";
 
 /**
  *  Emitted as an unattended run moves: once when a case's browser is

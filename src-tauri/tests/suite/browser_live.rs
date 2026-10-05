@@ -2434,3 +2434,65 @@ async fn expect_download_checks_the_file_a_step_downloaded() {
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, "no download started within 1.5 s");
 }
+
+/// A replay to a step against a real page: a three-step case replayed to
+/// step 3 signs in, takes the recorded trip to its area, runs steps 1 and
+/// 2, and leaves the page where step 2 left it - step 3's Save never ran.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
+    use v2_lib::autorun::nav::{save_nav, NavFile};
+    use v2_lib::autorun::preconditions::{NoDb, PreconditionDb};
+    use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest};
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+    let area = serde_json::from_value(json!({
+        "module": "Leave", "area": "Leave",
+        "clicks": [ { "role": "link", "name": "Leave", "exact": true } ],
+        "arrived": "/leave", "recorded": "2026-10-05T10:00:00Z"
+    }))
+    .unwrap();
+    save_nav(root.path(), "acme", "Web", &NavFile { direct_urls: true, modules: vec![area], save_words: vec![] }).unwrap();
+    let mut script = case_script(
+        31,
+        Some("kim"),
+        json!([
+            { "step_number": 1, "actions": [ { "kind": "click", "selector": { "role": "button", "name": "New request" } } ] },
+            { "step_number": 2, "actions": [ { "kind": "fill", "selector": { "role": "textbox", "name": "Reason" }, "value": "Back on Monday" } ] },
+            { "step_number": 3, "actions": [ { "kind": "click", "selector": { "role": "button", "name": "Save" } } ] }
+        ]),
+    );
+    script.area = Some("Leave".into());
+    store::save_script(root.path(), &script).unwrap();
+
+    let mut live = open().await;
+    let (mut account, mut guarded) = (None, None);
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let cancel = AtomicBool::new(false);
+    let end = replay_to_checked(
+        &mut live.cdp,
+        root.path(),
+        "acme",
+        "Web",
+        &ReplayRequest { case_id: 31, step: 3, db_read_access: false },
+        &mut account,
+        &mut lease,
+        &mut guarded,
+        true,
+        &timing(),
+        &cancel,
+        || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+    )
+    .await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None }, "{}", end.sentence());
+    let state = page::eval_value(
+        &mut live.cdp,
+        "[location.pathname, document.getElementById('form').hidden, document.querySelector('[aria-label=Reason]').value, document.getElementById('msg').textContent]",
+    )
+    .await
+    .unwrap();
+    assert_eq!(state, json!(["/leave", false, "Back on Monday", ""]), "the page is not where step 2 left it");
+}

@@ -91,3 +91,38 @@ export function lastResults(
 export function lastResultFor(last: ReadonlyMap<number, ResultBucket>, caseId: number): ResultBucket {
   return last.get(caseId) ?? "Not run";
 }
+
+/**
+ * The case's first own step (1 and up) with an action that ran and failed,
+ * or null when there is none - a case that passed, or one Blocked before
+ * step 1. A "not run:" outcome is an action an earlier failure skipped, so
+ * it never counts. The sign-in (step 0) and the trip to the module (-1) are
+ * not the case's own steps. The same rule the run's step marks follow in
+ * Rust (`autorun::publish::step_marks`). A replay goes up to this step.
+ */
+export function failingStep(c: {
+  steps?: readonly { step_number: number; outcomes: readonly { ok: boolean; detail: string }[] }[] | null;
+}): number | null {
+  let first: number | null = null;
+  for (const s of c.steps ?? []) {
+    if (s.step_number < 1) continue;
+    const failed = s.outcomes.some((o) => !o.ok && !o.detail.startsWith("not run:"));
+    if (failed && (first === null || s.step_number < first)) first = s.step_number;
+  }
+  return first;
+}
+
+/**
+ * The step a Replay to step button replays a case to: its failing step
+ * (`failingStep`), offered only while the case's result is Failed or
+ * Blocked - the person's verdict, else the proposal. A case the person
+ * called Passed gets none, whatever its steps say.
+ */
+export function replayStep(c: {
+  verdict: string;
+  proposed?: string | null;
+  steps?: Parameters<typeof failingStep>[0]["steps"];
+}): number | null {
+  const bucket = resultBucket(c);
+  return bucket === "Failed" || bucket === "Blocked" ? failingStep(c) : null;
+}

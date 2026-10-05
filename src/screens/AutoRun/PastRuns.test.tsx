@@ -13,9 +13,19 @@ import PastRuns from "./PastRuns";
 import type { ResultFilter } from "./verdicts";
 
 /** The screen holds the filter; this stands in for it. */
-function WithFilter({ pbiId, onReview }: { pbiId: number | null; onReview: (id: string) => void }) {
+function WithFilter({
+  pbiId,
+  onReview,
+  onReplay,
+}: {
+  pbiId: number | null;
+  onReview: (id: string) => void;
+  onReplay: (caseId: number, title: string, step: number) => void;
+}) {
   const [filter, setFilter] = useState<ResultFilter>("All");
-  return <PastRuns pbiId={pbiId} onReview={onReview} filter={filter} onFilterChange={setFilter} />;
+  return (
+    <PastRuns pbiId={pbiId} onReview={onReview} onReplay={onReplay} filter={filter} onFilterChange={setFilter} />
+  );
 }
 
 // The report opens in the browser; no dialog is ever involved.
@@ -51,12 +61,13 @@ function renderPastRuns(
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onReview = vi.fn();
+  const onReplay = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <WithFilter pbiId={pbiId} onReview={onReview} />
+      <WithFilter pbiId={pbiId} onReview={onReview} onReplay={onReplay} />
     </QueryClientProvider>,
   );
-  return { onReview };
+  return { onReview, onReplay };
 }
 
 test("a run for another PBI shows which PBI it belongs to and offers no Review button", async () => {
@@ -321,4 +332,83 @@ test("a download Rust refuses to open says why", async () => {
   await waitFor(() =>
     expect(toast.error).toHaveBeenCalledWith("Could not open a.csv: that file is not one of this run's downloads"),
   );
+});
+
+/** A failed case whose step 2 failed after step 1 passed, and a passed one. */
+const FAILED_AT_2 = runOf({
+  pbi_id: 42,
+  cases: [
+    {
+      case_id: 201,
+      title: "Valid login",
+      verdict: "",
+      note: "",
+      proposed: "Failed",
+      steps: [
+        { step_number: 0, outcomes: [{ ok: true, detail: "signed in as tester1" }] },
+        { step_number: 1, outcomes: [{ ok: true, detail: "clicked Login" }] },
+        { step_number: 2, outcomes: [{ ok: false, detail: 'button "Save" not found' }] },
+        { step_number: 3, outcomes: [{ ok: false, detail: "not run: an earlier step of this case failed" }] },
+      ],
+    },
+    {
+      case_id: 202,
+      title: "Locked account",
+      verdict: "Passed",
+      note: "",
+      proposed: "Passed",
+      steps: [{ step_number: 1, outcomes: [{ ok: true, detail: "page contains Locked out" }] }],
+    },
+    {
+      case_id: 203,
+      title: "Blocked before it began",
+      verdict: "",
+      note: "",
+      proposed: "Blocked",
+      reason: "precondition not met",
+      steps: [],
+    },
+  ],
+});
+
+test("a case with a failed step offers Replay to that step; one without a known failing step does not", async () => {
+  const { onReplay } = renderPastRuns([FAILED_AT_2], 42);
+
+  const failed = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
+  expect(replay).toHaveTextContent("Replay to step 2");
+
+  expect(
+    within(screen.getByRole("listitem", { name: "Run of Locked account" })).queryByRole("button", { name: /Replay/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("listitem", { name: "Run of Blocked before it began" })).queryByRole("button", {
+      name: /Replay/,
+    }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(replay);
+  expect(onReplay).toHaveBeenCalledWith(201, "Valid login", 2);
+});
+
+test("a run for another PBI offers no Replay", async () => {
+  renderPastRuns([{ ...FAILED_AT_2, pbi_id: 7 }], 42);
+
+  expect(await screen.findByText("for PBI #7")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
+});
+
+test("a case the person called Passed offers no Replay, whatever its steps say", async () => {
+  renderPastRuns(
+    [
+      {
+        ...FAILED_AT_2,
+        cases: [{ ...FAILED_AT_2.cases[0], verdict: "Passed" }],
+      },
+    ],
+    42,
+  );
+
+  await screen.findByRole("listitem", { name: "Run of Valid login" });
+  expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
 });

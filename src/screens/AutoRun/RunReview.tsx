@@ -23,7 +23,7 @@ import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import VerdictPicker from "./VerdictPicker";
-import { countBuckets, matchesFilter, type ResultFilter } from "./verdicts";
+import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
  * never has anything to show beyond its own sentence. */
@@ -82,8 +82,12 @@ export default function RunReview(props: {
    * publish skip the check that refuses step marks on a Shared Steps row. */
   sharedSteps: Record<number, number[]>;
   onClose: () => void;
+  /** Replay case `caseId` in the supervised browser up to the page before
+   * `step`, its first failed step. Not offered on a run of another PBI: the
+   * pane it opens saves under the PBI now selected. */
+  onReplay?: (caseId: number, title: string, step: number) => void;
 }) {
-  const { runId, onClose } = props;
+  const { runId, onClose, onReplay } = props;
   const queryClient = useQueryClient();
 
   const query = useQuery<LocalRun_Serialize | null>({
@@ -353,6 +357,7 @@ export default function RunReview(props: {
       <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
         {shown.map((c) => {
           const isExpanded = expanded.has(c.case_id);
+          const replayTo = onReplay && !mismatch ? replayStep(c) : null;
           return (
             <li
               key={c.case_id}
@@ -364,6 +369,16 @@ export default function RunReview(props: {
                 <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                 <RetriedBadge first={c.retried} />
                 <NoticeBadge notice={c.notice} />
+                {replayTo !== null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                    onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
+                  >
+                    Replay to step {replayTo}
+                  </Button>
+                )}
               </div>
               <p className="text-xs text-muted">{proposalLine(c)}</p>
 

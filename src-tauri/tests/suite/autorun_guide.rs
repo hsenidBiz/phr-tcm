@@ -270,6 +270,7 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
         "get_autorun_page",
         "probe_autorun_locator",
         "try_autorun_action",
+        "replay_autorun_to_step",
         "get_autorun_failures",
         "record_autorun_quirk",
         "retire_autorun_quirk",
@@ -599,4 +600,27 @@ fn the_guide_teaches_expect_download_with_its_two_examples() {
         seen += 1;
     }
     assert!(seen >= 3, "the section should show the click and both examples, saw {seen}");
+}
+
+/// Healing starts from the failing step: the repair section says to replay
+/// there first, that the assistant may replay without asking except that a
+/// must-not-save script asks the person in the app, and never to replay
+/// past the failing step.
+#[test]
+fn the_guide_teaches_replaying_to_the_failing_step() {
+    let g = autorun_guide();
+    let repair = &g[g.find("## Repairing a script that failed").unwrap()..];
+    let section = repair.split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("`replay_autorun_to_step`"), "{flat}");
+    assert!(flat.contains("Replay to the failing step before trying fixes."), "{flat}");
+    assert!(
+        flat.contains(
+            "You may replay without asking the person, except that a script marked must not save asks the person in the app first"
+        ),
+        "{flat}"
+    );
+    assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
+    assert!(flat.contains("No browser needs to be open"), "{flat}");
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

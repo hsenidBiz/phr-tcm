@@ -173,6 +173,9 @@ pub async fn auto_run_replay(
     CANCEL.store(false, Ordering::SeqCst);
 
     let root = super::autorun::root(&app)?;
+    // The browser picked in the dialog, remembered for a replay to a step
+    // that finds no supervised browser open.
+    store::remember_browser(&root, &browser_name);
     let run_account = crate::autorun::accounts::account_for_run(&root, account.as_deref())?;
     let mut run = LocalRun {
         id: store::new_run_id(),
