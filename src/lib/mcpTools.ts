@@ -99,7 +99,8 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "list_api_templates",
     label: "List API templates",
-    summary: "Every saved template for this project, with its params, outputs and last run.",
+    summary:
+      "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
   },
   {
     name: "prove_api_template",

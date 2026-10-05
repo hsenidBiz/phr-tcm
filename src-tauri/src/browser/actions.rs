@@ -800,16 +800,26 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
     }
 }
 
-/// Did `target` become visible within `within_ms`? The one look a
-/// `when_visible` takes, recipe or script. `Err` is the browser failing to
-/// answer, as the outcome to report.
+/// The least a `when_visible` waits, whatever its `within_ms` says. One
+/// protocol call may take `cdp::MIN_CALL_TIMEOUT` (250 ms) even at the edge
+/// of a budget, so a shorter wait on a slow page could end before a single
+/// look had completed - which reads as the browser having stopped
+/// answering, a harness failure, for a page that was only slow.
+pub const WHEN_VISIBLE_FLOOR_MS: u32 = 500;
+
+/// Did `target` become visible within `within_ms` (never less than
+/// `WHEN_VISIBLE_FLOOR_MS`)? The one look a `when_visible` takes, recipe or
+/// script. Any visible match counts, two or more included: the guarded
+/// actions then run and an ambiguous click says "matched N" itself. `Err`
+/// is the browser failing to answer, as the outcome to report.
 pub async fn shows_up<D: Driver>(
     d: &mut D,
     target: &Target,
     within_ms: u32,
     timing: &Timing,
 ) -> Result<bool, ActionOutcome> {
-    let seen = expect::expect(d, target, Check::Visible, u64::from(within_ms), timing.poll_ms).await;
+    let wait = u64::from(within_ms.max(WHEN_VISIBLE_FLOOR_MS));
+    let seen = expect::expect(d, target, Check::Shown, wait, timing.poll_ms).await;
     if seen.harness {
         return Err(seen);
     }

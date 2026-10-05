@@ -3433,10 +3433,63 @@ mod api_template_routes {
         assert_eq!((f["id"].as_str(), f["title"].as_str()), (Some(FLOW), Some("Performance cycle wizard")));
         assert_eq!(f["stage_count"], 5, "{f}");
         assert!(f.get("stages").is_none(), "{f}");
+        // The fixture's templates are unproven, so the index says once - not
+        // per row - what that means for relying on them.
+        assert!(rows.iter().all(|r| r["proven"] == false) && rows.iter().all(|r| r.get("unproven").is_none()));
         assert_eq!(
             v["note"],
-            "This is the index of 301 templates. Narrow it with module, search or flow until at most 25 match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most 100)."
+            format!(
+                "This is the index of 301 templates. Narrow it with module, search or flow until at most 25 match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most 100). A template whose proven is false was {}.",
+                v2_lib::api_templates::share::UNPROVEN_FOR_ASSISTANT
+            )
         );
+    }
+
+    /// The index of templates that are all proven says nothing about
+    /// proving.
+    #[tokio::test]
+    async fn an_index_of_proven_templates_has_no_unproven_line() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        for n in 0..30 {
+            let t = crate::common::saved_on_stage(&format!("proven-{n:02}"), &format!("Proven {n}"), "rules");
+            v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        }
+        let (_, v, out) = list("/api-templates").await;
+        assert!(v["templates"].as_array().unwrap().iter().all(|r| r["proven"] == true), "{out}");
+        assert!(!v["note"].as_str().unwrap().contains("proven"), "{out}");
+    }
+
+    /// A filtered answer in full lists the flows its templates are on, not
+    /// every flow with every stage - the bulk the filters are there to cut.
+    #[tokio::test]
+    async fn a_filtered_answer_lists_only_the_flows_its_templates_are_on() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_300_templates();
+        let c = ctx();
+        let mut other = crate::common::cycle_flow_json();
+        other["id"] = json!("leave-request");
+        other["title"] = json!("Leave request");
+        let other: v2_lib::api_templates::flow::Flow = serde_json::from_value(other).unwrap();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &other).unwrap();
+
+        let (_, v, out) = list("/api-templates?search=eval-rules").await;
+        assert_eq!(v["templates"][0]["id"], "pms-set-eval-rules", "{out}");
+        let ids: Vec<&str> = v["flows"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec![FLOW], "{out}");
+        assert_eq!(v["flows"][0]["stages"][1]["templates"], json!(["pms-set-eval-rules"]), "in full: {out}");
+
+        // On no flow at all: no flows.
+        let (_, v, out) = list("/api-templates?search=UNIQUEPARAM137").await;
+        assert_eq!(v["flows"], json!([]), "{out}");
+        let (_, v, out) = list("/api-templates?module=pms&search=tpl-13").await;
+        assert_eq!(v["paging"]["total"], 5, "{out}");
+        assert_eq!(v["flows"], json!([]), "{out}");
+
+        // With no filter, every flow is still there.
+        let (_, v, out) = list("/api-templates?limit=100&offset=250").await;
+        assert_eq!(v["flows"].as_array().unwrap().len(), 2, "{out}");
     }
 
     #[tokio::test]

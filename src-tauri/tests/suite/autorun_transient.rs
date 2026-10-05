@@ -171,3 +171,72 @@ fn a_case_that_passed_was_stopped_or_needs_its_script_is_never_transient() {
     // Without the script the failure's words alone decide nothing.
     assert_eq!(is_transient(&failed_at_2("Failed", gateway), None), None);
 }
+
+/// An `api_request` is sent by the page's own `fetch`, which never says
+/// `net::ERR_*`: a dropped connection comes back as "Failed to fetch".
+#[test]
+fn an_api_request_the_network_dropped_is_transient_but_its_timeout_is_not() {
+    let dropped = failed_at_2("Failed", ActionOutcome::failed("GET /hr/api/cycles/42 failed: TypeError: Failed to fetch"));
+    assert!(is_transient(&dropped, Some(&script(api_get()))).is_some());
+
+    // The page's own limit ran out: a slow server, not a dropped line.
+    let slow = failed_at_2("Failed", ActionOutcome::failed("GET /hr/api/cycles/42 failed: timeout"));
+    assert_eq!(is_transient(&slow, Some(&script(api_get()))), None);
+    // A page that could not send it at all is not the network either.
+    let unsent = failed_at_2("Failed", ActionOutcome::failed("GET /hr/api/cycles/42 failed: the page could not send it"));
+    assert_eq!(is_transient(&unsent, Some(&script(api_get()))), None);
+    // Only an api_request's own sentence: a check reading those words is the page.
+    let check = json!({ "kind": "check_text", "value": "Failed to fetch" });
+    assert_eq!(is_transient(&dropped, Some(&script(check))), None);
+}
+
+/// A case whose sign-in is the first thing that failed.
+fn sign_in_failed(outcomes: Vec<ActionOutcome>) -> CaseRecord {
+    let last = outcomes.last().unwrap().detail.clone();
+    CaseRecord {
+        steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None }],
+        proposed: "Blocked".into(),
+        reason: format!("while signing in: {last}"),
+        ..failed_at_2("Blocked", ActionOutcome::failed("x"))
+    }
+}
+
+/// The sign-in page not loading at all (a server restarting) is the most
+/// common transient there is.
+#[test]
+fn a_sign_in_page_that_would_not_load_is_transient() {
+    let url = "https://hr.example.internal/";
+    let refused = sign_in_failed(vec![
+        ActionOutcome::failed(format!("{url} would not load: net::ERR_CONNECTION_REFUSED")),
+        ActionOutcome::failed(format!("the sign-in page did not open: {url} would not load: net::ERR_CONNECTION_REFUSED")),
+    ]);
+    assert_eq!(is_transient(&refused, Some(&script(expect_save()))), Some(refused.reason.clone()));
+    // Even with no script: the sign-in is the runner's, not the script's.
+    assert!(is_transient(&refused, None).is_some());
+
+    // The page calling its own load off is not the network.
+    let aborted = sign_in_failed(vec![ActionOutcome::failed(format!("{url} would not load: net::ERR_ABORTED"))]);
+    assert_eq!(is_transient(&aborted, Some(&script(expect_save()))), None);
+    // A sign-in that loaded and then did not work is never transient.
+    let wrong = sign_in_failed(vec![ActionOutcome::failed(
+        "the signed-in marker #home never appeared - check the username and password for \"admin\"",
+    )]);
+    assert_eq!(is_transient(&wrong, Some(&script(expect_save()))), None);
+    // Nor a recipe check whose words read like a failed load.
+    let lookalike = sign_in_failed(vec![ActionOutcome::failed(
+        "text \"x would not load: net::ERR_CONNECTION_RESET\" not found",
+    )]);
+    assert_eq!(is_transient(&lookalike, Some(&script(expect_save()))), None);
+}
+
+#[test]
+fn a_mid_script_sign_in_whose_page_would_not_load_is_transient() {
+    let sign_in = json!({ "kind": "sign_in", "account": "admin" });
+    let refused = failed_at_2(
+        "Blocked",
+        ActionOutcome::failed("the sign-in page did not open: https://hr.example.internal/ would not load: net::ERR_CONNECTION_RESET"),
+    );
+    assert!(is_transient(&refused, Some(&script(sign_in.clone()))).is_some());
+    let wrong = failed_at_2("Blocked", ActionOutcome::failed("sign-in stopped at step 2: #password is not on the page"));
+    assert_eq!(is_transient(&wrong, Some(&script(sign_in))), None);
+}

@@ -253,6 +253,112 @@ async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_run
     assert_eq!(*clicked.lock().unwrap(), vec!["#save".to_string()], "the late banner is never clicked");
 }
 
+/// A page where `.pair` matches two visible elements (a dialog's OK and
+/// Cancel) and every other css locator matches one. Each click is logged by
+/// the locator it was aimed at.
+fn two_buttons_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let one = |i: u32| json!({ "name": i.to_string(), "value": { "objectId": format!("el{i}") } });
+                let found = if last_selector == ".pair" { vec![one(0), one(1)] } else { vec![one(0)] };
+                json!({ "result": found })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// Two visible matches are visible by any reading: the guard used to wait
+/// out its whole `within_ms` and report "not shown, skipped" while the
+/// dialog sat on the screen.
+#[tokio::test]
+async fn a_guard_whose_locator_matches_two_visible_elements_counts_as_shown_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = two_buttons_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": ".pair" }, "within_ms": 5000,
+                               "then": [ { "kind": "click", "selector": { "css": "#close" } } ] }));
+    let started = std::time::Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(!out[0].detail.contains(NOT_SHOWN), "{}", out[0].detail);
+    assert!(out[0].detail.starts_with(".pair showed: "), "{}", out[0].detail);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#close".to_string()]);
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "waited {:?}", started.elapsed());
+}
+
+/// The person reads the real problem - an ambiguous locator - in the
+/// guarded click's own sentence, not a timing story.
+#[tokio::test]
+async fn a_guarded_click_on_an_ambiguous_locator_fails_with_matched() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = two_buttons_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": ".pair" }, "within_ms": 5000,
+                               "then": [ { "kind": "click", "selector": { "css": ".pair" } } ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with(".pair showed: "), "{}", out[0].detail);
+    assert!(out[0].detail.contains("matched 2"), "{}", out[0].detail);
+    assert!(clicked.lock().unwrap().is_empty());
+}
+
+/// A `within_ms` shorter than one answer from a slow page used to end
+/// before any look had completed, which reads as the browser having gone
+/// silent - a harness failure, and a retried case - for a page that was
+/// merely slow and had no banner at all.
+#[tokio::test]
+async fn a_tiny_within_ms_on_a_slow_page_is_not_a_harness_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = true;
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if method == "Runtime.evaluate" && params["expression"] == "document" {
+            if std::mem::take(&mut first) {
+                // The page's first answer did not come within its call's time.
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                return Err(v2_lib::browser::cdp::CdpError::Timeout { what: method.to_string(), ms: 250 });
+            }
+            return Ok(json!({ "result": { "objectId": "doc" } }));
+        }
+        Ok(match method {
+            "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" => json!({ "result": [] }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            _ => json!({}),
+        })
+    });
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 1,
+                               "then": [ { "kind": "click", "selector": { "css": "#banner" } } ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].harness, "{:?}", out[0]);
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, format!("#banner {NOT_SHOWN}"));
+}
+
 /// The executor alone cannot carry one out: its `then` may hold an upload,
 /// which only the runner can place.
 #[tokio::test]

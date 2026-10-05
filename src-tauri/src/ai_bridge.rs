@@ -635,6 +635,13 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     let total = matched.len();
     let full = total <= limit;
     let page: Vec<&store::SavedTemplate> = matched.into_iter().skip(offset).take(limit).collect();
+    // A narrowed answer in full names the flows its templates are on (a
+    // requested `flow` is already the only one), not every flow with every
+    // stage - that bulk is what the filters are for.
+    let narrowed = !by_id && arg("flow").is_none() && (arg("module").is_some() || arg("search").is_some());
+    if full && narrowed {
+        flows.retain(|f| page.iter().any(|s| s.template.stage.as_ref().is_some_and(|r| r.flow == f.id)));
+    }
 
     let flow_rows: Vec<serde_json::Value> = flows
         .iter()
@@ -710,9 +717,18 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             .collect();
         answer["test_files"] = serde_json::json!(test_files);
     } else {
-        answer["note"] = serde_json::json!(format!(
+        let mut note = format!(
             "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
-        ));
+        );
+        // The full answer says it on each unproven row; the index says it
+        // once.
+        if page.iter().any(|s| s.template.proven.is_none()) {
+            note.push_str(&format!(
+                " A template whose proven is false was {}.",
+                crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+            ));
+        }
+        answer["note"] = serde_json::json!(note);
     }
     (200, answer.to_string())
 }

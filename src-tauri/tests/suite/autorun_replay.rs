@@ -1132,6 +1132,77 @@ async fn a_retry_whose_browser_never_opens_keeps_the_first_gos_record() {
     assert!(failed.iter().any(|o| o.harness), "the first go's steps are the record: {:?}", rec.steps);
 }
 
+/// A page whose API answers `status` to the script's `api_request`.
+fn api_answering(status: u16) -> common::ScriptedDriver {
+    common::ScriptedDriver::new(move |method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => {
+            Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+        }
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == v2_lib::autorun::api_checks::GET_FN => {
+            Ok(serde_json::json!({ "result": { "value": {
+                "status": status, "contentType": "application/json", "finalPath": "/hr/api/cycles/42",
+                "sameOrigin": true, "redirected": false, "text": "", "over": false
+            } } }))
+        }
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+/// End to end, through the sentence `api_request` really writes: a
+/// gateway that answers 502 once is a transient failure, and the second
+/// go's 200 passes the case, labelled Retried.
+#[tokio::test]
+async fn an_api_check_that_answers_502_then_200_on_the_retry_passes_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let api = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "api_request", "path": "/hr/api/cycles/42", "expect": { "status": 200 } }
+    ] }]));
+    store::save_script(root, &api).unwrap();
+    let mut browsers = browsers_of(vec![api_answering(502), api_answering(200)]);
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 2, "a fresh browser for the second go");
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().expect("labelled Retried");
+    assert!(first.contains("GET /hr/api/cycles/42 answered 502, expected 200"), "{first}");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+    assert_eq!(rec.reason, format!("{RETRY_PASSED}{first}"));
+}
+
+/// The same through the page's own `fetch` failing outright: the sentence
+/// `api_request` writes for a dropped connection is the one retried.
+#[tokio::test]
+async fn an_api_check_whose_fetch_failed_is_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let api = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "api_request", "path": "/hr/api/cycles/42", "expect": { "status": 200 } }
+    ] }]));
+    store::save_script(root, &api).unwrap();
+    let dropped = common::ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => {
+            Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+        }
+        "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "value": { "error": "TypeError: Failed to fetch" } } })),
+        _ => Ok(serde_json::json!({})),
+    });
+    let mut browsers = browsers_of(vec![dropped, api_answering(200)]);
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().expect("labelled Retried");
+    assert!(first.contains("GET /hr/api/cycles/42 failed: TypeError: Failed to fetch"), "{first}");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+}
+
 #[tokio::test]
 async fn an_assertion_that_fails_is_never_retried() {
     let dir = tempfile::tempdir().unwrap();
