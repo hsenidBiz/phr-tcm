@@ -51,6 +51,17 @@ order:
    A failure outcome carries the step's screenshot, as a supervised step's
    does.
 
+   *Ruling, 2026-10-05 (final review):* a failure before step 1 is not a
+   step-1 failure. These two sentences extend the list above:
+   - a failed sign-in: `replay stopped while signing in: <why>`;
+   - a failed trip to the area: `replay stopped while going to the case's
+     area: <why>`.
+
+   A pane that saves the result keeps their outcomes under the sign-in step
+   (0) and the module step (-1), as an unattended run does. A precondition
+   that is not met answers with its Blocked sentence as it is, and the pane
+   records the case as Blocked with that reason, as a watched start does.
+
 Only one replay runs at a time. A second request while one runs is refused
 with `a replay is already running - wait for it to finish`.
 

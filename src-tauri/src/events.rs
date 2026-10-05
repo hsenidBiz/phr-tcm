@@ -174,6 +174,16 @@ pub struct AutorunReplayProgress {
     pub of: i32,
 }
 
+/// Emitted when a replay changes the supervised browser under the panes:
+/// it opened one (`opened`, nobody signed in yet), or signed it in as
+/// `account` - the account's key, never its login. A pane showing another
+/// case hears that its own sign-in no longer holds.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunSessionChanged {
+    pub opened: bool,
+    pub account: Option<String>,
+}
+
 /// Emitted when the assistant asks to replay case `case_id` (`title`) up
 /// to step `step` and its script must not save: the app shows the Allow
 /// prompt for request `id` (`autorun::replay_ask`), and nothing runs until

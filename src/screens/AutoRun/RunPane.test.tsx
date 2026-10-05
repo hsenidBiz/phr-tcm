@@ -648,7 +648,7 @@ function mockReplay(opts: { account?: string } = {}) {
 
 function renderReplay(step: number) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={qc}>
       <RunPane
         org="acme"
@@ -698,8 +698,10 @@ test("the replay is told Database Read Access is off", async () => {
 });
 
 test("the pane says which step the replay is on, from its progress", async () => {
-  mockReplay();
+  const r = mockReplay();
   renderReplay(3);
+  // Progress is said once the replay has started.
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
 
   const { emit } = await import("@tauri-apps/api/event");
   await act(async () => {
@@ -736,7 +738,7 @@ test.each([
   [READY, "text-success"],
   [
     {
-      end: { kind: "stopped_at", detail: { step: 2, why: 'button "Save" not found', outcomes: [] } },
+      end: { kind: "stopped_at", detail: { phase: "step", step: 2, why: 'button "Save" not found', outcomes: [] } },
       sentence: 'replay stopped at step 2: button "Save" not found',
     },
     "text-danger",
@@ -744,6 +746,13 @@ test.each([
   [{ end: { kind: "stopped", detail: { step: 2 } }, sentence: "the replay was stopped at step 2" }, "text-muted"],
   [
     { end: { kind: "refused", detail: "case 1 has no saved script" }, sentence: "case 1 has no saved script" },
+    "text-warning",
+  ],
+  [
+    {
+      end: { kind: "blocked", detail: "precondition not met: Publish for 274" },
+      sentence: "precondition not met: Publish for 274",
+    },
     "text-warning",
   ],
 ])("the replay's answer is shown as its own sentence (%#)", async (answer, tone) => {
@@ -800,6 +809,7 @@ test("a replay stopped at step 2 marks step 1, shows step 2's outcomes as failed
     end: {
       kind: "stopped_at",
       detail: {
+        phase: "step",
         step: 2,
         why: 'button "Save" not found',
         outcomes: [
@@ -875,4 +885,175 @@ test("saving after a replay keeps each replayed step with one outcome, never an 
     { step_number: 2, outcomes: [{ ok: true, detail: "replayed before healing" }] },
     { step_number: 3, outcomes: [] },
   ]);
+});
+
+/** The steps the pane hands to `auto_run_save_run`, after Failed and Save. */
+async function saveFailed(r: ReturnType<typeof mockReplay>) {
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+  await waitFor(() => expect(r.named("auto_run_save_run")).toHaveLength(1));
+  return (r.named("auto_run_save_run")[0].args as {
+    run: { cases: { proposed?: string; reason?: string; steps: { step_number: number; outcomes: unknown[] }[] }[] };
+  }).run.cases[0];
+}
+
+test("a replay stopped while signing in keeps its outcomes under the sign-in, never step 1", async () => {
+  const r = mockReplay({ account: "hr.admin" });
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  const failed = { ok: false, detail: "nothing matched #go", screenshot: "shot-1-0.png" };
+  await r.finish({
+    end: { kind: "stopped_at", detail: { phase: "sign_in", step: 1, why: "nothing matched #go", outcomes: [failed] } },
+    sentence: "replay stopped while signing in: nothing matched #go",
+  });
+  expect(await screen.findByText("replay stopped while signing in: nothing matched #go")).toHaveClass("text-danger");
+  // The sign-in box says it, with the way to try again.
+  expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
+  expect(within(await stepRow(1)).queryByText(/nothing matched/)).not.toBeInTheDocument();
+
+  const saved = await saveFailed(r);
+  expect(saved.steps).toEqual([
+    { step_number: 0, outcomes: [failed] },
+    { step_number: 1, outcomes: [] },
+    { step_number: 2, outcomes: [] },
+    { step_number: 3, outcomes: [] },
+  ]);
+});
+
+test("a replay stopped going to the area keeps its outcomes under the module step", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  const failed = { ok: false, detail: "the Leave link never appeared" };
+  await r.finish({
+    end: { kind: "stopped_at", detail: { phase: "area", step: 1, why: failed.detail, outcomes: [failed] } },
+    sentence: "replay stopped while going to the case's area: the Leave link never appeared",
+  });
+  await screen.findByText("replay stopped while going to the case's area: the Leave link never appeared");
+  expect(screen.getByText("Going to the area").closest("li")).toHaveTextContent("the Leave link never appeared");
+
+  const saved = await saveFailed(r);
+  expect(saved.steps[0]).toEqual({ step_number: -1, outcomes: [failed] });
+  expect(saved.steps.find((s) => s.step_number === 1)?.outcomes).toEqual([]);
+});
+
+test("a replay blocked by a precondition blocks the case, as a watched start does", async () => {
+  const r = mockReplay({ account: "hr.admin" });
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish({
+    end: { kind: "blocked", detail: "precondition not met: Publish for 274" },
+    sentence: "precondition not met: Publish for 274",
+  });
+  expect(await screen.findByText("Blocked before step 1: precondition not met: Publish for 274")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run step 1" })).toBeDisabled();
+
+  const saved = await saveFailed(r);
+  expect(saved.proposed).toBe("Blocked");
+  expect(saved.reason).toBe("precondition not met: Publish for 274");
+  expect(r.named("auto_run_sign_in")).toHaveLength(0);
+});
+
+test("a refused replay leaves the shared browser alone: closing the pane neither stops nor closes it", async () => {
+  const r = mockReplay();
+  const onClose = vi.fn();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane org="acme" project="Web" pbiId={42} cases={[{ id: 1, title: "Valid login" }]} replayTo={3} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish({
+    end: { kind: "refused", detail: "a replay is already running - wait for it to finish" },
+    sentence: "a replay is already running - wait for it to finish",
+  });
+  await screen.findByText("a replay is already running - wait for it to finish");
+
+  fireEvent.click(screen.getByRole("button", { name: /Close/ }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(r.named("auto_run_close_browser")).toHaveLength(0);
+  expect(r.named("auto_run_stop_replay")).toHaveLength(0);
+});
+
+test("a pane closed while its replay goes stops the replay and closes no browser", async () => {
+  const r = mockReplay();
+  const view = renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  view.unmount();
+  await waitFor(() => expect(r.named("auto_run_stop_replay")).toHaveLength(1));
+  expect(r.named("auto_run_close_browser")).toHaveLength(0);
+});
+
+test("a browser another replay opened is shown as open, and never opened again", async () => {
+  const calls: string[] = [];
+  mockIPC(
+    (cmd) => {
+      calls.push(cmd);
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "Valid login" }]);
+  expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-session-changed", { opened: true, account: null });
+  });
+  expect(await screen.findByRole("button", { name: "Run step 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open browser" })).not.toBeInTheDocument();
+  expect(calls).not.toContain("auto_run_open_browser");
+});
+
+test("a replay that signs the browser in as another account is said, and this case signs in again before its next step", async () => {
+  const order: string[] = [];
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+      if (cmd === "auto_run_sign_in") {
+        order.push("sign in");
+        return OK;
+      }
+      if (cmd === "auto_run_step") {
+        order.push("step");
+        return [{ ok: true, detail: "ok" }];
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "Valid login" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  // The pane's own sign-in, once the browser opened.
+  await waitFor(() => expect(order).toEqual(["sign in"]));
+  const run = await screen.findByRole("button", { name: "Run step 1" });
+  await waitFor(() => expect(run).toBeEnabled());
+
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-session-changed", { opened: true, account: "clerk" });
+  });
+  expect(
+    await screen.findByText(
+      "the Auto Run browser was signed in as clerk by a replay - sign in again before the next step",
+    ),
+  ).toBeInTheDocument();
+
+  fireEvent.click(run);
+  await waitFor(() => expect(order).toEqual(["sign in", "sign in", "step"]));
+  await waitFor(() =>
+    expect(screen.queryByText(/was signed in as clerk by a replay/)).not.toBeInTheDocument(),
+  );
+
+  // Once signed in again, the next step needs no second sign-in.
+  await waitFor(() => expect(run).toBeEnabled());
+  fireEvent.click(run);
+  await waitFor(() => expect(order).toEqual(["sign in", "sign in", "step", "step"]));
 });

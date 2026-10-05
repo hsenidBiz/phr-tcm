@@ -1741,7 +1741,7 @@ pub async fn autorun_replay_with(
     };
     let sentence = end.sentence();
     match end {
-        ReplayEnd::Refused(_) => (409, sentence),
+        ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {
             let answer = match host.page().await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),

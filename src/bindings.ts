@@ -1092,6 +1092,7 @@ export const events = {
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
+	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
@@ -1554,6 +1555,17 @@ export type AutorunReplayRequest = {
  */
 export type AutorunReplayRequestEnded = {
 	id: string,
+};
+
+/**
+ *  Emitted when a replay changes the supervised browser under the panes:
+ *  it opened one (`opened`, nobody signed in yet), or signed it in as
+ *  `account` - the account's key, never its login. A pane showing another
+ *  case hears that its own sign-in no longer holds.
+ */
+export type AutorunSessionChanged = {
+	opened: boolean,
+	account: string | null,
 };
 
 export type BackupImportResult = {
@@ -3276,15 +3288,23 @@ export type ReplayEnd_Deserialize =
 	notice: string | null,
 } } | 
 /**
- *  Step `step` failed, or the sign-in or the trip to the area before
- *  step 1 did (then `step` is 1): `why` is the failure's sentence, and
- *  `outcomes` what ran, a failure carrying its screenshot.
+ *  The replay failed in `phase`: step `step` when it is `Step`; the
+ *  case's sign-in or its trip to the area before step 1 otherwise (then
+ *  `step` is 1, the step it never reached). `why` is the failure's
+ *  sentence, and `outcomes` what ran, a failure carrying its screenshot.
  */
 { kind: "stopped_at"; detail: {
+	phase: ReplayPhase,
 	step: number,
 	why: string,
 	outcomes: ActionOutcome_Deserialize[],
 } } | 
+/**
+ *  A precondition of the case is not met: nothing was signed in, and
+ *  the case is Blocked with this sentence as its reason, as a watched
+ *  start blocks it.
+ */
+{ kind: "blocked"; detail: string } | 
 /**
  *  The stop control, or the browser closing, ended the replay before
  *  step `step` finished.
@@ -3307,15 +3327,23 @@ export type ReplayEnd_Serialize =
 	notice: string | null,
 } } | 
 /**
- *  Step `step` failed, or the sign-in or the trip to the area before
- *  step 1 did (then `step` is 1): `why` is the failure's sentence, and
- *  `outcomes` what ran, a failure carrying its screenshot.
+ *  The replay failed in `phase`: step `step` when it is `Step`; the
+ *  case's sign-in or its trip to the area before step 1 otherwise (then
+ *  `step` is 1, the step it never reached). `why` is the failure's
+ *  sentence, and `outcomes` what ran, a failure carrying its screenshot.
  */
 { kind: "stopped_at"; detail: {
+	phase: ReplayPhase,
 	step: number,
 	why: string,
 	outcomes: ActionOutcome_Serialize[],
 } } | 
+/**
+ *  A precondition of the case is not met: nothing was signed in, and
+ *  the case is Blocked with this sentence as its reason, as a watched
+ *  start blocks it.
+ */
+{ kind: "blocked"; detail: string } | 
 /**
  *  The stop control, or the browser closing, ended the replay before
  *  step `step` finished.
@@ -3325,6 +3353,14 @@ export type ReplayEnd_Serialize =
 } } | 
 /**  Nothing was replayed: the sentence says why. */
 { kind: "refused"; detail: string };
+
+/**
+ *  Where a replay that stopped on a failure was: signing the case in,
+ *  going to its area, or running one of its steps. The sign-in and the
+ *  trip are not step 1: a record keeps their outcomes under the sign-in
+ *  step and the module step, as an unattended run's does.
+ */
+export type ReplayPhase = "sign_in" | "area" | "step";
 
 /**
  *  Emitted as an unattended run moves: once when a case's browser is

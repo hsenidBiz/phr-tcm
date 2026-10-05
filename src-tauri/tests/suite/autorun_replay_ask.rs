@@ -314,7 +314,12 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
     project(dir.path(), &script(false));
     for (end, sentence) in [
         (
-            ReplayEnd::StoppedAt { step: 2, why: "nothing matched #s2".into(), outcomes: vec![] },
+            ReplayEnd::StoppedAt {
+                phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
+                step: 2,
+                why: "nothing matched #s2".into(),
+                outcomes: vec![],
+            },
             "replay stopped at step 2: nothing matched #s2",
         ),
         (ReplayEnd::Stopped { step: 2 }, "the replay was stopped at step 2"),

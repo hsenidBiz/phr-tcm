@@ -34,6 +34,18 @@ pub struct ReplayRequest {
     pub db_read_access: bool,
 }
 
+/// Where a replay that stopped on a failure was: signing the case in,
+/// going to its area, or running one of its steps. The sign-in and the
+/// trip are not step 1: a record keeps their outcomes under the sign-in
+/// step and the module step, as an unattended run's does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayPhase {
+    SignIn,
+    Area,
+    Step,
+}
+
 /// How a replay ended. `sentence` says it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
@@ -41,10 +53,15 @@ pub enum ReplayEnd {
     /// Every step before `step` ran: the browser is on the page before it.
     /// `notice` is said beside it: the preconditions were not checked.
     Ready { case_id: i32, step: i32, notice: Option<String> },
-    /// Step `step` failed, or the sign-in or the trip to the area before
-    /// step 1 did (then `step` is 1): `why` is the failure's sentence, and
-    /// `outcomes` what ran, a failure carrying its screenshot.
-    StoppedAt { step: i32, why: String, outcomes: Vec<ActionOutcome> },
+    /// The replay failed in `phase`: step `step` when it is `Step`; the
+    /// case's sign-in or its trip to the area before step 1 otherwise (then
+    /// `step` is 1, the step it never reached). `why` is the failure's
+    /// sentence, and `outcomes` what ran, a failure carrying its screenshot.
+    StoppedAt { phase: ReplayPhase, step: i32, why: String, outcomes: Vec<ActionOutcome> },
+    /// A precondition of the case is not met: nothing was signed in, and
+    /// the case is Blocked with this sentence as its reason, as a watched
+    /// start blocks it.
+    Blocked(String),
     /// The stop control, or the browser closing, ended the replay before
     /// step `step` finished.
     Stopped { step: i32 },
@@ -59,11 +76,43 @@ impl ReplayEnd {
             ReplayEnd::Ready { case_id, step, .. } => {
                 format!("replayed case {case_id} to step {step} - the browser is on the page before step {step} runs")
             }
-            ReplayEnd::StoppedAt { step, why, .. } => format!("replay stopped at step {step}: {why}"),
+            ReplayEnd::StoppedAt { phase: ReplayPhase::SignIn, why, .. } => {
+                format!("replay stopped while signing in: {why}")
+            }
+            ReplayEnd::StoppedAt { phase: ReplayPhase::Area, why, .. } => {
+                format!("replay stopped while going to the case's area: {why}")
+            }
+            ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step, why, .. } => {
+                format!("replay stopped at step {step}: {why}")
+            }
+            ReplayEnd::Blocked(why) => why.clone(),
             ReplayEnd::Stopped { step } => format!("the replay was stopped at step {step}"),
             ReplayEnd::Refused(why) => why.clone(),
         }
     }
+}
+
+/// What the panes hear once a replay has opened the supervised browser:
+/// nothing when one was open already (`had_browser`).
+pub fn opened_event(had_browser: bool) -> Option<crate::events::AutorunSessionChanged> {
+    (!had_browser).then_some(crate::events::AutorunSessionChanged { opened: true, account: None })
+}
+
+/// What the panes hear once a replay has signed the browser in: the
+/// account key it holds now, when that is not the one it held `before`.
+pub fn signed_in_event(
+    before: &Option<String>,
+    after: &Option<String>,
+) -> Option<crate::events::AutorunSessionChanged> {
+    (after.is_some() && after != before)
+        .then(|| crate::events::AutorunSessionChanged { opened: true, account: after.clone() })
+}
+
+/// Why a replay stopped when its page tried to save while the browser was
+/// guarding case `other`'s draft (an assistant's replay never lifts that
+/// guard).
+pub fn guarding_other_case(other: i32) -> String {
+    format!("the Auto Run browser is guarding case {other}'s draft, and the page tried to save")
 }
 
 /// A replay's end with the sentence that says it, as the person's command
@@ -244,7 +293,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
         Err(why) => return ReplayEnd::Refused(why),
     };
     if let Some(why) = checked.blocked {
-        return ReplayEnd::Refused(why);
+        return ReplayEnd::Blocked(why);
     }
 
     // The no-save guard, through the same path as a person's step.
@@ -253,6 +302,9 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
     {
         return ReplayEnd::Refused(why);
     }
+    // A guard still held for another case: an assistant's replay never
+    // lifts it, so a save this case's page tries is stopped for that case.
+    let guarding_other = guarded_case.filter(|c| *c != id);
 
     // The case's own account, through the supervised browser's lease.
     let mut signed_now = false;
@@ -272,7 +324,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
             if !one.harness {
                 one.screenshot = runner::picture(d, root).await;
             }
-            return ReplayEnd::StoppedAt { step: 1, why: one.detail.clone(), outcomes: vec![one] };
+            return ReplayEnd::StoppedAt { phase: ReplayPhase::SignIn, step: 1, why: one.detail.clone(), outcomes: vec![one] };
         }
         signed_now = true;
     }
@@ -287,7 +339,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
         return ReplayEnd::Stopped { step: 1 };
     }
     if !went.ok {
-        return ReplayEnd::StoppedAt { step: 1, why: went.detail.clone(), outcomes: vec![went] };
+        return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
     }
 
     // Steps 1 to N-1, in the script's order.
@@ -314,7 +366,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
         .await;
         let mut outcomes = match ran {
             Ok(o) => o,
-            Err(why) => return ReplayEnd::StoppedAt { step: k, why, outcomes: Vec::new() },
+            Err(why) => return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes: Vec::new() },
         };
         if outcomes.iter().any(|o| o.detail == AFTER_STOP || closed(o)) {
             return ReplayEnd::Stopped { step: k };
@@ -329,8 +381,11 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
                 }
             }
         }
-        if let Some(why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
-            return ReplayEnd::StoppedAt { step: k, why, outcomes };
+        if let Some(mut why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
+            if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {
+                why = guarding_other_case(other);
+            }
+            return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes };
         }
     }
     ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice }

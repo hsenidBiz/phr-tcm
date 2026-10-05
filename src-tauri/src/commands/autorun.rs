@@ -103,8 +103,11 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     let mut slot = SESSION.lock().await;
     open_into(&app, &mut slot, Browser::from_name(&browser_name)).await?;
     // The person's choice, once it opened, for a replay that finds no
-    // browser.
-    store::remember_browser(&root(&app)?, &browser_name);
+    // browser. Best effort: the browser is open either way.
+    match root(&app) {
+        Ok(root) => store::remember_browser(&root, &browser_name),
+        Err(e) => crate::applog::warn(format!("auto-run: the browser choice could not be remembered: {e}")),
+    }
     Ok(())
 }
 
@@ -354,8 +357,15 @@ pub(crate) async fn replay_supervised(
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
         return Ok(stopped);
     }
+    let had_browser = slot.is_some();
     open_if_none(app, &mut slot).await?;
+    // The panes hear of a browser this replay opened, and of the account
+    // it leaves the browser signed in as, before the lock lets them in.
+    if let Some(changed) = replay_to::opened_event(had_browser) {
+        let _ = changed.emit(app);
+    }
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    let account_before = session.account.clone();
     let end = replay_to::replay_to_checked(
         &mut session.cdp,
         &root,
@@ -374,12 +384,18 @@ pub(crate) async fn replay_supervised(
         },
     )
     .await;
+    if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
+        let _ = changed.emit(app);
+    }
     if session.cdp.is_guarding_saves() {
         answer_between_commands();
     }
     let how = match &end {
         ReplayEnd::Ready { .. } => "ready".to_string(),
+        ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::SignIn, .. } => "stopped while signing in".to_string(),
+        ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::Area, .. } => "stopped going to the area".to_string(),
         ReplayEnd::StoppedAt { step, .. } => format!("stopped at step {step}"),
+        ReplayEnd::Blocked(_) => "blocked by a precondition".to_string(),
         ReplayEnd::Stopped { step } => format!("stopped before step {step} finished"),
         ReplayEnd::Refused(_) => "refused".to_string(),
     };

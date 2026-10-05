@@ -16,8 +16,8 @@ use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
 use v2_lib::autorun::preconditions::{PreconditionDb, NEED_DB, NOT_CHECKED};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{
-    replay_to, replay_to_checked, stopped_before_opening, OneReplay, ReplayAnswer, ReplayEnd, ReplayRequest,
-    ALREADY_RUNNING, CANCEL,
+    guarding_other_case, opened_event, replay_to, replay_to_checked, signed_in_event, stopped_before_opening, OneReplay,
+    ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ALREADY_RUNNING, CANCEL,
 };
 use v2_lib::commands::autorun::guard_for_case;
 use v2_lib::autorun::runner::NEEDS_SCRIPT_AREA;
@@ -218,8 +218,8 @@ async fn a_failing_step_stops_the_replay_there_with_its_outcomes() {
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    let ReplayEnd::StoppedAt { step, why, outcomes } = &end else { panic!("{end:?}") };
-    assert_eq!(*step, 2);
+    let ReplayEnd::StoppedAt { phase, step, why, outcomes } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
     assert_eq!(outcomes.len(), 2);
     assert!(outcomes[0].ok && !outcomes[1].ok, "{outcomes:?}");
     assert_eq!(why, &outcomes[1].detail);
@@ -333,7 +333,10 @@ async fn a_precondition_not_met_stops_it_with_its_blocked_sentence_and_signs_nob
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Refused("precondition not met: Publish for 274 (Performance cycle wizard)".into()));
+    // Blocked, as a watched start blocks it: the pane keeps the sentence as
+    // the case's reason.
+    assert_eq!(end, ReplayEnd::Blocked("precondition not met: Publish for 274 (Performance cycle wizard)".into()));
+    assert_eq!(end.sentence(), "precondition not met: Publish for 274 (Performance cycle wizard)");
     assert!(log(&app).is_empty(), "something ran in the browser: {:?}", log(&app));
     assert_eq!((account, held.account()), (None, None), "nobody was signed in");
 }
@@ -377,7 +380,7 @@ async fn with_no_database_to_ask_the_plain_replay_says_so() {
     let (mut account, mut held, cancel) = (None, Held::supervised(), AtomicBool::new(false));
     let r = ReplayRequest { case_id: ID, step: 2, db_read_access: true };
     let end = replay_to(&mut d, dir.path(), "acme", "Web", &r, &mut account, &mut held, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Refused(NEED_DB.into()));
+    assert_eq!(end, ReplayEnd::Blocked(NEED_DB.into()), "Blocked, as a watched start with no database to ask is");
     assert!(log(&app).is_empty());
 }
 
@@ -518,4 +521,166 @@ fn the_answer_carries_the_finished_sentence() {
     assert_eq!(answer.sentence, ALREADY_RUNNING);
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(json, json!({ "end": { "kind": "refused", "detail": ALREADY_RUNNING }, "sentence": ALREADY_RUNNING }));
+}
+
+// ---- where a failure happened --------------------------------------------
+
+#[test]
+fn each_phase_says_where_the_replay_stopped() {
+    let at = |phase| ReplayEnd::StoppedAt { phase, step: 1, why: "nothing matched #go".into(), outcomes: vec![] };
+    assert_eq!(at(ReplayPhase::SignIn).sentence(), "replay stopped while signing in: nothing matched #go");
+    assert_eq!(
+        at(ReplayPhase::Area).sentence(),
+        "replay stopped while going to the case's area: nothing matched #go"
+    );
+    assert_eq!(at(ReplayPhase::Step).sentence(), "replay stopped at step 1: nothing matched #go");
+    assert_eq!(serde_json::to_value(at(ReplayPhase::SignIn)).unwrap()["detail"]["phase"], "sign_in");
+    assert_eq!(serde_json::to_value(at(ReplayPhase::Area)).unwrap()["detail"]["phase"], "area");
+    assert_eq!(serde_json::to_value(at(ReplayPhase::Step)).unwrap()["detail"]["phase"], "step");
+}
+
+#[tokio::test]
+async fn an_area_that_cannot_be_reached_stops_the_replay_while_going_there_not_at_step_1() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    // A menu with no Leave link: the trip to the area cannot be made.
+    let (mut d, app) = common::menu_app(&[("link", "Payroll", "/hr/payroll")], "/hr/home/index", 0);
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let ReplayEnd::StoppedAt { phase, why, outcomes, .. } = &end else { panic!("{end:?}") };
+    assert_eq!(*phase, ReplayPhase::Area);
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(end.sentence(), format!("replay stopped while going to the case's area: {why}"));
+    assert!(!clicked(&app, "#s1"), "step 1 ran: {:?}", log(&app));
+}
+
+/// A pane that saves a replay stopped while signing in keeps the outcomes
+/// under the sign-in step (0): the run's failures say STOP for the sign-in,
+/// never a defect in step 1.
+#[test]
+fn a_saved_sign_in_failure_is_a_sign_in_stop_not_a_step_1_defect() {
+    use v2_lib::autorun::failures::{describe_failures, stop_reason};
+    let case: v2_lib::autorun::CaseRecord = serde_json::from_value(json!({
+        "case_id": ID,
+        "title": "Leave request",
+        "verdict": "Failed",
+        "note": "",
+        "steps": [
+            { "step_number": 0, "outcomes": [ { "ok": false, "detail": "nothing matched #go" } ] },
+            { "step_number": 1, "outcomes": [] },
+            { "step_number": 2, "outcomes": [] }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        stop_reason(&case).as_deref(),
+        Some("the sign-in failed - fix the account or the recipe in the app, not the script")
+    );
+    let run = v2_lib::autorun::LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        cases: vec![case],
+        mode: String::new(),
+        published: None,
+        environment: None,
+    };
+    let out = describe_failures(&run, &[]);
+    assert!(out.contains("sign-in: nothing matched #go"), "{out}");
+    assert!(!out.contains("step 1"), "{out}");
+}
+
+/// A browser whose page tries to save on the first click after `armed` is
+/// set: the guard stops it and hands the sentence over, as a guarded
+/// browser does.
+struct SavesWhenArmed {
+    inner: ScriptedDriver,
+    armed: Arc<AtomicBool>,
+    blocked: Option<String>,
+}
+
+impl Driver for SavesWhenArmed {
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, CdpError> {
+        if method == "Input.dispatchMouseEvent" && self.armed.swap(false, Ordering::SeqCst) {
+            self.blocked = Some(v2_lib::browser::save_guard::blocked("POST", "https://app.example/api/leave/save"));
+        }
+        self.inner.call(method, params).await
+    }
+    async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+    fn take_save_blocked(&mut self) -> Option<String> {
+        self.blocked.take()
+    }
+}
+
+/// An assistant's replay keeps a guard held for another case (5). A save
+/// the replayed case's page tries is stopped for case 5, and the sentence
+/// says so rather than calling it this script's own save.
+#[tokio::test]
+async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (inner, app) = app();
+    let armed = Arc::new(AtomicBool::new(false));
+    let mut d = SavesWhenArmed { inner, armed: armed.clone(), blocked: None };
+    let (mut account, cancel) = (None, AtomicBool::new(false));
+    let mut guarded = Some(5);
+    let mut held = Held::supervised();
+    let end = replay_to_checked(
+        &mut d,
+        dir.path(),
+        "acme",
+        "Web",
+        &req(4),
+        &mut account,
+        &mut held,
+        &mut guarded,
+        false,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+        |k, _| {
+            if k == 2 {
+                armed.store(true, Ordering::SeqCst);
+            }
+        },
+    )
+    .await;
+    let ReplayEnd::StoppedAt { phase, step, why, .. } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
+    assert_eq!(why, &guarding_other_case(5));
+    assert_eq!(
+        end.sentence(),
+        "replay stopped at step 2: the Auto Run browser is guarding case 5's draft, and the page tried to save"
+    );
+    assert!(!clicked(&app, "#s3"), "{:?}", log(&app));
+    assert_eq!(guarded, Some(5));
+}
+
+// ---- what the panes hear ---------------------------------------------------
+
+#[test]
+fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
+    use v2_lib::events::AutorunSessionChanged;
+    assert_eq!(opened_event(false), Some(AutorunSessionChanged { opened: true, account: None }));
+    assert_eq!(opened_event(true), None, "a browser already open is no news");
+    let (none, admin, clerk) = (None, Some("admin".to_string()), Some("clerk".to_string()));
+    assert_eq!(signed_in_event(&none, &admin), Some(AutorunSessionChanged { opened: true, account: admin.clone() }));
+    assert_eq!(signed_in_event(&clerk, &admin), Some(AutorunSessionChanged { opened: true, account: admin.clone() }));
+    assert_eq!(signed_in_event(&admin, &admin), None, "the same account is no news");
+    assert_eq!(signed_in_event(&admin, &none), None);
+    let json = serde_json::to_value(signed_in_event(&none, &admin).unwrap()).unwrap();
+    assert_eq!(json, json!({ "opened": true, "account": "admin" }));
 }
