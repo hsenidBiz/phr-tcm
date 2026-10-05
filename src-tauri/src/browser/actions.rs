@@ -246,9 +246,9 @@ fn check_download(
         return Err("expect_download needs a name, such as Template*.xlsx".to_string());
     }
     match within_ms {
-        Some(0) => return Err("expect_download within_ms must be more than 0".to_string()),
+        Some(0) => return Err(WITHIN_MS_ZERO.to_string()),
         Some(ms) if *ms > DOWNLOAD_WAIT_MAX_MS => {
-            return Err(format!("expect_download waits at most {DOWNLOAD_WAIT_MAX_MS} ms, not {ms}"))
+            return Err(format!("within_ms is at most {DOWNLOAD_WAIT_MAX_MS} (got {ms})"))
         }
         _ => {}
     }

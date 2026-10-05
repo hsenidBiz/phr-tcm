@@ -337,11 +337,16 @@ the one checked, once it has finished.
     { "kind": "click", "selector": { "role": "button", "name": "Download Template" } },
     { "kind": "expect_download", "name": "*Template*.xlsx", "headers": { "exact": ["Employee No", "Name", "Department"] } }
 
-137537, an upload's error log, checked with `contains_text` (a .csv or
-.txt log) or with `cells` (a workbook):
+137537, an upload's error log. Use one of these two, whichever fits the
+file the application gives; they are alternatives, not two checks on one
+download. A .csv or .txt log, checked with `contains_text`:
 
     { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
     { "kind": "expect_download", "name": "*Error*.csv", "contains_text": ["Row 4: Department is required"] }
+
+Or a workbook, checked with `cells`:
+
+    { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
     { "kind": "expect_download", "name": "*Error*.xlsx", "sheet": "Errors", "cells": [ { "ref": "B2", "text": "Department is required", "match": "contains" } ] }
 
 The names, buttons and words above are examples: use the file name the

@@ -20,6 +20,7 @@ use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
 use crate::browser::downloads::{DownloadEntry, DownloadState};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in before this action failed";
@@ -154,6 +155,44 @@ pub async fn run_step_routed<D: Driver>(
     route: Option<&Route>,
     area: AreaRoute<'_>,
 ) -> Result<Vec<ActionOutcome>, String> {
+    let mut run = InRun::default();
+    run_step_in_run(d, root, organization, project, step, timing, account, lease, route, area, &mut run).await
+}
+
+/// What an unattended run shares with each step it runs, and learns back.
+#[derive(Default)]
+pub struct InRun<'a> {
+    /// The run's Stop: a wait inside the step (an `expect_download`'s) ends
+    /// at its next look once it is set. `None` in a watched run or a try,
+    /// where nothing waits that long unasked.
+    pub cancel: Option<&'a AtomicBool>,
+    /// Set by the step: the moment it began, as its `expect_download` takes
+    /// it (after reading what the browser had already sent). The step's
+    /// record dates its downloads from the same moment.
+    pub began: Option<Instant>,
+}
+
+/// What an action interrupted by the run's Stop, and every action after it
+/// in the step, records: what a stopped case records for what it never
+/// ran.
+pub const AFTER_STOP: &str = "not run: the run was stopped";
+
+/// `run_step_routed` inside an unattended run: the run's Stop reaches the
+/// step's waits through `run`, and the step says when it began.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_step_in_run<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    step: &StepScript,
+    timing: &Timing,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    route: Option<&Route>,
+    area: AreaRoute<'_>,
+    run: &mut InRun<'_>,
+) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
     // as before the built-in existed; the sign-in itself is what refuses.
     let recipe = recipe::load_effective_recipe_if_any(root, organization, project)?;
@@ -173,6 +212,7 @@ pub async fn run_step_routed<D: Driver>(
     }
     let mark = d.net_mark();
     let began = Instant::now();
+    run.began = Some(began);
     let here =
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
@@ -249,7 +289,13 @@ pub async fn run_step_routed<D: Driver>(
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
-            Action::ExpectDownload { .. } => expect_download(d, action, began).await,
+            Action::ExpectDownload { .. } => {
+                let outcome = expect_download(d, action, began, run.cancel).await;
+                if outcome.detail == AFTER_STOP {
+                    blocked = Some(AFTER_STOP);
+                }
+                outcome
+            }
             Action::WhenVisible { .. } => {
                 let (outcome, stop) = when_visible(d, &here, action, timing).await;
                 blocked = stop;
@@ -267,7 +313,8 @@ pub async fn run_step_routed<D: Driver>(
             outcome = ActionOutcome::failed(sentence);
             blocked = Some(AFTER_SAVE_BLOCKED);
         }
-        if !outcome.ok && !outcome.harness {
+        // A Stop is no failure to picture.
+        if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
@@ -382,13 +429,19 @@ fn seconds(ms: u32) -> String {
     }
 }
 
-/// An `expect_download`: the first download that started at or after
-/// `began` (the step's start), waited for until it completes - both within
+/// An `expect_download`: the first download that started after `began`
+/// (the step's start), waited for until it completes - both within
 /// the action's one `within_ms` - then checked by
 /// `autorun::downloads::check_file`. A download an earlier step started is
 /// never this step's, finished or not. The file is read off the async
-/// thread: a workbook can be up to the 50 MB cap.
-async fn expect_download<D: Driver>(d: &mut D, action: &Action, began: Instant) -> ActionOutcome {
+/// thread: a workbook can be up to the 50 MB cap. The run's Stop (`cancel`)
+/// ends either wait at its next look, as `AFTER_STOP`.
+async fn expect_download<D: Driver>(
+    d: &mut D,
+    action: &Action,
+    began: Instant,
+    cancel: Option<&AtomicBool>,
+) -> ActionOutcome {
     use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck};
     use crate::browser::actions::{CellMatch, HeadersSpec, DOWNLOAD_WAIT_MS};
     if let Err(why) = action.validate() {
@@ -399,9 +452,13 @@ async fn expect_download<D: Driver>(d: &mut D, action: &Action, began: Instant) 
     };
     let within = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
     let deadline = Instant::now() + Duration::from_millis(u64::from(within));
+    let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
     let guid = loop {
-        if let Some(e) = d.downloads().into_iter().find(|e| e.started_at >= began) {
+        if let Some(e) = d.downloads().into_iter().find(|e| e.started_at > began) {
             break e.guid;
+        }
+        if stopped() {
+            return ActionOutcome::failed(AFTER_STOP);
         }
         if Instant::now() >= deadline {
             return ActionOutcome::failed(format!("no download started within {}", seconds(within)));
@@ -422,6 +479,7 @@ async fn expect_download<D: Driver>(d: &mut D, action: &Action, began: Instant) 
                     seconds(within)
                 ))
             }
+            DownloadState::InProgress if stopped() => return ActionOutcome::failed(AFTER_STOP),
             DownloadState::InProgress => d.idle(DOWNLOAD_POLL).await,
         }
     };
@@ -448,14 +506,14 @@ async fn expect_download<D: Driver>(d: &mut D, action: &Action, began: Instant) 
     }
 }
 
-/// The files a step saved: the downloads that started at or after `began`
+/// The files a step saved: the downloads that started after `began`
 /// (and before `until`, the next step's start, when there is one) and
 /// completed, by the names they are kept under on disk - numbered when
 /// their own name was taken.
 pub fn saved_between(all: &[DownloadEntry], began: Instant, until: Option<Instant>) -> Vec<String> {
     all.iter()
         .filter(|e| e.state == DownloadState::Completed)
-        .filter(|e| e.started_at >= began && until.map_or(true, |u| e.started_at < u))
+        .filter(|e| e.started_at > began && until.map_or(true, |u| e.started_at <= u))
         .filter_map(|e| e.path.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect()
 }

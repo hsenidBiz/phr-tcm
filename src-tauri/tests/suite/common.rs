@@ -62,6 +62,10 @@ pub struct ScriptedDriver {
     /// What `downloads` reports: a test pushes the entries a real browser
     /// would have followed.
     pub downloads: Vec<DownloadEntry>,
+    /// A download that the browser is heard to start once a call to the
+    /// named method is made, dated then - how a test says "the browser read
+    /// this download's start while that call was answered". Fires once.
+    pub downloads_on_call: Vec<(String, DownloadEntry)>,
 }
 
 impl ScriptedDriver {
@@ -85,6 +89,7 @@ impl ScriptedDriver {
             save_blocked: None,
             download_dirs: vec![],
             downloads: vec![],
+            downloads_on_call: vec![],
         }
     }
 
@@ -141,6 +146,19 @@ impl Driver for ScriptedDriver {
                 }
             }
             self.events.push_back(ev);
+        }
+        let mut heard = vec![];
+        self.downloads_on_call.retain(|(m, e)| {
+            if m == method {
+                heard.push(e.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for mut e in heard {
+            e.started_at = Instant::now();
+            self.downloads.push(e);
         }
         (self.handler)(method, &params)
     }

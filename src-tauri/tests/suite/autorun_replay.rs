@@ -1837,3 +1837,24 @@ async fn a_stopped_case_does_not_wait_for_its_downloads() {
     settle_downloads(&mut d, &cancel).await;
     assert!(began.elapsed() < std::time::Duration::from_millis(50), "took {:?}", began.elapsed());
 }
+
+/// Review follow-up 4: a download stuck in progress costs a case one
+/// settle, not one in the case and another before its browser closes.
+#[tokio::test]
+async fn a_stuck_download_costs_a_case_one_settle() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut d = common::FakePage::default().driver();
+    d.downloads.push(arriving());
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-78");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let took = started.elapsed();
+    assert!(took >= std::time::Duration::from_secs(5), "the case did wait for the download: {took:?}");
+    assert!(took < std::time::Duration::from_secs(9), "two settles: {took:?}");
+    assert_eq!(browsers.closed, 1);
+}

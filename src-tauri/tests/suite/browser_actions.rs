@@ -836,11 +836,11 @@ fn expect_download_refuses_what_could_never_be_checked() {
     // within_ms: more than 0, at most 120000.
     assert_eq!(
         download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 0 })),
-        "expect_download within_ms must be more than 0"
+        "within_ms must be more than 0"
     );
     assert_eq!(
         download_refusal(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 120001 })),
-        "expect_download waits at most 120000 ms, not 120001"
+        "within_ms is at most 120000 (got 120001)"
     );
     let ok: Action =
         serde_json::from_value(json!({ "kind": "expect_download", "name": "a.csv", "within_ms": 120000 })).unwrap();

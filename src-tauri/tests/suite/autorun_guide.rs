@@ -578,6 +578,16 @@ fn the_guide_teaches_expect_download_with_its_two_examples() {
         assert!(section.contains(term), "the downloads section never says {term:?}");
     }
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    // Each example checks one download once: two checks in a row would read
+    // as one file checked twice, when the error log's are alternatives.
+    let lines: Vec<&str> = section.lines().collect();
+    for pair in lines.windows(2) {
+        assert!(
+            !(pair[0].contains("\"expect_download\"") && pair[1].contains("\"expect_download\"")),
+            "two expect_download examples run together: {pair:?}"
+        );
+    }
+    assert!(section.contains("Use one of these two"), "the error log's checks must read as alternatives");
     let mut seen = 0;
     for line in section.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
         assert!(line.starts_with("    { \"kind\""), "an example line is not indented: {line}");

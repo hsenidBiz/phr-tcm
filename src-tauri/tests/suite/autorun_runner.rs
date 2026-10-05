@@ -483,3 +483,74 @@ async fn the_files_saved_during_a_step_are_on_its_record() {
     none.downloads.clear();
     assert!(serde_json::to_value(&none).unwrap().get("downloads").is_none());
 }
+
+/// A Stop pressed while an unattended step waits for its download ends the
+/// wait at the next look: the case stops there, as a stopped case does.
+#[tokio::test]
+async fn a_stop_ends_a_download_wait_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [
+            { "kind": "expect_download", "name": "report.csv", "within_ms": 10000 },
+            { "kind": "check_text", "value": "Saved" }
+        ] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Done" }] }
+    ] }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let started = Instant::now();
+    let stop = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    };
+    let timing = quick();
+    let mut on_step = |_| {};
+    let (rec, ()) = tokio::join!(
+        v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &script, &timing, &cancel, &mut on_step),
+        stop
+    );
+    assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
+    let stopped = "not run: the run was stopped";
+    assert_eq!(rec.steps[0].outcomes[0].detail, stopped);
+    assert_eq!(rec.steps[0].outcomes[1].detail, stopped);
+    assert!(rec.steps[0].outcomes[0].screenshot.is_none() && rec.steps[0].screenshot.is_none());
+    assert_eq!(rec.steps[1].outcomes[0].detail, stopped);
+    assert_eq!((rec.proposed.as_str(), rec.reason.as_str()), ("", "stopped before it finished"));
+}
+
+/// Review follow-up 3: a download the browser was heard to start while the
+/// step read what had already arrived (its settle) is an earlier step's.
+/// The step's check and its record agree: it belongs to neither.
+#[tokio::test]
+async fn a_download_heard_during_the_settle_belongs_to_neither_the_check_nor_the_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.csv");
+    std::fs::write(&file, EXPORT).unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.downloads_on_call
+        .push(("Runtime.evaluate".into(), followed(&file, "report.csv", 0, DownloadState::Completed)));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }] }
+    ] }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let rec = v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &script, &quick(), &cancel, &mut |_| {})
+        .await;
+    assert_eq!(d.downloads.len(), 1, "the settle heard the download");
+    assert_eq!(rec.steps[0].outcomes[0].detail, "no download started within 0.3 s");
+    assert!(rec.steps[0].downloads.is_empty(), "{:?}", rec.steps[0].downloads);
+}
+
+/// A watched run or a try has no Stop to hear: its wait runs its course.
+#[tokio::test]
+async fn a_watched_step_has_no_stop_to_end_its_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 300 }));
+    let started = Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(300));
+    assert_eq!(out[0].detail, "no download started within 0.3 s");
+}
