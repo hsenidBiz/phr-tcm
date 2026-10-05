@@ -90,11 +90,12 @@ fn a_request_brings_a_hidden_or_minimised_window_forward() {
 
     // The app's replay host presents the window as it shows the prompt,
     // through the same restore the tray's Open uses.
-    let tray = read("src/tray.rs");
+    // Normalised: a Windows checkout has CRLF line endings.
+    let tray = read("src/tray.rs").replace("\r\n", "\n");
     let present = &tray[tray.find("pub fn present_main").expect("present_main")..];
     let present = &present[..present.find("\n}\n").unwrap()];
     assert!(present.contains("show_main(app)"), "{present}");
-    let host = read("src/commands/ai_bridge.rs");
+    let host = read("src/commands/ai_bridge.rs").replace("\r\n", "\n");
     let asked = &host[host.find("Notice::Asked(ask) =>").expect("the Asked arm")..];
     let asked = &asked[..asked.find("Notice::Ended").unwrap()];
     assert!(asked.contains("crate::tray::present_main(&self.0)"), "{asked}");
