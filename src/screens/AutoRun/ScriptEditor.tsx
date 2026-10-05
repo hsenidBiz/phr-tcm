@@ -11,11 +11,11 @@ import { commands, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
-import { Textarea } from "../../components/ui/input";
+import { Input, Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
+import { IconAdd, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { floorOf } from "./floor";
 
@@ -94,6 +94,14 @@ export default function ScriptEditor({
     .map((p, i) => ({ p, n: i + 1 }))
     .filter(({ n }) => !removedPre.includes(n));
 
+  // The shared state the case changes or needs unchanged, by name. null =
+  // untouched, so the saved script's names show until the person edits a
+  // row. The save checks them (length, count, no name twice).
+  const [pickedChanges, setPickedChanges] = useState<string[] | null>(null);
+  const [pickedNeeds, setPickedNeeds] = useState<string[] | null>(null);
+  const changes = pickedChanges ?? existing.data?.changes ?? [];
+  const needsUnchanged = pickedNeeds ?? existing.data?.needs_unchanged ?? [];
+
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
   const value =
@@ -150,6 +158,8 @@ export default function ScriptEditor({
       // Carried through, less any removed here (the save checks them
       // again).
       ...(preconditions.length ? { preconditions: preconditions.map(({ p }) => p) } : {}),
+      ...(changes.length ? { changes } : {}),
+      ...(needsUnchanged.length ? { needs_unchanged: needsUnchanged } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -268,6 +278,19 @@ export default function ScriptEditor({
             </div>
           )}
 
+          <MarkRow
+            label="Changes"
+            noun="change"
+            names={changes}
+            onChange={setPickedChanges}
+          />
+          <MarkRow
+            label="Needs unchanged"
+            noun="needs unchanged"
+            names={needsUnchanged}
+            onChange={setPickedNeeds}
+          />
+
           {preconditions.length > 0 && (
             <div className="space-y-1">
               <span className="text-xs font-medium text-muted">Preconditions</span>
@@ -312,5 +335,78 @@ export default function ScriptEditor({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+/** The comparison key of a mark's name, as the backend's `marks::normalise`
+ * takes it: trimmed, inner whitespace collapsed, lowercased. */
+function markKey(name: string): string {
+  return name.trim().split(/\s+/).join(" ").toLowerCase();
+}
+
+/** One row of marks: each name a chip with a remove button, and a box to
+ * add one with Enter or Add. A name already in the row, as `markKey`
+ * compares them, is not added again. */
+function MarkRow({
+  label,
+  noun,
+  names,
+  onChange,
+}: {
+  label: string;
+  noun: string;
+  names: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const name = draft.trim();
+    setDraft("");
+    if (!name || names.some((n) => markKey(n) === markKey(name))) return;
+    onChange([...names, name]);
+  };
+  return (
+    <div className="space-y-1">
+      <span className="text-xs font-medium text-muted">{label}</span>
+      {names.length > 0 && (
+        <ul aria-label={label} className="flex flex-wrap gap-1 text-xs">
+          {names.map((name, i) => (
+            <li
+              key={`${i}-${name}`}
+              className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text"
+            >
+              {name}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="px-1.5 py-0.5"
+                aria-label={`Remove ${noun} ${name}`}
+                onClick={() => onChange(names.filter((_, j) => j !== i))}
+              >
+                <IconRemove aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-2">
+        <Input
+          aria-label={`Add to ${label}`}
+          className="min-w-0 flex-1 px-2 py-1 text-xs"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Button size="sm" variant="outline" aria-label={`Add ${noun}`} onClick={add}>
+          <IconAdd aria-hidden />
+          Add
+        </Button>
+      </div>
+    </div>
   );
 }

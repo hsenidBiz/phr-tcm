@@ -529,6 +529,52 @@ Send each existing precondition back exactly as it is: a repair that
 leaves one out or changes it is refused, and only a person can drop or
 change one, in the app.
 
+## Shared state a case changes
+
+Some cases change shared state, for example publishing a cycle. Other
+cases only work while that change has not happened, or after it is
+reverted. A script can say so with two optional lists of names:
+
+- `changes`: this case leaves something changed for the cases after it.
+- `needs_unchanged`: this case needs that thing not yet changed (or
+  reverted).
+
+Auto Run uses them to order the cases and to stop a run where a person
+must reset the environment.
+
+Mark a case only when it really leaves shared state that another case
+depends on. Re-runnable cases that clean up after themselves carry no
+marks.
+
+The publish example:
+
+- the case that publishes has `"changes": ["cycle published"]`;
+- each case that edits the draft cycle has `"needs_unchanged": ["cycle published"]`.
+
+    { "case_id": 503, "title": "...", "changes": ["cycle published"], "steps": [ ... ] }
+    { "case_id": 504, "title": "...", "needs_unchanged": ["cycle published"], "steps": [ ... ] }
+
+A name is a short phrase, for example "cycle published" or "appraisal
+submitted for A001". Reuse one name for one change across the set: names
+are compared trimmed and case-insensitively, so "Cycle published" and
+"cycle published" are one name, but "cycle publish" is another.
+
+The same name in both lists is allowed. A case that needs X unchanged and
+then changes X is the usual shape, for example "publish the cycle".
+
+A name is 1 to 60 characters, and each list holds at most 10 names. Every
+save refuses a list that breaks these rules, one sentence per problem:
+
+- `changes: "<name>" is longer than 60 characters`
+- `changes holds more than 10 names`
+- `changes: a name cannot be empty`
+- `changes: "<name>" is listed twice`
+
+and the same four for `needs_unchanged`.
+
+A repair may change these lists. Marking a saved script is not a repair:
+it needs no "edits" and uses none of the repair count.
+
 ## Every expected result is checked
 
 Every step whose test case has a non-empty expected result must be

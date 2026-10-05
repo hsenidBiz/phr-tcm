@@ -455,6 +455,18 @@ export const commands = {
 	 */
 	preconditions?: Precondition_Serialize[],
 	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
 	 *  repair reads the test case as of this moment to see which steps the
@@ -1868,6 +1880,18 @@ export type CaseScript_Deserialize = {
 	 */
 	preconditions?: Precondition_Deserialize[],
 	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
 	 *  repair reads the test case as of this moment to see which steps the
@@ -1938,6 +1962,18 @@ export type CaseScript_Serialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A

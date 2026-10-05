@@ -2218,3 +2218,36 @@ async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("an assertion is never removed"), "{out}");
 }
+
+/// Marks affect order, not safety: an assistant marking a saved script
+/// needs no "edits", uses none of the repair count, and the save says the
+/// marks changed. A re-send with the same marks is unchanged again, and
+/// one that leaves them out drops them.
+#[tokio::test]
+async fn marking_a_saved_script_is_no_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let send = |body: serde_json::Value| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await }
+    };
+
+    assert_eq!(send(case_7("#toast", "Saved")).await.0, 200);
+    let mut marked = case_7("#toast", "Saved");
+    marked[0]["changes"] = serde_json::json!(["cycle published"]);
+    marked[0]["needs_unchanged"] = serde_json::json!(["cycle published"]);
+
+    assert_eq!(send(marked.clone()).await, (200, "saved 1 script(s): case 7 (marks updated)".to_string()));
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.repairs, 0, "marking is not a repair");
+    assert_eq!(on_disk.changes, vec!["cycle published".to_string()]);
+    assert_eq!(on_disk.needs_unchanged, vec!["cycle published".to_string()]);
+
+    assert_eq!(send(marked).await, (200, "saved 1 script(s): case 7 (unchanged)".to_string()));
+    assert_eq!(send(case_7("#toast", "Saved")).await, (200, "saved 1 script(s): case 7 (marks updated)".to_string()));
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert!(on_disk.changes.is_empty() && on_disk.needs_unchanged.is_empty());
+    assert_eq!(on_disk.repairs, 0);
+}

@@ -62,6 +62,8 @@ fn script() -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }
 }
@@ -196,6 +198,8 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }
 }
@@ -243,7 +247,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], saved_at: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], changes: vec![], needs_unchanged: vec![], saved_at: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -269,6 +273,8 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
@@ -297,6 +303,8 @@ fn a_step_with_no_actions_is_still_accepted() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
@@ -534,7 +542,19 @@ fn a_script_saved_before_this_plan_is_written_exactly_as_before() {
     assert_eq!(sc.repairs, 0);
     assert_eq!(sc.last_repair, None);
     assert_eq!(sc.steps[0].unchecked, None);
+    // Nor the shared-state marks, which every script before them lacks.
+    assert!(sc.changes.is_empty());
+    assert!(sc.needs_unchanged.is_empty());
     assert_eq!(serde_json::to_value(&sc).unwrap(), old);
+    // Through the store too: written back to the file byte for byte.
+    let dir = TempDir::new();
+    let text = serde_json::to_string_pretty(&sc).unwrap();
+    save_script(dir.path(), &sc).unwrap();
+    let back = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(back, sc);
+    save_script(dir.path(), &back).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.path().join("scripts").join("case-7.json")).unwrap(), text);
+    assert!(!text.contains("changes") && !text.contains("needs_unchanged"), "{text}");
 }
 
 /// `unchecked` round-trips with `repairs` and `last_repair`, and a blank

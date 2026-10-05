@@ -624,3 +624,33 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("No browser needs to be open"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
+
+/// Marks: the guide says when to mark a case (only for shared state
+/// another case depends on), gives the publish example, says to reuse one
+/// name for one change, and lists the save's refusals in its own words.
+#[test]
+fn the_guide_teaches_marking_shared_state() {
+    let g = autorun_guide();
+    let at = g.find("## Shared state a case changes").expect("the guide has no marks section");
+    let section = g[at..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "`changes`",
+        "`needs_unchanged`",
+        "Mark a case only when it really leaves shared state that another case depends on.",
+        "Re-runnable cases that clean up after themselves carry no marks.",
+        "the case that publishes has `\"changes\": [\"cycle published\"]`",
+        "each case that edits the draft cycle has `\"needs_unchanged\": [\"cycle published\"]`",
+        "Reuse one name for one change across the set",
+        "compared trimmed and case-insensitively",
+        "The same name in both lists is allowed.",
+        "changes: \"<name>\" is longer than 60 characters",
+        "changes holds more than 10 names",
+        "changes: a name cannot be empty",
+        "changes: \"<name>\" is listed twice",
+        "A repair may change these lists.",
+    ] {
+        assert!(flat.contains(term), "the marks section never says {term:?}\n{flat}");
+    }
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+}

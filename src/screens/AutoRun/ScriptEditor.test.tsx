@@ -296,3 +296,109 @@ test("removing every precondition saves the script without the key", async () =>
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).not.toHaveProperty("preconditions");
 });
+
+// ---- Marks: the shared state a case changes or needs unchanged ----
+
+test("a script's marks show as chips in the Changes and Needs unchanged rows", async () => {
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      changes: ["cycle published"],
+      needs_unchanged: ["cycle published", "appraisal submitted for A001"],
+    },
+    ACCOUNTS,
+    [],
+  );
+  const changes = await screen.findByRole("list", { name: "Changes" });
+  expect(within(changes).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["cycle published"]);
+  const needs = screen.getByRole("list", { name: "Needs unchanged" });
+  expect(within(needs).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+    "cycle published",
+    "appraisal submitted for A001",
+  ]);
+  expect(screen.getByRole("button", { name: "Remove change cycle published" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove needs unchanged cycle published" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Remove needs unchanged appraisal submitted for A001" }),
+  ).toBeInTheDocument();
+});
+
+test("a name is added with Enter or the Add button, and saved with the script", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  const change = await screen.findByRole("textbox", { name: "Add to Changes" });
+  fireEvent.change(change, { target: { value: "  cycle published " } });
+  fireEvent.keyDown(change, { key: "Enter" });
+  expect(change).toHaveValue("");
+  const need = screen.getByRole("textbox", { name: "Add to Needs unchanged" });
+  fireEvent.change(need, { target: { value: "appraisal submitted for A001" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add needs unchanged" }));
+  expect(need).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Remove change cycle published" })).toBeInTheDocument();
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(
+    expect.objectContaining({ changes: ["cycle published"], needs_unchanged: ["appraisal submitted for A001"] }),
+  );
+});
+
+test("a name that differs only in case or spacing from one in the row is not added twice", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, changes: ["Cycle Published"] }, ACCOUNTS, []);
+  const change = await screen.findByRole("textbox", { name: "Add to Changes" });
+  await screen.findByRole("button", { name: "Remove change Cycle Published" });
+  fireEvent.change(change, { target: { value: " cycle   published " } });
+  fireEvent.keyDown(change, { key: "Enter" });
+  const list = screen.getByRole("list", { name: "Changes" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Cycle Published"]);
+  // A blank box adds nothing.
+  fireEvent.change(change, { target: { value: "   " } });
+  fireEvent.click(screen.getByRole("button", { name: "Add change" }));
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+});
+
+test("Remove then Save sends the script without that name, and an emptied row without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    { case_id: 7, title: "t", steps: ONE_STEP, changes: ["cycle published"], needs_unchanged: ["a", "b"] },
+    ACCOUNTS,
+    saved,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Remove change cycle published" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove needs unchanged a" }));
+  expect(screen.queryByRole("button", { name: "Remove change cycle published" })).not.toBeInTheDocument();
+  expect(saved).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("changes");
+  expect((saved[0] as { needs_unchanged?: unknown }).needs_unchanged).toEqual(["b"]);
+});
+
+test("a script with no marks is saved without either key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("changes");
+  expect(saved[0]).not.toHaveProperty("needs_unchanged");
+});
+
+test("a script's marks are kept when it is saved untouched", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    { case_id: 7, title: "t", steps: ONE_STEP, changes: ["cycle published"], needs_unchanged: ["cycle published"] },
+    ACCOUNTS,
+    saved,
+  );
+  await screen.findByRole("button", { name: "Remove change cycle published" });
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(
+    expect.objectContaining({ changes: ["cycle published"], needs_unchanged: ["cycle published"] }),
+  );
+});

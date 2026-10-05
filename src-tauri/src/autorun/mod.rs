@@ -15,6 +15,7 @@ pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod lease;
+pub mod marks;
 pub mod nav;
 pub mod patterns;
 pub mod preconditions;
@@ -103,6 +104,16 @@ pub struct CaseScript {
     /// Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
+    /// Shared state this case leaves changed for the cases after it, by
+    /// name (`"cycle published"`). Names compare by `marks::normalise`, and
+    /// every save validates them (`marks::check_marks`). Written only when
+    /// there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<String>,
+    /// Shared state this case needs not yet changed, or reverted, by the
+    /// same names as `changes`. Written only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs_unchanged: Vec<String>,
     /// When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
     /// every save (`store::save_scripts_atomically`), whatever was sent. A
     /// repair reads the test case as of this moment to see which steps the
