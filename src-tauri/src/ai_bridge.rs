@@ -1537,6 +1537,7 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ExpireSession
         | Action::ReturnToArea => String::new(),
         Action::PressKey { key } => key.trim().to_string(),
+        Action::ExpectDownload { name, .. } => name.trim().to_string(),
         // Never a query string: a fragment or a path can carry a token there.
         Action::ExpectResponse { url_contains: address, .. } | Action::ApiRequest { path: address, .. } => {
             crate::autorun::report::without_query(address.trim()).to_string()

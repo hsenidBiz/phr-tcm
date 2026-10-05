@@ -446,6 +446,7 @@ fn a_blocked_save_proposes_failed_and_is_never_retried() {
         step_number: 1,
         outcomes: vec![ActionOutcome::failed(SENTENCE), ActionOutcome::failed("not run: the page tried to save")],
         screenshot: None,
+        downloads: vec![],
     }];
     let p = propose(&script, &steps, None, false);
     assert_eq!(p.verdict, "Failed");
@@ -471,7 +472,7 @@ fn a_blocked_save_proposes_failed_and_is_never_retried() {
 #[test]
 fn a_save_blocked_on_the_way_to_the_module_proposes_failed() {
     let script = no_save_script(one_click());
-    let steps = vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(SENTENCE)], screenshot: None }];
+    let steps = vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(SENTENCE)], screenshot: None, downloads: vec![] }];
     let p = propose(&script, &steps, None, false);
     assert_eq!(p.verdict, "Failed");
     assert!(p.reason.ends_with(SENTENCE), "{}", p.reason);

@@ -610,7 +610,7 @@ fn propose_blames_the_browser_before_the_page() {
     let ordinary_fail = ActionOutcome::failed("nope");
     let mut harness_fail = ActionOutcome::failed("gone");
     harness_fail.harness = true;
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![] }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
 }
@@ -1412,7 +1412,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1428,7 +1428,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
         no_address(1)
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1440,7 +1440,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
     assert_eq!(p.reason, format!("step 1: {detail}"));
@@ -1460,6 +1460,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
             ActionOutcome::failed("not run: the module screen was not reached after the sign-in"),
         ],
         screenshot: None,
+        downloads: vec![],
     }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
@@ -1484,7 +1485,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }
     ] }]));
@@ -1518,7 +1519,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
-    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![] }];
     let p = propose(&signs_in, &steps, Some(true), false);
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
@@ -1600,7 +1601,7 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
         "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
     }))
     .unwrap();
-    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None });
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![] });
     run.cases.push(earlier);
 
     let mut browsers = FakeBrowsers {

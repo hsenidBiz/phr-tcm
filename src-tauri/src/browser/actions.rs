@@ -148,6 +148,168 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// Check the file this step downloaded: the first download that started
+    /// during the step, once it completes within `within_ms`
+    /// (`DOWNLOAD_WAIT_MS` when left out). `name` is the whole file name,
+    /// ignoring case, with `*` for any run of characters; the other keys
+    /// read what is in it (`autorun::downloads::check_file`). Carried out by
+    /// the runner, which alone knows where the step began.
+    ExpectDownload {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headers: Option<HeadersSpec>,
+        /// `None` when left out; an empty list is refused, not ignored.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cells: Option<Vec<CellSpec>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains_text: Option<Vec<String>>,
+        /// Any other key the script carried - see `Stray`.
+        #[serde(flatten)]
+        #[specta(skip)]
+        stray: Stray,
+    },
+}
+
+/// An `expect_download`'s first row: `{ "exact": [...] }`, exactly these in
+/// this order, or `{ "contains": [...] }`, each of these in any order.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadersSpec {
+    Exact(Vec<String>),
+    Contains(Vec<String>),
+}
+
+/// One cell an `expect_download` reads: `{ "ref": "B2", "text": "...",
+/// "match": "exact" | "contains" }`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct CellSpec {
+    #[serde(rename = "ref")]
+    pub at: String,
+    pub text: String,
+    #[serde(rename = "match", default)]
+    pub how: CellMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CellMatch {
+    #[default]
+    Exact,
+    Contains,
+}
+
+/// How long an `expect_download` waits when it names no `within_ms`.
+pub const DOWNLOAD_WAIT_MS: u32 = 15_000;
+/// The longest an `expect_download` may wait.
+pub const DOWNLOAD_WAIT_MAX_MS: u32 = 120_000;
+
+/// The file types whose cells an `expect_download` reads, and whose text.
+const SHEET_TYPES: (&[&str], &str, &str) = (&[".xlsx", ".xls", ".csv"], ".xlsx, .xls or .csv", "Template*.xlsx");
+const TEXT_TYPES: (&[&str], &str, &str) = (&[".csv", ".txt"], ".csv or .txt", "errors*.csv");
+
+/// A key `expect_download` reads only in a file of `types`, refused unless
+/// the name ends in one: the type is known before the file arrives, so a
+/// saved script never asks to read a workbook as text.
+fn needs_type(key: &str, name: &str, (exts, said, example): (&[&str], &str, &str)) -> Result<(), String> {
+    let lower = name.trim().to_lowercase();
+    if exts.iter().any(|e| lower.ends_with(e)) {
+        return Ok(());
+    }
+    Err(format!(
+        "expect_download can check {key} only in a file whose name ends in {said}, and \"{}\" does not - name the file type (such as {example}) so it is known before the file arrives, or check only name and within_ms",
+        name.trim()
+    ))
+}
+
+/// What `validate` says about an `expect_download`.
+#[allow(clippy::too_many_arguments)]
+fn check_download(
+    name: &str,
+    within_ms: &Option<u32>,
+    sheet: &Option<String>,
+    headers: &Option<HeadersSpec>,
+    cells: &Option<Vec<CellSpec>>,
+    contains_text: &Option<Vec<String>>,
+    stray: &Stray,
+) -> Result<(), String> {
+    if let Some(key) = stray.keys().next() {
+        let shown: String = key.chars().take(40).collect();
+        return Err(format!(
+            "expect_download has no \"{shown}\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+        ));
+    }
+    if name.trim().is_empty() {
+        return Err("expect_download needs a name, such as Template*.xlsx".to_string());
+    }
+    match within_ms {
+        Some(0) => return Err("expect_download within_ms must be more than 0".to_string()),
+        Some(ms) if *ms > DOWNLOAD_WAIT_MAX_MS => {
+            return Err(format!("expect_download waits at most {DOWNLOAD_WAIT_MAX_MS} ms, not {ms}"))
+        }
+        _ => {}
+    }
+    if sheet.is_some() {
+        needs_type("sheet", name, SHEET_TYPES)?;
+    }
+    if headers.is_some() {
+        needs_type("headers", name, SHEET_TYPES)?;
+    }
+    if cells.is_some() {
+        needs_type("cells", name, SHEET_TYPES)?;
+    }
+    if contains_text.is_some() {
+        needs_type("contains_text", name, TEXT_TYPES)?;
+    }
+    if let Some(s) = sheet {
+        if s.trim().is_empty() {
+            return Err("expect_download sheet is empty - leave it out for the first sheet".to_string());
+        }
+        if headers.is_none() && cells.is_none() {
+            return Err(format!(
+                "expect_download sheet \"{}\" is read only for headers or cells - add one, or leave sheet out",
+                s.trim()
+            ));
+        }
+    }
+    if let Some(HeadersSpec::Exact(h) | HeadersSpec::Contains(h)) = headers {
+        if h.is_empty() {
+            return Err(
+                "expect_download headers is an empty list - name at least one header, or leave headers out".to_string()
+            );
+        }
+    }
+    if let Some(cells) = cells {
+        if cells.is_empty() {
+            return Err("expect_download cells is an empty list - give at least one cell, or leave cells out".to_string());
+        }
+        for (i, c) in cells.iter().enumerate() {
+            let n = i + 1;
+            if crate::autorun::downloads::parse_a1(c.at.trim()).is_none() {
+                return Err(format!("expect_download cells {n}: \"{}\" is not a cell reference like B2", c.at.trim()));
+            }
+            if c.how == CellMatch::Contains && c.text.trim().is_empty() {
+                return Err(format!(
+                    "expect_download cells {n}: an empty text with match contains holds for any cell - give the text to find"
+                ));
+            }
+        }
+    }
+    if let Some(texts) = contains_text {
+        if texts.is_empty() {
+            return Err(
+                "expect_download contains_text is an empty list - give at least one text, or leave contains_text out"
+                    .to_string(),
+            );
+        }
+        if let Some(i) = texts.iter().position(|t| t.trim().is_empty()) {
+            return Err(format!("expect_download contains_text {} is empty - every file contains nothing", i + 1));
+        }
+    }
+    Ok(())
 }
 
 /// The keys `press_key` may press, as a script names them: name, the DOM
@@ -546,6 +708,9 @@ impl Action {
             }
             Action::PressKey { .. } => Ok(()),
             Action::ExpectFocused { selector, .. } => selector.validate(),
+            Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, stray } => {
+                check_download(name, within_ms, sheet, headers, cells, contains_text, stray)
+            }
         }
     }
 
@@ -581,6 +746,7 @@ impl Action {
                 | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
+                | Action::ExpectDownload { .. }
         )
     }
 }
@@ -870,6 +1036,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         }
         // Only the runner knows the case's area and the recipe's home.
         Action::ReturnToArea => ActionOutcome::failed("return_to_area is carried out by the runner"),
+        // Only the runner knows where the step began, and so which
+        // download is the step's.
+        Action::ExpectDownload { .. } => ActionOutcome::failed("expect_download is carried out by the runner"),
     }
 }
 

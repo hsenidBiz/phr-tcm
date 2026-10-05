@@ -2389,3 +2389,48 @@ async fn a_hostile_name_lands_inside_the_folder() {
     assert_eq!(std::fs::read_to_string(&all[0].path).unwrap(), "hostile");
     assert_eq!(files_in(dir.path()), ["inner"], "nothing landed beside the folder");
 }
+
+/// One step of `expect_download`'s live test, run as a run runs it.
+async fn download_step(live: &mut Live, root: &Path, n: i32, actions: Vec<serde_json::Value>) -> Vec<ActionOutcome> {
+    let s = StepScript { step_number: n, actions: actions.into_iter().map(action_of).collect(), unchecked: None };
+    let mut account: Option<String> = None;
+    run_step(&mut live.cdp, root, "org", "proj", &s, &timing(), &mut account).await.expect("run_step failed")
+}
+
+/// `expect_download` in a real browser: the export clicked and the
+/// workbook's headers and a cell checked in the same step; a wrong name
+/// fails; and a step that clicks nothing hears of no download, though
+/// earlier steps downloaded two (Review Focus 3).
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_download_checks_the_file_a_step_downloaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut live = open_downloads(&dir.path().join("downloads")).await;
+
+    let out = download_step(&mut live, dir.path(), 1, vec![
+        json!({ "kind": "click", "selector": { "css": "#xlsx" } }),
+        json!({ "kind": "expect_download", "name": "template*.XLSX",
+                "headers": { "exact": ["Employee No", "Name"] },
+                "cells": [ { "ref": "B2", "text": "Ada" }, { "ref": "A2", "text": "E0", "match": "contains" } ] }),
+    ])
+    .await;
+    must(out[0].clone());
+    assert!(out[1].ok, "{}", out[1].detail);
+    assert!(out[1].detail.starts_with("downloaded \"Template.xlsx\" ("), "{}", out[1].detail);
+    assert!(out[1].detail.ends_with(", headers match, B2 is \"Ada\", A2 contains \"E0\""), "{}", out[1].detail);
+
+    let out = download_step(&mut live, dir.path(), 2, vec![
+        json!({ "kind": "click", "selector": { "css": "#csv" } }),
+        json!({ "kind": "expect_download", "name": "Template*.xlsx" }),
+    ])
+    .await;
+    assert!(!out[1].ok);
+    assert_eq!(out[1].detail, "got \"report.csv\", expected a file named \"Template*.xlsx\"");
+
+    let out = download_step(&mut live, dir.path(), 3, vec![
+        json!({ "kind": "expect_download", "name": "*", "within_ms": 1500 }),
+    ])
+    .await;
+    assert!(!out[0].ok);
+    assert_eq!(out[0].detail, "no download started within 1.5 s");
+}

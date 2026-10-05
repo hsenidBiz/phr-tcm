@@ -79,6 +79,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         step_number: step.step_number,
         outcomes: step.actions.iter().map(|_| ActionOutcome::failed(why)).collect(),
         screenshot: None,
+        downloads: Vec::new(),
     }
 }
 
@@ -290,7 +291,7 @@ pub async fn run_case_as<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new() });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -328,10 +329,19 @@ pub async fn run_case_as<D: Driver>(
             } else if !out.ok {
                 skip = Some(AFTER_UNREACHED);
             }
-            steps.push(StepRecord { step_number: MODULE_STEP, outcomes: vec![out], screenshot: None });
+            steps.push(StepRecord {
+                step_number: MODULE_STEP,
+                outcomes: vec![out],
+                screenshot: None,
+                downloads: Vec::new(),
+            });
         }
     }
 
+    // Where each step that ran began, by its index in `steps`: the files
+    // the browser saved are put on the step they started in once the case
+    // is over, so one still arriving as its step ended is not left out.
+    let mut step_began: Vec<(usize, Instant)> = Vec::new();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
@@ -342,6 +352,7 @@ pub async fn run_case_as<D: Driver>(
             continue;
         }
         on_step(step.step_number);
+        step_began.push((steps.len(), Instant::now()));
         // `return_to_area` goes where the run went before step 1.
         let area = match route {
             Some(r) => runner::AreaRoute::To(r),
@@ -369,7 +380,17 @@ pub async fn run_case_as<D: Driver>(
         if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new() });
+    }
+
+    let took = began.elapsed();
+    if !step_began.is_empty() {
+        settle_downloads(d, cancel).await;
+        let all = d.downloads();
+        for (i, &(at, from)) in step_began.iter().enumerate() {
+            let until = step_began.get(i + 1).map(|&(_, next)| next);
+            steps[at].downloads = runner::saved_between(&all, from, until);
+        }
     }
 
     let p = propose(script, &steps, signed_in, stopped);
@@ -381,7 +402,7 @@ pub async fn run_case_as<D: Driver>(
         steps,
         proposed: p.verdict.to_string(),
         reason: p.reason,
-        duration_ms: i32::try_from(began.elapsed().as_millis()).ok(),
+        duration_ms: i32::try_from(took.as_millis()).ok(),
         account: account.map(str::to_string),
         retried: None,
         notice: None,

@@ -110,6 +110,7 @@ pub fn action_words(action: &Action) -> String {
         Action::ReturnToArea => "go back to the case's area".to_string(),
         Action::PressKey { key } => format!("press {}", key.trim()),
         Action::ExpectFocused { selector, .. } => format!("expect {} to have the focus", selector.describe()),
+        Action::ExpectDownload { name, .. } => format!("expect a download named \"{}\"", name.trim()),
     }
 }
 

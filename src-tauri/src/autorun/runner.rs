@@ -18,8 +18,9 @@ use crate::browser::actions::{
 use crate::browser::cdp::Driver;
 use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
+use crate::browser::downloads::{DownloadEntry, DownloadState};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in before this action failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached after the sign-in";
@@ -164,10 +165,14 @@ pub async fn run_step_routed<D: Driver>(
     // `expect_response` looks only at requests that started after it. What
     // the browser has already sent is read first, so a request the page
     // made before this step is not taken for one of the step's own.
-    if step.actions.iter().any(|a| matches!(a, Action::ExpectResponse { .. })) {
+    // The same for downloads: one an earlier step started is read (and
+    // dated) before the step's own time is noted, so it is never taken for
+    // one this step started.
+    if step.actions.iter().any(|a| matches!(a, Action::ExpectResponse { .. } | Action::ExpectDownload { .. })) {
         api_checks::settle(d, timing).await;
     }
     let mark = d.net_mark();
+    let began = Instant::now();
     let here =
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
@@ -244,6 +249,7 @@ pub async fn run_step_routed<D: Driver>(
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
+            Action::ExpectDownload { .. } => expect_download(d, action, began).await,
             Action::WhenVisible { .. } => {
                 let (outcome, stop) = when_visible(d, &here, action, timing).await;
                 blocked = stop;
@@ -362,6 +368,96 @@ async fn upload<D: Driver>(
             upload_in(d, selector, &path, &shown, timing).await
         }
     }
+}
+
+/// How often an `expect_download` looks at the browser's downloads.
+const DOWNLOAD_POLL: Duration = Duration::from_millis(100);
+
+/// `ms` as a person reads a wait: `15 s`, `1.5 s`.
+fn seconds(ms: u32) -> String {
+    if ms % 1000 == 0 {
+        format!("{} s", ms / 1000)
+    } else {
+        format!("{:.1} s", f64::from(ms) / 1000.0)
+    }
+}
+
+/// An `expect_download`: the first download that started at or after
+/// `began` (the step's start), waited for until it completes - both within
+/// the action's one `within_ms` - then checked by
+/// `autorun::downloads::check_file`. A download an earlier step started is
+/// never this step's, finished or not. The file is read off the async
+/// thread: a workbook can be up to the 50 MB cap.
+async fn expect_download<D: Driver>(d: &mut D, action: &Action, began: Instant) -> ActionOutcome {
+    use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck};
+    use crate::browser::actions::{CellMatch, HeadersSpec, DOWNLOAD_WAIT_MS};
+    if let Err(why) = action.validate() {
+        return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
+    }
+    let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, .. } = action else {
+        return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_download"));
+    };
+    let within = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
+    let deadline = Instant::now() + Duration::from_millis(u64::from(within));
+    let guid = loop {
+        if let Some(e) = d.downloads().into_iter().find(|e| e.started_at >= began) {
+            break e.guid;
+        }
+        if Instant::now() >= deadline {
+            return ActionOutcome::failed(format!("no download started within {}", seconds(within)));
+        }
+        d.idle(DOWNLOAD_POLL).await;
+    };
+    let entry = loop {
+        let Some(e) = d.downloads().into_iter().find(|e| e.guid == guid) else {
+            return ActionOutcome::failed("the download this step started is no longer followed by the browser");
+        };
+        match e.state {
+            DownloadState::Completed => break e,
+            DownloadState::Canceled => return ActionOutcome::failed(format!("the download \"{}\" was canceled", e.name)),
+            DownloadState::InProgress if Instant::now() >= deadline => {
+                return ActionOutcome::failed(format!(
+                    "the download \"{}\" did not finish within {}",
+                    e.name,
+                    seconds(within)
+                ))
+            }
+            DownloadState::InProgress => d.idle(DOWNLOAD_POLL).await,
+        }
+    };
+    let check = DownloadCheck {
+        name: name.trim().to_string(),
+        sheet: sheet.clone(),
+        headers: headers.as_ref().map(|h| match h {
+            HeadersSpec::Exact(v) => HeaderCheck::Exact(v.clone()),
+            HeadersSpec::Contains(v) => HeaderCheck::Contains(v.clone()),
+        }),
+        cells: cells
+            .iter()
+            .flatten()
+            .map(|c| CellCheck { r#ref: c.at.clone(), text: c.text.clone(), contains: c.how == CellMatch::Contains })
+            .collect(),
+        contains_text: contains_text.clone().unwrap_or_default(),
+    };
+    let (path, shown) = (entry.path.clone(), entry.name.clone());
+    let checked = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check)).await;
+    match checked {
+        Ok(Ok(sentence)) => ActionOutcome::passed(sentence),
+        Ok(Err(sentence)) => ActionOutcome::failed(sentence),
+        Err(_) => ActionOutcome::failed(format!("\"{}\" could not be read", entry.name)),
+    }
+}
+
+/// The files a step saved: the downloads that started at or after `began`
+/// (and before `until`, the next step's start, when there is one) and
+/// completed, by the names they are kept under on disk - numbered when
+/// their own name was taken.
+pub fn saved_between(all: &[DownloadEntry], began: Instant, until: Option<Instant>) -> Vec<String> {
+    all.iter()
+        .filter(|e| e.state == DownloadState::Completed)
+        .filter(|e| e.started_at >= began && until.map_or(true, |u| e.started_at < u))
+        .filter_map(|e| e.path.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect()
 }
 
 /// A sign-in and the trip back to the module that follows it, as the one

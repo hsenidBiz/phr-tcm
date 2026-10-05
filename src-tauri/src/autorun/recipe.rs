@@ -226,7 +226,8 @@ fn check(action: &Action) -> Result<(), String> {
     }
     // Checking what a page asks its server is part of a case: a recipe
     // runs for every case's sign-in, and its steps carry no expectations.
-    if let Some(k @ ("expect_response" | "api_request")) = kind.as_deref() {
+    // Nor does it check a downloaded file.
+    if let Some(k @ ("expect_response" | "api_request" | "expect_download")) = kind.as_deref() {
         return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
     }
     // Ending the session undoes the sign-in itself, and going to a case's

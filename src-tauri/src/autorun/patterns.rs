@@ -370,6 +370,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         Action::ExpireSession => Some("the session".to_string()),
         Action::ReturnToArea => Some("the case's area".to_string()),
         Action::PressKey { key } => Some(format!("the {} key", key.trim())),
+        Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
         Action::Navigate { url } => {
             let url = url.trim();
             let end = url.find(['?', '#']).unwrap_or(url.len());

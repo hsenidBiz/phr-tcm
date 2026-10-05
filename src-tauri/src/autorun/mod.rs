@@ -157,6 +157,11 @@ pub struct StepRecord {
     /// A picture of the page when the step ended (unattended runs only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    /// The files the browser saved during the step, by the names they are
+    /// kept under in the run's download folder (`store::downloads_dir`):
+    /// names only, never a path (unattended runs only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<String>,
 }
 
 /// One case in a run. `verdict` is the HUMAN's word - "", "Passed",

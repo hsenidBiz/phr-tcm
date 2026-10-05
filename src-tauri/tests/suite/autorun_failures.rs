@@ -84,6 +84,7 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
             step_number: 0,
             outcomes: vec![ActionOutcome::failed("wrong password")],
             screenshot: None,
+            downloads: vec![],
         }],
         verdict: "Blocked".to_string(),
         ..empty_case()
@@ -176,11 +177,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                             harness: false,
                         }],
                         screenshot: None,
+                        downloads: vec![],
                     },
                     StepRecord {
                         step_number: 3,
                         outcomes: vec![ActionOutcome::failed("not run: an earlier step of this case failed")],
                         screenshot: None,
+                        downloads: vec![],
                     },
                 ],
                 proposed: "Failed".to_string(),
@@ -204,6 +207,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         harness: false,
                     }],
                     screenshot: None,
+                    downloads: vec![],
                 }],
                 proposed: "Failed".to_string(),
                 reason: "step 1: the page refused: no such element".to_string(),
@@ -299,6 +303,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
                 step_number: 1,
                 outcomes: vec![ActionOutcome::failed("the field never appeared")],
                 screenshot: None,
+                downloads: vec![],
             }],
             ..empty_case()
         }],
@@ -324,6 +329,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
                 step_number: 1,
                 outcomes: vec![ActionOutcome::failed("value shown was wrong")],
                 screenshot: None,
+                downloads: vec![],
             }],
             ..empty_case()
         }],
@@ -393,6 +399,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
                     ActionOutcome::failed("not run: an earlier action in this step failed"),
                 ],
                 screenshot: None,
+                downloads: vec![],
             }],
             ..empty_case()
         }],
@@ -421,6 +428,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
                 step_number: 1,
                 outcomes: vec![ActionOutcome::failed("button \"Save\" not found")],
                 screenshot: None,
+                downloads: vec![],
             }],
             ..empty_case()
         }],
@@ -482,7 +490,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let case = CaseRecord {
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
-        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None }],
+        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![] }],
         ..empty_case()
     };
     let expected = Some(
@@ -529,6 +537,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
             step_number: 1,
             outcomes: vec![ActionOutcome::failed("button \"Save\" not found")],
             screenshot: None,
+            downloads: vec![],
         }],
         ..empty_case()
     };

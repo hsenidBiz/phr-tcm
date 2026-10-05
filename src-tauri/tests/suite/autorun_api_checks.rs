@@ -748,6 +748,8 @@ fn a_sign_in_recipe_cannot_check_the_api() {
     let checks = [
         ("expect_response", json!({ "kind": "expect_response", "url_contains": "/Account/Login" })),
         ("api_request", json!({ "kind": "api_request", "path": "/api/me" })),
+        // Nor a downloaded file: that is a case's check too.
+        ("expect_download", json!({ "kind": "expect_download", "name": "report.csv" })),
     ];
     for (kind, a) in checks {
         let want = format!("a sign-in recipe cannot contain {kind} - it belongs in a case script");

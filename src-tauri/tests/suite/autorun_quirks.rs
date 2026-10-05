@@ -397,7 +397,7 @@ fn save_button() -> Action {
 }
 
 fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
-    StepRecord { step_number: n, outcomes, screenshot: None }
+    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![] }
 }
 
 fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
