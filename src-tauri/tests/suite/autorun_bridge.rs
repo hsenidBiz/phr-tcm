@@ -2098,3 +2098,121 @@ fn the_active_environment_says_when_its_database_is_gone() {
     assert!(text.contains("Its database is not set up any more."), "{text}");
     assert!(!text.contains("It has no database set."), "{text}");
 }
+
+/// Azure DevOps after case `id` was edited: the batch read returns its
+/// steps `now`, and reading the work item as of `as_of` (the script's own
+/// `saved_at`) returns what it said `before`. The as-of read answers only
+/// when asked for exactly that moment.
+async fn client_with_changed_case(id: i32, now: &[&str], before: &[&str], as_of: &str) -> (MockServer, AdoClient) {
+    let steps = |expected: &[&str]| -> String {
+        let s: Vec<Step> = expected
+            .iter()
+            .enumerate()
+            .map(|(i, e)| Step { action: format!("Step {}", i + 1), expected: (*e).to_string(), shared: None })
+            .collect();
+        build_steps_xml(&s)
+    };
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [{
+            "id": id,
+            "fields": { "System.Title": "Save a rating", "Microsoft.VSTS.TCM.Steps": steps(now) }
+        }] })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/_apis/wit/workitems/{id}")))
+        .and(wiremock::matchers::query_param("asOf", as_of))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": id,
+            "fields": { "Microsoft.VSTS.TCM.Steps": steps(before) }
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+/// Every save stamps the script with when it was saved: the moment a later
+/// repair reads the test case as of, to see what the case itself changed.
+#[tokio::test]
+async fn a_saved_script_records_when_it_was_saved() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
+    // UTC, to the second, as Azure DevOps' asOf takes it: 2026-10-05T09:35:09Z
+    assert_eq!(saved_at.len(), 20, "{saved_at}");
+    assert!(saved_at.ends_with('Z') && saved_at.as_bytes()[10] == b'T', "{saved_at}");
+}
+
+/// The case's step 2 dropped its expected result after the script was
+/// saved. A repair that follows it - step 2 no longer checks the toast - is
+/// a repair, not a weakening: it is accepted, declared, and counted.
+#[tokio::test]
+async fn a_repair_may_follow_what_the_case_itself_changed() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
+
+    let (_changed, client) = client_with_changed_case(7, &["", ""], &["", "A toast says Saved"], &saved_at).await;
+    let following = serde_json::json!({
+        "scripts": [{
+            "case_id": 7,
+            "title": "Save a rating",
+            "steps": [
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
+            ]
+        }],
+        "edits": [edit_step_2("the case no longer expects a toast at step 2")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &following, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+}
+
+/// The as-of read says the case is exactly as it was: nothing the case
+/// changed excuses a dropped check, so the old refusal stands.
+#[tokio::test]
+async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
+
+    let (_same, client) =
+        client_with_changed_case(7, &["", "A toast says Saved"], &["", "A toast says Saved"], &saved_at).await;
+    let weakened = serde_json::json!({
+        "scripts": [{
+            "case_id": 7,
+            "title": "Save a rating",
+            "steps": [
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
+            ]
+        }],
+        "edits": [edit_step_2("the toast never appears in my run")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("an assertion is never removed"), "{out}");
+}

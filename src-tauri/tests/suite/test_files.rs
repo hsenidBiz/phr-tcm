@@ -518,6 +518,7 @@ fn script_with(action: Value) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        saved_at: None,
     }
 }
 
@@ -526,7 +527,10 @@ fn a_script_with_upload_saves_and_a_bad_name_is_refused() {
     let root = tempfile::tempdir().unwrap();
     let good = script_with(json!({ "kind": "upload", "selector": { "css": "#cv" }, "file": "cv.pdf" }));
     v2_lib::commands::autorun::save_script_from_editor(root.path(), ORG, PROJECT, good.clone()).unwrap();
-    assert_eq!(store::load_script(root.path(), 501).unwrap(), Some(good));
+    let back = store::load_script(root.path(), 501).unwrap().unwrap();
+    // Every save stamps when it happened; everything else is as sent.
+    assert!(back.saved_at.is_some(), "the save was not stamped");
+    assert_eq!(v2_lib::autorun::CaseScript { saved_at: None, ..back }, good);
 
     let bad = script_with(json!({ "kind": "upload", "selector": { "css": "#cv" }, "file": "a/b.pdf" }));
     let err = store::save_scripts_atomically(root.path(), &[bad]).unwrap_err().to_string();

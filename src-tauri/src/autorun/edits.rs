@@ -38,6 +38,10 @@ pub const NO_SAVE_KEPT: &str =
 pub const PRECONDITIONS_KEPT: &str =
     "a repair cannot change a script's preconditions - save the script itself to change them";
 
+/// The end of Rule 3's refusal - the save route looks for it to decide
+/// whether the test case's own history could excuse the change.
+pub const NEVER_WEAKENED: &str = "an assertion is never removed or weakened by a repair";
+
 /// How many times a script may be repaired by an assistant before a person
 /// must open it in the app and save it there, which resets the count.
 pub const MAX_REPAIRS: u32 = 3;
@@ -97,8 +101,37 @@ fn duplicate_step_number(steps: &[StepScript]) -> Option<i32> {
     dupes.into_iter().next()
 }
 
+/// The test case's steps that changed between two readings of it: the
+/// position (1-based, as a script numbers its steps) of every step whose
+/// action or expected result differs, and of every step `before` had that
+/// `now` no longer has. A step only `now` has changes nothing a script
+/// already checked, so it is not counted.
+pub fn steps_changed_by_case(before: &[crate::steps_xml::Step], now: &[crate::steps_xml::Step]) -> BTreeSet<i32> {
+    before
+        .iter()
+        .enumerate()
+        .filter(|(i, b)| now.get(*i) != Some(*b))
+        .map(|(i, _)| i as i32 + 1)
+        .collect()
+}
+
 /// Refuses an undeclared or weakening change. `old` is the script on disk.
 pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) -> Result<(), String> {
+    check_edits_following_case(old, new, declared, &BTreeSet::new())
+}
+
+/// `check_edits`, for a repair that follows its test case: `changed_by_case`
+/// is the steps the case itself changed or dropped since the script was
+/// saved (`steps_changed_by_case`). Those steps may lose checks - the case
+/// no longer asks for them - and every other rule still holds: each one is
+/// still declared, and the save's expected-result floor still checks the
+/// script against the case as it is now.
+pub fn check_edits_following_case(
+    old: &CaseScript,
+    new: &CaseScript,
+    declared: Option<&Edit>,
+    changed_by_case: &BTreeSet<i32>,
+) -> Result<(), String> {
     // A duplicated step number defeats every check below it (the map built
     // from the Vec would silently keep only one of the two entries while
     // the runner executes both), so it is refused before anything else is
@@ -233,13 +266,14 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     }
 
     // Rule 3: a repair never removes or weakens an assertion, declared or
-    // not.
-    for n in &changed {
+    // not - unless the test case itself changed or dropped that step since
+    // the script was saved: following the case is not weakening it.
+    for n in changed.iter().filter(|n| !changed_by_case.contains(n)) {
         let old_checks = old_map.get(n).map(|s| checks(s)).unwrap_or(0);
         let new_checks = new_map.get(n).map(|s| checks(s)).unwrap_or(0);
         if new_checks < old_checks {
             return Err(format!(
-                "step {n} had {old_checks} checks and now has {new_checks} - an assertion is never removed or weakened by a repair"
+                "step {n} had {old_checks} checks and now has {new_checks} - {NEVER_WEAKENED}"
             ));
         }
     }

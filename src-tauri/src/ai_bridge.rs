@@ -2427,6 +2427,46 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
                     == crate::autorun::edits::step_signature(b)
         })
 }
+/// The steps of `old`'s test case that the case itself changed or dropped
+/// since the script was saved: the case read as of the script's `saved_at`
+/// (or, for a script saved before that existed, its file's modified time)
+/// against the case now. Empty when there is no signed-in client or either
+/// read fails - the gate then judges the repair exactly as before.
+async fn steps_the_case_changed(
+    client: Option<&crate::ado::AdoClient>,
+    organization: &str,
+    root: &std::path::Path,
+    old: &crate::autorun::CaseScript,
+) -> std::collections::BTreeSet<i32> {
+    let none = std::collections::BTreeSet::new;
+    let Some(client) = client else { return none() };
+    let Some(as_of) = old
+        .saved_at
+        .clone()
+        .or_else(|| crate::autorun::store::script_modified(root, old.case_id))
+    else {
+        return none();
+    };
+    let before = match client.get_test_case_steps_as_of(organization, old.case_id, &as_of).await {
+        Ok(steps) => steps,
+        Err(e) => {
+            crate::applog::info(format!(
+                "Auto Run: case {} could not be read as of {as_of} to see what the case changed: {e:?}",
+                old.case_id
+            ));
+            return none();
+        }
+    };
+    let now = match client.get_test_cases_by_ids(organization, &[old.case_id], None, None).await {
+        Ok(cases) => match cases.into_iter().find(|c| c.id == old.case_id) {
+            Some(c) => c.steps,
+            None => return none(),
+        },
+        Err(_) => return none(),
+    };
+    crate::autorun::edits::steps_changed_by_case(&before, &now)
+}
+
 
 /// Save one or many Auto Run action scripts, as an assistant writes them.
 ///
@@ -2546,7 +2586,19 @@ async fn save_autorun_scripts(
                 lines.push(format!("case {} (unchanged)", script.case_id));
             }
             Some(old) => {
-                if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
+                let mut verdict = crate::autorun::edits::check_edits(&old, sent, declared);
+                // Refused for losing checks: the test case itself may have
+                // changed or dropped those steps since the script was saved,
+                // and a repair that follows it is not weakening it. Only
+                // then is the case's history read - an ordinary repair costs
+                // no extra request.
+                if verdict.as_ref().err().is_some_and(|w| w.contains(crate::autorun::edits::NEVER_WEAKENED)) {
+                    let changed_by_case = steps_the_case_changed(client, &ctx.org, &root, &old).await;
+                    if !changed_by_case.is_empty() {
+                        verdict = crate::autorun::edits::check_edits_following_case(&old, sent, declared, &changed_by_case);
+                    }
+                }
+                if let Err(why) = verdict {
                     // A body with no declarations at all, refused for
                     // something a declaration would cover (the sentences
                     // that point at "edits"): say first that the list
