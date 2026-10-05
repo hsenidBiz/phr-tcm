@@ -59,6 +59,7 @@ mod autorun_report;
 mod autorun_runner;
 mod autorun_signin;
 mod autorun_store;
+mod autorun_when_visible;
 mod backup;
 mod branchcheck;
 mod browser_actions;

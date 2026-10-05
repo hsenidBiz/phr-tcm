@@ -667,6 +667,47 @@ async fn a_tried_action_really_happens_in_the_page() {
     assert!(!outcome.detail.contains("hello"), "the outcome detail leaked the filled value: {}", outcome.detail);
 }
 
+/// `when_visible` against a real page: a cookie banner that covers the
+/// page half a second after it loads is dismissed, and the click in the
+/// next step reaches the button the banner was covering. A second guard,
+/// once the banner is gone, passes with "not shown, skipped".
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_banner_that_shows_up_late_is_dismissed_and_the_next_step_works() {
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url().replace("autorun-live.html", "autorun-banner.html") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let guard = json!({ "kind": "when_visible", "selector": { "css": "#close" }, "within_ms": 4000,
+                        "then": [ { "kind": "click", "selector": { "css": "#close" } } ] });
+
+    let dismiss = StepScript { step_number: 1, actions: vec![action_of(guard.clone())], unchecked: None };
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &dismiss, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert_eq!(out.len(), 1);
+    assert!(out[0].ok && out[0].detail.contains("clicked"), "{}", out[0].detail);
+    let gone = page::eval_value(&mut live.cdp, "document.getElementById('banner') === null").await.unwrap();
+    assert_eq!(gone.as_bool(), Some(true), "the banner was not really dismissed");
+
+    let next = StepScript {
+        step_number: 2,
+        actions: vec![
+            action_of(json!({ "kind": "when_visible", "selector": { "css": "#close" }, "within_ms": 300,
+                              "then": [ { "kind": "click", "selector": { "css": "#close" } } ] })),
+            action_of(json!({ "kind": "click", "selector": { "css": "#save" } })),
+        ],
+        unchecked: None,
+    };
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &next, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert!(out[0].ok && out[0].detail.ends_with("not shown, skipped"), "{}", out[0].detail);
+    must(out[1].clone());
+    let mirror = page::eval_value(&mut live.cdp, "document.getElementById('count').textContent").await.unwrap();
+    assert_eq!(mirror.as_str(), Some("saved"), "the click after the guard did not reach the page");
+}
+
 /// A web application small enough to read in one go. `GET /` is the home
 /// page for a browser carrying a cookie the server still honours, and the
 /// login form for anyone else. `POST /login` checks the login, sets an

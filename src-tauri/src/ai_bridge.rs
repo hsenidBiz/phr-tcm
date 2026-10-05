@@ -1529,7 +1529,8 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
-        | Action::Upload { selector, .. } => selector.describe(),
+        | Action::Upload { selector, .. }
+        | Action::WhenVisible { selector, .. } => selector.describe(),
     };
     let target = if what.is_empty() { String::new() } else { format!(" {what}") };
     format!(

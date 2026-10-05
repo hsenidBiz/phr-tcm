@@ -101,6 +101,9 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
         // `execute_in`, so no page dialog is ever appended to it: it is
         // exactly this sentence, for this step.
         Some(Action::Navigate { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
+        // The same refusal, met inside a guard: said after what the guard
+        // had already done.
+        Some(Action::WhenVisible { .. }) if o.detail.ends_with(&nav::no_address(n)) => Some(o.detail.as_str()),
         _ => None,
     }
 }

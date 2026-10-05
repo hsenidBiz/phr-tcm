@@ -11,7 +11,9 @@ use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
 use super::{store, StepScript};
-use crate::browser::actions::{execute_in, upload_in, Action, ActionOutcome, Policy};
+use crate::browser::actions::{
+    execute_in, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN, WHEN_VISIBLE_MS,
+};
 use crate::browser::cdp::Driver;
 use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
@@ -113,6 +115,8 @@ pub async fn run_step_routed<D: Driver>(
         api_checks::settle(d, timing).await;
     }
     let mark = d.net_mark();
+    let here =
+        Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
     for action in &step.actions {
@@ -121,12 +125,6 @@ pub async fn run_step_routed<D: Driver>(
             continue;
         }
         let mut outcome = match action {
-            // A script saved before the switch was turned off. The runner's
-            // own trip home never comes through here.
-            Action::Navigate { .. } if !nav_file.direct_urls => {
-                blocked = Some(AFTER_REFUSED_ADDRESS);
-                ActionOutcome::failed(nav::no_address(step.step_number))
-            }
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
                     *account = None;
@@ -155,11 +153,19 @@ pub async fn run_step_routed<D: Driver>(
                     }
                 }
             },
-            Action::Upload { selector, file } => upload(d, root, organization, project, action, selector, file, timing).await,
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
-            other => execute_in(d, other, timing, &policy).await,
+            Action::WhenVisible { .. } => {
+                let (outcome, stop) = when_visible(d, &here, action, timing).await;
+                blocked = stop;
+                outcome
+            }
+            other => {
+                let (outcome, stop) = plain(d, &here, other, timing).await;
+                blocked = stop;
+                outcome
+            }
         };
         if !outcome.ok && !outcome.harness {
             outcome.screenshot = picture(d, root).await;
@@ -167,6 +173,73 @@ pub async fn run_step_routed<D: Driver>(
         out.push(outcome);
     }
     Ok(out)
+}
+
+/// What a plain action needs from the step it is in.
+struct Here<'a> {
+    root: &'a Path,
+    organization: &'a str,
+    project: &'a str,
+    policy: &'a Policy,
+    direct_urls: bool,
+    step: i32,
+}
+
+/// A plain action - one a `when_visible` may guard - carried out, and why
+/// the rest of the step must not run, when it must not.
+async fn plain<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    action: &Action,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    match action {
+        // A script saved before the switch was turned off. The runner's
+        // own trip home never comes through here.
+        Action::Navigate { .. } if !here.direct_urls => {
+            (ActionOutcome::failed(nav::no_address(here.step)), Some(AFTER_REFUSED_ADDRESS))
+        }
+        Action::Upload { selector, file } => {
+            (upload(d, here.root, here.organization, here.project, action, selector, file, timing).await, None)
+        }
+        other => (execute_in(d, other, timing, here.policy).await, None),
+    }
+}
+
+/// A `when_visible`: one look for its target, then its `then` actions in
+/// order if it showed, as the ONE outcome the action stands for - so the
+/// step still has one outcome per action. A target that never appeared
+/// passes with `NOT_SHOWN`. The guard stops at its first failure, and that
+/// failure is the step's, said after what already ran.
+async fn when_visible<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    action: &Action,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    if let Err(why) = action.validate() {
+        return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
+    }
+    let Action::WhenVisible { selector, within_ms, then } = action else {
+        unreachable!("only a when_visible is routed here");
+    };
+    let target = selector.describe();
+    match shows_up(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
+        Err(silent) => return (silent, None),
+        Ok(false) => return (ActionOutcome::passed(format!("{target} {NOT_SHOWN}")), None),
+        Ok(true) => {}
+    }
+    let mut said: Vec<String> = Vec::with_capacity(then.len());
+    for guarded in then {
+        let (out, stop) = plain(d, here, guarded, timing).await;
+        said.push(out.detail);
+        if !out.ok {
+            let mut failed = ActionOutcome::failed(format!("{target} showed: {}", said.join("; ")));
+            failed.harness = out.harness;
+            return (failed, stop);
+        }
+    }
+    (ActionOutcome::passed(format!("{target} showed: {}", said.join("; "))), None)
 }
 
 /// An `upload`, carried out here because only the runner knows the

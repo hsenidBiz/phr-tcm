@@ -31,6 +31,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "upload",
     "expect_response",
     "api_request",
+    "when_visible",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -102,6 +103,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
+- `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
 
 There is nothing else. An action of any other kind is rejected.
 
@@ -144,6 +146,32 @@ where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
 Never add a fixed pause. There is no action for one, on purpose.
+
+## Dismissing what may not show up
+
+Some things appear only sometimes: a cookie banner, or PeoplesHR's
+"Another active session" prompt when the account is still signed in
+somewhere else. A plain `click` on them fails on every run where they do
+not appear. Guard the click with `when_visible` instead:
+
+    { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }
+
+    { "kind": "when_visible", "selector": { "role": "button", "name": "Continue here" }, "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
+
+- If the target becomes visible within `within_ms` (default 2000, at
+  most 10000), the `then` actions run in order, and the step records what
+  they did. Otherwise the step passes with "not shown, skipped" and the
+  run moves on.
+- `then` holds plain actions only: no `when_visible` inside it, no
+  `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
+  `expect_response`). A guarded click is a tidy-up, not an assertion, so
+  nothing inside it counts toward the expected-result floor. Put the
+  check after the guard.
+- A `then` action that fails fails the step, as any action would.
+- Close a banner with its own close button, never Accept All, so a run
+  records no consent.
+- Use it only for something that genuinely may not appear. A step the
+  test always expects belongs in the script as a plain action.
 
 ## Checking the API
 

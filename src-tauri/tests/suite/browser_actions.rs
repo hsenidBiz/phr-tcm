@@ -632,6 +632,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
+        // A guard is a tidy-up, never a check - even holding one.
+        Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 

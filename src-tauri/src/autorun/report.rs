@@ -101,6 +101,10 @@ pub fn action_words(action: &Action) -> String {
         Action::ApiRequest { path, expect, .. } => {
             format!("ask {} and expect {}", without_query(path), expect.status)
         }
+        Action::WhenVisible { selector, then, .. } => {
+            let what: Vec<String> = then.iter().map(action_words).collect();
+            format!("if {} shows up, {}", selector.describe(), what.join(", then "))
+        }
     }
 }
 

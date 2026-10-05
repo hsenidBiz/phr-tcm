@@ -6,7 +6,7 @@
 //! being signed in, here and nowhere else.
 
 use super::accounts::Account;
-use crate::browser::actions::Action;
+use crate::browser::actions::{Action, NESTED_WHEN_VISIBLE, WITHIN_MS_ZERO};
 use crate::browser::locator::Target;
 use std::path::{Path, PathBuf};
 
@@ -79,6 +79,12 @@ impl<'de> serde::Deserialize<'de> for RecipeStep {
                 then: Vec<Action>,
             }
             let raw: Raw = serde_json::from_value(v).map_err(D::Error::custom)?;
+            // A script's `when_visible` is an action too, so it would parse
+            // inside `then`; a recipe file holding one is refused as it is
+            // read, the way it was before scripts had one.
+            if raw.then.iter().any(|a| matches!(a, Action::WhenVisible { .. })) {
+                return Err(D::Error::custom(NESTED_WHEN_VISIBLE));
+            }
             return Ok(RecipeStep::WhenVisible(WhenVisible {
                 kind: raw.kind,
                 selector: raw.selector,
@@ -205,6 +211,11 @@ fn has_placeholder_anywhere(v: &serde_json::Value) -> bool {
 fn check(action: &Action) -> Result<(), String> {
     let v = serde_json::to_value(action).ok();
     let kind = v.as_ref().and_then(|v| v["kind"].as_str()).map(str::to_string);
+    // Only `then` reaches here holding one: a recipe's own `when_visible`
+    // is read as `RecipeStep::WhenVisible`, never as an action.
+    if kind.as_deref() == Some("when_visible") {
+        return Err(NESTED_WHEN_VISIBLE.to_string());
+    }
     if kind.as_deref() == Some("sign_in") {
         return Err("a recipe cannot contain sign_in - it IS the sign-in".to_string());
     }
@@ -245,7 +256,7 @@ fn check_steps(steps: &[RecipeStep], label: &str, fill_placeholders: bool) -> Re
             RecipeStep::Do(a) => vec![a],
             RecipeStep::WhenVisible(w) => {
                 if w.within_ms == 0 {
-                    return Err(at("within_ms must be more than 0".to_string()));
+                    return Err(at(WITHIN_MS_ZERO.to_string()));
                 }
                 w.selector.validate().map_err(|e| at(e))?;
                 w.then.iter().collect()

@@ -23,4 +23,18 @@ describe("floorOf", () => {
     const out = floorOf(steps, scriptWith([{ kind: "click", selector: "x" }, { kind: "sign_in", account: "a" }]));
     expect(out[0].state.kind).toBe("unchecked");
   });
+
+  it("never counts a check inside a when_visible guard", () => {
+    const out = floorOf(
+      steps,
+      scriptWith([
+        {
+          kind: "when_visible",
+          selector: { css: "#banner" },
+          then: [{ kind: "expect_visible", selector: { css: "#banner" } }],
+        },
+      ]),
+    );
+    expect(out[0].state.kind).toBe("unchecked");
+  });
 });

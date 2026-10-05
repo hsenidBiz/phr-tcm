@@ -7,7 +7,7 @@
 use super::accounts::{find_account, Account};
 use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe};
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
-use crate::browser::actions::{execute_in, Action, ActionOutcome, Policy};
+use crate::browser::actions::{execute_in, shows_up, Action, ActionOutcome, Policy};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::expect::{expect, Check};
 use crate::browser::session;
@@ -298,13 +298,15 @@ async fn run_steps<D: Driver>(
         let actions: Vec<&Action> = match step {
             RecipeStep::Do(a) => vec![a],
             RecipeStep::WhenVisible(w) => {
-                let shown = expect(d, &w.selector, Check::Visible, u64::from(w.within_ms), timing.poll_ms).await;
-                if shown.harness {
-                    let why = shown.detail.clone();
-                    run.keep(shown);
-                    return Err((n, why, true));
-                }
-                if !shown.ok {
+                let shown = match shows_up(d, &w.selector, w.within_ms, timing).await {
+                    Ok(shown) => shown,
+                    Err(silent) => {
+                        let why = silent.detail.clone();
+                        run.keep(silent);
+                        return Err((n, why, true));
+                    }
+                };
+                if !shown {
                     run.keep(ActionOutcome::passed(format!(
                         "step {n}: {} did not appear, carried on",
                         w.selector.describe()

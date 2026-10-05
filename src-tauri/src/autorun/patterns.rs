@@ -351,7 +351,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
-        | Action::Upload { selector, .. } => Some(selector.describe()),
+        | Action::Upload { selector, .. }
+        | Action::WhenVisible { selector, .. } => Some(selector.describe()),
         Action::Navigate { url } => {
             let url = url.trim();
             let end = url.find(['?', '#']).unwrap_or(url.len());

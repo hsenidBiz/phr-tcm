@@ -691,7 +691,7 @@ pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), S
     }
     for sc in scripts {
         for step in &sc.steps {
-            if step.actions.iter().any(|a| matches!(a, Action::Navigate { .. })) {
+            if step.actions.iter().flat_map(Action::each).any(|a| matches!(a, Action::Navigate { .. })) {
                 return Err(format!("case {}: {}", sc.case_id, no_address(step.step_number)));
             }
         }
