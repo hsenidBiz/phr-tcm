@@ -770,3 +770,22 @@ test("a case re-bucketed under a filter stays listed, with its note field and fo
   expect(screen.queryByRole("listitem", { name: /#201/ })).not.toBeInTheDocument();
   expect(screen.getByText("No case in this run matches that filter.")).toBeInTheDocument();
 });
+
+test("a case run a second time after a transient failure is labelled Retried", async () => {
+  const first = "the browser stopped answering at step 1: the browser did not respond in time";
+  const retried = {
+    ...RUN,
+    cases: RUN.cases.map((c) =>
+      c.case_id === 202
+        ? { ...c, retried: first, reason: `passed on a second try after a transient failure: ${first}` }
+        : c,
+    ),
+  };
+  renderReview(retried);
+
+  await screen.findByText(/proposed: passed - passed on a second try/i);
+  const label = within(caseCard(202)).getByText("Retried");
+  expect(label).toHaveAttribute("title", `Run a second time after a transient failure: ${first}`);
+  expect(label).toHaveClass("text-warning");
+  expect(within(caseCard(201)).queryByText("Retried")).not.toBeInTheDocument();
+});

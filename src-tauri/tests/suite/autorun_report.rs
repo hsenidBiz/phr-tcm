@@ -452,3 +452,29 @@ fn scrubbing_keeps_the_rest_of_the_sentence_and_every_address_in_it() {
     assert_eq!(scrub_urls("https://x/y?t=1"), "https://x/y");
     assert_eq!(scrub_urls(""), "");
 }
+
+/// One case's whole `<details>` section, from its summary to its close.
+fn section_of(html: &str, case_id: i32) -> &str {
+    let at = html.find(&format!("<span class=\"id\">#{case_id}</span>")).unwrap();
+    let rest = &html[at..];
+    &rest[..rest.find("</details>").unwrap()]
+}
+
+/// Spec §6: a case that ran a second time after a transient failure says
+/// so beside its result, and its section names the first try's failure.
+#[test]
+fn a_retried_case_is_labelled_and_names_its_first_try() {
+    let mut run = run_of(SHOT);
+    run.cases[3].proposed = "Passed".into();
+    run.cases[3].retried = Some("step 1: GET /hr/api/<x> answered 503, expected 200".into());
+    let html = build(&run, &[script_201()], "x", &all_shots);
+    let section = section_of(&html, 204);
+    assert!(section.contains("<span class=\"retried\">Retried</span></summary>"), "{section}");
+    assert!(
+        section.contains("<p><strong>Retried:</strong> the first try failed: step 1: GET /hr/api/&lt;x&gt; answered 503, expected 200</p>"),
+        "{section}"
+    );
+    // A case that was not retried carries neither.
+    let other = section_of(&html, 201);
+    assert!(!other.contains("Retried"), "{other}");
+}

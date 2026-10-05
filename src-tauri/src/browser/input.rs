@@ -49,9 +49,11 @@ pub struct Ready {
 /// (and `requestAnimationFrame` no better), which would make such a wait
 /// take a second or more. `launch.rs` passes the switches that turn that
 /// throttling off for a browser this app starts, but a browser the person
-/// attached some other way could still throttle. The click point is
-/// clamped to the part of the rect actually inside the viewport, and only
-/// hit-tested when some of it is on screen at all.
+/// attached some other way could still throttle. The click point is the
+/// middle of the part of the rect actually inside the viewport - and inside
+/// every enclosing frame's visible box, so a button half hidden by a
+/// frame's edge is clicked in its visible half - and is only hit-tested
+/// when some of it is on screen at all.
 ///
 /// It is aimed at the first box the element is really drawn in
 /// (`getClientRects`), not the middle of its bounding box: words that wrap
@@ -68,8 +70,33 @@ pub const PROBE_JS: &str = r#"function() {
   const a = drawn || b;
   const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
   const onscreen = r > l && bt > t;
-  const x = (l + r) / 2, y = (t + bt) / 2;
-  const top = onscreen ? document.elementFromPoint(x, y) : null;
+  // Inside a same-origin frame everything here is measured in the frame.
+  // Walk out to the top window: shift the box by each frame's place on its
+  // page (plus its border and padding), and clip it to each frame's visible
+  // box. `out` keeps each enclosing page with the offset from this frame's
+  // coordinates to that page's, for the cover checks below.
+  let w = window, ox = 0, oy = 0;
+  let cl = l, cr = r, ct = t, cb = bt;
+  const out = [];
+  while (w.frameElement) {
+    const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
+    // The frame's viewport starts inside its border AND its padding.
+    const cs = pw.getComputedStyle(fe);
+    const dx = fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0);
+    const dy = fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
+    ox += dx; oy += dy;
+    cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
+    ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
+    out.push({ fe, pw, ox, oy });
+    w = pw;
+  }
+  const allOnscreen = onscreen && cr > cl && cb > ct;
+  // The point is the middle of what is LEFT once every frame has clipped
+  // the box, so a button half hidden by a frame's edge is aimed at in its
+  // visible half. `lx`/`ly` is that point in this frame's own coordinates.
+  const lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
+  const ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
+  const top = onscreen ? document.elementFromPoint(lx, ly) : null;
   const label = top && top.closest ? top.closest('label') : null;
   // Words that let a click through (pointer-events: none) to the row around
   // them: the row is what the point belongs to, and what a person's click on
@@ -84,35 +111,19 @@ pub const PROBE_JS: &str = r#"function() {
       !/^(checkbox|radio|file|button|submit|reset|image|hidden)$/.test(this.type)) ||
     (this instanceof HTMLTextAreaElement && !this.readOnly) ||
     this instanceof HTMLSelectElement || this.isContentEditable;
-  // Inside a same-origin frame everything above is measured in the frame.
-  // Walk out to the top window: shift the point and rect by each frame's
-  // place on its page (plus its border and padding), clip to each frame's visible box,
-  // and require each enclosing page to have that frame on top at the point
-  // - an overlay on the page over the frame covers the element too.
-  let w = window, ox = 0, oy = 0, outer = null;
-  let cl = l, cr = r, ct = t, cb = bt;
-  while (w.frameElement) {
-    const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
-    // The frame's viewport starts inside its border AND its padding.
-    const cs = pw.getComputedStyle(fe);
-    const dx = fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0);
-    const dy = fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
-    ox += dx; oy += dy;
-    cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
-    ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
-    if (outer === null) {
-      const there = pw.document.elementFromPoint(x + ox, y + oy);
-      if (!there || (there !== fe && !fe.contains(there))) outer = there || false;
-    }
-    w = pw;
+  // Each enclosing page must have that frame on top at the point - an
+  // overlay on the page over the frame covers the element too.
+  let outer = null;
+  for (const o of out) {
+    const there = o.pw.document.elementFromPoint(lx + o.ox, ly + o.oy);
+    if (!there || (there !== o.fe && !o.fe.contains(there))) { outer = there || false; break; }
   }
-  const allOnscreen = onscreen && cr > cl && cb > ct;
   const allHit = hit && allOnscreen && outer === null;
   return {
     visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
     enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
     editable: !!editable,
-    onscreen: allOnscreen, hit: allHit, x: x + ox, y: y + oy,
+    onscreen: allOnscreen, hit: allHit, x: lx + ox, y: ly + oy,
     rect: [b.left + ox, b.top + oy, b.width, b.height],
     covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
   };

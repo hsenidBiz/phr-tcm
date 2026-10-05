@@ -442,8 +442,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "Every API template saved for the current project: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - and the project's flows, each with its stages and the templates on them - and its Test files (names and sizes), the only files a step's `files` may name. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script).",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "The API templates saved for the current project, filtered and paged. When at most `limit` templates match, each comes in full: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - with the project's flows (only the ones those templates are on, when `module` or `search` narrowed the list), each with its stages and the templates on them, and its Test files (names and sizes), the only files a step's `files` may name. When more match, the answer is a compact index (per template the id, title, module, effect, proven state and stage; per flow the id, title and stage count): narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. Every answer has `paging` { total, offset, returned, next_offset }: while `next_offset` is there, call again with `offset` set to it for the next page. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script).",
+            "inputSchema": schema(serde_json::json!({
+                "module": { "type": "string", "description": "Only templates whose module contains this text (case does not matter)." },
+                "search": { "type": "string", "description": "Only templates whose id, title, or a param or output name contains this text (case does not matter)." },
+                "flow": { "type": "string", "description": "A flow id: only that flow, and the templates on its stages." },
+                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on. The other arguments are ignored with it." },
+                "offset": { "type": "number", "description": "How many matching templates to skip: the `next_offset` of the previous answer. 0 by default." },
+                "limit": { "type": "number", "description": "How many templates one answer carries: 25 by default, 100 at most." },
+            }), &[]),
         },
         {
             "name": "prove_api_template",
@@ -632,6 +639,56 @@ pub fn refusal_text(name: &str, offered: bool) -> String {
     }
 }
 
+/// Why a `{ scripts, edits }` bundle sent as `scripts` cannot take the
+/// `edits` sent beside it: its own `edits` is neither a list nor one entry.
+pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an \"edits\" that is not a list, and more \"edits\" were sent beside it - send one \"edits\" list beside \"scripts\", one entry per case";
+
+/// Why the `edits` sent beside a `{ scripts, edits }` bundle cannot be
+/// added to the bundle's own: it is neither a list nor one entry.
+pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
+
+/// The bundle's own `edits` with the ones sent beside it added, exact
+/// duplicates dropped. Either side may be a list, one entry, or a JSON
+/// string of either. When both are there and one of them is anything else,
+/// the call is refused rather than one side being dropped without a word.
+/// With only one side present it is forwarded as it is, and the route
+/// says what is wrong with it.
+fn merge_bundle_edits(
+    mut bundle: serde_json::Map<String, serde_json::Value>,
+    beside: Option<serde_json::Value>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let parsed = |v: serde_json::Value| match v {
+        serde_json::Value::String(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(inner @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => inner,
+            _ => serde_json::Value::String(s),
+        },
+        other => other,
+    };
+    let as_list = |v: serde_json::Value| match v {
+        serde_json::Value::Array(list) => Some(list),
+        one @ serde_json::Value::Object(_) => Some(vec![one]),
+        _ => None,
+    };
+    let own = bundle.remove("edits").filter(|e| !e.is_null()).map(parsed);
+    let merged = match (own, beside.map(parsed)) {
+        (None, None) => None,
+        (Some(one_side), None) | (None, Some(one_side)) => Some(one_side),
+        (Some(own), Some(beside)) => {
+            let mut list = as_list(own).ok_or_else(|| BUNDLE_EDITS_NOT_A_LIST.to_string())?;
+            for e in as_list(beside).ok_or_else(|| BESIDE_EDITS_NOT_A_LIST.to_string())? {
+                if !list.contains(&e) {
+                    list.push(e);
+                }
+            }
+            Some(serde_json::Value::Array(list))
+        }
+    };
+    if let Some(edits) = merged {
+        bundle.insert("edits".to_string(), edits);
+    }
+    Ok(bundle)
+}
+
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
@@ -784,18 +841,33 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 Some(v) => Some(v.clone()),
                 None => None,
             };
-            let body = match (value_of("scripts"), value_of("edits")) {
+            // `"edits": null` declares nothing: the same as leaving it out.
+            let edits = value_of("edits").filter(|e| !e.is_null());
+            let body: Result<String, String> = match (value_of("scripts"), edits) {
+                // The guide's whole body, { scripts, edits }, sent AS
+                // `scripts` (an object or its text). Wrapping it again
+                // would bury its scripts one level down, so it is the
+                // body, with any `edits` sent beside it added to its own.
+                // Its other keys stay, for the route to name.
+                (Some(serde_json::Value::Object(bundle)), beside) if bundle.contains_key("scripts") => {
+                    merge_bundle_edits(bundle, beside).map(|b| serde_json::Value::Object(b).to_string())
+                }
                 // Nothing to declare: the bare array, exactly as before.
                 // An unparseable string is forwarded as it was written so
                 // the route's own message names what is wrong with it.
-                (Some(serde_json::Value::String(s)), None) => s,
-                (Some(scripts), None) => scripts.to_string(),
+                (Some(serde_json::Value::String(s)), None) => Ok(s),
+                (Some(scripts), None) => Ok(scripts.to_string()),
                 (Some(scripts), Some(edits)) => {
-                    serde_json::json!({ "scripts": scripts, "edits": edits }).to_string()
+                    Ok(serde_json::json!({ "scripts": scripts, "edits": edits }).to_string())
                 }
-                (None, _) => args.to_string(),
+                (None, _) => Ok(args.to_string()),
             };
-            call("POST", "/autorun-script", &body)
+            match body {
+                Ok(body) => call("POST", "/autorun-script", &body),
+                // Refused here, before anything reaches the app, in the
+                // same shape as a refusal from the route.
+                Err(refused) => Ok((400, refused)),
+            }
         }
         "get_autorun_page" => {
             let target = match args["limit"].as_u64() {
@@ -831,7 +903,31 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_accounts" => call("GET", "/accounts", ""),
         "list_test_files" => call("GET", "/autorun-test-files", ""),
         "get_api_template_guide" => call("GET", "/api-template-guide", ""),
-        "list_api_templates" => call("GET", "/api-templates", ""),
+        "list_api_templates" => {
+            // Text filters pass through percent-encoded. Offset and limit
+            // may arrive as numbers or as numeric strings; anything else
+            // given for them (a boolean, a list, a negative or fractional
+            // number) is forwarded as written, so the route refuses it by
+            // name rather than this dispatch quietly dropping it.
+            let mut params: Vec<String> = vec![];
+            for key in ["module", "search", "flow", "id", "offset", "limit"] {
+                let paging = matches!(key, "offset" | "limit");
+                let value = match &args[key] {
+                    serde_json::Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Null | serde_json::Value::String(_) => continue,
+                    other if paging => other.to_string(),
+                    _ => continue,
+                };
+                params.push(format!("{key}={}", percent_encode(&value)));
+            }
+            let target = if params.is_empty() {
+                "/api-templates".to_string()
+            } else {
+                format!("/api-templates?{}", params.join("&"))
+            };
+            call("GET", &target, "")
+        }
         // The bridge reads its fields out of the body (a template or
         // values sent as a JSON string included), so the arguments object
         // travels whole - the same pattern as `check_spec_coverage`.

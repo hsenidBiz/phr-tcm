@@ -101,6 +101,10 @@ pub fn action_words(action: &Action) -> String {
         Action::ApiRequest { path, expect, .. } => {
             format!("ask {} and expect {}", without_query(path), expect.status)
         }
+        Action::WhenVisible { selector, then, .. } => {
+            let what: Vec<String> = then.iter().map(action_words).collect();
+            format!("if {} shows up, {}", selector.describe(), what.join(", then "))
+        }
     }
 }
 
@@ -316,8 +320,10 @@ fn case_section(
     let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
     let mut h = String::new();
     h.push_str(&format!("<details class=\"case\"{open}>"));
+    // Run a second time after a transient failure (`transient`).
+    let retried = if case.retried.is_some() { " <span class=\"retried\">Retried</span>" } else { "" };
     h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span></summary>",
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}</summary>",
         case.case_id,
         esc(&case.title),
         css_key(b)
@@ -326,6 +332,9 @@ fn case_section(
         h.push_str(&stopped_summary(case, script));
     } else if !case.reason.is_empty() {
         h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
+    }
+    if let Some(first) = &case.retried {
+        h.push_str(&format!("<p><strong>Retried:</strong> the first try failed: {}</p>", esc(&scrub_urls(first))));
     }
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
@@ -366,6 +375,7 @@ h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-conte
 dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
 th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
+.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
 .note{color:#59636e;font-style:italic}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
 .actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\

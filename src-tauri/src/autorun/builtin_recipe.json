@@ -10,6 +10,8 @@
       "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
   ],
   "after_sign_in": [
+    { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000,
+      "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] },
     { "kind": "when_visible", "selector": { "css": ".bootbox.modal.show .modal-footer button" }, "within_ms": 4000,
       "then": [ { "kind": "click", "selector": { "css": ".bootbox.modal.show .modal-footer button" } } ] },
     { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 5000,

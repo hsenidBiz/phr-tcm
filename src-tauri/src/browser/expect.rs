@@ -16,6 +16,10 @@ use std::time::{Duration, Instant};
 
 pub enum Check<'a> {
     Visible,
+    /// At least one match is visible - what a `when_visible` asks. Two
+    /// visible matches (a dialog's OK and Cancel) are shown, not "not
+    /// shown": the ambiguity is for the guarded action to report.
+    Shown,
     Hidden,
     Text(&'a str),
     ContainsText(&'a str),
@@ -108,6 +112,22 @@ async fn look<D: Driver>(
                 }
             }
         },
+        Check::Shown => {
+            let mut seen = false;
+            for h in &handles {
+                if visible(d, h).await? {
+                    seen = true;
+                    break;
+                }
+            }
+            if seen {
+                Ok(format!("{what} is visible"))
+            } else if handles.is_empty() {
+                Err(NOT_ON_PAGE.to_string())
+            } else {
+                Err(HIDDEN.to_string())
+            }
+        }
         Check::Hidden => {
             let mut seen = false;
             for h in &handles {

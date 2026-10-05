@@ -107,6 +107,59 @@ pub enum Action {
         #[specta(skip)]
         stray: Stray,
     },
+    /// Something that may or may not show up (a consent banner, an "Another
+    /// active session" prompt): if `selector` becomes visible within
+    /// `within_ms` (`WHEN_VISIBLE_MS` when left out), the `then` actions
+    /// run; otherwise the step passes with `NOT_SHOWN`. `then` holds plain
+    /// actions only - see `validate`. The sign-in recipe's own `WhenVisible`
+    /// is the same step; this one is a case script's. Carried out by the
+    /// runner, which alone can place an `upload` inside it.
+    WhenVisible {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+        then: Vec<Action>,
+    },
+}
+
+/// How long a script's `when_visible` waits when it names no `within_ms`.
+pub const WHEN_VISIBLE_MS: u32 = 2000;
+/// The longest a script's `when_visible` may wait: a step that may not
+/// show up costs this much on every run where it does not.
+pub const WHEN_VISIBLE_MAX_MS: u32 = 10_000;
+/// A `when_visible` whose target never appeared, after the target's words.
+pub const NOT_SHOWN: &str = "not shown, skipped";
+/// A `when_visible` (recipe or script) told to wait no time at all.
+pub const WITHIN_MS_ZERO: &str = "within_ms must be more than 0";
+/// A `when_visible` inside another one's `then`.
+pub const NESTED_WHEN_VISIBLE: &str = "when_visible \"then\" cannot hold another when_visible";
+
+/// What a script's `when_visible` may hold in `then`: plain actions only.
+/// A guarded click is a tidy-up, not an assertion, so no check goes inside
+/// one (nothing there could count toward the expected-result floor), and
+/// neither does a change of who is signed in.
+fn check_guarded(then: &[Action]) -> Result<(), String> {
+    if then.is_empty() {
+        return Err("when_visible has nothing in \"then\" - say what to do when it shows up".to_string());
+    }
+    for (i, a) in then.iter().enumerate() {
+        if matches!(a, Action::WhenVisible { .. }) {
+            return Err(NESTED_WHEN_VISIBLE.to_string());
+        }
+        if matches!(a, Action::SignIn { .. }) {
+            return Err(
+                "when_visible \"then\" cannot hold sign_in - change who is signed in as an action of its own".to_string()
+            );
+        }
+        if a.is_check() {
+            return Err(format!(
+                "when_visible \"then\" cannot hold {} - a guarded step tidies up and checks nothing, so put the check after it",
+                a.kind()
+            ));
+        }
+        a.validate().map_err(|e| format!("when_visible then {}: {e}", i + 1))?;
+    }
+    Ok(())
 }
 
 /// Keys a script gave one of the two API checks that it does not take,
@@ -418,6 +471,34 @@ impl Action {
                 }
                 check_status(expect.status)
             }
+            Action::WhenVisible { selector, within_ms, then } => {
+                match within_ms {
+                    Some(0) => return Err(WITHIN_MS_ZERO.to_string()),
+                    Some(ms) if *ms > WHEN_VISIBLE_MAX_MS => {
+                        return Err(format!("when_visible waits at most {WHEN_VISIBLE_MAX_MS} ms, not {ms}"))
+                    }
+                    _ => {}
+                }
+                selector.validate()?;
+                check_guarded(then)
+            }
+        }
+    }
+
+    /// The script's own word for this action: `"click"`, `"when_visible"`.
+    pub fn kind(&self) -> String {
+        serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v["kind"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    /// This action, then every action a `when_visible` guards - for a rule
+    /// that has to see an action wherever in a step it is written.
+    pub fn each(&self) -> Vec<&Action> {
+        match self {
+            Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter()).collect(),
+            _ => vec![self],
         }
     }
 
@@ -448,9 +529,27 @@ pub const HIGHLIGHT_JS: &str = r#"function() {
 }"#;
 
 /// `this` is the document. Argument: the words to look for.
+///
+/// "Anywhere on the page" includes what same-origin frames show, at any
+/// depth: a page's own `innerText` stops at each iframe. A frame no one can
+/// see is skipped (a hidden frame's document is not rendered, and its
+/// `innerText` would hand back every word in it), and so is a frame from
+/// another site, whose document cannot be read (null, or a throw).
 pub const CHECK_TEXT_JS: &str = r#"function(want) {
-  const hay = (this.body ? this.body.innerText : '') || '';
-  return hay.toLowerCase().includes(String(want).toLowerCase());
+  const needle = String(want).toLowerCase();
+  const has = (doc) => {
+    const hay = (doc.body ? doc.body.innerText : '') || '';
+    if (hay.toLowerCase().includes(needle)) return true;
+    for (const f of doc.querySelectorAll('iframe, frame')) {
+      const r = f.getBoundingClientRect();
+      if (!f.checkVisibility({ visibilityProperty: true }) || r.width <= 0 || r.height <= 0) continue;
+      let inner = null;
+      try { inner = f.contentDocument; } catch (e) { inner = null; }
+      if (inner && has(inner)) return true;
+    }
+    return false;
+  };
+  return has(this);
 }"#;
 
 /// `this` is the document. Argument: the relative reference. Resolved in
@@ -696,7 +795,35 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         // requests; this driver has neither.
         Action::ExpectResponse { .. } => ActionOutcome::failed("expect_response is carried out by the runner"),
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
+        // Its `then` may hold an `upload`, which only the runner can place.
+        Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
     }
+}
+
+/// The least a `when_visible` waits, whatever its `within_ms` says. One
+/// protocol call may take `cdp::MIN_CALL_TIMEOUT` (250 ms) even at the edge
+/// of a budget, so a shorter wait on a slow page could end before a single
+/// look had completed - which reads as the browser having stopped
+/// answering, a harness failure, for a page that was only slow.
+pub const WHEN_VISIBLE_FLOOR_MS: u32 = 500;
+
+/// Did `target` become visible within `within_ms` (never less than
+/// `WHEN_VISIBLE_FLOOR_MS`)? The one look a `when_visible` takes, recipe or
+/// script. Any visible match counts, two or more included: the guarded
+/// actions then run and an ambiguous click says "matched N" itself. `Err`
+/// is the browser failing to answer, as the outcome to report.
+pub async fn shows_up<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    within_ms: u32,
+    timing: &Timing,
+) -> Result<bool, ActionOutcome> {
+    let wait = u64::from(within_ms.max(WHEN_VISIBLE_FLOOR_MS));
+    let seen = expect::expect(d, target, Check::Shown, wait, timing.poll_ms).await;
+    if seen.harness {
+        return Err(seen);
+    }
+    Ok(seen.ok)
 }
 
 /// `this` is the element. Is it a file input, and may it be used?

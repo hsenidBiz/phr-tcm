@@ -492,6 +492,13 @@ pub async fn go_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Acti
     if same_page(&href, &home.start_url) {
         return ActionOutcome::passed("already on the home page");
     }
+    load_home(d, home, timing).await
+}
+
+/// Load the recipe's home page whether or not the browser is on it - a
+/// fresh load - and leave it ready: the signed-in marker waited for and
+/// `after_sign_in` run again, as `go_home` does once it has to go.
+pub async fn load_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> ActionOutcome {
     let policy = Policy::only(home.origins.clone());
     let out = execute_in(d, &Action::Navigate { url: home.start_url.clone() }, timing, &policy).await;
     if !out.ok {
@@ -640,6 +647,61 @@ pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutco
     }
 }
 
+/// Added to a failed trip's sentence when the second go failed too.
+pub const TRIED_TWICE: &str = " Tried twice, reloading the start page between.";
+
+/// What the page was doing, from the page log, written to the application
+/// log - what a bug report ships - under `who`: a header with `detail`,
+/// then one line per entry. Never into the run, where a long list would
+/// bury the sentence the person reads. `false` when the log was empty and
+/// nothing was written.
+pub fn log_page<D: Driver>(d: &D, who: &str, detail: &str) -> bool {
+    let lines = d.page_log();
+    if lines.is_empty() {
+        return false;
+    }
+    crate::applog::warn(format!("{who}: {detail} What the page was doing:"));
+    for line in lines {
+        crate::applog::warn(format!("{who}, page: {line}"));
+    }
+    true
+}
+
+/// A run's trip to the module, as the one outcome its "Go to X" line
+/// shows, gone once more when it fails (spec §5): the page log of the
+/// first go is written under `who` (see `log_page`), the start address is
+/// loaded afresh - which waits for it to settle, signed in and with
+/// `after_sign_in` done - and the trip is made once more from there. A
+/// second failure says `TRIED_TWICE`. One reload, then the answer: never
+/// a loop. A browser that stopped answering is not reloaded - it would not
+/// answer that either.
+pub async fn reach_module<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    who: &str,
+) -> ActionOutcome {
+    let module = route.path.name();
+    let first = reached(module, go_to_module(d, route, from, timing).await);
+    if first.ok || first.harness {
+        return first;
+    }
+    log_page(d, &format!("{who}, first try"), &first.detail);
+    let reload = load_home(d, &route.home, timing).await;
+    let mut second = if reload.ok {
+        // Right after a fresh load the browser sits where a sign-in leaves
+        // it: on the path's own first page, there is no going home again.
+        reached(module, go_to_module(d, route, TripFrom::SignIn, timing).await)
+    } else {
+        reached(module, Err(PathFailure { at: Where::Home, reason: reload.detail, harness: reload.harness }))
+    };
+    if !second.ok {
+        second.detail.push_str(TRIED_TWICE);
+    }
+    second
+}
+
 /// How a mid-script `sign_in`'s one outcome joins the sign-in to the trip
 /// back to the module that follows it, when the trip went well.
 pub const THEN: &str = "; then ";
@@ -691,7 +753,7 @@ pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), S
     }
     for sc in scripts {
         for step in &sc.steps {
-            if step.actions.iter().any(|a| matches!(a, Action::Navigate { .. })) {
+            if step.actions.iter().flat_map(Action::each).any(|a| matches!(a, Action::Navigate { .. })) {
                 return Err(format!("case {}: {}", sc.case_id, no_address(step.step_number)));
             }
         }

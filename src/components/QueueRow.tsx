@@ -116,12 +116,12 @@ export function QueueRowInner({
                   : "border-border",
       )}
     >
-      <div className="flex items-center justify-between px-3 py-1.5">
-        <span className="text-text">
+      <div className="flex items-center justify-between gap-3 px-3 py-1.5">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-text">
           {/* Capture-phase wrapper: the checkbox's own click never
               fires, so shift-ranges can be read off the event. */}
           <span
-            className="mr-2 inline-block align-middle"
+            className="inline-flex"
             onClickCapture={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -133,41 +133,41 @@ export function QueueRowInner({
           <button
             aria-label={stepsOpen ? `Collapse steps of ${tc.title}` : `Expand steps of ${tc.title}`}
             title={stepsOpen ? "Hide steps" : "Check the steps before submitting"}
-            className="mr-2 align-middle text-muted hover:text-accent"
+            className="inline-flex text-muted hover:text-accent"
             onClick={() => onToggleSteps(i)}
           >
             {stepsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           {tc.update_id != null ? (
-            <Badge className="mr-2 bg-warning/20 text-warning">UPDATE #{tc.update_id}</Badge>
+            <Badge className="bg-warning/20 text-warning">UPDATE #{tc.update_id}</Badge>
           ) : (
-            <Badge className="mr-2 bg-success/20 text-success">NEW</Badge>
+            <Badge className="bg-success/20 text-success">NEW</Badge>
           )}
-          {uploaded && <Badge className="mr-2 bg-success/20 text-success">UPLOADED</Badge>}
+          {uploaded && <Badge className="bg-success/20 text-success">UPLOADED</Badge>}
           {tc.title}
-          <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
+          <span className="text-xs text-faint">{tc.steps.length} steps</span>
           {held && (
-            <span className="ml-2 text-xs text-warning">
+            <span className="text-xs text-warning">
               {ambiguous
                 ? "More than one test case with this title exists in Azure DevOps - check there before uploading again."
                 : "Outcome unknown - check before uploading again"}
             </span>
           )}
           {diff?.noop && (
-            <Badge className="ml-2 bg-warning/20 text-warning">no-op — nothing will change</Badge>
+            <Badge className="bg-warning/20 text-warning">no-op — nothing will change</Badge>
           )}
           {diff && !diff.noop && (
-            <button className="ml-2 text-xs text-accent hover:underline" onClick={() => onToggleDiff(i)}>
+            <button className="text-xs text-accent hover:underline" onClick={() => onToggleDiff(i)}>
               {diffSummary(diff)} {diffOpen ? "▾" : "▸"}
             </button>
           )}
-          {diffFailed && <span className="ml-2 text-xs text-faint">diff unavailable</span>}
-          {reviewing && problem && <span className="ml-2 text-xs text-danger">{problem}</span>}
+          {diffFailed && <span className="text-xs text-faint">diff unavailable</span>}
+          {reviewing && problem && <span className="text-xs text-danger">{problem}</span>}
           {reviewing && !problem && duplicate && (
-            <span className="ml-2 text-xs text-warning">{duplicate}</span>
+            <span className="text-xs text-warning">{duplicate}</span>
           )}
         </span>
-        <span className="flex items-center gap-3">
+        <span className="flex shrink-0 items-center gap-3">
           {/* Named for their case: every row has one of each, and a list of
               "Edit, Remove, Edit, Remove" says nothing about which is which. */}
           <button

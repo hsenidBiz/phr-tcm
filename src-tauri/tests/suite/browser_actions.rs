@@ -632,6 +632,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
+        // A guard is a tidy-up, never a check - even holding one.
+        Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -759,4 +761,15 @@ async fn the_driver_alone_never_runs_the_response_steps() {
         assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
         assert!(d.calls.is_empty());
     }
+}
+
+/// Spec 9: `check_text` reads the words of every same-origin frame too, at
+/// any depth, skipping a frame no one can see and one it cannot enter.
+/// Proven live in `browser_live::frame_check_text_reads_same_origin_frames_at_any_depth`.
+#[test]
+fn check_text_walks_into_same_origin_frames() {
+    let js = v2_lib::browser::actions::CHECK_TEXT_JS;
+    assert!(js.contains("contentDocument"), "{js}");
+    assert!(js.contains("try"), "a frame from another site throws or answers null, and is skipped: {js}");
+    assert!(js.contains("checkVisibility"), "a hidden frame's words are not on the page: {js}");
 }

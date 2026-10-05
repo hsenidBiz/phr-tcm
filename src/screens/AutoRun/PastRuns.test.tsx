@@ -200,3 +200,25 @@ test("Past runs' filter buttons say they count runs, not cases", async () => {
   );
   expect(within(row).getByRole("button", { name: "All (2)" })).toHaveAttribute("title", "Every run on this machine");
 });
+
+test("a case run a second time after a transient failure is labelled Retried", async () => {
+  const first = "step 1: GET /hr/api/cycles answered 503, expected 200";
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Passed", retried: first },
+          { case_id: 202, title: "Locked account", verdict: "", note: "", proposed: "Passed" },
+        ],
+      }),
+    ],
+    7,
+  );
+
+  const retried = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const label = within(retried).getByText("Retried");
+  expect(label).toHaveAttribute("title", `Run a second time after a transient failure: ${first}`);
+  expect(label).toHaveClass("text-warning");
+  const plain = screen.getByRole("listitem", { name: "Run of Locked account" });
+  expect(within(plain).queryByText("Retried")).not.toBeInTheDocument();
+});

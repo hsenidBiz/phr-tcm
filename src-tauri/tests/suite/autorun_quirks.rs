@@ -411,6 +411,7 @@ fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
         reason: String::new(),
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 

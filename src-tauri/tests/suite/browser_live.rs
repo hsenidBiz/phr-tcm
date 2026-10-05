@@ -667,6 +667,47 @@ async fn a_tried_action_really_happens_in_the_page() {
     assert!(!outcome.detail.contains("hello"), "the outcome detail leaked the filled value: {}", outcome.detail);
 }
 
+/// `when_visible` against a real page: a cookie banner that covers the
+/// page half a second after it loads is dismissed, and the click in the
+/// next step reaches the button the banner was covering. A second guard,
+/// once the banner is gone, passes with "not shown, skipped".
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_banner_that_shows_up_late_is_dismissed_and_the_next_step_works() {
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url().replace("autorun-live.html", "autorun-banner.html") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let guard = json!({ "kind": "when_visible", "selector": { "css": "#close" }, "within_ms": 4000,
+                        "then": [ { "kind": "click", "selector": { "css": "#close" } } ] });
+
+    let dismiss = StepScript { step_number: 1, actions: vec![action_of(guard.clone())], unchecked: None };
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &dismiss, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert_eq!(out.len(), 1);
+    assert!(out[0].ok && out[0].detail.contains("clicked"), "{}", out[0].detail);
+    let gone = page::eval_value(&mut live.cdp, "document.getElementById('banner') === null").await.unwrap();
+    assert_eq!(gone.as_bool(), Some(true), "the banner was not really dismissed");
+
+    let next = StepScript {
+        step_number: 2,
+        actions: vec![
+            action_of(json!({ "kind": "when_visible", "selector": { "css": "#close" }, "within_ms": 300,
+                              "then": [ { "kind": "click", "selector": { "css": "#close" } } ] })),
+            action_of(json!({ "kind": "click", "selector": { "css": "#save" } })),
+        ],
+        unchecked: None,
+    };
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &next, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert!(out[0].ok && out[0].detail.ends_with("not shown, skipped"), "{}", out[0].detail);
+    must(out[1].clone());
+    let mirror = page::eval_value(&mut live.cdp, "document.getElementById('count').textContent").await.unwrap();
+    assert_eq!(mirror.as_str(), Some("saved"), "the click after the guard did not reach the page");
+}
+
 /// A web application small enough to read in one go. `GET /` is the home
 /// page for a browser carrying a cookie the server still honours, and the
 /// login form for anyone else. `POST /login` checks the login, sets an
@@ -1699,7 +1740,13 @@ async fn frame_spike_role_lookup_through_a_frame_document() {
         .expect("queryAXTree for the iframe role failed");
     assert_eq!(
         names(&r),
-        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new(), "Padded frame".to_string()],
+        vec![
+            "Edge frame".to_string(),
+            "Employee Search".to_string(),
+            "Locked frame".to_string(),
+            String::new(),
+            "Padded frame".to_string()
+        ],
         "(b) role Iframe did not list the visible frames by title"
     );
 }
@@ -1822,4 +1869,61 @@ async fn frame_a_click_inside_a_padded_frame_lands_on_the_element() {
     let pad = |inner: serde_json::Value| json!([{ "css": "#pad-frame" }, inner]);
     must(run(&mut live, json!({ "kind": "click", "selector": pad(json!({ "css": "#pad-btn" })) })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": pad(json!({ "css": "#pout" })), "equals": "hit" })).await);
+}
+
+/// Spec 9: `#edge-inner` sits half past `#edge-frame`'s right edge, so only
+/// the left half of the button inside shows. The middle of the whole button
+/// is on that edge, where nothing can be clicked; the point is re-centred
+/// inside the half that is left, and the click lands.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_button_half_hidden_by_a_frames_edge_is_clicked_in_its_visible_part() {
+    let mut live = open_iframes().await;
+    let edge = |inner: serde_json::Value| json!([{ "css": "#edge-frame" }, { "css": "#edge-inner" }, inner]);
+    must(run(&mut live, json!({ "kind": "click", "selector": edge(json!({ "css": "#edge-btn" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text",
+        "selector": edge(json!({ "css": "#eout", "visible": false })), "equals": "hit" })).await);
+}
+
+/// Spec 9: `check_text` means anywhere on the page, so it reads the words of
+/// same-origin frames at any depth - but not a hidden frame's, which no one
+/// can see, and not a frame from another site, which it cannot read.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_check_text_reads_same_origin_frames_at_any_depth() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "check_text", "value": "Deep frame words" })).await);
+    must(run(&mut live, json!({ "kind": "check_text", "value": "bare inner" })).await);
+    refused(run(&mut live, json!({ "kind": "check_text", "value": "Hidden frame words" })).await, "page does NOT contain");
+    refused(run(&mut live, json!({ "kind": "check_text", "value": "Locked" })).await, "page does NOT contain");
+}
+
+/// The step the snapshot prints for an iframe with an odd id or title
+/// (a space, a quote, a leading digit, a colon, a backslash) is a selector
+/// the browser parses, and it matches that frame and no other.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_an_odd_id_or_title_prints_a_step_that_matches_its_frame() {
+    let mut live = open().await;
+    let values = crate::browser_locator::ODD_FRAME_VALUES;
+    let add = format!(
+        "{}.forEach((v, k) => {{ const f = document.createElement('iframe'); f.setAttribute('id', v); \
+         f.setAttribute('title', v); f.dataset.k = String(k); document.body.appendChild(f); }}); true",
+        json!(values)
+    );
+    let added = live.cdp.call("Runtime.evaluate", json!({ "expression": add, "returnByValue": true })).await.expect("no answer");
+    assert_eq!(added["result"]["value"], true, "{added}");
+    for (k, value) in values.iter().enumerate() {
+        for attr in ["id", "title"] {
+            let step = v2_lib::browser::snapshot::frame_step("", &json!([attr, value]), 0);
+            let css = step["css"].as_str().unwrap().to_string();
+            let check = format!(
+                "(() => {{ try {{ return Array.from(document.querySelectorAll({})).map(e => e.dataset.k).join(','); }} \
+                 catch (e) {{ return 'invalid: ' + e.message; }} }})()",
+                json!(css)
+            );
+            let r = live.cdp.call("Runtime.evaluate", json!({ "expression": check, "returnByValue": true })).await.expect("no answer");
+            assert_eq!(r["result"]["value"], json!(k.to_string()), "{attr} {value:?} printed {css}");
+        }
+    }
 }

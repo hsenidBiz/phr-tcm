@@ -11,7 +11,7 @@
 
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
-use super::{recipe, signin};
+use super::{recipe, signin, transient};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
@@ -39,15 +39,14 @@ pub const PAGE_LOG_NOTE: &str = " What the page was doing then is in Settings, L
 /// not into the run, where a long list would bury the sentence the person
 /// reads (PeoplesHR, 2026-10-02: a first case stuck on a spinner).
 fn log_the_page<D: Driver>(d: &D, case_id: i32, out: &mut ActionOutcome) {
-    let lines = d.page_log();
-    if lines.is_empty() {
-        return;
+    if nav::log_page(d, &who(case_id), &out.detail) {
+        out.detail.push_str(PAGE_LOG_NOTE);
     }
-    crate::applog::warn(format!("unattended run, case {case_id}: {} What the page was doing:", out.detail));
-    for line in lines {
-        crate::applog::warn(format!("unattended run, case {case_id}, page: {line}"));
-    }
-    out.detail.push_str(PAGE_LOG_NOTE);
+}
+
+/// How the application log names a case of an unattended run.
+fn who(case_id: i32) -> String {
+    format!("unattended run, case {case_id}")
 }
 
 /// Where a fresh browser per case comes from. The command gives real ones;
@@ -101,6 +100,9 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
         // `execute_in`, so no page dialog is ever appended to it: it is
         // exactly this sentence, for this step.
         Some(Action::Navigate { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
+        // The same refusal, met inside a guard: said after what the guard
+        // had already done.
+        Some(Action::WhenVisible { .. }) if o.detail.ends_with(&nav::no_address(n)) => Some(o.detail.as_str()),
         _ => None,
     }
 }
@@ -232,7 +234,7 @@ pub async fn run_case_as<D: Driver>(
             // The case's own sign-in just above, when it had one; otherwise
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
-            let mut out = nav::reached(r.path.name(), nav::go_to_module(d, r, from, timing).await);
+            let mut out = nav::reach_module(d, r, from, timing, &who(script.case_id)).await;
             if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
                 // Read after the picture: taking it read every event the
@@ -280,6 +282,7 @@ pub async fn run_case_as<D: Driver>(
         reason: p.reason,
         duration_ms: i32::try_from(began.elapsed().as_millis()).ok(),
         account: account.map(str::to_string),
+        retried: None,
     }
 }
 
@@ -294,6 +297,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         reason,
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 
@@ -311,6 +315,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         reason,
         duration_ms: None,
         account: account.map(str::to_string),
+        retried: None,
     }
 }
 
@@ -342,6 +347,69 @@ fn tell(
     }
 }
 
+/// Where a case sits in the run, for its progress events.
+struct Place<'a> {
+    run_id: &'a str,
+    index: u32,
+    total: u32,
+    case_id: i32,
+    title: &'a str,
+    count: u32,
+}
+
+/// What one go at a case needs.
+struct Go<'a> {
+    root: &'a Path,
+    organization: &'a str,
+    project: &'a str,
+    script: &'a CaseScript,
+    account: Option<&'a str>,
+    route: Option<&'a Route>,
+    timing: &'a Timing,
+    cancel: &'a AtomicBool,
+}
+
+/// One go at a case in a fresh browser: opened, the case run, and the
+/// browser given back. `Err` is why the browser did not open: the case
+/// never ran, so the caller decides what record that leaves.
+async fn one_go<B: Browsers>(
+    browsers: &mut B,
+    go: &Go<'_>,
+    at: &Place<'_>,
+    progress: &mut (dyn FnMut(ReplayProgress) + Send),
+) -> Result<CaseRecord, String> {
+    let (run_id, index, total, case_id, title, count) = (at.run_id, at.index, at.total, at.case_id, at.title, at.count);
+    progress(tell(run_id, index, total, case_id, title, "opening", 0, count, ""));
+    match browsers.open().await {
+        Err(why) => Err(why),
+        Ok(mut d) => {
+            let mut on_step = |n: i32| {
+                let phase = match n {
+                    SIGN_IN_STEP => "signing_in",
+                    MODULE_STEP => "module",
+                    _ => "step",
+                };
+                progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
+            };
+            let rec = run_case_as(
+                &mut d,
+                go.root,
+                go.organization,
+                go.project,
+                go.script,
+                go.account,
+                go.route,
+                go.timing,
+                go.cancel,
+                &mut on_step,
+            )
+            .await;
+            browsers.close(d).await;
+            Ok(rec)
+        }
+    }
+}
+
 /// Run a selection with no module or run account per case - the shape
 /// every caller used before module paths.
 #[allow(clippy::too_many_arguments)]
@@ -358,7 +426,7 @@ pub async fn run_selection<B: Browsers>(
 ) -> Result<(), String> {
     let cases: Vec<CaseToRun> =
         cases.iter().map(|(case_id, title)| CaseToRun { case_id: *case_id, title: title.clone(), module: None }).collect();
-    run_cases(browsers, root, organization, project, run, &cases, None, timing, cancel, progress).await
+    run_cases(browsers, root, organization, project, run, &cases, None, false, timing, cancel, progress).await
 }
 
 /// Run a whole selection, one fresh browser each, saving the run after
@@ -368,7 +436,8 @@ pub async fn run_selection<B: Browsers>(
 /// `sign_in` step inside a script still changes to the account it names.
 /// The module paths file
 /// is read once, first: an unreadable one stops the run before any
-/// browser opens.
+/// browser opens. With `retry_transient`, a case whose failure looked
+/// transient (`transient::is_transient`) runs once more in a fresh browser.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases<B: Browsers>(
     browsers: &mut B,
@@ -378,6 +447,7 @@ pub async fn run_cases<B: Browsers>(
     run: &mut LocalRun,
     cases: &[CaseToRun],
     run_account: Option<&str>,
+    retry_transient: bool,
     timing: &Timing,
     cancel: &AtomicBool,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
@@ -422,34 +492,23 @@ pub async fn run_cases<B: Browsers>(
                         // A path but no recipe: the sign-in fails first and
                         // says what to add, so no route is needed.
                         let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
-                        progress(tell(&run_id, index, total, case_id, title, "opening", 0, count, ""));
-                        match browsers.open().await {
-                            Err(why) => unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")),
-                            Ok(mut d) => {
-                                let mut on_step = |n: i32| {
-                                    let phase = match n {
-                                        SIGN_IN_STEP => "signing_in",
-                                        MODULE_STEP => "module",
-                                        _ => "step",
-                                    };
-                                    progress(tell(&run_id, index, total, case_id, title, phase, n, count, ""));
-                                };
-                                let rec = run_case_as(
-                                    &mut d,
-                                    root,
-                                    organization,
-                                    project,
-                                    &script,
-                                    account,
-                                    route.as_ref(),
-                                    timing,
-                                    cancel,
-                                    &mut on_step,
-                                )
-                                .await;
-                                browsers.close(d).await;
-                                rec
-                            }
+                        let at = Place { run_id: &run_id, index, total, case_id, title, count };
+                        let go = Go { root, organization, project, script: &script, account, route: route.as_ref(), timing, cancel };
+                        let first = one_go(browsers, &go, &at, progress)
+                            .await
+                            .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
+                        // One more go, from sign-in in a fresh browser, for a
+                        // failure that looked transient - once, never again,
+                        // and never after a stop.
+                        let looked_transient = if retry_transient { transient::is_transient(&first, Some(&script)) } else { None };
+                        match looked_transient {
+                            Some(why) if !cancel.load(Ordering::SeqCst) => match one_go(browsers, &go, &at, progress).await {
+                                Ok(second) => transient::after_retry(why, first.duration_ms, second),
+                                // No second go to keep: the first go's steps
+                                // and evidence stay the record.
+                                Err(open) => transient::retry_not_started(first, &open),
+                            },
+                            _ => first,
                         }
                     }
                 }

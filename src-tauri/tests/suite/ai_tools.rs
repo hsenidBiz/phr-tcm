@@ -720,6 +720,10 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert!(!body.contains('\u{2014}'), "no em dashes in text an assistant reads");
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(flat.contains("matched on its stable part with a non-exact name"), "{flat}");
+    assert!(
+        flat.contains("with the case's entry in `edits` - a TOP-LEVEL list beside `scripts`, one entry per case, never inside a script"),
+        "{flat}"
+    );
     assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
     assert!(flat.contains("refused when the failure is one of the `STOP:` lines"), "{flat}");
     assert!(flat.contains("is one of the `STOP:` lines is reported as it is"), "{flat}");

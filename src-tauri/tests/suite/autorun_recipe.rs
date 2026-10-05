@@ -382,6 +382,8 @@ fn approved_builtin() -> serde_json::Value {
           "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
       ],
       "after_sign_in": [
+        { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000,
+          "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] },
         { "kind": "when_visible", "selector": { "css": ".bootbox.modal.show .modal-footer button" }, "within_ms": 4000,
           "then": [ { "kind": "click", "selector": { "css": ".bootbox.modal.show .modal-footer button" } } ] },
         { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 5000,
@@ -413,6 +415,25 @@ fn the_built_in_recipe_is_the_approved_one_and_carries_no_address() {
     let mut expected = approved_builtin();
     expected["start_url"] = json!("");
     assert_eq!(r, recipe(expected), "the shipped recipe is the approved one, step for step");
+}
+
+/// The cookie bar comes back whenever a case reuses a saved session, which
+/// never shows the login page: the built-in recipe closes it after EVERY
+/// sign-in, first, with the x - never Accept All, so a run records no
+/// consent (docs/autorun/cookie-banner-recipe.md).
+#[test]
+fn the_built_in_recipe_closes_the_cookie_bar_first_after_every_sign_in() {
+    use v2_lib::autorun::recipe::builtin_recipe;
+    let r = builtin_recipe();
+    let first = serde_json::to_value(&r.after_sign_in[0]).unwrap();
+    assert_eq!(
+        first,
+        json!({ "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000,
+                "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] })
+    );
+    assert_eq!(r.after_sign_in.len(), 3, "the two existing entries stay");
+    let all = serde_json::to_string(&r).unwrap();
+    assert!(!all.contains("AcceptAll"), "{all}");
 }
 
 #[test]

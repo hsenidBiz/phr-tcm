@@ -26,6 +26,7 @@ pub mod sessions;
 pub mod signin;
 pub mod signin_recorder;
 pub mod store;
+pub mod transient;
 
 use crate::browser::actions::{Action, ActionOutcome};
 
@@ -138,6 +139,11 @@ pub struct CaseRecord {
     /// The account the case ran as (a key, never a login).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Set when an unattended case failed in a way that looked transient
+    /// and was run once more (`transient`): the first try's failure
+    /// sentence. The steps above are the final try's only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retried: Option<String>,
 }
 
 /// Recorded once a run has been sent to Azure DevOps, so a stale review

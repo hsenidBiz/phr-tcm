@@ -40,6 +40,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
+        Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -287,6 +288,13 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
     assert_eq!(payload.scripts.len(), 1, "expected one script in the declared-edit example");
     assert_eq!(payload.edits.len(), 1, "expected one edit in the declared-edit example");
     assert!(!payload.edits[0].why.is_empty(), "the example edit has no reason");
+    // The documented shape is the top-level list, said in words too: an
+    // `edits` put inside each script is what used to go missing.
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("`edits` is a TOP-LEVEL list beside `scripts`, as above - never inside a script - with one entry per case you are changing"),
+        "the guide never says where `edits` goes"
+    );
 }
 
 /// `check_edits` can refuse a save for six distinct reasons; the guide's
@@ -489,4 +497,39 @@ fn the_guide_says_navigate_is_held_to_the_site_address_with_either_recipe() {
         "{flat}"
     );
     assert!(!flat.contains("A project with no recipe saved yet has no such restriction"), "{flat}");
+}
+
+/// `when_visible` dismisses what may or may not show up. The guide's own
+/// examples - the cookie banner and "Another active session" - are what an
+/// assistant copies, so each must validate as a script action.
+#[test]
+fn the_guide_teaches_when_visible_with_its_two_examples() {
+    let g = autorun_guide();
+    assert!(g.contains("## Dismissing what may not show up"), "the guide has no when_visible section");
+    let section = g.split_once("## Dismissing what may not show up").unwrap().1;
+    let section = section.split("
+## ").next().unwrap();
+    for term in ["not shown, skipped", "2000", "10000", "Another active session", "cookie", "expected-result floor"] {
+        assert!(section.contains(term), "the when_visible section never mentions {term}");
+    }
+    let mut from = 0;
+    let mut seen = 0;
+    while let Some(at) = section[from..].find("{ \"kind\": \"when_visible\"") {
+        let example = first_balanced(section, from + at, '{', '}');
+        let a: Action = serde_json::from_str(example).unwrap_or_else(|e| panic!("{e}: {example}"));
+        a.validate().unwrap_or_else(|e| panic!("the guide's example is refused: {e}: {example}"));
+        seen += 1;
+        from += at + example.len();
+    }
+    assert!(seen >= 2, "the section has {seen} when_visible examples, wants the cookie banner and the session prompt");
+}
+
+/// Spec 9: "anywhere on the page" now includes same-origin frames, and the
+/// guide says which frames are not read.
+#[test]
+fn the_guide_says_which_frames_check_text_reads() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.contains("\"kind\": \"check_text\"")).expect("no check_text line");
+    assert!(line.contains("same-origin frames included"), "{line}");
+    assert!(line.contains("a frame holding a page from another site is not searched"), "{line}");
 }

@@ -51,6 +51,11 @@ pub enum ErrorClass {
     LostFocus,
     NoOption,
     NoFileChooser,
+    /// A chain had to pass through a frame Auto Run cannot enter: one from
+    /// another site, a sandboxed one, or one with no page yet
+    /// (`locator::frame_unreachable`). About the application, so it can
+    /// carry quirks.
+    FrameUnreachable,
     /// A request the page made, or the answer to it, was not what the
     /// case expected (`expect_response`).
     Api,
@@ -87,6 +92,7 @@ impl ErrorClass {
             ErrorClass::LostFocus => "lost_focus",
             ErrorClass::NoOption => "no_option",
             ErrorClass::NoFileChooser => "no_file_chooser",
+            ErrorClass::FrameUnreachable => "frame",
             ErrorClass::Api => "api",
             ErrorClass::CannotRun => "cannot_run",
             ErrorClass::Browser => "browser",
@@ -117,6 +123,7 @@ impl ErrorClass {
             ErrorClass::LostFocus => "lost the focus before typing".to_string(),
             ErrorClass::NoOption => "the list had no such option".to_string(),
             ErrorClass::NoFileChooser => "no file chooser opened".to_string(),
+            ErrorClass::FrameUnreachable => "a frame Auto Run cannot reach".to_string(),
             ErrorClass::Api => "the server was asked or answered differently".to_string(),
             ErrorClass::CannotRun => "the action could not run".to_string(),
             ErrorClass::Browser => "the browser stopped answering".to_string(),
@@ -168,6 +175,12 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     // failure can end with an excerpt of whatever the server answered.
     if is_api_check(whole) {
         return ErrorClass::Api;
+    }
+    // The frame's own sentence can stand alone or follow a chain's target,
+    // so it is found anywhere in the sentence, before any reading of its
+    // start or end.
+    if whole.contains(crate::browser::locator::FRAME_UNREACHABLE) {
+        return ErrorClass::FrameUnreachable;
     }
     let t = tail(whole, target);
     if let Some(class) = by_start(t) {
@@ -338,7 +351,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
-        | Action::Upload { selector, .. } => Some(selector.describe()),
+        | Action::Upload { selector, .. }
+        | Action::WhenVisible { selector, .. } => Some(selector.describe()),
         Action::Navigate { url } => {
             let url = url.trim();
             let end = url.find(['?', '#']).unwrap_or(url.len());

@@ -103,7 +103,56 @@ test("start sends the selection, the browser and the watch choice", async () => 
     account: null,
     browserName: "edge",
     watch: false,
+    retryTransient: true,
   });
+});
+
+test("retrying transient failures is on by default and a remembered choice", async () => {
+  const calls: { retryTransient: boolean }[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "auto_run_replay") {
+        calls.push(args as { retryTransient: boolean });
+        return new Promise(() => {});
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+
+  const { unmount } = render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[{ id: 1, title: "A" }]}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+
+  const option = await screen.findByRole("checkbox", { name: "Retry transient failures once" });
+  expect(option).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(option);
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+  await waitFor(() => expect(calls).toEqual([expect.objectContaining({ retryTransient: false })]));
+  expect(localStorage.getItem("tcm-v2-autorun-retry-transient")).toBe("0");
+  unmount();
+
+  render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[{ id: 1, title: "A" }]}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("checkbox", { name: "Retry transient failures once" }),
+  ).toHaveAttribute("aria-checked", "false");
 });
 
 test("watching is a remembered choice", async () => {

@@ -343,8 +343,12 @@ async fn dedupe_by_backend<D: Driver>(d: &mut D, handles: Vec<Handle>) -> Result
 /// cannot be reached: a frame from another site, a sandboxed one, or one
 /// with no document yet. `frame` is that frame step's `describe()`.
 pub fn frame_unreachable(frame: &str) -> String {
-    format!("the frame {frame} holds a page from another site (or has not loaded), which Auto Run cannot reach")
+    format!("the frame {frame} {FRAME_UNREACHABLE}")
 }
+
+/// The words `frame_unreachable` ends with, which `autorun::patterns`
+/// reads a failure's class from.
+pub const FRAME_UNREACHABLE: &str = "holds a page from another site (or has not loaded), which Auto Run cannot reach";
 
 /// Every element the target matches right now. Empty is an answer, not an
 /// error: callers decide whether "nothing yet" means wait or fail.
@@ -402,9 +406,14 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
         }
         if i + 1 < steps.len() {
             let mut entered = Vec::with_capacity(next.len());
+            // Whether a frame at this step was entered, and whether one
+            // could not be: a step that entered another frame and found
+            // nothing in it is "not found", not "cannot reach".
+            let (mut frame_entered, mut blocked) = (false, false);
             for handle in next {
                 match page::call_value(d, &handle, FRAME_JS, &[]).await?.as_str() {
                     Some("frame") => {
+                        frame_entered = true;
                         // Chrome runs a function in the context its handle
                         // came from. Read through the parent, the frame's
                         // document would make every later search and probe
@@ -417,11 +426,12 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
                             entered.push(page::resolve_backend(d, backend).await?);
                         }
                     }
-                    Some("unreachable") => {
-                        unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
-                    }
+                    Some("unreachable") => blocked = true,
                     _ => entered.push(handle),
                 }
+            }
+            if blocked && !frame_entered {
+                unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
             }
             next = entered;
         }

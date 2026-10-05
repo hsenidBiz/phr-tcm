@@ -556,3 +556,15 @@ async fn one_completed_look_keeps_the_page_wording() {
         other => panic!("expected a page failure, got {other:?}"),
     }
 }
+
+/// Spec 9: the click point is the middle of what is LEFT of the element
+/// once every enclosing frame has clipped it, not the middle of the part
+/// its own frame shows: a button half-hidden by a frame's edge is clicked
+/// in its visible half, and the hit tests look at that same point. Proven
+/// live in `browser_live::frame_a_button_half_hidden_by_a_frames_edge_is_clicked_in_its_visible_part`.
+#[test]
+fn the_probe_aims_at_the_middle_of_the_clipped_box() {
+    assert!(PROBE_JS.contains("(cl + cr) / 2"), "{PROBE_JS}");
+    assert!(PROBE_JS.contains("(ct + cb) / 2"), "{PROBE_JS}");
+    assert!(PROBE_JS.contains("document.elementFromPoint(lx, ly)"), "the frame's own hit test uses the re-centred point");
+}

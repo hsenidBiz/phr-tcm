@@ -85,7 +85,7 @@ fn upn_extracts_preferred_username() {
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use v2_lib::auth::{await_redirect, read_redirect, Redirect, SIGN_IN_TIMEOUT};
+use v2_lib::auth::{await_redirect, read_redirect, Loopback, Redirect, SIGN_IN_TIMEOUT};
 
 fn loopback() -> (TcpListener, u16) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -133,7 +133,7 @@ fn only_a_matching_state_with_a_code_is_a_sign_in() {
 fn a_silent_preconnect_does_not_block_the_real_redirect() {
     let (l, port) = loopback();
     let waiter = std::thread::spawn(move || {
-        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(1))
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(1), Duration::ZERO)
     });
     let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let _ = request(port, "GET /favicon.ico HTTP/1.1\r\n\r\n");
@@ -148,12 +148,14 @@ fn a_denied_sign_in_shows_a_failure_page() {
     let (l, port) = loopback();
     // Room to send the line on a loaded machine - see the preconnect test.
     let waiter = std::thread::spawn(move || {
-        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2))
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2), Duration::from_secs(10))
     });
     let page = request(port, "GET /?error=access_denied&state=s1 HTTP/1.1\r\n\r\n");
     assert!(waiter.join().unwrap().is_err());
     assert!(page.contains("Sign-in did not complete"), "{page}");
     assert!(!page.contains("You're signed in"), "{page}");
+    // A refusal does not keep the loopback open, linger or not.
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_err(), "still listening after a refusal");
 }
 
 /// A closed browser tab used to leave sign-in pending forever.
@@ -161,7 +163,7 @@ fn a_denied_sign_in_shows_a_failure_page() {
 fn nobody_coming_back_times_out_with_a_plain_sentence() {
     let (l, _port) = loopback();
     let started = std::time::Instant::now();
-    let out = await_redirect(l, "s1", Duration::from_millis(300), Duration::from_millis(200));
+    let out = await_redirect(l, "s1", Duration::from_millis(300), Duration::from_millis(200), Duration::ZERO);
     assert_eq!(out, Err(SIGN_IN_TIMEOUT.to_string()));
     assert_eq!(SIGN_IN_TIMEOUT, "Sign-in timed out. Try again.");
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -183,10 +185,142 @@ fn a_slow_drip_connection_cannot_hold_the_wait_past_the_window() {
         }
     });
     let started = std::time::Instant::now();
-    let out = await_redirect(l, "s1", Duration::from_millis(600), Duration::from_millis(200));
+    let out = await_redirect(l, "s1", Duration::from_millis(600), Duration::from_millis(200), Duration::ZERO);
     assert_eq!(out, Err(SIGN_IN_TIMEOUT.to_string()));
     assert!(started.elapsed() < Duration::from_secs(2), "held for {:?}", started.elapsed());
     dripper.join().unwrap();
+}
+
+/// A request the size a real browser sends: the redirect line, then about
+/// 3 KB of headers (a long Cookie line among them), all in one write.
+fn browser_request(state: &str) -> String {
+    let cookie: String = (0..50).map(|i| format!("c{i}={}; ", "v".repeat(48))).collect();
+    [
+        format!("GET /?code=abc&state={state} HTTP/1.1"),
+        "Host: localhost".into(),
+        "Connection: keep-alive".into(),
+        "sec-ch-ua: \"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\"".into(),
+        "Upgrade-Insecure-Requests: 1".into(),
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36".into(),
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".into(),
+        "Accept-Encoding: gzip, deflate, br, zstd".into(),
+        "Accept-Language: en-GB,en;q=0.9".into(),
+        format!("Cookie: {cookie}"),
+        String::new(),
+        String::new(),
+    ]
+    .join("\r\n")
+}
+
+/// The whole answer as a browser reads it: every byte up to a clean close.
+/// A reset (the app dropping a socket with the browser's headers still
+/// unread) is an error here, as it is "connection was reset" there.
+fn browser_get(port: u16, raw: &str) -> std::io::Result<String> {
+    let mut s = TcpStream::connect(("127.0.0.1", port))?;
+    s.set_read_timeout(Some(Duration::from_secs(5)))?;
+    s.write_all(raw.as_bytes())?;
+    let mut out = Vec::new();
+    s.read_to_end(&mut out)?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The owner saw "connection was reset", then "localhost refused to
+/// connect", and was signed in anyway: the loopback read only the request
+/// line, answered, and dropped the socket with the rest of the headers
+/// unread - which Windows answers with a reset.
+#[test]
+fn a_browser_sized_request_gets_the_whole_page_without_a_reset() {
+    let raw = browser_request("s1");
+    assert!(raw.len() > 3000, "{}", raw.len());
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2), Duration::ZERO)
+    });
+    let page = browser_get(port, &raw);
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    let page = page.expect("the browser's read ended in an error, not a clean close");
+    assert!(page.contains("You're signed in"), "{page}");
+}
+
+/// A browser that retries the redirect (after a reset, or on reload) used
+/// to find nobody listening: "localhost refused to connect".
+#[test]
+fn the_same_redirect_again_after_the_code_still_gets_the_page() {
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2), Duration::from_secs(10))
+    });
+    let first = browser_get(port, &browser_request("s1"));
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    let again = browser_get(port, &browser_request("s1"))
+        .expect("the retry was refused or reset");
+    assert!(again.contains("You're signed in"), "{again}");
+    assert!(first.is_ok(), "{first:?}");
+    // Something else in the linger gets the old answers, never the page.
+    let other = browser_get(port, "GET /?code=zz&state=other HTTP/1.1\r\n\r\n").unwrap();
+    assert!(other.contains("Sign-in did not complete"), "{other}");
+    let favicon = browser_get(port, "GET /favicon.ico HTTP/1.1\r\n\r\n").unwrap();
+    assert!(favicon.starts_with("HTTP/1.1 404"), "{favicon}");
+}
+
+/// A browser preconnect that sends nothing used to hold the linger for the
+/// whole per-connection budget (10 s in the app), with the retry queued
+/// behind it. After sign-in each connection gets a second.
+#[test]
+fn a_silent_connection_in_the_linger_cannot_hold_up_the_retry() {
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(10), Duration::from_secs(10))
+    });
+    browser_get(port, &browser_request("s1")).unwrap();
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let asked = Instant::now();
+    let again = browser_get(port, &browser_request("s1")).expect("the retry got no answer in time");
+    assert!(again.contains("You're signed in"), "{again}");
+    assert!(asked.elapsed() < Duration::from_millis(2500), "the retry waited {:?}", asked.elapsed());
+}
+
+/// The linger is for a browser's retry, not a port held open for good.
+#[test]
+fn the_linger_stops_after_its_window() {
+    let (l, port) = loopback();
+    let window = Duration::from_millis(800);
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(2), window)
+    });
+    browser_get(port, &browser_request("s1")).unwrap();
+    let signed_in_at = Instant::now();
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    let again = browser_get(port, &browser_request("s1")).expect("refused inside the linger");
+    assert!(again.contains("You're signed in"), "{again}");
+    // Past the window (and one poll of the linger's accept loop).
+    std::thread::sleep((window + Duration::from_millis(400)).saturating_sub(signed_in_at.elapsed()));
+    match browser_get(port, &browser_request("s1")) {
+        Err(_) => {}
+        Ok(page) => assert!(page.is_empty(), "still answered after the linger: {page}"),
+    }
+}
+
+/// A browser that tries `localhost` over IPv6 first reached nobody there.
+#[test]
+fn a_redirect_to_ipv6_localhost_gets_the_page() {
+    if TcpListener::bind("[::1]:0").is_err() {
+        eprintln!("SKIPPED a_redirect_to_ipv6_localhost_gets_the_page: this machine cannot bind [::1]");
+        return;
+    }
+    let (lb, port) = Loopback::bind().unwrap();
+    assert!(lb.has_ipv6(), "[::1]:{port} was not bound although [::1] is available");
+    let waiter = std::thread::spawn(move || {
+        await_redirect(lb, "s1", Duration::from_secs(10), Duration::from_secs(2), Duration::ZERO)
+    });
+    let mut s = TcpStream::connect(("::1", port)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    s.write_all(browser_request("s1").as_bytes()).unwrap();
+    let mut page = String::new();
+    s.read_to_string(&mut page).expect("the IPv6 answer ended in an error");
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    assert!(page.contains("You're signed in"), "{page}");
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};

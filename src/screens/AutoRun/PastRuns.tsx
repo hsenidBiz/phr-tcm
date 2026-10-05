@@ -13,6 +13,7 @@ import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import { IconCancel, IconClearResults, IconExportReport, IconReview } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
+import RetriedBadge from "./RetriedBadge";
 import {
   RESULT_BUCKETS,
   bucketTone,
@@ -219,6 +220,7 @@ export default function PastRuns({
                     <div className="flex items-center gap-2">
                       <span className="id-mono text-faint">#{c.case_id}</span>
                       <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+                      <RetriedBadge first={c.retried} />
                       {c.verdict ? (
                         <span className={cn("text-xs font-medium", rowTone[c.verdict] ?? "text-faint")}>
                           {c.verdict}

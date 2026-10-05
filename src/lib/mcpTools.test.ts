@@ -36,6 +36,15 @@ test("every tool carries a summary the settings screen can show", () => {
   for (const t of MCP_TOOLS) expect(t.summary.trim()).not.toBe("");
 });
 
+/// Past one page the list is an index, not every template in full: the
+/// summary says how it is narrowed and paged.
+test("the template list's summary describes its filters and paging", () => {
+  const list = MCP_TOOLS.find((t) => t.name === "list_api_templates");
+  expect(list?.summary).toBe(
+    "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
+  );
+});
+
 test("toggling is its own inverse", () => {
   const once = toggleTool([], "search_wiki");
   expect(once).toEqual(["search_wiki"]);

@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run banner fixture</title>
+<!--
+  A cookie banner that shows up half a second after the page loads and
+  covers everything, the way PeoplesHR's does. Until its close button is
+  clicked, a click on Save lands on the banner instead. `when_visible`
+  dismisses it; the click after it then reaches Save.
+-->
+<style>
+  #banner { position: fixed; inset: 0; background: #ffffff; z-index: 10; }
+</style>
+<button id="save" onclick="document.getElementById('count').textContent='saved'">Save</button>
+<p id="count"></p>
+<div id="banner" hidden>
+  <p>This site uses cookies.</p>
+  <button id="close" onclick="document.getElementById('banner').remove()">Close</button>
+</div>
+<script>
+  setTimeout(() => { document.getElementById('banner').hidden = false; }, 500);
+</script>
