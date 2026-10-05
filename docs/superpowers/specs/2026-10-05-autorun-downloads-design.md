@@ -109,8 +109,11 @@ with two examples:
 - 137540: a template's columns checked with `headers.exact`;
 - 137537: an error log's messages checked with `contains_text` or `cells`.
 
-It also says to click the export in the step before `expect_download`, or
-in the same step.
+It also says to click the export in the same step, just before
+`expect_download`: only a download that starts during the step is the
+step's (ruled 2026-10-05, matching how an Azure DevOps step holds both the
+action and its expected result). Supervised runs list no downloads, since
+their folder is emptied when the browser closes.
 
 ## 5. Out of scope
 
