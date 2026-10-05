@@ -16,6 +16,7 @@ import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { dbReadAccessOn } from "../../lib/mcpTools";
 import VerdictPicker from "./VerdictPicker";
 
 const BROWSERS = [
@@ -106,10 +107,12 @@ export default function RunPane({
   });
   /** The current case's preconditions, checked once per browser before its
    * sign-in. "blocked" carries the sentence: the case never signs in and
-   * none of its steps can run. */
-  const [pre, setPre] = useState<{ state: "idle" | "checking" | "blocked"; reason: string }>({
+   * none of its steps can run. `notice` is said and the case goes on (the
+   * checks were skipped while Database Read Access is off). */
+  const [pre, setPre] = useState<{ state: "idle" | "checking" | "blocked"; reason: string; notice: string }>({
     state: "idle",
     reason: "",
+    notice: "",
   });
 
   // The failure screenshot on show, as a data URL, or null.
@@ -246,11 +249,17 @@ export default function RunPane({
   const startCase = async (account: string) => {
     const forLaunch = launches;
     setBusy(true);
-    setPre({ state: "checking", reason: "" });
+    setPre({ state: "checking", reason: "", notice: "" });
     let blocked: string | null;
+    let notice = "";
     try {
-      const r = await commands.autoRunCheckPreconditions(org, project, caseId);
-      blocked = r.status === "error" ? `precondition could not be checked: ${r.error}` : r.data;
+      const r = await commands.autoRunCheckPreconditions(org, project, caseId, dbReadAccessOn());
+      if (r.status === "error") {
+        blocked = `precondition could not be checked: ${r.error}`;
+      } else {
+        blocked = r.data.blocked;
+        notice = r.data.notice ?? "";
+      }
     } catch (e) {
       blocked = `precondition could not be checked: ${e instanceof Error ? e.message : String(e)}`;
     }
@@ -258,11 +267,11 @@ export default function RunPane({
     // dropped, and must not clear a newer launch's busy flag.
     if (launchRef.current !== forLaunch) return;
     if (blocked) {
-      setPre({ state: "blocked", reason: blocked });
+      setPre({ state: "blocked", reason: blocked, notice: "" });
       setBusy(false);
       return;
     }
-    setPre({ state: "idle", reason: "" });
+    setPre({ state: "idle", reason: "", notice });
     if (account === "") {
       setBusy(false);
       return;
@@ -283,6 +292,9 @@ export default function RunPane({
     // A case its preconditions blocked says so the way an unattended run
     // does: proposed Blocked, with the sentence. The verdict stays theirs.
     ...(pre.state === "blocked" ? { proposed: "Blocked", reason: pre.reason } : {}),
+    // Checks skipped while Database Read Access was off: said on the record
+    // too, as an unattended run says it.
+    ...(pre.notice ? { notice: pre.notice } : {}),
   });
 
   /** Every case starts from a clean browser. Keeping one profile across
@@ -324,7 +336,7 @@ export default function RunPane({
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });
-        setPre({ state: "idle", reason: "" });
+        setPre({ state: "idle", reason: "", notice: "" });
         await freshBrowser();
         return;
       }
@@ -455,6 +467,11 @@ export default function RunPane({
         <div className="space-y-2">
           {pre.state === "checking" && (
             <p className="rounded border border-border/60 px-2 py-1 text-xs text-muted">Checking the preconditions</p>
+          )}
+          {pre.notice && (
+            <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
+              {pre.notice}
+            </p>
           )}
           {pre.state === "blocked" && (
             <p role="status" className="rounded border border-border/60 px-2 py-1 text-xs text-danger">

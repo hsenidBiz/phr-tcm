@@ -412,6 +412,7 @@ fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 

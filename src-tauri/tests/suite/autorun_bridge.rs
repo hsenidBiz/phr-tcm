@@ -1488,6 +1488,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         mode: String::new(),
         published: None,

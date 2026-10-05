@@ -356,6 +356,7 @@ pub async fn run_case_as<D: Driver>(
         duration_ms: i32::try_from(began.elapsed().as_millis()).ok(),
         account: account.map(str::to_string),
         retried: None,
+        notice: None,
     }
 }
 
@@ -371,6 +372,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 
@@ -389,6 +391,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         duration_ms: None,
         account: account.map(str::to_string),
         retried: None,
+        notice: None,
     }
 }
 
@@ -525,7 +528,8 @@ pub async fn run_cases<B: Browsers>(
     cancel: &AtomicBool,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
-    let no_db: Result<preconditions::NoDb, String> = Err(preconditions::NEED_DB.to_string());
+    let no_db: preconditions::PreconditionDb<preconditions::NoDb> =
+        preconditions::PreconditionDb::Missing(preconditions::NEED_DB.to_string());
     run_cases_checked(
         browsers,
         root,
@@ -555,6 +559,8 @@ pub async fn run_cases<B: Browsers>(
 /// A case with preconditions has them checked against `precondition_db`
 /// before its browser opens; one not met Blocks the case with its sentence
 /// (`preconditions::check_case`), it never signs in, and the run goes on.
+/// While Database Read Access is off (`PreconditionDb::ReadingOff`) none
+/// is checked, and such a case runs carrying the `notice` that says so.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     browsers: &mut B,
@@ -567,7 +573,7 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     retry_transient: bool,
     timing: &Timing,
     cancel: &AtomicBool,
-    precondition_db: &Result<P, String>,
+    precondition_db: &preconditions::PreconditionDb<P>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
     // Each error says for itself where the run got to, so the command can
@@ -607,13 +613,21 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
                 // Where the case starts, then the records it relies on -
                 // both before its browser opens, so a case that cannot
                 // start never signs in.
+                let mut notice = None;
                 let ready = match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
                     Err(why) => Err(why),
-                    Ok(path) => preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
-                        .await
-                        .map(|()| path),
+                    Ok(path) => {
+                        let checked =
+                            preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                                .await;
+                        notice = checked.notice;
+                        match checked.blocked {
+                            Some(why) => Err(why),
+                            None => Ok(path),
+                        }
+                    }
                 };
-                match ready {
+                let mut record = match ready {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {
                         // A path but no recipe: the sign-in fails first and
@@ -638,7 +652,11 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
                             _ => first,
                         }
                     }
-                }
+                };
+                // Said on the record whichever way the case went, so the
+                // review and the report show the checks were skipped.
+                record.notice = notice;
+                record
             }
         };
         let mut record = record;

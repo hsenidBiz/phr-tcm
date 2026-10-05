@@ -368,12 +368,14 @@ export const commands = {
 	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
 	/**
 	 *  A supervised case's preconditions, checked where the case starts and
-	 *  before its sign-in. `None`: the case may go on. `Some(sentence)`: it is
-	 *  Blocked, with the sentence as its reason, and the pane never signs it
-	 *  in. The active environment's database is looked up only when the
-	 *  case's script has preconditions.
+	 *  before its sign-in. `blocked`: the case is Blocked, with the sentence
+	 *  as its reason, and the pane never signs it in. `notice`: said before
+	 *  step 1, and the case goes on (the checks were skipped while
+	 *  `db_read_access`, the AI Bridge tab's Database Read Access switch, is
+	 *  off). Neither: the case goes on. The active environment's database is
+	 *  looked up only when the case's script has preconditions.
 	 */
-	autoRunCheckPreconditions: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId })),
+	autoRunCheckPreconditions: (organization: string, project: string, caseId: number, dbReadAccess: boolean) => typedError<PreconditionCheck, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId, dbReadAccess })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -612,8 +614,10 @@ export const commands = {
 	 *  script to its own); it must be a key in the Accounts list, or the run
 	 *  does not start. `retry_transient` runs a case whose failure looked
 	 *  transient once more, in a fresh browser (`autorun::transient`).
+	 *  `db_read_access` is the AI Bridge tab's Database Read Access switch:
+	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */
-	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient })),
+	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	/**
@@ -1564,6 +1568,13 @@ export type CaseRecord_Deserialize = {
 	 *  sentence. The steps above are the final try's only.
 	 */
 	retried?: string | null,
+	/**
+	 *  Something the run did not do for this case and the case went on
+	 *  without, said so a person reviewing it knows: today only that its
+	 *  preconditions were not checked while Database Read Access was off
+	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
+	 */
+	notice?: string | null,
 };
 
 /**
@@ -1595,6 +1606,13 @@ export type CaseRecord_Serialize = {
 	 *  sentence. The steps above are the final try's only.
 	 */
 	retried?: string | null,
+	/**
+	 *  Something the run did not do for this case and the case went on
+	 *  without, said so a person reviewing it knows: today only that its
+	 *  preconditions were not checked while Database Read Access was off
+	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
+	 */
+	notice?: string | null,
 };
 
 /**
@@ -2617,6 +2635,14 @@ export type PrWorkItem = {
  *  the flow's subject as its checks take it (a cycle's id, or its name).
  */
 export type Precondition = Precondition_Serialize | Precondition_Deserialize;
+
+/**  What the check before a case's sign-in decided. */
+export type PreconditionCheck = {
+	/**  The Blocked sentence: the case never signs in. */
+	blocked: string | null,
+	/**  Said, and the case goes on (`NOT_CHECKED`). */
+	notice: string | null,
+};
 
 /**
  *  One record a case relies on: `stage` of `flow` must be done for `value`,

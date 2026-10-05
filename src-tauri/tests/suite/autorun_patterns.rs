@@ -32,6 +32,7 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 

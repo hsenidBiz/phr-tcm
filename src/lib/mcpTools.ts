@@ -378,6 +378,13 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   get_run_failures: "get_run_results",
 };
 
+/** Whether Database Read Access is switched on: the reading pair's
+ * `db_query` is not among the disabled tools. Auto Run's precondition
+ * checks follow it - while it is off, none is run. */
+export function dbReadAccessOn(): boolean {
+  return !disabledToolsSnapshot().includes("db_query");
+}
+
 export function loadDisabledTools(): string[] {
   try {
     const raw = localStorage.getItem(KEY);

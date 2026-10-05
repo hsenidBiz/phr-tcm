@@ -17,6 +17,7 @@ use v2_lib::autorun::replay::{
     propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
 use v2_lib::autorun::lease::Held;
+use v2_lib::autorun::preconditions::{PreconditionDb, NOT_CHECKED};
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
@@ -1652,8 +1653,7 @@ async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_
     save_cycle_flow(root);
     store::save_script(root, &needs_publish(1, Some("lead"))).unwrap();
     store::save_script(root, &passing_script(2)).unwrap();
-    let db: Result<common::FakeStageDb, String> =
-        Ok(common::FakeStageDb::new().answer("/*publish*/", Ok(false)));
+    let db = PreconditionDb::Ready(common::FakeStageDb::new().answer("/*publish*/", Ok(false)));
     let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
@@ -1680,7 +1680,8 @@ async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_
         blocked.reason,
         "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle"
     );
-    let asked = db.as_ref().unwrap().calls();
+    let PreconditionDb::Ready(fake) = &db else { unreachable!() };
+    let asked = fake.calls();
     assert_eq!(asked.len(), 1, "only the case with a precondition asks the database: {asked:?}");
     assert!(asked[0].contains("cycle_id = 274"), "{asked:?}");
     assert_eq!(run.cases[1].proposed, "Passed", "{:?}", run.cases[1]);
@@ -1693,7 +1694,7 @@ async fn every_precondition_done_lets_the_case_run() {
     let root = dir.path();
     save_cycle_flow(root);
     store::save_script(root, &needs_publish(1, None)).unwrap();
-    let db: Result<common::FakeStageDb, String> = Ok(common::FakeStageDb::new().answer("/*publish*/", Ok(true)));
+    let db = PreconditionDb::Ready(common::FakeStageDb::new().answer("/*publish*/", Ok(true)));
     let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
@@ -1702,6 +1703,52 @@ async fn every_precondition_done_lets_the_case_run() {
         .unwrap();
     assert_eq!(browsers.opened, 1);
     assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    assert_eq!(run.cases[0].notice, None, "checked, so nothing to say");
+}
+
+/// While Database Read Access is off no precondition is asked: the case
+/// with preconditions runs, carrying the notice, and the one without
+/// carries none.
+#[tokio::test]
+async fn with_reading_off_a_case_runs_unchecked_and_its_record_says_so() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let db: PreconditionDb<common::FakeStageDb> = PreconditionDb::ReadingOff;
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(
+        &mut browsers,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &[to_run(1, None), to_run(2, None)],
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &db,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(browsers.opened, 2, "neither case was Blocked");
+    assert_ne!(run.cases[0].proposed, "Blocked", "{:?}", run.cases[0]);
+    assert_eq!(
+        run.cases[0].notice.as_deref(),
+        Some("preconditions were not checked: Database Read Access is off on the AI Bridge tab")
+    );
+    assert_eq!(run.cases[0].notice.as_deref(), Some(NOT_CHECKED));
+    assert_eq!(run.cases[1].notice, None, "a script without preconditions is untouched");
+    assert_eq!(run.cases[1].proposed, "Passed");
+    // And it is on the saved run.
+    let saved = store::load_run(root, "run-x").unwrap().unwrap();
+    assert_eq!(saved.cases[0].notice.as_deref(), Some(NOT_CHECKED));
 }
 
 /// With no database to ask, a case with preconditions is Blocked and one

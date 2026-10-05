@@ -55,6 +55,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn empty_case() -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 
@@ -186,6 +188,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 duration_ms: Some(1234),
                 account: Some("hr.admin".to_string()),
                 retried: None,
+                notice: None,
             },
             CaseRecord {
                 case_id: 8,
@@ -207,6 +210,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 duration_ms: Some(500),
                 account: None,
                 retried: None,
+                notice: None,
             },
             CaseRecord {
                 case_id: 9,
@@ -219,6 +223,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 duration_ms: Some(200),
                 account: None,
                 retried: None,
+                notice: None,
             },
         ],
         mode: String::new(),

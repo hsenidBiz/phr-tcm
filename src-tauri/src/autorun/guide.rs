@@ -366,11 +366,15 @@ wrong:
   (the cycle's name).
 - `why` is optional: one sentence on what the case needs the record for.
 
-Before the case signs in, the app runs each precondition's stage check on
-the active environment's database, itself: it does not need Database Read
-Access switched on, but it does need a database chosen. When every stage
-is done the case runs. Otherwise it is Blocked before step 1, and never
-signs in, with one of:
+Preconditions follow the Database Read Access switch on the AI Bridge
+tab: while it is off, no check runs, and the case goes on saying:
+
+    preconditions were not checked: Database Read Access is off on the AI Bridge tab
+
+While it is on, before the case signs in, the app runs each
+precondition's stage check on the active environment's database, so it
+needs a database chosen. When every stage is done the case runs.
+Otherwise it is Blocked before step 1, and never signs in, with one of:
 
     precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle
     precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs

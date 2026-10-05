@@ -117,6 +117,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         mode: String::new(),
         published: None,
@@ -416,6 +417,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         environment: None,
     };
@@ -621,6 +623,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             duration_ms: None,
             account: None,
             retried: None,
+            notice: None,
         }],
         environment: None,
     };

@@ -104,7 +104,35 @@ test("start sends the selection, the browser and the watch choice", async () => 
     browserName: "edge",
     watch: false,
     retryTransient: true,
+    dbReadAccess: true,
   });
+});
+
+test("the run is told Database Read Access is off, so it checks no precondition", async () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_lookup", "db_query"]));
+  const calls: { dbReadAccess: boolean }[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "auto_run_replay") {
+        calls.push(args as { dbReadAccess: boolean });
+        return new Promise(() => {});
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[{ id: 1, title: "A" }]}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  await waitFor(() => expect(calls).toEqual([expect.objectContaining({ dbReadAccess: false })]));
 });
 
 test("retrying transient failures is on by default and a remembered choice", async () => {

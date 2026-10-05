@@ -109,6 +109,7 @@ fn failed_at_3(case_id: i32) -> CaseRecord {
         duration_ms: None,
         account: None,
         retried: None,
+        notice: None,
     }
 }
 

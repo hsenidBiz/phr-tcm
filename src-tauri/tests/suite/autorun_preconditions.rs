@@ -8,7 +8,8 @@ use std::path::Path;
 use v2_lib::api_templates::flow::Flow;
 use v2_lib::api_templates::flow_store;
 use v2_lib::autorun::preconditions::{
-    check_all, check_case, check_script, environment_db, not_met, problems, NoDb, NEED_DB,
+    check_all, check_case, check_script, environment_db, for_run, not_met, problems, NoDb, PreconditionCheck,
+    PreconditionDb, NEED_DB, NOT_CHECKED,
 };
 use v2_lib::autorun::{store, CaseScript, Precondition};
 
@@ -155,13 +156,54 @@ fn a_flow_or_stage_gone_since_the_save_blocks_the_case_without_asking() {
     assert!(db.calls().is_empty());
 }
 
+fn blocked(why: &str) -> PreconditionCheck {
+    PreconditionCheck { blocked: Some(why.to_string()), notice: None }
+}
+
+fn notice() -> PreconditionCheck {
+    PreconditionCheck { blocked: None, notice: Some(NOT_CHECKED.to_string()) }
+}
+
 #[test]
 fn no_database_blocks_a_case_with_preconditions_and_never_one_without() {
     let dir = tempfile::tempdir().unwrap();
-    let no_db: Result<NoDb, String> = Err(NEED_DB.to_string());
+    let no_db: PreconditionDb<NoDb> = PreconditionDb::Missing(NEED_DB.to_string());
     assert_eq!(NEED_DB, "preconditions need a database chosen on the AI Bridge tab");
-    assert_eq!(block(check_case(&no_db, dir.path(), "acme", "Web", &[publish(None)])), Err(NEED_DB.to_string()));
-    assert_eq!(block(check_case(&no_db, dir.path(), "acme", "Web", &[])), Ok(()));
+    assert_eq!(block(check_case(&no_db, dir.path(), "acme", "Web", &[publish(None)])), blocked(NEED_DB));
+    assert_eq!(block(check_case(&no_db, dir.path(), "acme", "Web", &[])), PreconditionCheck::default());
+}
+
+/// While Database Read Access is off nothing is asked, the case is not
+/// Blocked, and it says so - but only a case that has preconditions.
+#[test]
+fn with_reading_off_nothing_is_asked_and_the_case_goes_on_saying_so() {
+    let _g = crate::serial::activity_log();
+    assert_eq!(NOT_CHECKED, "preconditions were not checked: Database Read Access is off on the AI Bridge tab");
+    let dir = tempfile::tempdir().unwrap();
+    // The switch off: no database is resolved at all.
+    let off = for_run(dir.path(), None, false);
+    assert!(matches!(off, PreconditionDb::ReadingOff));
+    assert_eq!(block(check_case(&off, dir.path(), "acme", "Web", &[publish(None)])), notice());
+    assert_eq!(block(check_case(&off, dir.path(), "acme", "Web", &[])), PreconditionCheck::default());
+}
+
+/// With the switch on, `for_run` is the environment's database, as before.
+#[test]
+fn with_reading_on_the_environment_database_is_used() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("environments.json"),
+        json!({ "active": "env-0000abcd", "environments": [
+            { "id": "env-0000abcd", "name": "Default", "start_url": "", "allowed_origins": [],
+              "db_id": "gone", "test_environment": false }
+        ] })
+        .to_string(),
+    )
+    .unwrap();
+    match for_run(dir.path(), None, true) {
+        PreconditionDb::Missing(why) => assert_eq!(why, NEED_DB),
+        _ => panic!("the switch on with no database is no database"),
+    }
 }
 
 /// The active environment names a database this build does not know, or
@@ -189,27 +231,32 @@ fn the_supervised_check_reads_the_script_and_asks_for_a_database_only_when_it_ne
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_flows(root);
-    let never = || -> Result<FakeStageDb, String> { panic!("the database was looked up for a case with no preconditions") };
-    assert_eq!(block(check_script(root, "acme", "Web", 1, never)), Ok(None), "no script");
+    let go = PreconditionCheck::default();
+    let never = || -> PreconditionDb<FakeStageDb> { panic!("the database was looked up for a case with no preconditions") };
+    assert_eq!(block(check_script(root, "acme", "Web", 1, never)), Ok(go.clone()), "no script");
 
     let plain: CaseScript = serde_json::from_value(script_with(2, json!([]))).unwrap();
     store::save_script(root, &plain).unwrap();
-    assert_eq!(block(check_script(root, "acme", "Web", 2, never)), Ok(None), "no preconditions");
+    assert_eq!(block(check_script(root, "acme", "Web", 2, never)), Ok(go.clone()), "no preconditions");
+    // No preconditions, no notice, even with reading off.
+    let off = || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff };
+    assert_eq!(block(check_script(root, "acme", "Web", 2, off)), Ok(go.clone()));
 
     let needs: CaseScript = serde_json::from_value(script_with(3, json!([
         { "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }
     ])))
     .unwrap();
     store::save_script(root, &needs).unwrap();
-    let not_done = || Ok(FakeStageDb::new().answer("/*publish*/", Ok(false)));
+    let not_done = || PreconditionDb::Ready(FakeStageDb::new().answer("/*publish*/", Ok(false)));
     assert_eq!(
         block(check_script(root, "acme", "Web", 3, not_done)),
-        Ok(Some("precondition not met: Publish for 274 (Performance cycle wizard)".to_string()))
+        Ok(blocked("precondition not met: Publish for 274 (Performance cycle wizard)"))
     );
-    let done = || Ok(FakeStageDb::new().answer("/*publish*/", Ok(true)));
-    assert_eq!(block(check_script(root, "acme", "Web", 3, done)), Ok(None));
-    let none = || -> Result<FakeStageDb, String> { Err(NEED_DB.to_string()) };
-    assert_eq!(block(check_script(root, "acme", "Web", 3, none)), Ok(Some(NEED_DB.to_string())));
+    let done = || PreconditionDb::Ready(FakeStageDb::new().answer("/*publish*/", Ok(true)));
+    assert_eq!(block(check_script(root, "acme", "Web", 3, done)), Ok(go));
+    let none = || -> PreconditionDb<FakeStageDb> { PreconditionDb::Missing(NEED_DB.to_string()) };
+    assert_eq!(block(check_script(root, "acme", "Web", 3, none)), Ok(blocked(NEED_DB)));
+    assert_eq!(block(check_script(root, "acme", "Web", 3, off)), Ok(notice()), "reading off: a notice, not a block");
 }
 
 // ------------------------------------------------------------- on a save
@@ -341,6 +388,8 @@ fn the_guide_teaches_preconditions() {
         "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle",
         "precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs",
         NEED_DB,
+        NOT_CHECKED,
+        "follow the Database Read Access switch",
         "precondition 1: no flow",
         "has no stage",
         "give the value the flow's checks take",

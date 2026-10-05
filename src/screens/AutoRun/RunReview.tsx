@@ -20,6 +20,7 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
+import NoticeBadge from "./NoticeBadge";
 import VerdictPicker from "./VerdictPicker";
 import { countBuckets, matchesFilter, type ResultFilter } from "./verdicts";
 
@@ -361,6 +362,7 @@ export default function RunReview(props: {
                 <span className="id-mono text-faint">#{c.case_id}</span>
                 <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                 <RetriedBadge first={c.retried} />
+                <NoticeBadge notice={c.notice} />
               </div>
               <p className="text-xs text-muted">{proposalLine(c)}</p>
 

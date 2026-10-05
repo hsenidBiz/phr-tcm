@@ -221,10 +221,12 @@ pub async fn auto_run_step(
 }
 
 /// A supervised case's preconditions, checked where the case starts and
-/// before its sign-in. `None`: the case may go on. `Some(sentence)`: it is
-/// Blocked, with the sentence as its reason, and the pane never signs it
-/// in. The active environment's database is looked up only when the
-/// case's script has preconditions.
+/// before its sign-in. `blocked`: the case is Blocked, with the sentence
+/// as its reason, and the pane never signs it in. `notice`: said before
+/// step 1, and the case goes on (the checks were skipped while
+/// `db_read_access`, the AI Bridge tab's Database Read Access switch, is
+/// off). Neither: the case goes on. The active environment's database is
+/// looked up only when the case's script has preconditions.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_check_preconditions(
@@ -232,11 +234,12 @@ pub async fn auto_run_check_preconditions(
     organization: String,
     project: String,
     case_id: i32,
-) -> Result<Option<String>, String> {
+    db_read_access: bool,
+) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
     let root = root(&app)?;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
-        crate::autorun::preconditions::environment_db(&root, Some(secrets.as_ref()))
+        crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
     })
     .await
 }

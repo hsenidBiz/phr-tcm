@@ -5,8 +5,9 @@
 //! the active environment's database whether each stage is done, through
 //! the flow machinery (`api_templates::gate::stage_state`), and a case
 //! whose record is not there is Blocked before anything happens in the
-//! browser. The app runs these checks itself, so they do not need the
-//! assistant's Database Read Access switch; they do need a database.
+//! browser. They follow the Database Read Access switch: while it is off
+//! no check runs and a case with preconditions goes on carrying
+//! `NOT_CHECKED`; while it is on they need a database.
 //!
 //! Every save path (the Script editor, an import, the assistant's save)
 //! validates the preconditions through `check_saved`, so a script naming a
@@ -127,45 +128,99 @@ pub async fn check_all<D: StageDb>(db: &D, flows: &[Flow], preconditions: &[Prec
     Ok(())
 }
 
+/// Where a run's preconditions are asked.
+pub enum PreconditionDb<D> {
+    /// The database to ask.
+    Ready(D),
+    /// No database to ask: the Blocked sentence that says why
+    /// (`environment_db`).
+    Missing(String),
+    /// Database Read Access is switched off: no check runs, and a case with
+    /// preconditions goes on carrying `NOT_CHECKED`.
+    ReadingOff,
+}
+
+impl<D> PreconditionDb<D> {
+    /// The database `environment_db` found, or its sentence for none.
+    pub fn from_result(db: Result<D, String>) -> Self {
+        match db {
+            Ok(d) => PreconditionDb::Ready(d),
+            Err(why) => PreconditionDb::Missing(why),
+        }
+    }
+}
+
+/// The note a case with preconditions carries when they were not checked
+/// because Database Read Access is switched off. Not a block: the case
+/// goes on.
+pub const NOT_CHECKED: &str = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
+
+/// What the check before a case's sign-in decided.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct PreconditionCheck {
+    /// The Blocked sentence: the case never signs in.
+    pub blocked: Option<String>,
+    /// Said, and the case goes on (`NOT_CHECKED`).
+    pub notice: Option<String>,
+}
+
+impl PreconditionCheck {
+    fn go() -> Self {
+        Self::default()
+    }
+}
+
 /// One case's preconditions, as the run checks them before its sign-in.
-/// Nothing is asked, and the database is never looked at, when the case
-/// has none. `db` is the database, or the Blocked sentence that says why
-/// there is none (`environment_db`).
+/// Nothing is asked, the database is never looked at, and nothing is said,
+/// when the case has none. While reading is off nothing is asked either,
+/// and the case goes on with `NOT_CHECKED`.
 pub async fn check_case<D: StageDb>(
-    db: &Result<D, String>,
+    db: &PreconditionDb<D>,
     root: &Path,
     org: &str,
     project: &str,
     preconditions: &[Precondition],
-) -> Result<(), String> {
+) -> PreconditionCheck {
     if preconditions.is_empty() {
-        return Ok(());
+        return PreconditionCheck::go();
     }
-    let db = db.as_ref().map_err(String::clone)?;
-    let flows = flow_store::list(root, org, project).map_err(|e| {
-        crate::applog::warn(format!("Auto Run preconditions: the flows could not be read: {e}"));
-        format!("{COULD_NOT}: the flows could not be read - see Settings, Logs")
-    })?;
-    check_all(db, &flows, preconditions).await
+    let db = match db {
+        PreconditionDb::ReadingOff => {
+            return PreconditionCheck { blocked: None, notice: Some(NOT_CHECKED.to_string()) }
+        }
+        PreconditionDb::Missing(why) => return PreconditionCheck { blocked: Some(why.clone()), notice: None },
+        PreconditionDb::Ready(db) => db,
+    };
+    let flows = match flow_store::list(root, org, project) {
+        Ok(flows) => flows,
+        Err(e) => {
+            crate::applog::warn(format!("Auto Run preconditions: the flows could not be read: {e}"));
+            return PreconditionCheck {
+                blocked: Some(format!("{COULD_NOT}: the flows could not be read - see Settings, Logs")),
+                notice: None,
+            };
+        }
+    };
+    PreconditionCheck { blocked: check_all(db, &flows, preconditions).await.err(), notice: None }
 }
 
 /// The supervised run's check for one case, by id, before its sign-in.
-/// `Ok(None)`: the case may go on (it has no script, or no preconditions,
-/// or every one is met). `Ok(Some(sentence))`: it is Blocked. The database
-/// is resolved only when the script has preconditions.
+/// Neither field set: the case may go on (it has no script, or no
+/// preconditions, or every one is met). The database is resolved only
+/// when the script has preconditions.
 pub async fn check_script<D: StageDb>(
     root: &Path,
     org: &str,
     project: &str,
     case_id: i32,
-    db: impl FnOnce() -> Result<D, String>,
-) -> Result<Option<String>, String> {
-    let Some(script) = super::store::load_script(root, case_id)? else { return Ok(None) };
+    db: impl FnOnce() -> PreconditionDb<D>,
+) -> Result<PreconditionCheck, String> {
+    let Some(script) = super::store::load_script(root, case_id)? else { return Ok(PreconditionCheck::go()) };
     if script.preconditions.is_empty() {
-        return Ok(None);
+        return Ok(PreconditionCheck::go());
     }
     let db = db();
-    Ok(check_case(&db, root, org, project, &script.preconditions).await.err())
+    Ok(check_case(&db, root, org, project, &script.preconditions).await)
 }
 
 /// The active environment's database, as the place preconditions are
@@ -189,6 +244,21 @@ pub fn environment_db(
         }
     })?;
     Ok(SqlcmdStageDb { runner: crate::db::RealRunner, exe, conn })
+}
+
+/// Where a run started from the app asks its preconditions: nowhere while
+/// Database Read Access is off (`db_read_access` is the AI Bridge tab's
+/// switch, as the webview holds it: `db_query` not among the disabled
+/// tools), otherwise the active environment's database.
+pub fn for_run(
+    root: &Path,
+    store: Option<&dyn crate::db::SecretStore>,
+    db_read_access: bool,
+) -> PreconditionDb<SqlcmdStageDb<crate::db::RealRunner>> {
+    if !db_read_access {
+        return PreconditionDb::ReadingOff;
+    }
+    PreconditionDb::from_result(environment_db(root, store))
 }
 
 /// A database that is never asked: the stand-in for callers that have no
