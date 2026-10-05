@@ -73,6 +73,10 @@ const ACCENT_TITLE: Record<Accent, string> = {
  * the order they set off (their `data-settings-card` ids). */
 const MOVING_CARDS = ["updates", "backup", "help"] as const;
 
+/** The cards that stack beside those under the changelog when its column
+ * has room for two cards across, and otherwise sit in the left column. */
+const SPARE_CARDS = ["ai-tools", "extras"] as const;
+
 /** The left track's width - min(32rem, the grid less the 2rem gap and the
  * right track's 24rem floor) - for the cards under the changelog, so a
  * card is the same size in either column and does not change width as it
@@ -139,6 +143,7 @@ export default function Settings({ org, project }: { org: string; project: strin
     rootRef: panelRef,
     changelogRef,
     moving: MOVING_CARDS,
+    spare: SPARE_CARDS,
     fold: () => document.getElementById("changelog-history")?.closest<HTMLElement>(".t-collapse") ?? null,
     changelogShown: rightPanel === "changelog",
   });
@@ -521,6 +526,75 @@ export default function Settings({ org, project }: { org: string; project: strin
     </>
   );
 
+  // AI tools and Extras sit in the left column, unless the right column has
+  // room for two cards across: then they stack beside the cards under the
+  // changelog, and move left with them while its history is open.
+  const aiToolsCard = (
+    <SettingsCard
+      title="AI tools"
+      data-settings-card="ai-tools"
+      className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
+    >
+      <SettingRow
+        asLabel
+        name="Allow registering AI tools machine-wide"
+        description="For a machine without a repository. Writing test cases still needs one."
+        control={
+          <Switch
+            checked={globalAllowed}
+            onCheckedChange={(on) => {
+              saveGlobalAllowed(on);
+              setGlobalAllowed(on);
+            }}
+            ariaLabel="Allow registering AI tools machine-wide"
+          />
+        }
+      />
+    </SettingsCard>
+  );
+
+  // Only on a machine where the optional extras are unlocked (a key sequence
+  // typed on this screen - see settingsExtras.ts). The heading stays neutral
+  // on purpose. Capture mode: the owner's machine can be unlocked, but a shot
+  // must never show it - see dev/capture.ts.
+  const extrasCard = extrasUnlocked && !isCaptureMode() && (
+    <SettingsCard
+      title="Extras"
+      data-settings-card="extras"
+      className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
+    >
+      <SettingRow
+        description="Optional extras on this machine. While they are on, Auto Run shows in the sidebar and its tools are offered on the AI Bridge tab."
+        control={
+          <>
+            <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
+              <IconPlayGame aria-hidden />
+              Play the dino game
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
+              <IconUndo aria-hidden />
+              Reset to default
+            </Button>
+          </>
+        }
+      />
+      {confirmReset && (
+        <Modal onClose={() => setConfirmReset(false)} className="w-full max-w-sm space-y-4 p-5">
+          <h3 className="text-sm font-semibold text-text">Hide these extras again?</h3>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" onClick={() => setConfirmReset(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={resetExtras}>
+              Reset
+            </Button>
+          </div>
+        </Modal>
+      )}
+      {gameOpen && <RunnerGameModal onClose={() => setGameOpen(false)} />}
+    </SettingsCard>
+  );
+
   return (
     // Two columns on wide windows; below lg everything stacks into one
     // column: the cards, then the changelog/log panel.
@@ -530,7 +604,10 @@ export default function Settings({ org, project }: { org: string; project: strin
     // changelog is short, and the space under it used to sit empty. While
     // the changelog's full history is open those three move to the foot of
     // the left column instead, sliding across as it unfolds and back as it
-    // folds, timed so its edge never crosses them (useTileLayout).
+    // folds, timed so its edge never crosses them (useTileLayout). When the
+    // right column has room for two cards across, AI tools and Extras stack
+    // beside those three instead of sitting below them on the left, and
+    // move left with them.
     //
     // Left: the settings, grouped into cards of one row per setting. It stops
     // growing at 32rem - none of its rows get better with more room - and the
@@ -660,64 +737,11 @@ export default function Settings({ org, project }: { org: string; project: strin
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="AI tools" data-settings-card="ai-tools">
-        <SettingRow
-          asLabel
-          name="Allow registering AI tools machine-wide"
-          description="For a machine without a repository. Writing test cases still needs one."
-          control={
-            <Switch
-              checked={globalAllowed}
-              onCheckedChange={(on) => {
-                saveGlobalAllowed(on);
-                setGlobalAllowed(on);
-              }}
-              ariaLabel="Allow registering AI tools machine-wide"
-            />
-          }
-        />
-      </SettingsCard>
+      {!tiles.spareStack && aiToolsCard}
 
       {tiles.placement !== "right" && movingCards}
 
-      {/* Only on a machine where the optional extras are unlocked (a key
-          sequence typed on this screen - see settingsExtras.ts). The
-          heading stays neutral on purpose. */}
-      {/* Capture mode: the owner's machine can be unlocked, but a shot must
-          never show it - see dev/capture.ts. */}
-      {extrasUnlocked && !isCaptureMode() && (
-        <SettingsCard title="Extras" data-settings-card="extras">
-          <SettingRow
-            description="Optional extras on this machine. While they are on, Auto Run shows in the sidebar and its tools are offered on the AI Bridge tab."
-            control={
-              <>
-                <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
-                  <IconPlayGame aria-hidden />
-                  Play the dino game
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
-                  <IconUndo aria-hidden />
-                  Reset to default
-                </Button>
-              </>
-            }
-          />
-          {confirmReset && (
-            <Modal onClose={() => setConfirmReset(false)} className="w-full max-w-sm space-y-4 p-5">
-              <h3 className="text-sm font-semibold text-text">Hide these extras again?</h3>
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="outline" onClick={() => setConfirmReset(false)}>
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={resetExtras}>
-                  Reset
-                </Button>
-              </div>
-            </Modal>
-          )}
-          {gameOpen && <RunnerGameModal onClose={() => setGameOpen(false)} />}
-        </SettingsCard>
-      )}
+      {!tiles.spareStack && extrasCard}
 
       {/* The Module / Preconditions field mapping is auto-detected
           (useFieldRefs ranked match) and deliberately NOT user-editable -
@@ -862,7 +886,20 @@ export default function Settings({ org, project }: { org: string; project: strin
         )}
       </section>
 
-      {tiles.placement === "right" && movingCards}
+      {tiles.placement === "right" &&
+        (tiles.spareStack ? (
+          // Room for two across: a second stack beside the first, both
+          // top-aligned, 1rem apart.
+          <div className="flex items-start gap-4">
+            <div className="space-y-4">{movingCards}</div>
+            <div className="space-y-4">
+              {aiToolsCard}
+              {extrasCard}
+            </div>
+          </div>
+        ) : (
+          movingCards
+        ))}
       </div>
 
       {/* Sizing and padding belong on the Modal, not inside it: the panel

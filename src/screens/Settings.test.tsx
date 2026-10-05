@@ -220,8 +220,18 @@ function stubMotion({ foldHeight = 0 } = {}) {
   Element.prototype.getBoundingClientRect = function (this: Element) {
     if (this.hasAttribute("data-settings-card")) {
       const col = this.parentElement!;
-      const inRight = col.contains(panel());
-      return rect(inRight ? 600 : 0, [...col.children].indexOf(this) * 100 + (inRight ? folded() : 0), 400, 90);
+      const right = panel()?.parentElement;
+      const inRight = !!right && right.contains(this);
+      // Under the panel the cards may sit in two stacks side by side, each
+      // starting one row down (the panel is the first row).
+      const stacked = inRight && col !== right;
+      const stack = stacked ? [...col.parentElement!.children].indexOf(col) : 0;
+      return rect(
+        inRight ? 600 + stack * 420 : 0,
+        [...col.children].indexOf(this) * 100 + (stacked ? 100 : 0) + (inRight ? folded() : 0),
+        400,
+        90,
+      );
     }
     if (this === panel()) return rect(600, 0, 400, 90 + folded());
     if (this === panel()?.parentElement) return rect(600, 0, 400, 500);
@@ -576,6 +586,203 @@ test("the Extras card stays last on the left as the cards come and go", async ()
   fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
   await screen.findByRole("button", { name: "Show less" });
   expect(headings(columns().left)).toEqual([...ALL_CARDS, "Extras"]);
+});
+
+// ---- A roomy right column: a spare stack beside Updates ------------------
+
+/** Two 32rem cards and a 1rem gap fit in the right track from a 99rem grid
+ * (32rem left track, 2rem gap); jsdom's root font size is 16px. */
+const ROOMY_PX = 1700;
+const SNUG_PX = 1200;
+
+/**
+ * jsdom does no layout, so the grid (the `@container`) reports `width` as
+ * its clientWidth, and `resize(px)` tells its ResizeObserver, as a browser
+ * would when the window or the sidebar changes size.
+ */
+function gridWidth(initial: number) {
+  let width = initial;
+  const isGrid = (el: Element) => el.classList.contains("@container");
+  const watched: { cb: ResizeObserverCallback; el: Element; ro: ResizeObserver }[] = [];
+  const RealRO = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(private cb: ResizeObserverCallback) {}
+    observe(el: Element) {
+      watched.push({ cb: this.cb, el, ro: this as unknown as ResizeObserver });
+    }
+    unobserve(el: Element) {
+      const i = watched.findIndex((w) => w.el === el && w.cb === this.cb);
+      if (i >= 0) watched.splice(i, 1);
+    }
+    disconnect() {
+      for (let i = watched.length - 1; i >= 0; i--) if (watched[i].cb === this.cb) watched.splice(i, 1);
+    }
+  } as unknown as typeof ResizeObserver;
+  const real = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!;
+  Object.defineProperty(Element.prototype, "clientWidth", {
+    configurable: true,
+    get(this: Element) {
+      return isGrid(this) ? width : (real.get!.call(this) as number);
+    },
+  });
+  return {
+    resize: (px: number) => {
+      width = px;
+      for (const w of [...watched]) if (isGrid(w.el)) w.cb([], w.ro);
+    },
+    restore: () => {
+      globalThis.ResizeObserver = RealRO;
+      Object.defineProperty(Element.prototype, "clientWidth", real);
+    },
+  };
+}
+
+/** The column (or stack) a card renders in. */
+const holder = (name: string) => screen.getByRole("heading", { name }).closest("section")!.parentElement!;
+
+/** Extras shown, as on an unlocked machine. */
+async function renderUnlocked() {
+  mockIPC((cmd) => {
+    if (cmd === "set_extras_unlocked") return null;
+    if (cmd === "get_extras_unlocked") return true;
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+  });
+  await act(() => setExtrasUnlocked(true));
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  await screen.findByRole("heading", { name: "Extras" });
+}
+
+/** AI tools and Extras in a stack of their own under the panel, beside the
+ * stack of Updates, Backup & transfer and Help & support. */
+function expectSpareStack() {
+  const { left, right } = columns();
+  const spare = holder("AI tools");
+  const movers = holder("Updates");
+  expect(headings(left)).toEqual(["Appearance", "General"]);
+  expect(spare).not.toBe(right);
+  expect(movers).not.toBe(right);
+  expect(right.contains(spare)).toBe(true);
+  expect(spare.parentElement).toBe(movers.parentElement);
+  expect(headings(movers)).toEqual(MOVERS);
+  expect(headings(spare)).toEqual(["AI tools", "Extras"]);
+}
+
+/// Owner's rule (2026-10-05): with the changelog folded and room for two
+/// cards across, AI tools and Extras sit beside Updates instead of below the
+/// fold of the window in the left column.
+test("a roomy wide window puts AI tools and Extras in a stack beside Updates", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  try {
+    await renderUnlocked();
+    expectSpareStack();
+    // The tour still finds its anchors.
+    expect(document.querySelector('[data-tour="settings-updates"]')).not.toBeNull();
+    expect(document.querySelector('[data-tour="theme"]')).not.toBeNull();
+  } finally {
+    grid.restore();
+  }
+});
+
+/// Show more needs the right column: every card under the panel moves left,
+/// the spare stack too, in today's order; Show less brings them back.
+test("on a roomy window Show more moves every card left, and Show less brings the spare stack back", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  try {
+    await renderUnlocked();
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    await screen.findByRole("button", { name: "Show less" });
+    expect(headings(columns().left)).toEqual([...ALL_CARDS, "Extras"]);
+    expect(headings(columns().right)).toEqual(["Changelog"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    await screen.findByRole("button", { name: /^Show more/ });
+    await waitFor(() => expectSpareStack());
+  } finally {
+    grid.restore();
+  }
+});
+
+/// The app log is "right" too: the spare stack stays under it.
+test("on a roomy window the spare stack stays under the app log", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  try {
+    await renderUnlocked();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    await screen.findByRole("button", { name: "Copy log" });
+    expectSpareStack();
+  } finally {
+    grid.restore();
+  }
+});
+
+/// Without room for two cards across, nothing changes from before.
+test("a wide window without room for two cards keeps AI tools and Extras on the left", async () => {
+  wideWindow();
+  const grid = gridWidth(SNUG_PX);
+  try {
+    await renderUnlocked();
+    expect(headings(columns().left)).toEqual([...LOOKS, "Extras"]);
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+    expect(holder("Updates")).toBe(columns().right);
+  } finally {
+    grid.restore();
+  }
+});
+
+/// A resize (or the sidebar folding) across the threshold changes the
+/// placement, settling at once with no slide.
+test("crossing the roomy threshold moves AI tools and Extras at once", async () => {
+  wideWindow();
+  const grid = gridWidth(SNUG_PX);
+  const motion = stubMotion();
+  try {
+    await renderUnlocked();
+    expect(headings(columns().left)).toEqual([...LOOKS, "Extras"]);
+
+    act(() => grid.resize(ROOMY_PX));
+    expectSpareStack();
+    act(() => grid.resize(SNUG_PX));
+    expect(headings(columns().left)).toEqual([...LOOKS, "Extras"]);
+    expect(headings(columns().right)).toEqual(["Changelog", ...MOVERS]);
+    expect(motion.cards()).toHaveLength(0);
+  } finally {
+    motion.restore();
+    grid.restore();
+  }
+});
+
+/// The spare stack slides with the others: Show more times AI tools and
+/// Extras as moving cards (drawn on top, top-down with the rest), not as
+/// cards that only shift to make room.
+test("on a roomy window Show more slides AI tools and Extras with the moving cards", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    await renderUnlocked();
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(headings(columns().left)).toEqual([...ALL_CARDS, "Extras"]);
+
+    const slides = motion.cards();
+    const ids = slides.map((s) => s.el.getAttribute("data-settings-card"));
+    expect([...ids].sort()).toEqual(["ai-tools", "backup", "extras", "help", "updates"]);
+    for (const s of slides) expect((s.el as HTMLElement).style.zIndex).toBe("1");
+    // Top-down by where each card set off: the first row (Updates, AI tools)
+    // no later than the second (Backup, Extras), and that no later than Help.
+    const at = (id: string) => motion.setsOff(slides[ids.indexOf(id)]);
+    expect(at("updates")).toBe(0);
+    expect(Math.max(at("updates"), at("ai-tools"))).toBeLessThanOrEqual(Math.min(at("backup"), at("extras")));
+    expect(Math.max(at("backup"), at("extras"))).toBeLessThanOrEqual(at("help"));
+    expect(Number(motion.fold()[0].opts.delay)).toBeGreaterThan(0);
+  } finally {
+    motion.restore();
+    grid.restore();
+  }
 });
 
 /// The request rate is a compact three-way choice: only the chosen level's
