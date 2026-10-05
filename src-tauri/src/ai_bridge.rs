@@ -298,6 +298,9 @@ pub async fn route(
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-defect") => autorun_defect(body),
+        // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
+        // DevOps (a read) to refuse an id the PBI is not tested by.
+        ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
         // The active environment's accounts: the assistant proposes logins
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
@@ -2001,6 +2004,71 @@ fn autorun_defect(body: &str) -> (u16, String) {
     (200, serde_json::to_string(&mark).unwrap_or_default())
 }
 
+/// `POST /autorun-order`, body `{ pbi_id, case_ids }`: Auto Run's own
+/// execution order for the PBI on this machine (`store::save_order`). Run
+/// Tests' order is not touched. Every id must be one of the PBI's test
+/// cases, read from Azure DevOps the way the Auto Run tab lists them; a
+/// listed case with no saved script is saved in the order and named back.
+async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>, body: &str) -> (u16, String) {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OrderBody {
+        pbi_id: i32,
+        case_ids: Vec<i32>,
+    }
+    let shape = "{ \"pbi_id\": 100, \"case_ids\": [503, 501, 502] }";
+    let o: OrderBody = match serde_json::from_str(body) {
+        Ok(o) => o,
+        Err(e) => return (400, format!("that is not an order: {e}. Expected {shape}.")),
+    };
+    if o.case_ids.is_empty() {
+        return (400, "case_ids is empty - list the PBI's cases in the order Auto Run should run them".to_string());
+    }
+    for (i, id) in o.case_ids.iter().enumerate() {
+        if o.case_ids[..i].contains(id) {
+            return (400, format!("case {id} is listed twice"));
+        }
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let Some(client) = client else {
+        return (503, "sign in to Test Case Manager first".to_string());
+    };
+    let on_pbi: Vec<i32> = match client.get_pbi_test_cases(&ctx.org, o.pbi_id).await {
+        Ok(cases) => cases.into_iter().map(|c| c.id).collect(),
+        Err(crate::ado::AdoError::NotFound) => {
+            return (404, format!("Azure DevOps has no work item #{} - check the PBI id", o.pbi_id))
+        }
+        Err(e) => return (502, format!("Azure DevOps error: {}", e.user_text())),
+    };
+    let not_on_pbi: Vec<String> = o
+        .case_ids
+        .iter()
+        .filter(|id| !on_pbi.contains(id))
+        .map(|id| format!("case {id} is not in PBI {}", o.pbi_id))
+        .collect();
+    if !not_on_pbi.is_empty() {
+        return (400, not_on_pbi.join("; "));
+    }
+    if let Err(e) = crate::autorun::store::save_order(&root, o.pbi_id, &o.case_ids) {
+        return (500, format!("could not save the order: {e}"));
+    }
+    crate::applog::info(format!("AI set Auto Run's order for PBI {}: {} case(s)", o.pbi_id, o.case_ids.len()));
+    let mut lines = vec![format!(
+        "saved Auto Run's order for PBI {}: {}",
+        o.pbi_id,
+        o.case_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+    )];
+    for id in &o.case_ids {
+        if !matches!(crate::autorun::store::load_script(&root, *id), Ok(Some(_))) {
+            lines.push(format!("case {id} has no saved script"));
+        }
+    }
+    (200, lines.join("\n"))
+}
+
 /// What an assistant is told when its line brought a retired note back.
 fn reactivated_reply(id: &str, reason: Option<&str>) -> String {
     match reason {
@@ -2560,7 +2628,10 @@ fn repair_source(
 /// the gate refuses - never a quiet "unchanged". Positional rather than keyed by step number, so a bundle
 /// that merely REORDERS the same steps counts as a change and goes
 /// through the gate rather than around it. `repairs` is deliberately
-/// not compared: it is never the sender's to set.
+/// not compared: it is never the sender's to set. Nor are the marks
+/// (`changes`, `needs_unchanged`): they affect order, not safety, so
+/// marking a saved script is no repair and uses none of its count. The
+/// sent marks are what is saved.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
     old.title == sent.title
         && old.account == sent.account
@@ -2730,7 +2801,9 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = old.repairs;
                 script.last_repair = old.last_repair.clone();
-                lines.push(format!("case {} (unchanged)", script.case_id));
+                let marks_changed = old.changes != sent.changes || old.needs_unchanged != sent.needs_unchanged;
+                let said = if marks_changed { "marks updated" } else { "unchanged" };
+                lines.push(format!("case {} ({said})", script.case_id));
             }
             Some(old) => {
                 let mut verdict = crate::autorun::edits::check_edits(&old, sent, declared);

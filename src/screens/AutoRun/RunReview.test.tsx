@@ -866,3 +866,35 @@ test("calling a failed case Passed takes its Replay away", async () => {
   fireEvent.click(within(failed).getByRole("button", { name: "Passed" }));
   await waitFor(() => expect(within(failed).queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument());
 });
+
+/** The run paused before case 202 to put "cycle published" back, and went on. */
+const RESET_RUN = {
+  ...RUN,
+  resets: [
+    { before_case_id: 202, names: ["cycle published"], changed_by: [["cycle published", [201]]], waited_ms: 900, outcome: "continued" },
+  ],
+};
+
+test("the review shows the reset line between the cases where the run paused", async () => {
+  renderReview(RESET_RUN);
+  const line = await screen.findByText('Reset: revert "cycle published" - continued');
+  const items = Array.from(line.closest("ul")!.children);
+  const at = items.indexOf(line);
+  expect(items.indexOf(caseCard(201))).toBeLessThan(at);
+  expect(items.indexOf(caseCard(202))).toBe(at + 1);
+});
+
+test("saving a review keeps the run's reset points", async () => {
+  let saved: { run: typeof RESET_RUN } | null = null;
+  renderReview(RESET_RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_save_run") saved = args as { run: typeof RESET_RUN };
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: failed/i);
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save review" }));
+  await waitFor(() => expect(saved).not.toBeNull());
+  expect(saved!.run.resets).toEqual(RESET_RUN.resets);
+});

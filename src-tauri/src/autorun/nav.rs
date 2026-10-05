@@ -807,14 +807,16 @@ pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> 
 
 /// The project's rules for a script, against its own file: no address
 /// while the switch is off (`check_no_addresses`), only recorded areas
-/// (`check_areas`), and preconditions that name a flow, a stage and a
-/// value the project has (`preconditions::check_saved`). The one call every
-/// save path makes (the Script editor, a JSON import, the assistant's
-/// `save_autorun_script`, a repair included).
+/// (`check_areas`), marks within their limits (`marks::check_saved`), and
+/// preconditions that name a flow, a stage and a value the project has
+/// (`preconditions::check_saved`). The one call every save path makes (the
+/// Script editor, a JSON import, the assistant's `save_autorun_script`, a
+/// repair included).
 pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
     let nav = load_nav(root, org, project)?;
     check_no_addresses(&nav, scripts)?;
     check_areas(&nav, scripts)?;
+    super::marks::check_saved(scripts)?;
     super::preconditions::check_saved(root, org, project, scripts)
 }
 

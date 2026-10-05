@@ -82,6 +82,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Mark a failed step as the application's fault, not the script's, with a note, and leave the script alone.",
   },
   {
+    name: "set_autorun_order",
+    label: "Set Auto Run's order",
+    summary: "Set the order Auto Run runs a PBI's cases in on this machine. Run Tests' order is not changed.",
+  },
+  {
     name: "propose_accounts",
     label: "Propose test logins",
     summary: "Suggest logins for the active environment - with their passwords only in a test environment - for you to add as accounts.",
@@ -182,6 +187,7 @@ export const DEV_ONLY_TOOLS = [
   "record_autorun_quirk",
   "retire_autorun_quirk",
   "mark_autorun_suspected_defect",
+  "set_autorun_order",
   "propose_accounts",
   "get_accounts",
   "list_test_files",
@@ -262,6 +268,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "record_autorun_quirk",
     "retire_autorun_quirk",
     "mark_autorun_suspected_defect",
+    "set_autorun_order",
     "propose_accounts",
     "get_accounts",
     "list_test_files",
@@ -305,7 +312,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   get_autorun_guide: {
     label: "Auto Run scripts",
     summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save and repair scripts, and propose and read the environment's test logins.",
+      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save and repair scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
   },
   get_api_template_guide: {
     label: "API templates",

@@ -7,7 +7,7 @@
 //! landed, never a foothold for driving Azure DevOps from here.
 
 use v2_lib::autorun::store::{
-    clear_runs, clear_scripts, downloads_dir, empty_supervised_downloads, list_runs, load_run, load_script,
+    clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
     load_shot, new_run_id, supervised_downloads_dir,
     safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
     SaveScriptsError,
@@ -62,6 +62,8 @@ fn script() -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }
 }
@@ -125,6 +127,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     save_run(dir.path(), &run).unwrap();
 
@@ -148,6 +151,7 @@ fn runs_come_back_newest_first() {
                 mode: String::new(),
                 published: None,
                 environment: None,
+                resets: vec![],
             },
         )
         .unwrap();
@@ -171,6 +175,7 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
             mode: String::new(),
             published: None,
             environment: None,
+            resets: vec![],
         },
     )
     .unwrap();
@@ -196,6 +201,8 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }
 }
@@ -243,7 +250,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], saved_at: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], changes: vec![], needs_unchanged: vec![], saved_at: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -269,6 +276,8 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
@@ -297,6 +306,8 @@ fn a_step_with_no_actions_is_still_accepted() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
@@ -426,6 +437,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             notice: None,
         }],
         environment: None,
+        resets: vec![],
     };
     save_run(root, &run).unwrap();
 
@@ -534,7 +546,19 @@ fn a_script_saved_before_this_plan_is_written_exactly_as_before() {
     assert_eq!(sc.repairs, 0);
     assert_eq!(sc.last_repair, None);
     assert_eq!(sc.steps[0].unchecked, None);
+    // Nor the shared-state marks, which every script before them lacks.
+    assert!(sc.changes.is_empty());
+    assert!(sc.needs_unchanged.is_empty());
     assert_eq!(serde_json::to_value(&sc).unwrap(), old);
+    // Through the store too: written back to the file byte for byte.
+    let dir = TempDir::new();
+    let text = serde_json::to_string_pretty(&sc).unwrap();
+    save_script(dir.path(), &sc).unwrap();
+    let back = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(back, sc);
+    save_script(dir.path(), &back).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.path().join("scripts").join("case-7.json")).unwrap(), text);
+    assert!(!text.contains("changes") && !text.contains("needs_unchanged"), "{text}");
 }
 
 /// `unchecked` round-trips with `repairs` and `last_repair`, and a blank
@@ -635,6 +659,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             notice: None,
         }],
         environment: None,
+        resets: vec![],
     };
     save_run(root, &unpublished).unwrap();
     let published = LocalRun {
@@ -649,6 +674,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         }),
         cases: vec![],
         environment: None,
+        resets: vec![],
     };
     save_run(root, &published).unwrap();
 
@@ -676,6 +702,7 @@ fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
         published: None,
         cases: vec![],
         environment: None,
+        resets: vec![],
     };
     save_run(root, &run).unwrap();
     std::fs::create_dir_all(root.join("reports").join("kept-folder")).unwrap();
@@ -845,6 +872,7 @@ fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() 
             published: None,
             cases: vec![],
             environment: None,
+            resets: vec![],
         },
     )
     .unwrap();
@@ -956,4 +984,68 @@ fn emptying_the_supervised_downloads_leaves_the_runs_alone() {
     assert_eq!(std::fs::read_to_string(run.join("b.csv")).unwrap(), "keep");
     // Nothing there is nothing to do.
     assert_eq!(empty_supervised_downloads(&root.join("missing")).unwrap(), 0);
+}
+
+// ------------------------------------------------------------ Auto Run's own order
+
+/// Auto Run's order for a PBI is kept in `orders/<pbi id>.json` as
+/// `{ "case_ids": [...] }`, and comes back as it was saved.
+#[test]
+fn an_order_round_trips_per_pbi() {
+    let dir = TempDir::new();
+    assert_eq!(load_order(dir.path(), 100), None);
+    save_order(dir.path(), 100, &[3, 1, 2]).unwrap();
+    save_order(dir.path(), 200, &[5]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![3, 1, 2]));
+    assert_eq!(load_order(dir.path(), 200), Some(vec![5]));
+    let file = std::fs::read_to_string(dir.path().join("orders").join("100.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(v, serde_json::json!({ "case_ids": [3, 1, 2] }));
+    // Saved again: replaced, and nothing is left beside it.
+    save_order(dir.path(), 100, &[2, 3]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![2, 3]));
+    let mut left: Vec<String> = std::fs::read_dir(dir.path().join("orders"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, vec!["100.json", "200.json"]);
+}
+
+/// An id listed twice is kept once, where it first appears.
+#[test]
+fn an_order_keeps_each_case_once() {
+    let dir = TempDir::new();
+    save_order(dir.path(), 100, &[3, 1, 3, 2, 1]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![3, 1, 2]));
+}
+
+/// Clearing removes that PBI's order file and nothing else: not another
+/// PBI's order, not a script, not a run.
+#[test]
+fn clearing_an_order_removes_only_that_file() {
+    let dir = TempDir::new();
+    save_order(dir.path(), 100, &[1, 2]).unwrap();
+    save_order(dir.path(), 200, &[3]).unwrap();
+    save_script(dir.path(), &script()).unwrap();
+    clear_order(dir.path(), 100).unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    assert_eq!(load_order(dir.path(), 200), Some(vec![3]));
+    assert!(load_script(dir.path(), script().case_id).unwrap().is_some());
+    // Clearing an order that is not there is not an error.
+    clear_order(dir.path(), 100).unwrap();
+    clear_order(dir.path(), 300).unwrap();
+}
+
+/// An order file that cannot be read, or holds no cases, is no order: the
+/// suggestion is used rather than nothing.
+#[test]
+fn an_unreadable_or_empty_order_is_no_order() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("orders")).unwrap();
+    std::fs::write(dir.path().join("orders").join("100.json"), "not json").unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    std::fs::write(dir.path().join("orders").join("100.json"), r#"{ "case_ids": [] }"#).unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    assert!(save_order(dir.path(), 100, &[]).is_err(), "an empty order is refused");
 }

@@ -835,3 +835,128 @@ fn browser_name(name: &str) -> String {
     }
     .to_string()
 }
+
+/// Where Auto Run's own order for each PBI lives: `orders/<pbi id>.json`.
+fn order_path(root: &Path, pbi_id: i32) -> PathBuf {
+    root.join("orders").join(format!("{pbi_id}.json"))
+}
+
+/// Auto Run's own order for a PBI, as stored.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedOrder {
+    case_ids: Vec<i32>,
+}
+
+/// Auto Run's own execution order for a PBI on this machine, or `None`
+/// when there is none. It is separate from Run Tests' order. A file that
+/// cannot be read, or holds no cases, is no order: it is logged, and the
+/// suggested order is used.
+pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
+    let path = order_path(root, pbi_id);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be read: {e}"));
+            return None;
+        }
+    };
+    match serde_json::from_str::<SavedOrder>(text.trim_start_matches('\u{feff}')) {
+        Ok(saved) if !saved.case_ids.is_empty() => Some(saved.case_ids),
+        Ok(_) => None,
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} is not readable: {e}"));
+            None
+        }
+    }
+}
+
+/// Save Auto Run's own order for a PBI, each case once where it first
+/// appears. Written by a temporary file and a rename, so a reader never
+/// sees half of it. An empty order is refused: clearing is `clear_order`.
+pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+    let mut ids: Vec<i32> = Vec::with_capacity(case_ids.len());
+    for id in case_ids {
+        if !ids.contains(id) {
+            ids.push(*id);
+        }
+    }
+    if ids.is_empty() {
+        return Err("an order needs at least one case".to_string());
+    }
+    let path = order_path(root, pbi_id);
+    // The raw error names the profile folder: it goes to the log, and the
+    // caller gets a sentence without it.
+    let not_saved = |e: String| {
+        crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be saved to {}: {e}", path.display()));
+        ORDER_NOT_SAVED.to_string()
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| not_saved(e.to_string()))?;
+    }
+    let json = serde_json::to_string_pretty(&SavedOrder { case_ids: ids }).map_err(|e| not_saved(e.to_string()))?;
+    crate::ai_tools::atomic_write(&path, &json).map_err(not_saved)
+}
+
+/// Said when an order could not be written; the details are in the log.
+pub const ORDER_NOT_SAVED: &str = "the order could not be saved - see Settings, Logs";
+/// Said when an order could not be removed; the details are in the log.
+pub const ORDER_NOT_CLEARED: &str = "the saved order could not be removed - see Settings, Logs";
+
+/// `ordered` (some of a PBI's cases, in their new order) laid over the
+/// order `existing` already holds: the ids `existing` has take the places
+/// those ids held in it, in their new order, every other id of `existing`
+/// stays where it was, and ids `existing` lacks go at the end. Each id once.
+pub fn merge_order(existing: &[i32], ordered: &[i32]) -> Vec<i32> {
+    let mut sub: Vec<i32> = Vec::with_capacity(ordered.len());
+    for id in ordered {
+        if !sub.contains(id) {
+            sub.push(*id);
+        }
+    }
+    let mut out: Vec<i32> = Vec::with_capacity(existing.len() + sub.len());
+    let mut held = sub.iter().filter(|id| existing.contains(id));
+    // A saved order holds each id once (`save_order`); a hand-edited one
+    // that repeats one keeps the first place only.
+    let mut seen: Vec<i32> = Vec::with_capacity(existing.len());
+    for id in existing {
+        if seen.contains(id) {
+            continue;
+        }
+        seen.push(*id);
+        if sub.contains(id) {
+            if let Some(next) = held.next() {
+                out.push(*next);
+            }
+        } else {
+            out.push(*id);
+        }
+    }
+    out.extend(sub.iter().filter(|id| !existing.contains(id)));
+    out
+}
+
+/// Save the order the person set in the Execution order dialog, which may
+/// be only the cases ticked now: merged into the PBI's saved order
+/// (`merge_order`) so the rest of it is kept. With no saved order, it is
+/// saved as given.
+pub fn save_order_merged(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+    match load_order(root, pbi_id) {
+        Some(existing) => save_order(root, pbi_id, &merge_order(&existing, case_ids)),
+        None => save_order(root, pbi_id, case_ids),
+    }
+}
+
+/// Remove Auto Run's own order for a PBI, so the suggested order is used
+/// again. Only that one file goes; a PBI with no order is left as it is.
+pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
+    let path = order_path(root, pbi_id);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
+            Err(ORDER_NOT_CLEARED.to_string())
+        }
+    }
+}

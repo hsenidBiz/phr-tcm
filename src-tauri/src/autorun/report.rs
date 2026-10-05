@@ -17,7 +17,7 @@
 //! `Downloads:` line of names and sizes: never a link, never the folder.
 
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
-use super::{CaseRecord, CaseScript, LocalRun, StepRecord};
+use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome};
 
 /// The result buckets, in the order the report (and the Auto Run screen's
@@ -380,6 +380,22 @@ fn case_section(
     h
 }
 
+/// The lines a reset point the run paused at is shown with, one per name:
+/// `Reset: revert "<name>" - continued` (or `- stopped`). An outcome that is
+/// neither is left off.
+pub fn reset_lines(reset: &ResetRecord) -> Vec<String> {
+    let ended = match reset.outcome.as_str() {
+        o @ (super::RESET_CONTINUED | super::RESET_STOPPED) => format!(" - {o}"),
+        _ => String::new(),
+    };
+    reset.names.iter().map(|name| format!("Reset: revert \"{name}\"{ended}")).collect()
+}
+
+/// The reset lines due before case `case_id`, escaped.
+fn resets_before(run: &LocalRun, case_id: i32) -> Vec<String> {
+    run.resets.iter().filter(|r| r.before_case_id == case_id).flat_map(reset_lines).map(|l| esc(&l)).collect()
+}
+
 /// A bucket as a CSS class suffix.
 fn css_key(bucket: &str) -> &'static str {
     match bucket {
@@ -413,7 +429,7 @@ th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
 .retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
-.note{color:#59636e;font-style:italic}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
+.note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
 .actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\
 figure{margin:8px 0}figure img{max-width:100%;border:1px solid #d0d7de}figcaption{font-size:12px;color:#59636e}\
 @media print{body{margin:0}.case,.step,tr,figure{break-inside:avoid}a{color:inherit}}";
@@ -492,6 +508,9 @@ pub fn build_with_downloads(
 
     h.push_str("<h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th></tr></thead><tbody>");
     for case in &run.cases {
+        for line in resets_before(run, case.case_id) {
+            h.push_str(&format!("<tr class=\"reset\"><td colspan=\"6\">{line}</td></tr>"));
+        }
         let b = case_bucket(case);
         let decided = if !case.verdict.is_empty() {
             "Confirmed"
@@ -515,6 +534,9 @@ pub fn build_with_downloads(
     if !run.cases.is_empty() {
         h.push_str("<h2>Cases in detail</h2>");
         for case in &run.cases {
+            for line in resets_before(run, case.case_id) {
+                h.push_str(&format!("<p class=\"reset\">{line}</p>"));
+            }
             h.push_str(&case_section(case, script_for(case.case_id), exists, size_of));
         }
     }

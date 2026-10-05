@@ -585,6 +585,7 @@ fn a_saved_sign_in_failure_is_a_sign_in_stop_not_a_step_1_defect() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains("sign-in: nothing matched #go"), "{out}");

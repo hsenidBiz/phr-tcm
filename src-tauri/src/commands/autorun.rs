@@ -654,6 +654,95 @@ pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<()
     Ok(())
 }
 
+/// The plan for a selection, as the screen shows it: the order, the order
+/// split into phases at each reset point, and the reset points. `counts`
+/// is `(this order's resets, the suggested order's resets)`, only when
+/// Auto Run's own order for the PBI needs more resets than the suggestion.
+/// `saved` says whether the PBI has an order of its own on this machine.
+/// Titles are the screen's: it has the case list.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct PlanView {
+    pub order: Vec<i32>,
+    pub phases: Vec<Vec<i32>>,
+    pub resets: Vec<crate::autorun::plan::Reset>,
+    pub counts: Option<(u32, u32)>,
+    pub saved: bool,
+}
+
+/// The plan for the cases selected on the Auto Run tab, in list order.
+/// Each case's marks come from its saved script; a case with no script
+/// has none. Scripts and orders are kept by work item id, so the
+/// organization and project name the selection's source and nothing more.
+/// `preview_order` stands in for the saved order for this one call (the
+/// Execution order dialog asks about a list the person has moved but not
+/// saved); nothing is written.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_plan(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+    case_ids: Vec<i32>,
+    preview_order: Option<Vec<i32>>,
+) -> Result<PlanView, String> {
+    let _ = (organization, project);
+    Ok(plan_at(&root(&app)?, pbi_id, &case_ids, preview_order.as_deref()))
+}
+
+/// The pure half of [`auto_run_plan`], so a test can reach it without an
+/// `AppHandle`. A script that cannot be read counts as no marks (and is
+/// logged), so one bad file never stops the plan.
+pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_order: Option<&[i32]>) -> PlanView {
+    use crate::autorun::plan::{plan_for, Marks};
+    let selected: Vec<(i32, Marks)> = case_ids
+        .iter()
+        .map(|&id| {
+            let marks = match store::load_script(root, id) {
+                Ok(Some(script)) => Marks::of(&script),
+                Ok(None) => Marks::default(),
+                Err(e) => {
+                    crate::applog::warn(format!("auto-run: case {id}'s script could not be read for the plan: {e}"));
+                    Marks::default()
+                }
+            };
+            (id, marks)
+        })
+        .collect();
+    let saved = match preview_order {
+        Some(p) => Some(p.to_vec()),
+        None => store::load_order(root, pbi_id),
+    };
+    let (plan, counts) = plan_for(&selected, saved.as_deref());
+    PlanView {
+        order: plan.order,
+        phases: plan.phases,
+        resets: plan.resets,
+        counts: counts.map(|(a, b)| (a as u32, b as u32)),
+        saved: preview_order.is_none() && saved.is_some(),
+    }
+}
+
+/// Save Auto Run's own execution order for a PBI on this machine. Only
+/// the cases given move: the rest of an order already saved keeps its
+/// places (`store::merge_order`). Run Tests' order is separate and is not
+/// changed.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_save_order(app: tauri::AppHandle, pbi_id: i32, case_ids: Vec<i32>) -> Result<(), String> {
+    // The dialog may order only the cases ticked now: the rest of the saved
+    // order is kept.
+    store::save_order_merged(&root(&app)?, pbi_id, &case_ids)
+}
+
+/// "Use suggested order": forget the PBI's own order, so the suggested
+/// order is used again.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_clear_order(app: tauri::AppHandle, pbi_id: i32) -> Result<(), String> {
+    store::clear_order(&root(&app)?, pbi_id)
+}
+
 /// Import a BUNDLE of scripts from one file - the shape an assistant
 /// writes for a whole PBI, and the shape the Auto Run screen's Import
 /// button reads back.

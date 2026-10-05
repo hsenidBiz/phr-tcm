@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, GripVertical } from "lucide-react";
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
 import { IconClear, IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
@@ -29,6 +29,7 @@ export default function CaseOrderList({
   grouped = false,
   collapsed = new Set<string>(),
   onToggleCollapsed = () => {},
+  noteBefore,
 }: {
   cases: SuiteCase[];
   selected: Set<number>;
@@ -44,6 +45,9 @@ export default function CaseOrderList({
   /** Section names whose rows are folded away. */
   collapsed?: Set<string>;
   onToggleCollapsed?: (name: string) => void;
+  /** Something to show between rows, ahead of this case's row (ungrouped
+   * lists only). It is not a case: it carries role=presentation. */
+  noteBefore?: (caseId: number) => ReactNode;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overId, setOverId] = useState<number | null>(null);
@@ -240,7 +244,11 @@ export default function CaseOrderList({
         <span className="ml-auto text-faint">Ctrl+click to add · Shift+click for a range</span>
       </div>
       <ol ref={regroup.ref} aria-label={ariaLabel} className="divide-y divide-border">
-        {!grouped && cases.map((c, i) => row(c, i))}
+        {!grouped &&
+          cases.map((c, i) => {
+            const note = noteBefore?.(c.id);
+            return note ? [<li key={`note-${c.id}`} role="presentation">{note}</li>, row(c, i)] : row(c, i);
+          })}
         {grouped &&
           sections.map((s, si) => {
             const members = new Set(s.ids);

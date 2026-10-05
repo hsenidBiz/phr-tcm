@@ -455,6 +455,18 @@ export const commands = {
 	 */
 	preconditions?: Precondition_Serialize[],
 	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
 	 *  repair reads the test case as of this moment to see which steps the
@@ -471,6 +483,28 @@ export const commands = {
 	 *  mark and nothing else - the script's actions and repair count stay.
 	 */
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
+	/**
+	 *  The plan for the cases selected on the Auto Run tab, in list order.
+	 *  Each case's marks come from its saved script; a case with no script
+	 *  has none. Scripts and orders are kept by work item id, so the
+	 *  organization and project name the selection's source and nothing more.
+	 *  `preview_order` stands in for the saved order for this one call (the
+	 *  Execution order dialog asks about a list the person has moved but not
+	 *  saved); nothing is written.
+	 */
+	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[], previewOrder: number[] | null) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds, previewOrder })),
+	/**
+	 *  Save Auto Run's own execution order for a PBI on this machine. Only
+	 *  the cases given move: the rest of an order already saved keeps its
+	 *  places (`store::merge_order`). Run Tests' order is separate and is not
+	 *  changed.
+	 */
+	autoRunSaveOrder: (pbiId: number, caseIds: number[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_order", { pbiId, caseIds })),
+	/**
+	 *  "Use suggested order": forget the PBI's own order, so the suggested
+	 *  order is used again.
+	 */
+	autoRunClearOrder: (pbiId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_order", { pbiId })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
@@ -517,6 +551,12 @@ export const commands = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
 	 *  Writes one run's report and opens it in the default browser. `ran_at` is
@@ -663,6 +703,24 @@ export const commands = {
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
+	/**
+	 *  The person's answer at the reset point run `run_id` is waiting at:
+	 *  Continue (`continue_run`) runs the next phase, Stop ends the run there.
+	 *  Refused when that run is not waiting at a reset point.
+	 */
+	autoRunAnswerReset: (runId: string, continueRun: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_answer_reset", { runId, continueRun })),
+	/**
+	 *  The reset point the unattended run is waiting at, if any, as the Reset
+	 *  needed panel shows it. A screen opened after the pause began (the person
+	 *  left Auto Run and came back) asks this to show the panel again.
+	 */
+	autoRunWaitingReset: () => __TAURI_INVOKE<{
+	run_id: string,
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
+	remaining: number[],
+} | null>("auto_run_waiting_reset"),
 	/**
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
@@ -1092,6 +1150,7 @@ export const events = {
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
+	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
 	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
@@ -1558,6 +1617,22 @@ export type AutorunReplayRequestEnded = {
 };
 
 /**
+ *  Emitted when an unattended run pauses at a reset point: before case
+ *  `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
+ *  name, the cases that changed it), then answers with
+ *  `auto_run_answer_reset`. `remaining` is every case still to run, the
+ *  next one first. Case ids and names only: never a host, an address or a
+ *  password. The screen supplies the titles from its own case list.
+ */
+export type AutorunResetNeeded = {
+	run_id: string,
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
+	remaining: number[],
+};
+
+/**
  *  Emitted when a replay changes the supervised browser under the panes:
  *  it opened one (`opened`, nobody signed in yet), or signed it in as
  *  `account` - the account's key, never its login. A pane showing another
@@ -1868,6 +1943,18 @@ export type CaseScript_Deserialize = {
 	 */
 	preconditions?: Precondition_Deserialize[],
 	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
 	 *  repair reads the test case as of this moment to see which steps the
@@ -1938,6 +2025,18 @@ export type CaseScript_Serialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  Shared state this case leaves changed for the cases after it, by
+	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
+	 *  every save validates them (`marks::check_marks`). Written only when
+	 *  there are any.
+	 */
+	changes?: string[],
+	/**
+	 *  Shared state this case needs not yet changed, or reverted, by the
+	 *  same names as `changes`. Written only when there are any.
+	 */
+	needs_unchanged?: string[],
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
@@ -2467,6 +2566,12 @@ export type LocalRun_Deserialize = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Deserialize[],
 };
 
 export type LocalRun_Serialize = {
@@ -2487,6 +2592,12 @@ export type LocalRun_Serialize = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Serialize[],
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -2713,6 +2824,22 @@ export type PbiHit = {
  */
 export type PlanCreated = {
 	plan_name: string,
+};
+
+/**
+ *  The plan for a selection, as the screen shows it: the order, the order
+ *  split into phases at each reset point, and the reset points. `counts`
+ *  is `(this order's resets, the suggested order's resets)`, only when
+ *  Auto Run's own order for the PBI needs more resets than the suggestion.
+ *  `saved` says whether the PBI has an order of its own on this machine.
+ *  Titles are the screen's: it has the case list.
+ */
+export type PlanView = {
+	order: number[],
+	phases: number[][],
+	resets: Reset[],
+	counts: [number, number] | null,
+	saved: boolean,
 };
 
 export type PlanWithSuites = {
@@ -3403,6 +3530,64 @@ export type ReportPalette = {
 	warning: string,
 	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
 	dark: boolean,
+};
+
+/**
+ *  A reset point: before `before_case_id` runs, a person reverts `names`.
+ *  `names` are display spellings, in the order the case lists them;
+ *  `changed_by` gives, for each of those names, the cases that changed it
+ *  since the last reset, in run order.
+ */
+export type Reset = {
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
+};
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord = ResetRecord_Serialize | ResetRecord_Deserialize;
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord_Deserialize = {
+	before_case_id: number,
+	names?: string[],
+	changed_by?: ([string, number[]])[],
+	/**
+	 *  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC);
+	 *  a pause past 49 days reads as `u32::MAX`.
+	 */
+	waited_ms?: number,
+	/**  "continued" or "stopped". */
+	outcome?: string,
+};
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord_Serialize = {
+	before_case_id: number,
+	names?: string[],
+	changed_by?: ([string, number[]])[],
+	/**
+	 *  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC);
+	 *  a pause past 49 days reads as `u32::MAX`.
+	 */
+	waited_ms: number,
+	/**  "continued" or "stopped". */
+	outcome: string,
 };
 
 export type ResultDetail = {

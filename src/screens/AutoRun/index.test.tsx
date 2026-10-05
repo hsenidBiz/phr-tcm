@@ -308,6 +308,125 @@ test("with cases ticked the bar offers both a supervised and an unattended run",
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
 });
 
+// ---- Execution order: both run buttons use the plan ----
+
+const PLANNED = (order: number[]) => ({ order, phases: [order], resets: [], counts: null, saved: true });
+
+test("Run selected starts from the planned order, not list order", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
+    cmd === "auto_run_plan" ? PLANNED([2, 1]) : null,
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
+
+  const progress = await screen.findByText("case 1 of 2");
+  expect(progress.closest("h2")).toHaveTextContent("#2 Beta check");
+});
+
+test("Run unattended starts from the planned order and shows no plan for a single phase", async () => {
+  const replays: { cases: { case_id: number }[] }[] = [];
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd, args) => {
+    if (cmd === "auto_run_plan") return PLANNED([2, 1]);
+    if (cmd === "auto_run_replay") {
+      replays.push(args as never);
+      return new Promise(() => {});
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
+  await screen.findByRole("heading", { name: "Unattended run" });
+  expect(screen.queryByLabelText("Run plan")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(replays).toHaveLength(1));
+  expect(replays[0].cases.map((c) => c.case_id)).toEqual([2, 1]);
+});
+
+test("a double click on a run button asks once and starts one run", async () => {
+  let plans = 0;
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => {
+    if (cmd !== "auto_run_plan") return null;
+    plans += 1;
+    return new Promise((r) => setTimeout(() => r(PLANNED([1])), 30));
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  const run = await screen.findByRole("button", { name: "Run 1 selected" });
+  fireEvent.click(run);
+  fireEvent.click(run);
+  expect(run).toBeDisabled();
+  await screen.findByRole("heading", { name: /#1 Alpha check/ });
+  expect(plans).toBe(1);
+});
+
+test("when the plan fails no run starts and a fixed sentence is shown, not the raw error", async () => {
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => {
+    if (cmd === "auto_run_plan") throw "the store is unreadable";
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Could not work out the order. Try again, or see Settings → Logs."),
+  );
+  expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).not.toContain("unreadable");
+  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeEnabled();
+});
+
+test("a run is not started if the PBI changed while the plan was on its way", async () => {
+  let resolvePlan: (v: unknown) => void = () => {};
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) =>
+    cmd === "auto_run_plan" ? new Promise((r) => (resolvePlan = r)) : null,
+  );
+  const view = renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
+  view.rerender(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AutoRun org="acme" project="proj" pbi={{ ...pbi, id: 43 } as never} />
+    </QueryClientProvider>,
+  );
+  await act(async () => {
+    resolvePlan(PLANNED([1]));
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /#1 Alpha check/ })).not.toBeInTheDocument();
+});
+
+test("a plan that is not these cases runs in list order", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
+    cmd === "auto_run_plan" ? PLANNED([2, 7]) : null,
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
+  const progress = await screen.findByText("case 1 of 2");
+  expect(progress.closest("h2")).toHaveTextContent("#1 Alpha check");
+});
+
+test("the Execution order item in More opens the dialog", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /Execution order/ }));
+  expect(await screen.findByRole("heading", { name: "Execution order" })).toBeInTheDocument();
+});
+
 // ---- Clear scripts / Clear results (shown wherever Auto Run is: dev, or unlocked) ----
 
 test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {
@@ -1150,4 +1269,79 @@ test("Replay in the review closes the review and shows the pane replaying", asyn
     expect(screen.queryByRole("listitem", { name: "Case #1 Alpha check" })).not.toBeInTheDocument(),
   );
   await waitFor(() => expect(replays).toHaveLength(1));
+});
+
+/** A run paused before case 2 to put "cycle published" back. */
+const WAITING = {
+  run_id: "run-7",
+  before_case_id: 2,
+  names: ["cycle published"],
+  changed_by: [["cycle published", [1]]],
+  remaining: [2, 9],
+};
+
+/** The screen's own answers, plus a run waiting at a reset point when
+ * `waiting` says so. Answers to the pause go to `answers`. */
+function mockWaiting(waiting: { current: unknown }, answers: { runId: string; continueRun: boolean }[]) {
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "pbi_test_cases_full") return [caseRow(1, "Publish the cycle"), caseRow(2, "Edit a draft cycle")];
+      if (cmd === "auto_run_list_runs") return [];
+      if (cmd === "auto_run_list_accounts") return [];
+      if (cmd === "auto_run_waiting_reset") return waiting.current;
+      if (cmd === "auto_run_answer_reset") {
+        answers.push(args as { runId: string; continueRun: boolean });
+        waiting.current = null;
+        return null;
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+}
+
+test("coming back to Auto Run finds a run paused at a reset point, and Continue answers it", async () => {
+  const waiting = { current: WAITING as unknown };
+  const answers: { runId: string; continueRun: boolean }[] = [];
+  mockWaiting(waiting, answers);
+  const first = renderScreen();
+  await screen.findByRole("region", { name: "Reset needed" });
+  // The person leaves Auto Run and comes back: the pause is found again.
+  first.unmount();
+  renderScreen();
+  const panel = await screen.findByRole("region", { name: "Reset needed" });
+  expect(
+    within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
+  ).toBeInTheDocument();
+  // A case the list does not show falls back to its id.
+  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "#2 Edit a draft cycle",
+    "#9",
+  ]);
+  fireEvent.click(within(panel).getByRole("button", { name: "Continue after reset" }));
+  await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: true }]));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+});
+
+test("Stop on a paused run found again answers Stop", async () => {
+  const answers: { runId: string; continueRun: boolean }[] = [];
+  mockWaiting({ current: WAITING }, answers);
+  renderScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this reset" }));
+  await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: false }]));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+});
+
+test("a pause that comes while the run's own dialog is closed shows the panel", async () => {
+  mockWaiting({ current: null }, []);
+  renderScreen();
+  await screen.findByText("Publish the cycle");
+  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-reset-needed", WAITING);
+  });
+  expect(await screen.findByRole("region", { name: "Reset needed" })).toBeInTheDocument();
 });

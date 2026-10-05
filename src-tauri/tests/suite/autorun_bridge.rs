@@ -1494,6 +1494,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     }
 }
 
@@ -1809,6 +1810,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-quirk",
         "/autorun-quirk-retire",
         "/autorun-defect",
+        "/autorun-order",
     ];
     for path in autorun {
         let (status, body) =
@@ -2217,4 +2219,179 @@ async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
         route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("an assertion is never removed"), "{out}");
+}
+
+/// Marks affect order, not safety: an assistant marking a saved script
+/// needs no "edits", uses none of the repair count, and the save says the
+/// marks changed. A re-send with the same marks is unchanged again, and
+/// one that leaves them out drops them.
+#[tokio::test]
+async fn marking_a_saved_script_is_no_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let send = |body: serde_json::Value| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await }
+    };
+
+    assert_eq!(send(case_7("#toast", "Saved")).await.0, 200);
+    let mut marked = case_7("#toast", "Saved");
+    marked[0]["changes"] = serde_json::json!(["cycle published"]);
+    marked[0]["needs_unchanged"] = serde_json::json!(["cycle published"]);
+
+    assert_eq!(send(marked.clone()).await, (200, "saved 1 script(s): case 7 (marks updated)".to_string()));
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.repairs, 0, "marking is not a repair");
+    assert_eq!(on_disk.changes, vec!["cycle published".to_string()]);
+    assert_eq!(on_disk.needs_unchanged, vec!["cycle published".to_string()]);
+
+    assert_eq!(send(marked).await, (200, "saved 1 script(s): case 7 (unchanged)".to_string()));
+    assert_eq!(send(case_7("#toast", "Saved")).await, (200, "saved 1 script(s): case 7 (marks updated)".to_string()));
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert!(on_disk.changes.is_empty() && on_disk.needs_unchanged.is_empty());
+    assert_eq!(on_disk.repairs, 0);
+}
+
+// ------------------------------------------------------------ Auto Run's own order
+
+/// A signed-in client whose PBI `pbi` is tested by `cases`: the PBI read
+/// with its relations, then the batch read of those cases. The only two
+/// requests `/autorun-order` makes, both reads.
+async fn client_with_pbi(pbi: i32, cases: &[i32]) -> (MockServer, AdoClient) {
+    let server = MockServer::start().await;
+    let relations: Vec<serde_json::Value> = cases
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "rel": "Microsoft.VSTS.Common.TestedBy-Forward",
+                "url": format!("https://dev.azure.com/acme/_apis/wit/workItems/{id}"),
+            })
+        })
+        .collect();
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/_apis/wit/workitems/{pbi}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": pbi, "relations": relations })))
+        .mount(&server)
+        .await;
+    let value: Vec<serde_json::Value> = cases
+        .iter()
+        .map(|id| serde_json::json!({ "id": id, "fields": { "System.Title": format!("Case {id}") } }))
+        .collect();
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": value })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+fn scripted(case_id: i32) -> CaseScript {
+    CaseScript {
+        case_id,
+        title: format!("Case {case_id}"),
+        account: None,
+        area: None,
+        steps: vec![v2_lib::autorun::StepScript {
+            step_number: 1,
+            actions: vec![Action::Navigate { url: "https://app.example/".into() }],
+            unchecked: None,
+        }],
+        repairs: 0,
+        last_repair: None,
+        suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
+        saved_at: None,
+    }
+}
+
+/// `set_autorun_order` saves Auto Run's own order for the PBI, and names
+/// every listed case that has no saved script.
+#[tokio::test]
+async fn an_order_is_saved_for_the_pbi_with_a_warning_for_each_case_with_no_script() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    v2_lib::autorun::store::save_script(dir.path(), &scripted(501)).unwrap();
+    v2_lib::autorun::store::save_script(dir.path(), &scripted(502)).unwrap();
+    let (_server, client) = client_with_pbi(100, &[501, 502, 503, 504]).await;
+
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [503, 502, 501, 504] }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "saved Auto Run's order for PBI 100: 503, 502, 501, 504",
+            "case 503 has no saved script",
+            "case 504 has no saved script",
+        ]
+    );
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![503, 502, 501, 504]));
+
+    // Every case scripted: no warning.
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [502, 501] }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "saved Auto Run's order for PBI 100: 502, 501"));
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![502, 501]));
+}
+
+/// An id the PBI is not tested by is refused, each one by name, and
+/// nothing is saved.
+#[tokio::test]
+async fn an_order_naming_a_case_not_in_the_pbi_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_pbi(100, &[501, 502]).await;
+
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [501, 999, 502, 998] }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!(
+        (status, out.as_str()),
+        (400, "case 999 is not in PBI 100; case 998 is not in PBI 100")
+    );
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);
+}
+
+/// A body that is not an order is refused before anything is read.
+#[tokio::test]
+async fn an_order_that_is_not_one_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_pbi(100, &[501, 502]).await;
+    let send = |body: serde_json::Value| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-order", &body.to_string(), "1.0.0").await }
+    };
+
+    let (status, out) = send(serde_json::json!({ "pbi_id": 100, "case_ids": [] })).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("case_ids is empty"), "{out}");
+    let (status, out) = send(serde_json::json!({ "pbi_id": 100, "case_ids": [501, 502, 501] })).await;
+    assert_eq!((status, out.as_str()), (400, "case 501 is listed twice"));
+    let (status, out) = send(serde_json::json!({ "case_ids": [501] })).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("that is not an order"), "{out}");
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);
+}
+
+/// The PBI's cases come from Azure DevOps, so the order needs a signed-in
+/// app.
+#[tokio::test]
+async fn an_order_needs_a_signed_in_app() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [501] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (503, "sign in to Test Case Manager first"));
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);
 }

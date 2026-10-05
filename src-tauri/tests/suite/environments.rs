@@ -810,6 +810,7 @@ fn a_new_run_records_the_active_environment() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
 
     save_run_at(root, run("run-new")).unwrap();

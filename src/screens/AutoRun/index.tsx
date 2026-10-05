@@ -17,7 +17,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { commands, type PbiHit } from "../../bindings";
+import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -46,9 +46,13 @@ import {
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
+import { logUi } from "../../lib/uiLog";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
+import ExecutionOrderDialog from "./ExecutionOrderDialog";
+import ResetNeededPanel from "./ResetNeededPanel";
+import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import ReadinessStrip from "./ReadinessStrip";
@@ -388,6 +392,51 @@ export default function AutoRun({
    * the same selection dock), but they are different flows with different
    * dialogs. */
   const [replaying, setReplaying] = useState<number[] | null>(null);
+  /** The plan the unattended run dialog shows: phases and reset points. */
+  const [replayPlan, setReplayPlan] = useState<PlanView | null>(null);
+  /** The plan the supervised pane pauses by at each reset point. */
+  const [runPlan, setRunPlan] = useState<PlanView | null>(null);
+  /** An unattended run paused at a reset point while its own dialog is not
+   * open: the person left Auto Run (a shortcut or the palette navigates
+   * even over a dialog) and came back, or the pause came while away. The
+   * run waits with no time limit, so it is found again here. */
+  const [waitingReset, setWaitingReset] = useState<AutorunResetNeeded | null>(null);
+  const [answeringReset, setAnsweringReset] = useState(false);
+  useEffect(() => {
+    // The run's own dialog shows the panel while it is open.
+    if (replaying != null) {
+      setWaitingReset(null);
+      return;
+    }
+    let live = true;
+    commands
+      .autoRunWaitingReset()
+      .then((r) => {
+        if (live && r) setWaitingReset(r);
+      })
+      .catch(() => {});
+    const un = events.autorunResetNeeded.listen((e) => {
+      if (live) setWaitingReset(e.payload);
+    });
+    return () => {
+      live = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [replaying]);
+  const answerWaitingReset = async (continueRun: boolean) => {
+    if (!waitingReset) return;
+    setAnsweringReset(true);
+    try {
+      const r = await commands.autoRunAnswerReset(waitingReset.run_id, continueRun);
+      if (r.status === "error") logUi(`auto-run: the reset answer was refused: ${r.error}`);
+    } catch (e) {
+      logUi(`auto-run: the reset answer failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setWaitingReset(null);
+    setAnsweringReset(false);
+  };
+  /** The Execution order dialog, with the cases it orders. */
+  const [orderingOpen, setOrderingOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
    * unattended run opens straight into this once it finishes - see
    * ReplayPane's `onFinished` below. */
@@ -528,6 +577,42 @@ export default function AutoRun({
   /** List order, not click order - the run reads top to bottom the way
    * the screen does. */
   const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
+
+  /** Both run buttons start from the plan, not from list order: the saved
+   * order for this PBI, else the suggested one. A plan that cannot be had
+   * leaves list order, as before. */
+  const [planning, setPlanning] = useState(false);
+  const planningRef = useRef(false);
+  const pbiIdNow = useRef<number | undefined>(undefined);
+  pbiIdNow.current = pbi?.id;
+  const startPlanned = async (kind: "supervised" | "unattended") => {
+    // One at a time: a second click while the plan is on its way would
+    // start a second run.
+    if (!pbi || planningRef.current) return;
+    planningRef.current = true;
+    setPlanning(true);
+    const asked = pbi.id;
+    try {
+      const plan = await fetchPlan(org, project, asked, selectedInOrder);
+      // The person moved to another PBI while the plan was on its way.
+      if (pbiIdNow.current !== asked) return;
+      const order = plan?.order ?? selectedInOrder;
+      if (kind === "supervised") {
+        setRunPlan(plan);
+        setRunning(order);
+      } else {
+        setReplayPlan(plan);
+        setReplaying(order);
+      }
+    } catch (e) {
+      // The raw error goes to the app log; the person gets a sentence.
+      logUi(`auto-run: the plan for PBI ${asked} could not be worked out: ${e instanceof Error ? e.message : String(e)}`);
+      if (pbiIdNow.current === asked) toast.error("Could not work out the order. Try again, or see Settings → Logs.");
+    } finally {
+      planningRef.current = false;
+      setPlanning(false);
+    }
+  };
 
   /** One case row, by its index in `rows` - grouped and flat both render
    * the same thing, and `scripts[i]` is indexed the same way. */
@@ -1004,6 +1089,12 @@ export default function AutoRun({
                           onSelect: () => importScripts.mutate(),
                         },
                         {
+                          label: "Execution order",
+                          description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setOrderingOpen(true),
+                        },
+                        {
                           label: "Clear scripts",
                           danger: true,
                           disabled: !rows.some((_, i) => hasScript(i)),
@@ -1086,7 +1177,8 @@ export default function AutoRun({
                         <Button
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
-                          onClick={() => setRunning(selectedInOrder)}
+                          disabled={planning}
+                          onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
                           Run {selectedInOrder.length} selected
@@ -1095,7 +1187,8 @@ export default function AutoRun({
                           size="sm"
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
-                          onClick={() => setReplaying(selectedInOrder)}
+                          disabled={planning}
+                          onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />
                           Run {selectedInOrder.length} unattended
@@ -1158,6 +1251,19 @@ export default function AutoRun({
           project={project}
           caseModules={caseModules}
           onClose={() => setNavOpen(false)}
+        />
+      )}
+
+      {orderingOpen && (
+        <ExecutionOrderDialog
+          org={org}
+          project={project}
+          pbiId={pbi.id}
+          cases={(selectedInOrder.length > 0
+            ? rows.filter((c) => selected.has(c.id))
+            : rows.filter((_, i) => hasScript(i))
+          ).map((c) => ({ id: c.id, title: c.title }))}
+          onClose={() => setOrderingOpen(false)}
         />
       )}
 
@@ -1227,8 +1333,11 @@ export default function AutoRun({
               pbiId={pbi.id}
               cases={picked}
               replayTo={replayTo?.step}
+              // A replay to a step runs one case and never pauses.
+              plan={replayTo ? null : runPlan}
               onClose={() => {
                 setRunning(null);
+                setRunPlan(null);
                 setReplayTo(null);
                 // The selection has been run - leaving it ticked invites a
                 // second run of cases that were just decided. A replay ran
@@ -1238,6 +1347,20 @@ export default function AutoRun({
             />
           );
         })()}
+
+      {waitingReset && replaying == null && (
+        // Only Continue or Stop ends the pause: the run waits for one.
+        <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-lg p-4">
+          <ResetNeededPanel
+            reset={waitingReset}
+            remaining={waitingReset.remaining}
+            titleOf={(id) => rows.find((c) => c.id === id)?.title}
+            busy={answeringReset}
+            onContinue={() => void answerWaitingReset(true)}
+            onStop={() => void answerWaitingReset(false)}
+          />
+        </Modal>
+      )}
 
       {replaying != null &&
         (() => {
@@ -1252,6 +1375,7 @@ export default function AutoRun({
               project={project}
               pbiId={pbi.id}
               cases={picked}
+              plan={replayPlan}
               onClose={() => setReplaying(null)}
               onFinished={(runId) => {
                 setReplaying(null);

@@ -233,6 +233,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
 
     let scripts = vec![CaseScript {
@@ -253,6 +254,8 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
 
@@ -285,6 +288,7 @@ fn describe_failures_names_the_run_when_no_case_failed() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     assert_eq!(describe_failures(&run, &[]), "no failed case in run run-1");
 }
@@ -310,6 +314,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(
@@ -336,6 +341,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let scripts = vec![CaseScript {
         case_id: 1,
@@ -352,6 +358,8 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
 
@@ -374,6 +382,7 @@ fn describe_failures_omits_proposed_when_proposed_is_empty() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.starts_with("## Case 1 \"A case\" (run run-1, verdict Failed)"));
@@ -406,6 +415,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains("step 1, action 1: script: not on this machine"));
@@ -435,6 +445,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let scripts = vec![CaseScript {
         case_id: 1,
@@ -447,6 +458,8 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     }];
     let out = describe_failures(&run, &scripts);
@@ -465,6 +478,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let newer = LocalRun {
         id: "run-2000".to_string(),
@@ -474,6 +488,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     save_run(dir.path(), &older).unwrap();
     save_run(dir.path(), &newer).unwrap();
@@ -506,6 +521,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
         mode: "unattended".into(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains(&format!("module: {unreached}")), "{out}");
@@ -549,6 +565,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         mode: String::new(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let mut script = CaseScript {
         case_id: 1,
@@ -561,6 +578,8 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        changes: vec![],
+        needs_unchanged: vec![],
         saved_at: None,
     };
     let text = describe_failures(&run, std::slice::from_ref(&script));
@@ -607,6 +626,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
         mode: "unattended".to_string(),
         published: None,
         environment: None,
+        resets: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains("step 1 downloads: Template.xlsx"), "{out}");

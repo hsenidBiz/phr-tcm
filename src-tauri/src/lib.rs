@@ -98,6 +98,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunSessionChanged,
             events::AutorunReplayRequest,
             events::AutorunReplayRequestEnded,
+            events::AutorunResetNeeded,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
             events::GuideProgress
@@ -198,6 +199,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_load_script,
             autorun::auto_run_save_script,
             autorun::auto_run_clear_suspected_defect,
+            autorun::auto_run_plan,
+            autorun::auto_run_save_order,
+            autorun::auto_run_clear_order,
             autorun::auto_run_import_scripts,
             autorun::auto_run_save_run,
             autorun::auto_run_list_runs,
@@ -228,6 +232,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_clear_runs,
             autorun_replay::auto_run_replay,
             autorun_replay::auto_run_replay_cancel,
+            autorun_replay::auto_run_answer_reset,
+            autorun_replay::auto_run_waiting_reset,
             autorun_record::auto_run_record_start,
             autorun_record::auto_run_record_stop,
             autorun_record::auto_run_record_cancel,
@@ -525,6 +531,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
+                // A run paused at a reset point ends as if Stop was pressed,
+                // so its file is saved as stopped before the app goes.
+                commands::autorun_replay::stop_paused_run_on_exit();
                 close_autorun_on_exit();
             }
         });

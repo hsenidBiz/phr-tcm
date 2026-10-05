@@ -122,6 +122,7 @@ fn run_of(id: &str, started_at: &str, cases: Vec<CaseRecord>) -> LocalRun {
         mode: "unattended".into(),
         published: None,
         environment: None,
+        resets: vec![],
     }
 }
 

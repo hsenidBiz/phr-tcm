@@ -13,7 +13,8 @@ use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
 use super::{preconditions, recipe, signin, transient};
-use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
+use super::plan::Reset;
+use super::{store, CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
 use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
@@ -96,6 +97,31 @@ pub trait Browsers {
     type D: Driver;
     fn open(&mut self) -> impl std::future::Future<Output = Result<Self::D, String>>;
     fn close(&mut self, d: Self::D) -> impl std::future::Future<Output = ()>;
+}
+
+/// The reason each case left when a run ends at a reset point is recorded
+/// with, and the outcome of each of its steps.
+pub const STOPPED_AT_RESET: &str = "not run: the run stopped at a reset point";
+
+/// Where an unattended run pauses at a reset point. The command gives one
+/// that asks the person in the app (`reset_wait::AppGate`); the tests give
+/// one that answers as told.
+pub trait ResetGate {
+    /// Wait at `reset` until a person answers: `true` carries on with the
+    /// next phase, `false` ends the run there. `remaining` is every case
+    /// still to run, the next one first. A Stop (`cancel`) while waiting
+    /// answers `false`. There is no time limit.
+    fn wait(&mut self, reset: &Reset, remaining: &[i32], cancel: &AtomicBool) -> impl std::future::Future<Output = bool>;
+}
+
+/// A gate for a run with no reset points: it is never asked, and would
+/// carry on if it were.
+pub struct NeverPauses;
+
+impl ResetGate for NeverPauses {
+    async fn wait(&mut self, _reset: &Reset, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+        true
+    }
 }
 
 pub struct Proposal {
@@ -477,6 +503,17 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
     }
 }
 
+/// A case left when the run ended at a reset point: not run, nothing
+/// proposed, and each step of its script (when it has one) not run for the
+/// same reason.
+fn stopped_at_reset(root: &Path, case: &CaseToRun) -> CaseRecord {
+    let mut record = unrun(case.case_id, &case.title, "", STOPPED_AT_RESET.to_string());
+    if let Ok(Some(script)) = store::load_script(root, case.case_id) {
+        record.steps = script.steps.iter().map(|s| not_run(s, STOPPED_AT_RESET)).collect();
+    }
+    record
+}
+
 /// A case that cannot start (design §5): every step shown as not run, the
 /// verdict proposed is Blocked, and no browser was opened for it.
 fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: String) -> CaseRecord {
@@ -705,6 +742,49 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     precondition_db: &preconditions::PreconditionDb<P>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
+    run_cases_planned(
+        browsers,
+        root,
+        organization,
+        project,
+        run,
+        cases,
+        run_account,
+        retry_transient,
+        timing,
+        cancel,
+        precondition_db,
+        &[],
+        &mut NeverPauses,
+        progress,
+    )
+    .await
+}
+
+/// [`run_cases_checked`] with the plan's reset points (design §3). Before a
+/// case that a reset in `resets` names, once the case before it has ended
+/// and its browser has closed, the run pauses at `gate`. Continue runs the
+/// next phase; Stop (or the run's own Stop while paused) ends the run
+/// there, with every case left recorded as not run
+/// (`STOPPED_AT_RESET`). Each pause is kept in `run.resets` with how long
+/// it lasted and how it ended. `cases` are in the order to run them.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
+    browsers: &mut B,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    run: &mut LocalRun,
+    cases: &[CaseToRun],
+    run_account: Option<&str>,
+    retry_transient: bool,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    precondition_db: &preconditions::PreconditionDb<P>,
+    resets: &[Reset],
+    gate: &mut G,
+    progress: &mut (dyn FnMut(ReplayProgress) + Send),
+) -> Result<(), String> {
     // Each error says for itself where the run got to, so the command can
     // pass it on as it is: this one stops the run before any case.
     let nav_file = nav::load_nav(root, organization, project).map_err(|e| format!("the run did not start: {e}"))?;
@@ -725,6 +805,43 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     for (i, case) in cases.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
             break;
+        }
+        // A reset point before this case: the case before it has ended and
+        // its browser is closed, so the person can put things back now.
+        if let Some(reset) = resets.iter().filter(|_| i > 0).find(|r| r.before_case_id == case.case_id) {
+            let remaining: Vec<i32> = cases[i..].iter().map(|c| c.case_id).collect();
+            crate::applog::info(format!("Auto-run unattended: paused before case {} for a reset", case.case_id));
+            let paused = Instant::now();
+            let go_on = gate.wait(reset, &remaining, cancel).await && !cancel.load(Ordering::SeqCst);
+            let waited_ms = u32::try_from(paused.elapsed().as_millis()).unwrap_or(u32::MAX);
+            run.resets.push(ResetRecord {
+                before_case_id: reset.before_case_id,
+                names: reset.names.clone(),
+                changed_by: reset.changed_by.clone(),
+                waited_ms,
+                outcome: if go_on { RESET_CONTINUED } else { RESET_STOPPED }.to_string(),
+            });
+            crate::applog::info(format!(
+                "Auto-run unattended: the reset before case {} {} after {waited_ms} ms",
+                case.case_id,
+                if go_on { "continued" } else { "stopped the run" },
+            ));
+            if !go_on {
+                for (k, rest) in cases.iter().enumerate().skip(i) {
+                    let record = stopped_at_reset(root, rest);
+                    let count = record.steps.len() as u32;
+                    run.cases.push(record);
+                    progress(tell(&run_id, k as u32, total, rest.case_id, &rest.title, "done", 0, count, ""));
+                }
+                if let Err(e) = store::save_run(root, run) {
+                    save_error.get_or_insert(e);
+                }
+                break;
+            }
+            // The pause is on disk before the next case starts.
+            if let Err(e) = store::save_run(root, run) {
+                save_error.get_or_insert(e);
+            }
         }
         let index = i as u32;
         let (case_id, title) = (case.case_id, case.title.as_str());

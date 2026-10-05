@@ -412,3 +412,30 @@ test("a case the person called Passed offers no Replay, whatever its steps say",
   await screen.findByRole("listitem", { name: "Run of Valid login" });
   expect(screen.queryByRole("button", { name: /Replay/ })).not.toBeInTheDocument();
 });
+
+test("a run that stopped at a reset point shows the reset line between its cases", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Publish the cycle", verdict: "", note: "", proposed: "Passed" },
+          { case_id: 202, title: "Edit a draft cycle", verdict: "", note: "", proposed: "", reason: "not run: the run stopped at a reset point" },
+        ],
+        resets: [{ before_case_id: 202, names: ["cycle published", "rota"], waited_ms: 5, outcome: "stopped" }],
+      }),
+    ],
+    7,
+  );
+  const line = await screen.findByText('Reset: revert "cycle published" - stopped');
+  expect(screen.getByText('Reset: revert "rota" - stopped')).toBeInTheDocument();
+  const items = Array.from(line.closest("ul")!.children);
+  const at = items.indexOf(line);
+  expect(items.indexOf(screen.getByRole("listitem", { name: "Run of Publish the cycle" }))).toBeLessThan(at);
+  expect(items.indexOf(screen.getByRole("listitem", { name: "Run of Edit a draft cycle" }))).toBe(at + 2);
+});
+
+test("a run with no reset points shows no reset line", async () => {
+  renderPastRuns([runOf()], 7);
+  await screen.findByText("Valid login");
+  expect(screen.queryByText(/Reset: revert/)).not.toBeInTheDocument();
+});

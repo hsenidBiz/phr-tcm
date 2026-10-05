@@ -15,8 +15,10 @@ pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod lease;
+pub mod marks;
 pub mod nav;
 pub mod patterns;
+pub mod plan;
 pub mod preconditions;
 pub mod publish;
 pub mod quirks;
@@ -24,6 +26,7 @@ pub mod recipe;
 pub mod recorder;
 pub mod replay;
 pub mod replay_ask;
+pub mod reset_wait;
 pub mod replay_to;
 pub mod report;
 pub mod runner;
@@ -103,6 +106,16 @@ pub struct CaseScript {
     /// Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
+    /// Shared state this case leaves changed for the cases after it, by
+    /// name (`"cycle published"`). Names compare by `marks::normalise`, and
+    /// every save validates them (`marks::check_marks`). Written only when
+    /// there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<String>,
+    /// Shared state this case needs not yet changed, or reverted, by the
+    /// same names as `changes`. Written only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs_unchanged: Vec<String>,
     /// When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
     /// every save (`store::save_scripts_atomically`), whatever was sent. A
     /// repair reads the test case as of this moment to see which steps the
@@ -242,4 +255,34 @@ pub struct LocalRun {
     /// `None` for a run saved before environments existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    /// Each reset point the run paused at, in run order, with how it ended
+    /// (`reset_wait`). Written only when there are any, so a run without
+    /// reset points reads exactly as it always did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets: Vec<ResetRecord>,
 }
+
+/// One reset point a run paused at: before `before_case_id` ran, a person
+/// was asked to revert `names` (`changed_by` gives, per name, the cases
+/// that changed it). `waited_ms` is the wall time spent paused; `outcome`
+/// is "continued" or "stopped".
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ResetRecord {
+    pub before_case_id: i32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_by: Vec<(String, Vec<i32>)>,
+    /// Milliseconds. A `u32` (specta refuses a 64-bit number across IPC);
+    /// a pause past 49 days reads as `u32::MAX`.
+    #[serde(default)]
+    pub waited_ms: u32,
+    /// "continued" or "stopped".
+    #[serde(default)]
+    pub outcome: String,
+}
+
+/// `ResetRecord::outcome` when the person pressed Continue.
+pub const RESET_CONTINUED: &str = "continued";
+/// `ResetRecord::outcome` when the run ended at the reset point.
+pub const RESET_STOPPED: &str = "stopped";
