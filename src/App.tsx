@@ -68,6 +68,7 @@ import {
 import AnimatedContent from "./components/AnimatedContent";
 import ChangelogModal from "./components/ChangelogModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
+import ReplayRequestModal from "./screens/AutoRun/ReplayRequestModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
@@ -1344,6 +1345,11 @@ export default function App() {
       </QueryClientProvider>
 
       {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}
+
+      {/* The assistant's request to replay a must-not-save script. Always
+          mounted and listening: a request that arrives while the window
+          is hidden in the tray is waiting here when it is shown again. */}
+      <ReplayRequestModal />
 
       {/* Only over a signed-in app: before sign-in the SignIn screen IS the
           prompt. "Not now" just closes it - cached data stays readable and

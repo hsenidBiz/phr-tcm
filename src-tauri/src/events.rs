@@ -174,6 +174,25 @@ pub struct AutorunReplayProgress {
     pub of: i32,
 }
 
+/// Emitted when the assistant asks to replay case `case_id` (`title`) up
+/// to step `step` and its script must not save: the app shows the Allow
+/// prompt for request `id` (`autorun::replay_ask`), and nothing runs until
+/// the person answers it with `auto_run_answer_replay_request`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayRequest {
+    pub id: String,
+    pub case_id: i32,
+    pub title: String,
+    pub step: i32,
+}
+
+/// Emitted when replay request `id` stops waiting: answered, timed out, or
+/// its caller gone. The Allow prompt for it closes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunReplayRequestEnded {
+    pub id: String,
+}
+
 /// Emitted while a module path or a sign-in is being recorded: one per
 /// captured click, one per text field typed into (a sign-in only), one
 /// when the signed-in check is picked (a sign-in only), one per click or

@@ -57,6 +57,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Carry out one script action against the open page, without recording anything.",
   },
   {
+    name: "replay_autorun_to_step",
+    label: "Replay to a step",
+    summary: "Replay a case's saved steps up to the failing one, asking you first when its script must not save.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -172,6 +177,7 @@ export const DEV_ONLY_TOOLS = [
   "get_autorun_page",
   "probe_autorun_locator",
   "try_autorun_action",
+  "replay_autorun_to_step",
   "get_autorun_failures",
   "record_autorun_quirk",
   "retire_autorun_quirk",
@@ -251,6 +257,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_page",
     "probe_autorun_locator",
     "try_autorun_action",
+    "replay_autorun_to_step",
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",
@@ -298,7 +305,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   get_autorun_guide: {
     label: "Auto Run scripts",
     summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts, and propose and read the environment's test logins.",
+      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save and repair scripts, and propose and read the environment's test logins.",
   },
   get_api_template_guide: {
     label: "API templates",

@@ -73,6 +73,10 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
         crate::filewatch::watched_paths(&app_for_watch.state::<crate::filewatch::FileWatchState>())
     }));
 
+    // An assistant's replay to a step runs in the supervised browser this
+    // app holds, and a must-not-save script asks the person in its window.
+    crate::ai_bridge::set_replay_host(Box::new(AppReplayHost(app.clone())));
+
     let (port, _token) = crate::ai_bridge::start_listener(
         Arc::clone(&shared),
         Some(factory),
@@ -81,6 +85,38 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
     .await?;
     *handle.running.lock().unwrap() = Some((shared, port));
     Ok(BridgeStatus { port, mcp_exe: mcp_exe_path() })
+}
+
+/// The app behind the bridge's `/autorun-replay`: the Allow prompt goes to
+/// the window as events (it stays loaded while the window is hidden in the
+/// tray, so the prompt is there when it is shown again), and the replay
+/// takes the person's own path, as the assistant's.
+struct AppReplayHost(tauri::AppHandle);
+
+impl crate::ai_bridge::ReplayHost for AppReplayHost {
+    fn notify(&self, notice: crate::autorun::replay_ask::Notice<'_>) {
+        use crate::autorun::replay_ask::Notice;
+        use tauri_specta::Event as _;
+        let _ = match notice {
+            Notice::Asked(ask) => ask.clone().emit(&self.0),
+            Notice::Ended(id) => crate::events::AutorunReplayRequestEnded { id: id.to_string() }.emit(&self.0),
+        };
+    }
+
+    fn replay(
+        &self,
+        organization: String,
+        project: String,
+        req: crate::autorun::replay_to::ReplayRequest,
+    ) -> crate::ai_bridge::HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>> {
+        Box::pin(async move {
+            crate::commands::autorun::replay_supervised(&self.0, &organization, &project, req, false).await
+        })
+    }
+
+    fn page(&self) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
+        Box::pin(crate::ai_bridge::supervised_page(crate::browser::snapshot::DEFAULT_LIMIT))
+    }
 }
 
 /// The AI Bridge tab's on/off switches, pushed together - one argument, so

@@ -373,6 +373,13 @@ export const commands = {
 	 */
 	autoRunStopReplay: () => __TAURI_INVOKE<void>("auto_run_stop_replay"),
 	/**
+	 *  The person's Allow or Deny on the assistant's request to replay a
+	 *  must-not-save script (`autorun::replay_ask`). Refused with
+	 *  `that replay request is no longer waiting` for a request that already
+	 *  timed out or was answered: a late Allow starts nothing.
+	 */
+	autoRunAnswerReplayRequest: (id: string, allow: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_answer_replay_request", { id, allow })),
+	/**
 	 *  Run one step's actions in order and report every outcome. Actions after
 	 *  an ordinary failure still run: the watcher learns more from "the click
 	 *  worked, the check did not" than from a run that stops at the first red.
@@ -1083,6 +1090,8 @@ export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
+	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
+	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
@@ -1524,6 +1533,27 @@ export type AutorunReplayProgress = {
 	case_id: number,
 	step: number,
 	of: number,
+};
+
+/**
+ *  Emitted when the assistant asks to replay case `case_id` (`title`) up
+ *  to step `step` and its script must not save: the app shows the Allow
+ *  prompt for request `id` (`autorun::replay_ask`), and nothing runs until
+ *  the person answers it with `auto_run_answer_replay_request`.
+ */
+export type AutorunReplayRequest = {
+	id: string,
+	case_id: number,
+	title: string,
+	step: number,
+};
+
+/**
+ *  Emitted when replay request `id` stops waiting: answered, timed out, or
+ *  its caller gone. The Allow prompt for it closes.
+ */
+export type AutorunReplayRequestEnded = {
+	id: string,
 };
 
 export type BackupImportResult = {

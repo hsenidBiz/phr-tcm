@@ -619,9 +619,10 @@ person has open on the Auto Run tab:
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
 
-The person opens the browser and signs in - you cannot do either. You
-never navigate away from where they are unless the case's own step says
-to. A `fill` you try really types into the application, so use test
+The person opens the browser and signs in - you cannot do either, except
+through a replay to a failing step (see "Repairing a script that failed"),
+which the app opens and signs in for. You never navigate away from where
+they are unless the case's own step says to. A `fill` you try really types into the application, so use test
 data, not the real thing. Never try `sign_in`: the person signs in,
 always.
 
@@ -757,6 +758,19 @@ Read `get_autorun_failures` first - it names each failing step, shows
 each failed action as its own JSON, says what the page actually did, and
 points at the picture when there is one. Fix what it describes, not what
 you assume broke.
+
+Replay to the failing step before trying fixes. `replay_autorun_to_step`,
+with the case and its failing step, runs that case's saved steps before it
+in the supervised browser and stops there. Its answer carries the page, so
+you can try the step with `try_autorun_action` at once. No browser needs to
+be open: the app opens one, signs in as the case's account and goes to its
+area.
+
+- You may replay without asking the person, except that a script marked
+  must not save asks the person in the app first, and runs only once they
+  press Allow. Its saves stay stopped throughout.
+- Never replay past the failing step to "see what happens". The steps after
+  it are not the failure, and they can change the application's data.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:

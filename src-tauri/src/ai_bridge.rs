@@ -293,6 +293,7 @@ pub async fn route(
         ("GET", "/autorun-page") => autorun_page(target).await,
         ("POST", "/autorun-probe") => autorun_probe(body).await,
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
+        ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
@@ -1468,6 +1469,13 @@ async fn autorun_page(target: &str) -> (u16, String) {
         .filter(|n| *n > 0)
         .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT)
         .min(crate::browser::snapshot::DEFAULT_LIMIT * 10);
+    supervised_page(limit).await
+}
+
+/// The supervised browser's page as text, `limit` lines at most: what
+/// `/autorun-page` answers, and what a replay that reached its step hands
+/// back beside its sentence.
+pub async fn supervised_page(limit: usize) -> (u16, String) {
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -1627,6 +1635,124 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }
     try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, case_id, &action)
         .await
+}
+
+/// A future the replay host hands back: boxed, so the host can be a trait
+/// object the app installs once.
+pub type HostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// What the app lends the bridge for an assistant's replay to a step: the
+/// bridge has no `AppHandle` of its own (see `INTAKE_SINK`). A test hands
+/// `autorun_replay_with` a fake one.
+pub trait ReplayHost: Send + Sync {
+    /// Tell the app's window: the Allow prompt for a must-not-save script,
+    /// and its end.
+    fn notify(&self, notice: crate::autorun::replay_ask::Notice<'_>);
+    /// Run the replay in the supervised browser, by the same path as the
+    /// person's Replay to step button, as the assistant's: it never lifts a
+    /// guard held for another case. `Err` is a browser that would not open.
+    fn replay(
+        &self,
+        organization: String,
+        project: String,
+        req: crate::autorun::replay_to::ReplayRequest,
+    ) -> HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>>;
+    /// The page the replay left the browser on, as `/autorun-page` answers.
+    fn page(&self) -> HostFuture<'_, (u16, String)>;
+}
+
+static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
+
+/// Called once by the app when the bridge starts. Later calls are ignored.
+pub fn set_replay_host(host: Box<dyn ReplayHost>) {
+    let _ = REPLAY_HOST.set(host);
+}
+
+/// Said when a replay is asked for and the app has lent the bridge no host.
+const NO_REPLAY_HOST: &str = "the app could not start replays this session - restart the app";
+
+/// Replay a case to a step in the supervised browser, for the assistant.
+async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let Some(host) = REPLAY_HOST.get() else {
+        return (503, NO_REPLAY_HOST.to_string());
+    };
+    let asks = crate::autorun::replay_ask::asks();
+    autorun_replay_with(ctx, body, host.as_ref(), asks, crate::autorun::replay_ask::WAIT).await
+}
+
+/// `/autorun-replay`, body `{ case_id, step }`, with its host, its request
+/// registry and how long the person has to answer.
+///
+/// Refused, with the sentence, before anything opens: a body without the
+/// two numbers, an unattended run going, a case with no saved script, a
+/// step outside it, a replay already running. A script marked must not
+/// save then asks the person and waits (`replay_ask`): Deny, no answer or
+/// another request waiting refuse it, and only Allow goes on. Database
+/// Read Access is the `db_query` switch, as for the person's own replay.
+///
+/// The answer is `{ "sentence" }`, and once the browser stands before the
+/// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
+/// assistant can try the step at once.
+pub async fn autorun_replay_with(
+    ctx: &BridgeContext,
+    body: &str,
+    host: &dyn ReplayHost,
+    asks: &crate::autorun::replay_ask::Asks,
+    wait: std::time::Duration,
+) -> (u16, String) {
+    use crate::autorun::replay_to::{self, ReplayEnd, ReplayRequest};
+    const SHAPE: &str = "{ \"case_id\": <number>, \"step\": <number> }";
+    let number = |key: &str| -> Result<i32, (u16, String)> {
+        body_field(body, key, SHAPE)?
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or((400, format!("{key} must be a number")))
+    };
+    let (case_id, step) = match (number("case_id"), number("step")) {
+        (Ok(c), Ok(s)) => (c, s),
+        (Err(refused), _) | (_, Err(refused)) => return refused,
+    };
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let db_read_access = !ctx.disabled_tools.iter().any(|t| t == "db_query");
+    let req = ReplayRequest { case_id, step, db_read_access };
+    let checked = match replay_to::check(&root, &ctx.org, &ctx.project, &req) {
+        Ok(c) => c,
+        Err(why) => return (409, why),
+    };
+    if replay_to::is_running() {
+        return (409, replay_to::ALREADY_RUNNING.to_string());
+    }
+    if checked.script.no_save {
+        let notify = |n: crate::autorun::replay_ask::Notice<'_>| host.notify(n);
+        if let Err(why) = asks.ask(case_id, &checked.script.title, step, wait, &notify).await {
+            crate::applog::info(format!("Auto Run replay of case {case_id} for the assistant: {why}"));
+            return (409, why);
+        }
+    }
+    let end = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
+        Ok(end) => end,
+        Err(why) => return (503, why),
+    };
+    let sentence = end.sentence();
+    match end {
+        ReplayEnd::Refused(_) => (409, sentence),
+        ReplayEnd::Ready { .. } => {
+            let answer = match host.page().await {
+                (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
+                (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
+            };
+            (200, answer.to_string())
+        }
+        ReplayEnd::StoppedAt { .. } | ReplayEnd::Stopped { .. } => {
+            (200, serde_json::json!({ "sentence": sentence }).to_string())
+        }
+    }
 }
 
 /// Said to a try that does not name its case.
