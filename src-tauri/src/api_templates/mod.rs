@@ -10,6 +10,8 @@
 
 pub mod cookies;
 pub mod exec;
+pub mod fixture;
+pub mod fixture_store;
 pub mod flow;
 pub mod flow_page;
 pub mod flow_store;
@@ -175,6 +177,11 @@ pub struct ApiTemplate {
     /// `check`, so a template saved before flows existed keeps loading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<flow::StageRef>,
+    /// For a template with the `delete` effect: the kind of thing it
+    /// deletes (`cycle`, `suite` and so on), which Clean up matches against
+    /// the record of test-made drafts. Left out of any other template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletes_kind: Option<String>,
     /// Written by the app from a successful proving run; a draft that
     /// carries one is refused by `check`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -405,6 +412,9 @@ fn is_valid_date(s: &str) -> bool {
     (1..=days_in_month).contains(&day)
 }
 
+/// Said when a delete template does not name the kind it deletes.
+pub const DELETES_KIND_NEEDED: &str = "a delete template must say which kind it deletes";
+
 /// Every problem with this template, in template order (top-level `id`
 /// first, then each step in order, then `outputs`, then `proven`). Empty
 /// means the draft is fit to run.
@@ -416,6 +426,10 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
             "id '{}' must be lowercase ASCII letters, digits, '-' or '_', 1-100 characters long",
             t.id
         ));
+    }
+
+    if t.effect == Effect::Delete && t.deletes_kind.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        problems.push(DELETES_KIND_NEEDED.to_string());
     }
 
     // Names visible to a placeholder: every declared param, plus every

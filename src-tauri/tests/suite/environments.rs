@@ -25,6 +25,7 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
         allowed_origins: vec![],
         db_id: "dev-read".into(),
         test_environment: false,
+        test_prefix: "AUTOTEST".into(),
     }
 }
 
@@ -40,6 +41,7 @@ fn input(name: &str) -> EnvInput {
         allowed_origins: vec![],
         db_id: "qa-read".into(),
         test_environment: false,
+        test_prefix: None,
     }
 }
 
@@ -192,6 +194,39 @@ fn bad_address_and_origins_are_refused() {
 
     e.allowed_origins = vec!["https://login.x".into(), "https://x:8443/".into()];
     assert_eq!(validate(&file(vec![e]), &known()), Ok(()));
+}
+
+#[test]
+fn an_environment_file_from_before_prefixes_loads_with_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let old = r#"{"active":"env-00000001","environments":[{"id":"env-00000001","name":"Dev","start_url":"","allowed_origins":[],"db_id":"dev-read","test_environment":false}]}"#;
+    std::fs::write(root.join("environments.json"), old).unwrap();
+    let f = load_or_init(root, None).unwrap();
+    assert_eq!(f.environments[0].test_prefix, "AUTOTEST");
+}
+
+#[test]
+fn a_new_environment_gets_the_default_test_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, qa) = two_envs(dir.path());
+    let f = load_or_init(dir.path(), None).unwrap();
+    assert_eq!(f.environments.iter().find(|e| e.id == qa).unwrap().test_prefix, "AUTOTEST");
+}
+
+#[test]
+fn the_test_prefix_has_limits() {
+    for bad in ["AB", "ABCDEFGHIJKLMNOPQRSTU", "AUTO TEST", "AUTO_TEST", ""] {
+        let mut e = env("env-00000001", "Dev", "");
+        e.test_prefix = bad.into();
+        let err = validate(&file(vec![e]), &known()).unwrap_err();
+        assert_eq!(err, "the test name prefix is 3 to 20 letters, digits or -", "{bad:?}");
+    }
+    for good in ["ABC", "QA-run-1", "ABCDEFGHIJKLMNOPQRST"] {
+        let mut e = env("env-00000001", "Dev", "");
+        e.test_prefix = good.into();
+        validate(&file(vec![e]), &known()).unwrap();
+    }
 }
 
 #[test]
@@ -432,6 +467,7 @@ fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
         allowed_origins: allowed.iter().map(|s| s.to_string()).collect(),
         db_id: e.db_id,
         test_environment: e.test_environment,
+        test_prefix: None,
     }
 }
 
@@ -1326,6 +1362,7 @@ mod accounts_for_the_assistant {
             allowed_origins: e.allowed_origins,
             db_id: e.db_id,
             test_environment,
+            test_prefix: None,
         }
     }
 

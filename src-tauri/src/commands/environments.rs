@@ -21,6 +21,7 @@ pub struct EnvView {
     pub allowed_origins: Vec<String>,
     pub db_id: String,
     pub test_environment: bool,
+    pub test_prefix: String,
     pub has_default_password: bool,
 }
 
@@ -39,6 +40,10 @@ pub struct EnvInput {
     pub allowed_origins: Vec<String>,
     pub db_id: String,
     pub test_environment: bool,
+    /// Left out, an edit keeps the environment's prefix and a new
+    /// environment gets the default.
+    #[serde(default)]
+    pub test_prefix: Option<String>,
 }
 
 /// Said when a switch would land in the middle of a run, recording, check
@@ -77,6 +82,7 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 allowed_origins: e.allowed_origins,
                 db_id: e.db_id,
                 test_environment: e.test_environment,
+                test_prefix: e.test_prefix,
             })
             .collect(),
     }
@@ -122,6 +128,16 @@ fn sites(list: &[String]) -> Vec<String> {
 /// else. A changed address also drops that environment's saved sessions:
 /// they were made at the old address, and cookies are not port-scoped.
 pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> Result<EnvListView, String> {
+    let before = if env.id.is_empty() {
+        None
+    } else {
+        environments::load_or_init(root, None)?.environments.into_iter().find(|e| e.id == env.id)
+    };
+    let test_prefix = env
+        .test_prefix
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.test_prefix.clone()))
+        .unwrap_or_else(environments::default_test_prefix);
     let env = Environment {
         id: env.id,
         name: env.name,
@@ -129,11 +145,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         allowed_origins: env.allowed_origins,
         db_id: env.db_id,
         test_environment: env.test_environment,
-    };
-    let before = if env.id.is_empty() {
-        None
-    } else {
-        environments::load_or_init(root, None)?.environments.into_iter().find(|e| e.id == env.id)
+        test_prefix,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());

@@ -500,6 +500,7 @@ let environments: EnvListView = {
       allowed_origins: ["https://login.example.test"],
       db_id: "dev",
       test_environment: true,
+      test_prefix: "AUTOTEST",
       has_default_password: false,
     },
     {
@@ -509,6 +510,7 @@ let environments: EnvListView = {
       allowed_origins: [],
       db_id: "qa",
       test_environment: true,
+      test_prefix: "AUTOTEST",
       has_default_password: false,
     },
   ],
@@ -1522,7 +1524,11 @@ function applyPatches() {
     envSave: (env: EnvInput) => {
       if (!env || typeof env !== "object" || typeof env.id !== "string") return err("Demo mode: that environment is not valid");
       const old = environments.environments.find((e) => e.id === env.id);
-      const next = { ...env, has_default_password: old?.has_default_password ?? false };
+      const next = {
+        ...env,
+        test_prefix: env.test_prefix ?? old?.test_prefix ?? "AUTOTEST",
+        has_default_password: old?.has_default_password ?? false,
+      };
       environments = {
         ...environments,
         environments: old ? environments.environments.map((e) => (e.id === env.id ? next : e)) : [...environments.environments, next],

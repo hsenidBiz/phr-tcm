@@ -107,6 +107,7 @@ fn a_database_an_environment_uses_cannot_be_removed() {
         allowed_origins: vec![],
         db_id: staging.id.clone(),
         test_environment: false,
+        test_prefix: "AUTOTEST".into(),
     };
     let mut qa = save_env(&root, qa, &known).unwrap().environments.into_iter().find(|e| e.name == "QA").unwrap();
 

@@ -35,6 +35,30 @@ pub struct Environment {
     /// On lets the assistant read this environment's full logins.
     #[serde(default)]
     pub test_environment: bool,
+    /// What the names of things the tests make start with, so Clean up can
+    /// tell them from a person's own. See `validate_test_prefix`.
+    #[serde(default = "default_test_prefix")]
+    pub test_prefix: String,
+}
+
+/// What a new environment, and one saved before prefixes existed, uses.
+pub const DEFAULT_TEST_PREFIX: &str = "AUTOTEST";
+
+pub fn default_test_prefix() -> String {
+    DEFAULT_TEST_PREFIX.to_string()
+}
+
+/// Said when a test name prefix is outside its limits.
+pub const TEST_PREFIX_RULE: &str = "the test name prefix is 3 to 20 letters, digits or -";
+
+/// A prefix is 3 to 20 characters of letters, digits or `-`.
+pub fn validate_test_prefix(prefix: &str) -> Result<(), String> {
+    let n = prefix.chars().count();
+    if (3..=20).contains(&n) && prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        Ok(())
+    } else {
+        Err(TEST_PREFIX_RULE.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -156,6 +180,7 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
                 ));
             }
         }
+        validate_test_prefix(&e.test_prefix)?;
         if !known_db_ids.iter().any(|k| *k == e.db_id) {
             return Err(format!("\"{name}\" uses a database that is not set up - pick one"));
         }
@@ -212,6 +237,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             allowed_origins: vec![],
             db_id,
             test_environment: false,
+            test_prefix: default_test_prefix(),
         }],
     };
     write(root, &file)?;
@@ -273,6 +299,7 @@ fn tidy(mut env: Environment) -> Environment {
     env.start_url = env.start_url.trim().to_string();
     env.allowed_origins = env.allowed_origins.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
     env.db_id = env.db_id.trim().to_string();
+    env.test_prefix = env.test_prefix.trim().to_string();
     env
 }
 

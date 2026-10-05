@@ -1482,6 +1482,12 @@ export type ApiTemplate_Deserialize = {
 	 */
 	stage?: StageRef | null,
 	/**
+	 *  For a template with the `delete` effect: the kind of thing it
+	 *  deletes (`cycle`, `suite` and so on), which Clean up matches against
+	 *  the record of test-made drafts. Left out of any other template.
+	 */
+	deletes_kind?: string | null,
+	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
@@ -1505,6 +1511,12 @@ export type ApiTemplate_Serialize = {
 	 *  `check`, so a template saved before flows existed keeps loading.
 	 */
 	stage?: StageRef | null,
+	/**
+	 *  For a template with the `delete` effect: the kind of thing it
+	 *  deletes (`cycle`, `suite` and so on), which Clean up matches against
+	 *  the record of test-made drafts. Left out of any other template.
+	 */
+	deletes_kind?: string | null,
 	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
@@ -2346,6 +2358,11 @@ export type EnvInput = {
 	allowed_origins: string[],
 	db_id: string,
 	test_environment: boolean,
+	/**
+	 *  Left out, an edit keeps the environment's prefix and a new
+	 *  environment gets the default.
+	 */
+	test_prefix?: string | null,
 };
 
 export type EnvListView = {
@@ -2364,6 +2381,7 @@ export type EnvView = {
 	allowed_origins: string[],
 	db_id: string,
 	test_environment: boolean,
+	test_prefix: string,
 	has_default_password: boolean,
 };
 

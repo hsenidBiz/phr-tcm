@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 /// How many runs a template's history keeps. Past this, the oldest runs
 /// are no longer worth the read - see constraints.md.
-const MAX_RUNS: usize = 20;
+pub(super) const MAX_RUNS: usize = 20;
 
 pub fn templates_dir(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("templates").join(project_slug(org, project))
