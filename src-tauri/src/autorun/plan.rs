@@ -5,7 +5,7 @@
 //! again from the same inputs, so the two always agree.
 //!
 //! Names compare by `marks::normalise`. The spelling shown for a name is
-//! the first one seen, trimmed.
+//! the first one seen in list order, trimmed.
 
 use super::marks::normalise;
 use super::CaseScript;
@@ -69,68 +69,115 @@ fn keys(names: &[String]) -> Vec<String> {
 /// on itself, so it runs after the other needers of X and before the other
 /// changers.
 ///
-/// Stable: Kahn's algorithm, always taking the available case that comes
-/// first in list order, so cases no mark forces to move keep their places
-/// relative to each other.
+/// List order is kept wherever no mark forces a move. A constraint that
+/// agrees with list order (the needer is listed before the changer) is
+/// always kept. A backward one (the needer is listed after the changer)
+/// moves the needer ahead, so it is kept only when it closes no cycle with
+/// the constraints kept so far; the backward ones are tried by the needer's
+/// list position, then the changer's. A dropped backward constraint is
+/// where a reset falls: the needer may then run after the changer. So a
+/// cycle (A changes X and needs Y unchanged, B changes Y and needs X
+/// unchanged) costs one reset, and nothing moves to avoid a reset that no
+/// order avoids.
 ///
-/// A cycle (A changes X and needs Y unchanged, B changes Y and needs X
-/// unchanged): when no remaining case is free, the earliest remaining case
-/// in list order is taken anyway, its unmet constraints ignored. A cycle is
-/// only broken once nothing else can run, so every case that can run
-/// before the break does, and the reset the break becomes falls as late in
-/// the order as the constraints allow.
+/// The kept constraints have no cycle, and a stable Kahn sort over them
+/// (always taking the available case that comes first in list order) gives
+/// the order.
 pub fn suggest(cases_in_list_order: &[(i32, Marks)]) -> Vec<i32> {
     let cases = first_of_each(cases_in_list_order);
     let n = cases.len();
     let needs: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.needs)).collect();
     let changes: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.changes)).collect();
 
-    // after[i] holds every j that must run after i; incoming[j] counts them.
-    let mut after: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut incoming = vec![0usize; n];
+    // Every constraint (needer, changer), by list position. Generated with
+    // the needer outer and the changer inner, so the backward ones come out
+    // already ordered by the needer's position, then the changer's.
+    let mut forward: Vec<(usize, usize)> = Vec::new();
+    let mut backward: Vec<(usize, usize)> = Vec::new();
     for i in 0..n {
         for j in 0..n {
             if i != j && needs[i].iter().any(|k| changes[j].contains(k)) {
-                after[i].push(j);
-                incoming[j] += 1;
+                if i < j {
+                    forward.push((i, j));
+                } else {
+                    backward.push((i, j));
+                }
             }
         }
     }
 
+    // after[i] holds every j kept to run after i.
+    let mut after: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for &(i, j) in &forward {
+        after[i].push(j);
+    }
+    for &(i, j) in &backward {
+        if !reaches(&after, j, i) {
+            after[i].push(j);
+        }
+    }
+
+    let mut incoming = vec![0usize; n];
+    for js in &after {
+        for &j in js {
+            incoming[j] += 1;
+        }
+    }
     let mut placed = vec![false; n];
     let mut order = Vec::with_capacity(n);
-    while order.len() < n {
-        let next = (0..n)
-            .find(|&i| !placed[i] && incoming[i] == 0)
-            .or_else(|| (0..n).find(|&i| !placed[i]))
-            .expect("a case is left while the order is short");
+    while let Some(next) = (0..n).find(|&i| !placed[i] && incoming[i] == 0) {
         placed[next] = true;
         order.push(cases[next].0);
         for &j in &after[next] {
-            incoming[j] = incoming[j].saturating_sub(1);
+            incoming[j] -= 1;
         }
     }
+    debug_assert_eq!(order.len(), n, "the kept constraints have no cycle");
     order
+}
+
+/// Whether `to` can be reached from `from` over the kept constraints: an
+/// edge `to -> from` added now would close a cycle.
+fn reaches(after: &[Vec<usize>], from: usize, to: usize) -> bool {
+    let mut seen = vec![false; after.len()];
+    let mut stack = vec![from];
+    while let Some(at) = stack.pop() {
+        if at == to {
+            return true;
+        }
+        if !std::mem::replace(&mut seen[at], true) {
+            stack.extend(after[at].iter().copied());
+        }
+    }
+    false
 }
 
 /// The phases of an order (design §2.2). Walk the order; a new phase starts
 /// before a case that needs X unchanged when X has already been changed in
 /// the current phase. A case's own changes count after it runs. A case
 /// missing from `marks` has none.
+///
+/// A name is shown in the first spelling seen walking `order`; `plan_for`
+/// shows the first spelling in list order instead.
 pub fn phases(order: &[i32], marks: &HashMap<i32, Marks>) -> Plan {
-    let none = Marks::default();
+    phases_spelled(order, marks, &spellings(order, marks))
+}
+
+/// Each name's key, with the first spelling seen walking `ids` (trimmed).
+fn spellings(ids: &[i32], marks: &HashMap<i32, Marks>) -> HashMap<String, String> {
     let mut shown: HashMap<String, String> = HashMap::new();
-    let mut show = |name: &str| -> String {
-        shown.entry(normalise(name)).or_insert_with(|| name.trim().to_string()).clone()
-    };
-    // Every spelling, in run order, so the first one seen is the one shown.
-    for id in order {
-        let m = marks.get(id).unwrap_or(&none);
-        for name in m.changes.iter().chain(m.needs.iter()) {
-            show(name);
+    for id in ids {
+        if let Some(m) = marks.get(id) {
+            for name in m.changes.iter().chain(m.needs.iter()) {
+                shown.entry(normalise(name)).or_insert_with(|| name.trim().to_string());
+            }
         }
     }
+    shown
+}
 
+fn phases_spelled(order: &[i32], marks: &HashMap<i32, Marks>, shown: &HashMap<String, String>) -> Plan {
+    let none = Marks::default();
     let mut plan = Plan { order: order.to_vec(), phases: Vec::new(), resets: Vec::new() };
     let mut phase: Vec<i32> = Vec::new();
     // Changed in this phase: each name's key, with the cases that changed it.
@@ -179,7 +226,11 @@ pub fn phases(order: &[i32], marks: &HashMap<i32, Marks>) -> Plan {
 pub fn plan_for(selected_in_list_order: &[(i32, Marks)], saved: Option<&[i32]>) -> (Plan, Option<(usize, usize)>) {
     let cases = first_of_each(selected_in_list_order);
     let marks: HashMap<i32, Marks> = cases.iter().map(|(id, m)| (*id, (*m).clone())).collect();
-    let suggested = phases(&suggest(selected_in_list_order), &marks);
+    // Spelled from list order, so a saved order and the suggestion show a
+    // name the same way.
+    let list: Vec<i32> = cases.iter().map(|(id, _)| *id).collect();
+    let shown = spellings(&list, &marks);
+    let suggested = phases_spelled(&suggest(selected_in_list_order), &marks, &shown);
     let Some(saved) = saved else {
         return (suggested, None);
     };
@@ -189,7 +240,7 @@ pub fn plan_for(selected_in_list_order: &[(i32, Marks)], saved: Option<&[i32]>) 
             order.push(*id);
         }
     }
-    let plan = phases(&order, &marks);
+    let plan = phases_spelled(&order, &marks, &shown);
     let counts = (plan.resets.len() > suggested.resets.len()).then(|| (plan.resets.len(), suggested.resets.len()));
     (plan, counts)
 }

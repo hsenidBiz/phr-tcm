@@ -96,8 +96,8 @@ fn two_names_order_every_needer_before_the_changers() {
 }
 
 /// A changes X and needs Y unchanged, while B changes Y and needs X
-/// unchanged: no order avoids a reset. The cycle is broken by taking the
-/// earliest case in list order, so the reset falls before the second.
+/// unchanged: no order avoids a reset. The backward constraint (B before A)
+/// is the one dropped, so list order stands and the reset falls before B.
 #[test]
 fn a_two_case_cycle_is_broken_at_the_earliest_case_and_becomes_one_reset() {
     let cases = vec![(10, m(&["x"], &["y"])), (20, m(&["y"], &["x"]))];
@@ -110,8 +110,9 @@ fn a_two_case_cycle_is_broken_at_the_earliest_case_and_becomes_one_reset() {
 }
 
 /// Three cases in a ring (1 needs what 3 changes, 3 needs what 2 changes,
-/// 2 needs what 1 changes). List order would need two resets; breaking the
-/// ring at case 1 and following the constraints needs one.
+/// 2 needs what 1 changes). List order would need two resets. The forward
+/// constraint 1 before 3 is kept, then 2 before 1; 3 before 2 would close
+/// the ring and is dropped, so the one reset falls before 3.
 #[test]
 fn a_three_case_cycle_is_broken_once() {
     let cases = vec![
@@ -119,14 +120,39 @@ fn a_three_case_cycle_is_broken_once() {
         (2, m(&["y"], &["x"])),
         (3, m(&["z"], &["y"])),
     ];
-    assert_eq!(suggest(&cases), vec![1, 3, 2]);
+    assert_eq!(suggest(&cases), vec![2, 1, 3]);
     let (plan, _) = plan_for(&cases, None);
-    assert_eq!(plan.phases, vec![vec![1, 3], vec![2]]);
-    assert_eq!(plan.resets, vec![reset(2, &[("x", &[1])])]);
+    assert_eq!(plan.phases, vec![vec![2, 1], vec![3]]);
+    assert_eq!(plan.resets, vec![reset(3, &[("y", &[2])])]);
 
     // The same three in list order, for comparison: two resets.
     let in_list = phases(&[1, 2, 3], &map(&cases));
     assert_eq!(in_list.resets.len(), 2);
+}
+
+/// A case outside a cycle is not moved by it: list order stands, and the
+/// cycle costs one reset.
+#[test]
+fn an_unmarked_case_after_a_cycle_stays_last() {
+    let cases = vec![(1, m(&["x"], &["y"])), (2, m(&["y"], &["x"])), (3, none())];
+    assert_eq!(suggest(&cases), vec![1, 2, 3]);
+    let (plan, _) = plan_for(&cases, None);
+    assert_eq!(plan.phases, vec![vec![1], vec![2, 3]]);
+    assert_eq!(plan.resets, vec![reset(2, &[("x", &[1])])]);
+}
+
+/// D changes z, A changes x and needs y and z unchanged, B changes y and
+/// needs x unchanged. A before D is kept (no cycle); B before A would close
+/// a cycle with A before B and is dropped. One reset, before B.
+#[test]
+fn a_backward_constraint_that_closes_no_cycle_is_kept_and_one_reset_follows() {
+    let (d, a, b) = (30, 10, 20);
+    let cases = vec![(d, m(&["z"], &[])), (a, m(&["x"], &["y", "z"])), (b, m(&["y"], &["x"]))];
+    assert_eq!(suggest(&cases), vec![a, d, b]);
+    let (plan, _) = plan_for(&cases, None);
+    assert_eq!(plan.resets.len(), 1);
+    assert_eq!(phases(&plan.order, &map(&cases)).resets.len(), 1);
+    assert_eq!(plan.resets, vec![reset(b, &[("x", &[a])])]);
 }
 
 /// Two cases that each need and change the same name (two publishes)
@@ -189,6 +215,22 @@ fn names_that_differ_in_case_or_spacing_are_one_name_shown_as_first_spelled() {
     assert_eq!(suggest(&cases), vec![2, 1]);
     let plan = phases(&[1, 2], &map(&cases));
     assert_eq!(plan.resets, vec![reset(2, &[("Cycle Published", &[1])])]);
+}
+
+/// The spelling shown comes from list order, so a saved order and the
+/// suggestion name a reset the same way.
+#[test]
+fn a_saved_order_shows_names_in_the_first_spelling_in_list_order() {
+    let cases = vec![
+        (1, m(&[], &["cycle published"])),
+        (2, m(&["Cycle Published"], &[])),
+        (3, m(&[], &["CYCLE published"])),
+    ];
+    let (plan, counts) = plan_for(&cases, Some(&[2, 3, 1]));
+    assert_eq!(plan.resets, vec![reset(3, &[("cycle published", &[2])])]);
+    assert_eq!(counts, Some((1, 0)));
+    // Walking that order alone would show the changer's spelling.
+    assert_eq!(phases(&[2, 3, 1], &map(&cases)).resets[0].names, vec!["Cycle Published".to_string()]);
 }
 
 /// A case with no entry in the marks has none.
