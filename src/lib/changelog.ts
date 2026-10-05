@@ -16,6 +16,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.0",
+    date: "2026-10-05",
+    items: [
+      "Add as many databases of your own as you need under AI Bridge, each with its own name and login.",
+      "On the AI Bridge tab, the Company database card is now called Database Read Access.",
+      "The AI Bridge tab lays its cards out in columns that fit the window, without gaps between them.",
+      "AI assistants now list this app's tools as \"tcm\" instead of \"tcm-testcases\". Tools you had already allowed stay allowed.",
+      "With a window open, you can still move, minimise and close the app from its title bar.",
+      "Signing in no longer leaves the browser on a connection reset or localhost refused to connect page.",
+      "On Import Test Cases, each queued case's checkbox lines up with its arrow and title.",
+      "On a wide window, Settings puts the cards that used to sit below the bottom of the window beside Updates. They move back when the full changelog is open or the window is narrower.",
+      "Small reliability fixes.",
+    ],
+  },
+  {
     version: "2.0.9-beta.14",
     date: "2026-10-05",
     items: [
