@@ -16,6 +16,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.2",
+    date: "2026-10-05",
+    items: [
+      "On Import Test Cases, specs can only be Markdown (.md) files or Azure DevOps wiki links. Anything else is refused with a reason, and Attach offers Markdown files only.",
+      "When a test case's own steps have changed, an Auto Run script repair can now follow the new steps.",
+    ],
+  },
+  {
     version: "2.1.1-beta.1",
     date: "2026-10-05",
     items: [
