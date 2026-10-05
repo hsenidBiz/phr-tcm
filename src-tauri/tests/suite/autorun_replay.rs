@@ -10,8 +10,9 @@ use v2_lib::autorun::recipe::save_recipe;
 use std::path::Path;
 use v2_lib::autorun::nav::{
     is_setup_problem, nav_path, no_address, no_path, save_nav, NavFile, Route, AFTER_SIGN_IN, NO_ACCOUNT, NO_MODULE,
-    UNREACHED_PREFIX,
+    TRIED_TWICE, UNREACHED_PREFIX,
 };
+use v2_lib::autorun::transient::{FIRST_TRY, RETRY_PASSED};
 use v2_lib::autorun::replay::{
     propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
@@ -140,7 +141,7 @@ async fn a_run_that_finished_but_could_not_be_saved_says_so() {
     let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    let res = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {})
+    let res = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
         .await;
     let e = res.unwrap_err();
     assert!(e.starts_with("the run finished but could not be saved: "), "{e}");
@@ -280,7 +281,7 @@ async fn with_no_account_picked_a_script_signs_in_as_its_own() {
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
 
@@ -661,7 +662,7 @@ async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_r
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
     let mut phases: Vec<String> = vec![];
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some(" leave "))], None, &quick(), &cancel, &mut |p: ReplayProgress| {
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some(" leave "))], None, false, &quick(), &cancel, &mut |p: ReplayProgress| {
         phases.push(p.phase);
     })
     .await
@@ -696,7 +697,7 @@ async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
 
@@ -721,7 +722,7 @@ async fn a_case_with_no_module_is_blocked_and_no_browser_opens() {
     let mut browsers = browsers_of(vec![]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     let rec = &run.cases[0];
     assert_eq!(browsers.opened, 0);
     assert_eq!(rec.proposed, "Blocked");
@@ -738,7 +739,7 @@ async fn a_module_with_no_recorded_path_is_blocked_and_named() {
     let mut browsers = browsers_of(vec![]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     assert_eq!(browsers.opened, 0);
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, no_path("Payroll"));
@@ -780,7 +781,7 @@ async fn a_scripts_area_takes_the_case_there_whatever_its_module() {
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Payroll"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
     assert_eq!(
@@ -801,7 +802,7 @@ async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
     let mut browsers = browsers_of(vec![]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
     assert_eq!(browsers.opened, 0);
@@ -818,7 +819,7 @@ async fn with_paths_a_case_no_account_applies_to_is_blocked() {
     let mut browsers = browsers_of(vec![]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     assert_eq!(browsers.opened, 0);
     assert_eq!(run.cases[0].proposed, "Blocked");
     assert_eq!(run.cases[0].reason, NO_ACCOUNT);
@@ -842,7 +843,7 @@ async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4711, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4711, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
 
@@ -854,15 +855,35 @@ async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
     assert_eq!(rec.reason, module.detail);
     assert!(is_setup_problem(&rec.reason), "still read as the trip that failed");
 
-    let logged: Vec<String> = v2_lib::applog::recent(50).into_iter().map(|l| l.message).collect();
+    let logged: Vec<String> = v2_lib::applog::recent(6000).into_iter().map(|l| l.message).collect();
     let mine: Vec<&String> = logged.iter().filter(|l| l.starts_with("unattended run, case 4711")).collect();
-    assert_eq!(mine.len(), 3, "{mine:?}");
-    assert!(mine[0].contains("Could not reach module \"Leave\"") && mine[0].ends_with("What the page was doing:"), "{}", mine[0]);
+    // The first try's page goes to the log before the reload clears it,
+    // then the second try's, as a failed trip always logged it.
+    assert_eq!(mine.len(), 6, "{mine:?}");
+    assert!(
+        mine[0].starts_with("unattended run, case 4711, first try: Could not reach module \"Leave\"")
+            && !mine[0].contains(TRIED_TWICE.trim())
+            && mine[0].ends_with("What the page was doing:"),
+        "{}",
+        mine[0]
+    );
     assert_eq!(
         mine[1],
+        "unattended run, case 4711, first try, page: request still waiting after 14s: GET https://hr.example.internal/hr/pmsv10/PerformanceCycle"
+    );
+    assert_eq!(mine[2], "unattended run, case 4711, first try, page: console error: initialData is not defined");
+    assert!(
+        mine[3].starts_with("unattended run, case 4711: Could not reach module \"Leave\"")
+            && mine[3].contains(TRIED_TWICE.trim())
+            && mine[3].ends_with("What the page was doing:"),
+        "{}",
+        mine[3]
+    );
+    assert_eq!(
+        mine[4],
         "unattended run, case 4711, page: request still waiting after 14s: GET https://hr.example.internal/hr/pmsv10/PerformanceCycle"
     );
-    assert_eq!(mine[2], "unattended run, case 4711, page: console error: initialData is not defined");
+    assert_eq!(mine[5], "unattended run, case 4711, page: console error: initialData is not defined");
 }
 
 #[tokio::test]
@@ -876,11 +897,11 @@ async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_s
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4712, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4712, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
     assert!(!run.cases[0].reason.contains(PAGE_LOG_NOTE.trim()), "{}", run.cases[0].reason);
-    assert!(!v2_lib::applog::recent(50).iter().any(|l| l.message.starts_with("unattended run, case 4712")));
+    assert!(!v2_lib::applog::recent(6000).iter().any(|l| l.message.starts_with("unattended run, case 4712")));
 }
 
 #[tokio::test]
@@ -893,7 +914,7 @@ async fn a_path_click_that_finds_nothing_blocks_the_case_with_a_picture_and_runs
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     let rec = &run.cases[0];
     let module = &rec.steps.iter().find(|s| s.step_number == MODULE_STEP).unwrap().outcomes[0];
     assert!(!module.ok);
@@ -917,13 +938,215 @@ async fn a_path_that_ends_somewhere_else_fails_its_arrival_check() {
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     let rec = &run.cases[0];
     assert_eq!(rec.proposed, "Blocked");
     assert_eq!(
         rec.reason,
-        "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - the page ended on /hr/leave/other, not /hr/leave/apply."
+        "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - the page ended on /hr/leave/other, not /hr/leave/apply. \
+         Tried twice, reloading the start page between."
     );
+}
+
+/// Spec §5: a trip that stalls reloads the start page and goes once more;
+/// the second go reaching the module is all the case records, and its
+/// steps run as usual.
+#[tokio::test]
+async fn a_stalled_trip_reloads_the_start_page_and_the_second_go_reaches_the_module() {
+    let _tail = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &script(4721, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]))).unwrap();
+    // The first two menu clicks land nowhere: the first trip stalls.
+    let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
+    d.page_log = vec!["request still waiting after 14s: GET https://hr.example.internal/hr/menu".to_string()];
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(4721, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec![
+            "navigate /hr/home/index", "click #go",
+            "click Leave", "click Apply Leave",
+            "navigate /hr/home/index",
+            "click Leave", "click Apply Leave",
+            "check yes",
+        ]
+    );
+    let rec = &run.cases[0];
+    let modules: Vec<&StepRecord> = rec.steps.iter().filter(|s| s.step_number == MODULE_STEP).collect();
+    assert_eq!(modules.len(), 1, "one Go to line, whatever it took");
+    assert!(modules[0].outcomes[0].ok, "{:?}", modules[0].outcomes);
+    assert_eq!(modules[0].outcomes[0].detail, "Go to Leave");
+    assert_eq!(rec.proposed, "Passed", "{}", rec.reason);
+    // What the first try's page was doing is logged before the reload.
+    let logged: Vec<String> = v2_lib::applog::recent(6000).into_iter().map(|l| l.message).collect();
+    assert!(
+        logged.iter().any(|l| l == "unattended run, case 4721, first try, page: request still waiting after 14s: GET https://hr.example.internal/hr/menu"),
+        "{logged:?}"
+    );
+}
+
+/// Review focus 3: one reload, then the report - never a loop. Both goes
+/// failing give one Blocked line carrying the "tried twice" sentence.
+#[tokio::test]
+async fn a_trip_that_fails_twice_is_reported_once_after_one_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+
+    let log = app.log.lock().unwrap().clone();
+    assert_eq!(log.iter().filter(|l| l.starts_with("navigate")).count(), 2, "the sign-in's load and one reload: {log:?}");
+    assert_eq!(log.iter().filter(|l| *l == "click Leave").count(), 2, "two goes: {log:?}");
+    let rec = &run.cases[0];
+    let modules: Vec<&StepRecord> = rec.steps.iter().filter(|s| s.step_number == MODULE_STEP).collect();
+    assert_eq!(modules.len(), 1);
+    let module = &modules[0].outcomes[0];
+    assert!(!module.ok);
+    assert!(module.detail.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - "), "{}", module.detail);
+    assert!(module.detail.ends_with(TRIED_TWICE), "{}", module.detail);
+    assert_eq!(TRIED_TWICE, " Tried twice, reloading the start page between.");
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(rec.reason, module.detail);
+    assert!(is_setup_problem(&rec.reason), "still read as the trip that failed");
+    assert_eq!(rec.retried, None, "a module that was not reached is never a transient retry");
+    assert_eq!(browsers.opened, 1);
+}
+
+/// A mid-script `sign_in`'s trip back gets the same second go.
+#[tokio::test]
+async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
+    ] }]));
+    let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
+    let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
+    let mut account = None;
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+        .await
+        .unwrap();
+    assert!(outcomes[0].ok && outcomes[0].detail.ends_with("; then Go to Leave"), "{outcomes:?}");
+    assert!(outcomes[1].ok, "{outcomes:?}");
+    let log = app.log.lock().unwrap().clone();
+    assert_eq!(log.iter().filter(|l| *l == "click Leave").count(), 2, "{log:?}");
+    assert_eq!(log.last().map(String::as_str), Some("check yes"));
+}
+
+// ---- Transient retry (spec §6) --------------------------------------------
+
+/// Case 1, one passing check, its first browser going silent at once.
+async fn first_go_silent(second: common::ScriptedDriver, retry: bool) -> (LocalRun, FakeBrowsers) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers = browsers_of(vec![harness_driver(), second]);
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, retry, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    (run, browsers)
+}
+
+#[tokio::test]
+async fn a_transient_failure_runs_once_more_in_a_fresh_browser_and_passes_saying_why() {
+    let (run, browsers) = first_go_silent(common::FakePage::default().driver(), true).await;
+    assert_eq!((browsers.opened, browsers.closed), (2, 2), "a fresh browser for the second go");
+    assert_eq!(run.cases.len(), 1, "one record per case");
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().expect("a retried case says so");
+    assert!(first.starts_with("the browser stopped answering at step 1: "), "{first}");
+    assert_eq!(rec.proposed, "Passed");
+    assert_eq!(rec.reason, format!("passed on a second try after a transient failure: {first}"));
+    assert_eq!(RETRY_PASSED, "passed on a second try after a transient failure: ");
+    assert!(rec.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.ok), "only the final go's steps: {:?}", rec.steps);
+}
+
+/// Review focus 2: never a third go. A case transient twice is reported
+/// once, with both sentences.
+#[tokio::test]
+async fn a_case_that_fails_transiently_again_is_reported_once_with_both_sentences() {
+    let (run, browsers) = first_go_silent(harness_driver(), true).await;
+    assert_eq!(browsers.opened, 2, "one retry, never two");
+    assert_eq!(run.cases.len(), 1);
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().unwrap();
+    assert_eq!(rec.proposed, "Blocked");
+    assert!(rec.reason.starts_with("the browser stopped answering at step 1: "), "{}", rec.reason);
+    assert!(rec.reason.ends_with(&format!("{FIRST_TRY}{first})")), "{}", rec.reason);
+    assert_eq!(FIRST_TRY, " (first try: ");
+}
+
+#[tokio::test]
+async fn a_retry_that_fails_otherwise_proposes_what_the_second_go_found() {
+    let (run, _) = first_go_silent(checking_driver(), true).await;
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().unwrap();
+    // `checking_driver` passes only "yes"; the script checks "ok".
+    assert_eq!(rec.proposed, "Failed");
+    assert!(rec.reason.starts_with("step 1: "), "{}", rec.reason);
+    assert!(rec.reason.ends_with(&format!("{FIRST_TRY}{first})")), "{}", rec.reason);
+}
+
+#[tokio::test]
+async fn an_assertion_that_fails_is_never_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Failed");
+    assert_eq!(run.cases[0].retried, None);
+}
+
+#[tokio::test]
+async fn with_the_option_off_nothing_is_retried() {
+    let (run, browsers) = first_go_silent(common::FakePage::default().driver(), false).await;
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].retried, None);
+    assert!(!run.cases[0].reason.contains("second try"), "{}", run.cases[0].reason);
+}
+
+/// A stop asked for during the first go is a stop: no second go.
+#[tokio::test]
+async fn a_stopped_run_does_not_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers = browsers_of(vec![harness_driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |p: ReplayProgress| {
+        if p.phase == "step" {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(browsers.opened, 1, "{:?}", run.cases);
+    assert_eq!(run.cases[0].retried, None);
 }
 
 /// Review focus 5.
@@ -937,7 +1160,7 @@ async fn an_address_that_changes_a_moment_after_the_last_click_still_counts() {
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     assert_eq!(run.cases[0].proposed, "Passed", "{}", run.cases[0].reason);
 }
 
@@ -958,7 +1181,7 @@ async fn a_sign_in_in_the_middle_of_a_script_goes_back_to_the_module_before_the_
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
 
     // The second sign-in may come from the saved session (no form, so no
     // `#go`) - what matters is what happens around it.
@@ -985,7 +1208,7 @@ async fn a_project_whose_file_has_no_paths_runs_exactly_as_before() {
     let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     let rec = &run.cases[0];
     assert_eq!(rec.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(), vec![1]);
     assert_eq!(rec.proposed, "Passed");
@@ -1003,7 +1226,7 @@ async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens(
     let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    let err = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {})
+    let err = run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap_err();
     assert!(err.contains("areas file is not readable"), "{err}");
@@ -1049,7 +1272,7 @@ async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
     let rec = &run.cases[0];
     assert!(rec.steps.iter().find(|s| s.step_number == MODULE_STEP).unwrap().outcomes[0].ok, "{:?}", rec.steps);
     assert_eq!(rec.proposed, "Failed", "{}", rec.reason);
@@ -1187,6 +1410,8 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     // The runner's sentence first, the sign-in after it: read by position.
     assert!(outcomes[0].detail.starts_with(&format!("{UNREACHED_PREFIX}Leave\": click 2, ")), "{}", outcomes[0].detail);
     assert!(outcomes[0].detail.ends_with(&format!("{AFTER_SIGN_IN}signed in as Administrator)")), "{}", outcomes[0].detail);
+    assert!(outcomes[0].detail.contains(&format!("{TRIED_TWICE}{AFTER_SIGN_IN}")), "{}", outcomes[0].detail);
+    assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
     let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None }];
@@ -1217,7 +1442,7 @@ async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() 
     let mut browsers = browsers_of(vec![d1, d2]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], Some("lee"), &quick(), &cancel, &mut |_| {})
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], Some("lee"), false, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
     for case in &run.cases {

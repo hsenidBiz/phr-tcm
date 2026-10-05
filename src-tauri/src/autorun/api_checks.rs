@@ -517,10 +517,13 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
         Ok(e) => e,
         Err(out) => return out,
     };
-    // Read only for a JSON check, and never for a redirected request (what
-    // Chrome holds is the next page's body); otherwise never looked at.
-    let body = match (json, &entry.state) {
-        (Some(_), NetState::Finished) if entry.redirect.is_none() => match body_of(d, &entry.id).await {
+    // Read only for a JSON check, or for an unexpected 400 - whether it
+    // said why is what tells a refused request from a transient one
+    // (`transient`) - and never for a redirected request (what Chrome
+    // holds is the next page's body); otherwise never looked at.
+    let unexpected_400 = entry.status == Some(400) && *status != 400;
+    let body = match (json.is_some() || unexpected_400, &entry.state) {
+        (true, NetState::Finished) if entry.redirect.is_none() => match body_of(d, &entry.id).await {
             Ok(b) => b,
             Err(out) => return out,
         },

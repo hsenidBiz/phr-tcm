@@ -455,6 +455,19 @@ pub fn menu_app(
     landing: &'static str,
     lag: usize,
 ) -> (ScriptedDriver, MenuApp) {
+    stalling_menu_app(entries, landing, lag, 0)
+}
+
+/// `menu_app` whose first `stalls` menu clicks land nowhere - a page still
+/// busy loading behind its menu, the way a first trip to a module can
+/// stall. The clicks are still logged.
+pub fn stalling_menu_app(
+    entries: &[(&'static str, &'static str, &'static str)],
+    landing: &'static str,
+    lag: usize,
+    stalls: usize,
+) -> (ScriptedDriver, MenuApp) {
+    let mut stalls = stalls;
     let app = MenuApp { log: Arc::new(Mutex::new(vec![])), path: Arc::new(Mutex::new("/".to_string())) };
     let (log, path) = (app.log.clone(), app.path.clone());
     let entries: Vec<(String, String, String)> =
@@ -527,7 +540,9 @@ pub fn menu_app(
                 } else if let Some(id) = last_probed.strip_prefix("ax-").and_then(|s| s.parse::<usize>().ok()) {
                     if let Some((_, name, dest)) = id.checked_sub(100).and_then(|i| entries.get(i)) {
                         log.lock().unwrap().push(format!("click {name}"));
-                        if lag == 0 {
+                        if stalls > 0 {
+                            stalls -= 1;
+                        } else if lag == 0 {
                             *path.lock().unwrap() = dest.clone();
                         } else {
                             pending = Some((dest.clone(), lag));

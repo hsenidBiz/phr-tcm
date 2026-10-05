@@ -1,0 +1,110 @@
+//! Which failed unattended cases are worth one more go (spec §6).
+//!
+//! Pure: it reads a finished case and its script, and decides. A case is
+//! transient when its FIRST failure is one of:
+//! - an API check (`expect_response`, `api_request`) answered 502, 503 or
+//!   504, or 400 with an empty body;
+//! - a request the step waited for (an API check's, or a `navigate`'s
+//!   page load) failed at the network level, `net::ERR_*`;
+//! - the browser stopped answering (a harness failure).
+//!
+//! Decided by where the failure sits - which action of which step wrote
+//! it - and never by its words alone: a page's dialog or a `check_text`
+//! value can say "answered 503" too, and that is still the page failing
+//! the test. An assertion that fails is never transient.
+
+use super::{CaseRecord, CaseScript};
+use crate::browser::actions::{Action, ActionOutcome, WOULD_NOT_LOAD};
+
+/// The reason a retried case that passed on its second go proposes.
+pub const RETRY_PASSED: &str = "passed on a second try after a transient failure: ";
+/// Between a retried case's second-go reason and its first go's, closed by
+/// `)`: the second go's words first, so a reason still begins the way
+/// every reader of it expects (`step N:`, the trip's sentence...).
+pub const FIRST_TRY: &str = " (first try: ";
+
+/// Chrome's prefix for a request that failed at the network level.
+const NET_ERR: &str = "net::ERR_";
+/// The page calling its own request off - not the network failing.
+const ABORTED: &str = "net::ERR_ABORTED";
+
+/// The first failure's sentence - the case's reason - when `case` failed
+/// in a way worth one more go; `None` otherwise. Only a case proposed
+/// Failed or Blocked qualifies: a stopped case proposes nothing. Without
+/// its script only a harness failure can be told.
+pub fn is_transient(case: &CaseRecord, script: Option<&CaseScript>) -> Option<String> {
+    if !matches!(case.proposed.as_str(), "Failed" | "Blocked") {
+        return None;
+    }
+    let (n, i, first) = case
+        .steps
+        .iter()
+        .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
+        .find(|(_, _, o)| !o.ok && !o.detail.starts_with("not run:"))?;
+    let transient = first.harness || {
+        let action = script.and_then(|sc| sc.steps.iter().find(|s| s.step_number == n)).and_then(|s| s.actions.get(i));
+        action.is_some_and(|a| network_glitch(a, first))
+    };
+    transient.then(|| case.reason.clone())
+}
+
+/// The one record a retried case keeps: the second go's steps and
+/// proposal, `retried` holding the first go's sentence, and a reason that
+/// names it - `RETRY_PASSED` when the second go passed, else the second
+/// go's own reason followed by `FIRST_TRY`. The time is both goes'.
+pub fn after_retry(first: String, first_ms: Option<i32>, mut second: CaseRecord) -> CaseRecord {
+    second.reason = if second.proposed == "Passed" {
+        format!("{RETRY_PASSED}{first}")
+    } else {
+        format!("{}{FIRST_TRY}{first})", second.reason)
+    };
+    second.duration_ms = match (first_ms, second.duration_ms) {
+        (Some(a), Some(b)) => Some(a.saturating_add(b)),
+        (a, b) => a.or(b),
+    };
+    second.retried = Some(first);
+    second
+}
+
+/// A failure the network or the server's gateway made, read from the
+/// sentence the action that failed writes.
+fn network_glitch(action: &Action, out: &ActionOutcome) -> bool {
+    match action {
+        Action::ExpectResponse { .. } | Action::ApiRequest { .. } => api_glitch(&out.detail),
+        Action::Navigate { .. } => {
+            // `<url> would not load: <errorText>`: an address has no spaces,
+            // so the first such phrase is the runner's.
+            out.detail.find(WOULD_NOT_LOAD).is_some_and(|at| net_error(&out.detail[at + WOULD_NOT_LOAD.len()..]))
+        }
+        _ => false,
+    }
+}
+
+/// An API check's sentence begins `<METHOD> <path> `, neither with a space
+/// in it; what follows says how it failed (`api_checks`).
+fn api_glitch(detail: &str) -> bool {
+    let mut parts = detail.splitn(3, ' ');
+    let (Some(_method), Some(_path), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    if let Some(why) = rest.strip_prefix("failed: ") {
+        return net_error(why);
+    }
+    let Some(answer) = rest.strip_prefix("answered ") else {
+        return false;
+    };
+    let Some((got, after)) = answer.split_once(", expected ") else {
+        return false;
+    };
+    match got {
+        "502" | "503" | "504" => true,
+        // Nothing after the expected status: no body was shown, so it was
+        // empty - a 400 that said why is the server refusing the request.
+        "400" => !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()),
+        _ => false,
+    }
+}
+
+fn net_error(why: &str) -> bool {
+    why.starts_with(NET_ERR) && !why.starts_with(ABORTED)
+}

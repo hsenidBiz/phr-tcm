@@ -31,6 +31,7 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         reason: format!("step {step_number}: {detail}"),
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 

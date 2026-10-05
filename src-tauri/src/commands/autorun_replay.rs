@@ -144,7 +144,8 @@ impl Drop for RealBrowsers {
 /// arrives as `ReplayProgress` events while this is pending. `account`
 /// signs in every case, over the account a script names (null leaves each
 /// script to its own); it must be a key in the Accounts list, or the run
-/// does not start.
+/// does not start. `retry_transient` runs a case whose failure looked
+/// transient once more, in a fresh browser (`autorun::transient`).
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -157,6 +158,7 @@ pub async fn auto_run_replay(
     account: Option<String>,
     browser_name: String,
     watch: bool,
+    retry_transient: bool,
 ) -> Result<LocalRun, String> {
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
@@ -196,6 +198,7 @@ pub async fn auto_run_replay(
         &mut run,
         &list,
         run_account.as_deref(),
+        retry_transient,
         &timing,
         &CANCEL,
         &mut |p: ReplayProgress| {

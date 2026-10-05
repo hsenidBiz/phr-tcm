@@ -108,6 +108,7 @@ fn failed_at_3(case_id: i32) -> CaseRecord {
         reason: "step 3: the toast said Error 500".into(),
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 

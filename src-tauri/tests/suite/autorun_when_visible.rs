@@ -185,6 +185,67 @@ async fn with_addresses_switched_off_a_guarded_navigate_never_reaches_the_browse
     assert!(d.calls_to("Page.navigate").is_empty());
 }
 
+/// A page whose `#late` banner shows up only `after` it was opened; every
+/// other css locator is there from the start and clickable. Each click is
+/// logged by the locator it was aimed at.
+fn late_banner_app(after: std::time::Duration) -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let opened = std::time::Instant::now();
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = last_selector != "#late" || opened.elapsed() >= after;
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// Review focus 1: a banner that shows up just after `within_ms` is not
+/// waited for. The guard passes as "not shown, skipped", nothing clicks the
+/// banner once it has appeared, and the next step runs as it would have.
+#[tokio::test]
+async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = late_banner_app(std::time::Duration::from_millis(150));
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#late" }, "within_ms": 40,
+                               "then": [ { "kind": "click", "selector": { "css": "#late" } } ] }));
+    let first = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(first[0].ok, "{:?}", first[0]);
+    assert_eq!(first[0].detail, format!("#late {NOT_SHOWN}"));
+
+    // The banner is up by the time the next step begins.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let save = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
+    let next = StepScript { step_number: 2, actions: vec![save], unchecked: None };
+    let second = run_step(&mut d, dir.path(), "Acme", "Web", &next, &quick(), &mut acc).await.unwrap();
+    assert!(second[0].ok, "the next step runs as usual: {:?}", second[0]);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#save".to_string()], "the late banner is never clicked");
+}
+
 /// The executor alone cannot carry one out: its `then` may hold an upload,
 /// which only the runner can place.
 #[tokio::test]

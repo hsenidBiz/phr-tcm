@@ -578,9 +578,10 @@ export const commands = {
 	 *  arrives as `ReplayProgress` events while this is pending. `account`
 	 *  signs in every case, over the account a script names (null leaves each
 	 *  script to its own); it must be a key in the Accounts list, or the run
-	 *  does not start.
+	 *  does not start. `retry_transient` runs a case whose failure looked
+	 *  transient once more, in a fresh browser (`autorun::transient`).
 	 */
-	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch })),
+	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
 	/**
@@ -1525,6 +1526,12 @@ export type CaseRecord_Deserialize = {
 	duration_ms?: number | null,
 	/**  The account the case ran as (a key, never a login). */
 	account?: string | null,
+	/**
+	 *  Set when an unattended case failed in a way that looked transient
+	 *  and was run once more (`transient`): the first try's failure
+	 *  sentence. The steps above are the final try's only.
+	 */
+	retried?: string | null,
 };
 
 /**
@@ -1550,6 +1557,12 @@ export type CaseRecord_Serialize = {
 	duration_ms?: number | null,
 	/**  The account the case ran as (a key, never a login). */
 	account?: string | null,
+	/**
+	 *  Set when an unattended case failed in a way that looked transient
+	 *  and was run once more (`transient`): the first try's failure
+	 *  sentence. The steps above are the final try's only.
+	 */
+	retried?: string | null,
 };
 
 /**

@@ -1356,6 +1356,27 @@ async fn try_refuses_a_file_navigate() {
     }
 }
 
+/// The same refusal reaches inside a guard: a `when_visible` whose `then`
+/// would send the person's browser to a local file is refused before it
+/// looks for anything.
+#[tokio::test]
+async fn try_refuses_a_file_navigate_inside_a_when_visible() {
+    for url in ["file:///etc/passwd", "  FILE://C:/secrets.txt"] {
+        let body = serde_json::json!({ "action": {
+            "kind": "when_visible",
+            "selector": { "role": "button", "name": "Accept" },
+            "then": [
+                { "kind": "click", "selector": { "role": "button", "name": "Accept" } },
+                { "kind": "navigate", "url": url }
+            ]
+        } })
+        .to_string();
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, "a tried navigate goes to http or https only");
+    }
+}
+
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {
@@ -1377,6 +1398,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             reason: String::new(),
             duration_ms: None,
             account: None,
+            retried: None,
         }],
         mode: String::new(),
         published: None,

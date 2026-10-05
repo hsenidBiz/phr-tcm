@@ -54,6 +54,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
         reason: String::new(),
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 
@@ -70,6 +71,7 @@ fn empty_case() -> CaseRecord {
         reason: String::new(),
         duration_ms: None,
         account: None,
+        retried: None,
     }
 }
 
@@ -183,6 +185,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 reason: "step 2: button \"Save\" not found".to_string(),
                 duration_ms: Some(1234),
                 account: Some("hr.admin".to_string()),
+                retried: None,
             },
             CaseRecord {
                 case_id: 8,
@@ -203,6 +206,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 reason: "step 1: the page refused: no such element".to_string(),
                 duration_ms: Some(500),
                 account: None,
+                retried: None,
             },
             CaseRecord {
                 case_id: 9,
@@ -214,6 +218,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 reason: "every action of 1 steps passed".to_string(),
                 duration_ms: Some(200),
                 account: None,
+                retried: None,
             },
         ],
         mode: String::new(),

@@ -141,10 +141,8 @@ pub async fn run_step_routed<D: Driver>(
                         }
                         None => as_action_outcome(&signed),
                         Some(rt) => {
-                            let went = nav::reached(
-                                rt.path.name(),
-                                nav::go_to_module(d, rt, nav::TripFrom::SignIn, timing).await,
-                            );
+                            let who = format!("Auto Run, step {}", step.step_number);
+                            let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who).await;
                             if !went.ok {
                                 blocked = Some(AFTER_UNREACHED);
                             }
@@ -221,7 +219,7 @@ async fn when_visible<D: Driver>(
         return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
     }
     let Action::WhenVisible { selector, within_ms, then } = action else {
-        unreachable!("only a when_visible is routed here");
+        return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a when_visible")), None);
     };
     let target = selector.describe();
     match shows_up(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {

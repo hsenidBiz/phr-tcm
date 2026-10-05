@@ -297,6 +297,30 @@ async fn a_wrong_status_names_both_and_shows_the_body_when_one_was_read() {
     );
 }
 
+/// An unexpected 400 is read even with no JSON asked for: whether it said
+/// why is what tells a refused request from a transient one (spec §6).
+#[tokio::test]
+async fn an_unexpected_400_shows_its_body_so_an_empty_one_can_be_told_apart() {
+    let mut d = browser(|| Ok(json!({ "body": "{\"error\":\"Name is required\"}", "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(400));
+    let out = check(&mut d, &expect(Some("POST"), "/Save", 200, None, None)).await;
+    assert_eq!(
+        out.detail,
+        "POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200 - the response began: {\"error\":\"Name is required\"}"
+    );
+
+    let mut d = browser(|| Ok(json!({ "body": "", "base64Encoded": false })));
+    on_first_look(&mut d, save_finished(400));
+    let out = check(&mut d, &expect(Some("POST"), "/Save", 200, None, None)).await;
+    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200");
+
+    // An expected 400 is a pass, and its body is still never read.
+    let mut d = browser(|| panic!("the body of an expected answer is not read"));
+    on_first_look(&mut d, save_finished(400));
+    let out = check(&mut d, &expect(Some("POST"), "/Save", 400, None, None)).await;
+    assert!(out.ok, "{out:?}");
+}
+
 #[tokio::test]
 async fn a_body_chrome_no_longer_holds_or_that_is_not_json_fails_plainly() {
     // Review focus 2.
