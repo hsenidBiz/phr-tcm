@@ -1546,6 +1546,30 @@ test("capture mode suppresses the tour, the what's new modal, the update banner 
   expect(screen.queryByRole("heading", { name: /session expired/i })).not.toBeInTheDocument();
 });
 
+// The entries load on demand (only a launch after an update needs them), so
+// this is the whole path: the version check, the import, the modal, and
+// remembering the version once it is dismissed.
+test("after an update, What's new lists what changed and is remembered once dismissed", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const [current, previous] = CHANGELOG;
+  localStorage.setItem("tcm-v2-changelog-seen", previous.version);
+  signedInMocks((cmd) => {
+    if (cmd === "plugin:app|version") return current.version;
+  });
+  renderApp();
+  const heading = await screen.findByRole("heading", { name: "What's new" });
+  const dialog = heading.closest<HTMLElement>('[role="dialog"]')!;
+  const titles = within(dialog)
+    .getAllByRole("heading", { level: 3 })
+    .map((h) => h.textContent ?? "");
+  expect(titles).toHaveLength(1);
+  // One entry: the one installed, not the one already seen.
+  expect(titles[0].startsWith(`Version ${current.version}`)).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Got it" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-changelog-seen")).toBe(current.version));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "What's new" })).not.toBeInTheDocument());
+});
+
 // The DEV BUILD panel is additionally gated on `import.meta.env.MODE !==
 // "test"` (DEV_TOOLS), which is fixed at module load - vitest's own mode is
 // "test", so this file's other renders never reach it regardless of capture

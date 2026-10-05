@@ -315,8 +315,8 @@ export default function WorkItemDrawer({
     JSON.stringify(draft) !== JSON.stringify(toDraft(detail.data));
 
   // Portalled for the same reason as ui/modal.tsx and CommentModal: this
-  // is opened from the board, which renders inside AnimatedContent, and a
-  // `fixed` overlay inside that GSAP transform is positioned against the
+  // is opened from the board, which renders inside the screen fade, and a
+  // `fixed` overlay inside that transform is positioned against the
   // scrollable wrapper rather than the viewport.
   return createPortal(
     <div

@@ -1237,8 +1237,10 @@ table {
   --motion-quick: 150ms; /* dropdown / modal close */
   --motion-fast: 250ms; /* dropdown / modal open */
   --motion-draw: 350ms; /* switch travel */
+  --motion-screen: 120ms; /* a screen fading up on a tab switch */
   --motion-ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-ease-toggle: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --motion-ease-screen: cubic-bezier(0.215, 0.61, 0.355, 1); /* power3.out */
   --motion-scale-dropdown: 0.97;
   --motion-scale-dropdown-close: 0.99;
   --motion-scale-modal: 0.96;
@@ -1423,13 +1425,37 @@ table {
   animation: t-panel-in var(--motion-fast) var(--motion-ease-smooth-out) both;
 }
 
+/* Every screen fades up as it arrives: App keys the wrapper on the section,
+   so each tab switch replays it. 8px over 120ms on power3.out (snappy, by
+   the owner's request of 2026-08-22).
+   It ends on an identity transform, not `none`, and keeps one under reduced
+   motion too, as the GSAP fade it replaces did: the screens are laid out
+   with the wrapper as their stacking context and as the containing block
+   for `absolute` and `fixed` descendants. That containing block is also why
+   overlays and floating controls inside a screen portal to <body>. */
+@keyframes t-screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.t-screen-in {
+  transform: translateY(0);
+  animation: t-screen-in var(--motion-screen) var(--motion-ease-screen) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .t-dropdown,
   .t-modal,
   .t-backdrop,
   .t-toggle-thumb,
   .t-shake,
-  .t-panel-in {
+  .t-panel-in,
+  .t-screen-in {
     animation: none !important;
   }
   .t-dropdown.is-closing {

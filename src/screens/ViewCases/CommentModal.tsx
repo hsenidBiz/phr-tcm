@@ -43,7 +43,7 @@ export default function CommentModal({
   }, [onClose]);
 
   // PORTALLED to <body>, like ui/modal.tsx and for the same reason: this
-  // renders inside AnimatedContent, whose GSAP transform makes any
+  // renders inside the screen fade, whose transform makes any
   // descendant `position: fixed` resolve against that scrollable wrapper
   // instead of the viewport. Without the portal the backdrop covered only
   // the screen area and the dialog centred inside it - so opening a

@@ -7,7 +7,7 @@ import { useFocusTrap } from "./focusTrap";
 
 /**
  * Backdrop + centered panel, PORTALED to document.body. The portal matters:
- * screens render inside AnimatedContent, whose GSAP transform would
+ * screens render inside the screen fade, whose transform would
  * otherwise trap a `position: fixed` overlay inside that (scrollable)
  * region instead of the viewport - the backdrop covered only the screen
  * area and the panel centered within it, so a tall list pushed the modal

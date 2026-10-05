@@ -495,7 +495,7 @@ export default function ViewCases({
           screens deep in a long detail when they want it all gone, and a
           control that has scrolled away is no control. Bottom LEFT, and
           portalled to <body> for the same reason as Run Tests' action bar:
-          this screen renders inside AnimatedContent, whose GSAP transform
+          this screen renders inside the screen fade, whose transform
           would make `fixed` mean the scroll region instead of the
           viewport. */}
       {collapsible > 0 &&
