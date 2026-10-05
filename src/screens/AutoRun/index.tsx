@@ -41,6 +41,7 @@ import {
   IconRun,
   IconSiteAddress,
   IconTestFiles,
+  IconSaveWords,
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -67,6 +68,7 @@ import {
   type ResultFilter,
 } from "./verdicts";
 import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
+import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness, type AutoRunTab } from "./useAutoRunReadiness";
 
@@ -155,6 +157,7 @@ export default function AutoRun({
   const [navOpen, setNavOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
+  const [saveWordsOpen, setSaveWordsOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -841,6 +844,45 @@ export default function AutoRun({
                         Manage
                       </Button>
                     </SetupRow>
+
+                    {/* What a script marked Must not save has stopped: the
+                        built-in words, fixed, then the project's own. */}
+                    <SetupRow
+                      label="Save words"
+                      state={
+                        !setupReady ? (
+                          <span className="text-muted">{needsProject}</span>
+                        ) : nav.isError ? (
+                          <span className="text-danger">The save words could not be read</span>
+                        ) : nav.isPending ? (
+                          <span className="text-muted">Loading…</span>
+                        ) : (
+                          <>
+                            <span className="text-muted">
+                              {(nav.data?.built_in_save_words?.length
+                                ? nav.data.built_in_save_words
+                                : BUILT_IN_SAVE_WORDS
+                              ).join(", ")}
+                            </span>
+                            {(nav.data?.save_words ?? []).length > 0 && (
+                              <span>, {(nav.data?.save_words ?? []).join(", ")}</span>
+                            )}
+                          </>
+                        )
+                      }
+                    >
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label="Edit save words"
+                        disabled={!setupReady || nav.isPending || nav.isError}
+                        title={needsProject}
+                        onClick={() => setSaveWordsOpen(true)}
+                      >
+                        <IconSaveWords aria-hidden />
+                        Edit
+                      </Button>
+                    </SetupRow>
                   </div>
                 </section>
                 <p className="text-xs text-muted">
@@ -1084,6 +1126,14 @@ export default function AutoRun({
       )}
       {siteOpen && (
         <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
+      )}
+      {saveWordsOpen && (
+        <SaveWordsDialog
+          org={org}
+          project={project}
+          view={nav.data ?? null}
+          onClose={() => setSaveWordsOpen(false)}
+        />
       )}
       {navOpen && (
         <AreasDialog

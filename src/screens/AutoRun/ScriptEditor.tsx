@@ -9,6 +9,7 @@ import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
@@ -80,6 +81,10 @@ export default function ScriptEditor({
   const [picked, setPicked] = useState<string | null>(null);
   const account = picked ?? existing.data?.account ?? "";
   const known = (accounts.data ?? []).some((a) => a.key === account);
+  // null = untouched, so the saved script's flag shows until the person
+  // changes it. Only a save from here can turn it off.
+  const [pickedNoSave, setPickedNoSave] = useState<boolean | null>(null);
+  const noSave = pickedNoSave ?? existing.data?.no_save ?? false;
 
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
@@ -133,6 +138,7 @@ export default function ScriptEditor({
       account: account === "" ? null : account,
       // Left out when blank: the module's default area.
       ...(area === "" ? {} : { area }),
+      ...(noSave ? { no_save: true } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -205,6 +211,15 @@ export default function ScriptEditor({
               {area !== "" && !areaKnown && <option value={area}>{`${area} (not recorded)`}</option>}
             </Select>
           </label>
+
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox checked={noSave} ariaLabel="Must not save" onCheckedChange={setPickedNoSave} />
+            Must not save
+          </label>
+          <p className="text-xs text-faint">
+            For a case that works on a shared draft: while it runs, any save the page tries to send
+            is stopped before it reaches the server, and the case fails.
+          </p>
 
           {existing.data && (existing.data.repairs ?? 0) > 0 && (
             <p className="text-xs text-warning">

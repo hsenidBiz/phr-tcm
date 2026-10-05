@@ -364,12 +364,16 @@ test("a sign-in that fails is shown with its steps, and the steps can still be r
   expect(s.asked).toHaveLength(2);
 });
 
-test("a step is sent with the project it belongs to", async () => {
+// The case too: the app reads its script on this machine to decide whether
+// the browser must stop the page's saves (Must not save).
+test("a step is sent with the project and the case it belongs to", async () => {
   const s = mockSignIn({ 1: { case_id: 1, title: "s", steps: STEPS } }, () => OK);
   renderPane([{ id: 1, title: "Public page" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
-  await waitFor(() => expect(s.stepped).toEqual([{ organization: "acme", project: "Web", step: STEPS[0] }]));
+  await waitFor(() =>
+    expect(s.stepped).toEqual([{ organization: "acme", project: "Web", caseId: 1, step: STEPS[0] }]),
+  );
 });
 
 test("a verdict waits for the case's own sign-in to finish; Close stays available regardless", async () => {

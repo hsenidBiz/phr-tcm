@@ -202,3 +202,37 @@ test("an area the project has not recorded is kept and marked, not silently drop
   await waitFor(() => expect(saved).toHaveLength(1));
   expect((saved[0] as { area: string }).area).toBe("Assessments");
 });
+
+test("Must not save is off for an old script, and ticking it writes no_save", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  expect(box).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(box);
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { no_save?: boolean }).no_save).toBe(true);
+});
+
+test("a person saving from the editor can turn Must not save off", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(box);
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "false"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("no_save");
+});
+
+test("a script marked Must not save keeps the flag when saved untouched", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { no_save?: boolean }).no_save).toBe(true);
+});
