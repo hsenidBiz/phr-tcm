@@ -865,6 +865,44 @@ fn the_flow_tools_reach_their_routes() {
     }
 }
 
+/// `list_api_templates` forwards its filters and paging as the query,
+/// percent-encoded; numbers may arrive as numbers or as numeric strings.
+/// Its schema and description say how to page.
+#[test]
+fn list_api_templates_forwards_filters_and_paging() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let path_for = |args: serde_json::Value| {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "list_api_templates", "arguments": args },
+        });
+        handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        calls.borrow().last().unwrap().1.clone()
+    };
+    assert_eq!(path_for(serde_json::json!({})), "/api-templates");
+    assert_eq!(
+        path_for(serde_json::json!({
+            "module": "PMS / Cycle", "search": "cycle&id", "flow": "pms-performance-cycle", "offset": 25, "limit": "50",
+        })),
+        "/api-templates?module=PMS%20%2F%20Cycle&search=cycle%26id&flow=pms-performance-cycle&offset=25&limit=50"
+    );
+    assert_eq!(path_for(serde_json::json!({ "id": "pms-create-draft-cycle" })), "/api-templates?id=pms-create-draft-cycle");
+
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "list_api_templates").unwrap().clone();
+    let props = &tool["inputSchema"]["properties"];
+    for key in ["module", "search", "flow", "id", "offset", "limit"] {
+        assert!(props.get(key).is_some(), "schema has {key}: {tool}");
+    }
+    let description = tool["description"].as_str().unwrap();
+    assert!(description.contains("next_offset"), "says how to page: {description}");
+}
+
 /// A failed run comes back as a tool error that still carries the run's
 /// report - which step failed, and what had already been created.
 #[test]

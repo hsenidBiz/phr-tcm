@@ -413,3 +413,74 @@ fn an_iframe_step_is_its_name_else_its_id_else_its_title_else_its_place() {
     assert_eq!(frame_step("", &attrs(&["title", "Search"]), 0), json!({ "css": "iframe[title='Search']" }));
     assert_eq!(frame_step("", &attrs(&["data-k", "bare"]), 2), json!({ "css": "iframe", "nth": 2 }));
 }
+
+/// The odd ids and titles a real page has: a space, a quote, a leading
+/// digit, a colon, a backslash. Shared with the live check in
+/// `browser_live`, which proves each printed step matches its frame.
+pub const ODD_FRAME_VALUES: [&str; 6] = ["my frame", "it's", "1st-frame", "ns:frame", "back\\slash", "O'Brien \\ 'co'"];
+
+/// A CSS quoted string read back: `\` followed by up to six hex digits
+/// (and one optional space) is that code point, `\` followed by anything
+/// else is that character, and an unescaped `'` ends it. `None` when the
+/// text is not one whole single-quoted string.
+fn css_string(s: &str) -> Option<String> {
+    let mut chars = s.strip_prefix('\'')?.chars().peekable();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => return chars.next().is_none().then_some(out),
+            '\\' => {
+                let mut hex = String::new();
+                while hex.len() < 6 && chars.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
+                    hex.push(chars.next().unwrap());
+                }
+                if hex.is_empty() {
+                    out.push(chars.next()?);
+                } else {
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                    if chars.peek() == Some(&' ') {
+                        chars.next();
+                    }
+                }
+            }
+            '\n' | '\r' => return None,
+            c => out.push(c),
+        }
+    }
+    None
+}
+
+/// The attribute value an `iframe[attr='...']` step matches, or the id an
+/// `iframe#id` step matches when the id is a plain CSS identifier.
+fn matched_value(css: &str, attr: &str) -> Option<String> {
+    if let Some(id) = css.strip_prefix("iframe#") {
+        let mut chars = id.chars();
+        let first = chars.next()?;
+        let plain = (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        return (attr == "id" && plain).then(|| id.to_string());
+    }
+    css_string(css.strip_prefix(&format!("iframe[{attr}="))?.strip_suffix(']')?)
+}
+
+/// Ids and titles always print a valid CSS step that names the value they
+/// came from: an id that is not a plain identifier uses `iframe[id='...']`,
+/// and both escape `\` and `'`.
+#[test]
+fn an_iframe_step_escapes_odd_ids_and_titles() {
+    let attrs = |pairs: &[&str]| json!(pairs);
+    assert_eq!(frame_step("", &attrs(&["id", "my frame"]), 0), json!({ "css": "iframe[id='my frame']" }));
+    assert_eq!(frame_step("", &attrs(&["id", "1st-frame"]), 0), json!({ "css": "iframe[id='1st-frame']" }));
+    assert_eq!(frame_step("", &attrs(&["id", "back\\slash"]), 0), json!({ "css": "iframe[id='back\\\\slash']" }));
+    assert_eq!(frame_step("", &attrs(&["title", "O'Brien \\ 'co'"]), 0), json!({ "css": "iframe[title='O\\'Brien \\\\ \\'co\\'']" }));
+    for value in ODD_FRAME_VALUES {
+        for attr in ["id", "title"] {
+            let step = frame_step("", &attrs(&[attr, value]), 0);
+            let css = step["css"].as_str().unwrap();
+            assert_eq!(matched_value(css, attr).as_deref(), Some(value), "{attr} {value:?} printed {css}");
+        }
+    }
+    // A line break in a title is escaped, never printed raw.
+    let step = frame_step("", &attrs(&["title", "two\nlines"]), 0);
+    assert_eq!(matched_value(step["css"].as_str().unwrap(), "title").as_deref(), Some("two\nlines"), "{step}");
+}

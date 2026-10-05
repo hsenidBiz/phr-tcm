@@ -1823,3 +1823,33 @@ async fn frame_a_click_inside_a_padded_frame_lands_on_the_element() {
     must(run(&mut live, json!({ "kind": "click", "selector": pad(json!({ "css": "#pad-btn" })) })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": pad(json!({ "css": "#pout" })), "equals": "hit" })).await);
 }
+
+/// The step the snapshot prints for an iframe with an odd id or title
+/// (a space, a quote, a leading digit, a colon, a backslash) is a selector
+/// the browser parses, and it matches that frame and no other.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_an_odd_id_or_title_prints_a_step_that_matches_its_frame() {
+    let mut live = open().await;
+    let values = crate::browser_locator::ODD_FRAME_VALUES;
+    let add = format!(
+        "{}.forEach((v, k) => {{ const f = document.createElement('iframe'); f.setAttribute('id', v); \
+         f.setAttribute('title', v); f.dataset.k = String(k); document.body.appendChild(f); }}); true",
+        json!(values)
+    );
+    let added = live.cdp.call("Runtime.evaluate", json!({ "expression": add, "returnByValue": true })).await.expect("no answer");
+    assert_eq!(added["result"]["value"], true, "{added}");
+    for (k, value) in values.iter().enumerate() {
+        for attr in ["id", "title"] {
+            let step = v2_lib::browser::snapshot::frame_step("", &json!([attr, value]), 0);
+            let css = step["css"].as_str().unwrap().to_string();
+            let check = format!(
+                "(() => {{ try {{ return Array.from(document.querySelectorAll({})).map(e => e.dataset.k).join(','); }} \
+                 catch (e) {{ return 'invalid: ' + e.message; }} }})()",
+                json!(css)
+            );
+            let r = live.cdp.call("Runtime.evaluate", json!({ "expression": check, "returnByValue": true })).await.expect("no answer");
+            assert_eq!(r["result"]["value"], json!(k.to_string()), "{attr} {value:?} printed {css}");
+        }
+    }
+}

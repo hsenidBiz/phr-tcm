@@ -530,6 +530,119 @@ async fn a_repairs_reason_is_persisted_and_survives_an_unchanged_resend() {
     );
 }
 
+// ------------------------------------- the tool's payload shapes, end to end
+
+/// The body `save_autorun_script` posts for these tool arguments, taken
+/// from the REAL MCP dispatch - the same function the stdio proxy runs.
+fn tool_body(arguments: serde_json::Value) -> String {
+    let posted = std::cell::RefCell::new(None);
+    let call = |method: &str, path: &str, body: &str| {
+        if (method, path) == ("POST", "/autorun-script") {
+            *posted.borrow_mut() = Some(body.to_string());
+        }
+        Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "save_autorun_script", "arguments": arguments },
+    });
+    v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+    posted.into_inner().expect("the tool posted nothing to /autorun-script")
+}
+
+/// Every shape an assistant sends a repair in reaches the route WITH its
+/// edits: the repair lands. Owner's report: "save_autorun_script through
+/// the tools drops the edits list". Each shape starts from a fresh store
+/// holding case 7, and changes step 2's locator.
+#[tokio::test]
+async fn every_payload_shape_of_a_repair_keeps_its_edits() {
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let scripts = case_7(".toast", "Saved");
+    let edits = serde_json::json!([edit_step_2("the toast has no id, only a class")]);
+    let bundle = serde_json::json!({ "scripts": scripts, "edits": edits });
+    let mut nested = scripts.clone();
+    nested[0]["edits"] = edit_step_2("the toast has no id, only a class");
+    let mut nested_list = scripts.clone();
+    nested_list[0]["edits"] = edits.clone();
+    let mut nested_no_id = scripts.clone();
+    nested_no_id[0]["edits"] = serde_json::json!({ "steps": [2], "why": "the toast has no id, only a class" });
+
+    let shapes: Vec<(&str, serde_json::Value)> = vec![
+        ("array + array", serde_json::json!({ "scripts": scripts, "edits": edits })),
+        ("array + string", serde_json::json!({ "scripts": scripts, "edits": edits.to_string() })),
+        ("string + array", serde_json::json!({ "scripts": scripts.to_string(), "edits": edits })),
+        ("string + string", serde_json::json!({ "scripts": scripts.to_string(), "edits": edits.to_string() })),
+        ("bundle in a scripts string", serde_json::json!({ "scripts": bundle.to_string() })),
+        ("bundle object as scripts", serde_json::json!({ "scripts": bundle })),
+        ("bundle in a scripts string + edits null", serde_json::json!({ "scripts": bundle.to_string(), "edits": null })),
+        ("bundle in a scripts string + the same edits", serde_json::json!({ "scripts": bundle.to_string(), "edits": edits })),
+        ("edits nested in the script", serde_json::json!({ "scripts": nested })),
+        ("edits nested as a list", serde_json::json!({ "scripts": nested_list.to_string() })),
+        ("edits nested without a case id", serde_json::json!({ "scripts": nested_no_id })),
+    ];
+    let _root = crate::serial::autorun();
+    let mut lost = vec![];
+    for (name, arguments) in shapes {
+        let dir = TempDir::new();
+        set_root(dir.path().to_path_buf());
+        let first = case_7("#toast", "Saved").to_string();
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+        assert_eq!(status, 200, "{name}: {out}");
+
+        let body = tool_body(arguments);
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        if status != 200 || !out.contains("case 7 (repaired, 1 of 3 used)") {
+            lost.push(format!("{name}: {status} {out}\n    body: {body}"));
+        }
+    }
+    assert!(lost.is_empty(), "shapes that lost their edits:\n{}", lost.join("\n"));
+}
+
+/// `edits` sent as null on a NEW script is no declaration - there is
+/// nothing to declare - and the script saves.
+#[tokio::test]
+async fn edits_null_on_a_new_script_is_no_declaration() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let body = tool_body(serde_json::json!({ "scripts": case_7("#toast", "Saved"), "edits": null }));
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7 (new)"), "{out}");
+}
+
+/// A repair sent with no `edits` at all is refused, and the sentence says
+/// `edits` is missing rather than only that a step changed.
+#[tokio::test]
+async fn a_repair_without_edits_says_edits_is_missing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let body = tool_body(serde_json::json!({ "scripts": case_7(".toast", "Saved") }));
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("step 2 was changed but not declared"), "{out}");
+    assert!(
+        out.contains("case 7 already has a script, so this save is a repair, and \"edits\" is missing."),
+        "{out}"
+    );
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
+}
+
 /// Three repairs without a person looking is the cap. Saving the script
 /// from the app's own editor (which writes `repairs: 0`) is what starts
 /// the count again.

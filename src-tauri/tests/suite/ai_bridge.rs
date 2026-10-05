@@ -2863,7 +2863,7 @@ mod api_template_routes {
 
         let (status, list) = route(&ctx(), None, "GET", "/api-templates", "", "1.0.0").await;
         assert_eq!(status, 200, "{list}");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!({ "templates": [], "flows": [], "test_files": [] }));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&list).unwrap(), json!({ "templates": [], "flows": [], "test_files": [], "paging": { "total": 0, "offset": 0, "returned": 0 } }));
     }
 
     /// What a template's `files` may name: the project's Test files, names
@@ -3370,6 +3370,168 @@ mod api_template_routes {
         assert_eq!(f["stages"][2]["optional"], true);
         assert_eq!(f["stages"][0]["templates"], json!([]));
         assert!(f["stages"][0].get("check").is_none(), "the list is a summary: {f}");
+    }
+
+    // ------------------------------------------- the list, filtered and paged
+
+    /// A project of 300 templates, each as heavy as a real one: half in
+    /// Leave, half in PMS, every one with params and outputs. Template
+    /// 137 is the only one with a param called `uniqueParam137`. Plus the
+    /// cycle flow with one template on its rules stage.
+    fn root_with_300_templates() -> tempfile::TempDir {
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        for n in 0..300 {
+            let mut v = draft();
+            v["id"] = json!(format!("tpl-{n:03}"));
+            v["title"] = json!(format!("Template number {n} that sets up a record for a long test"));
+            v["module"] = json!(if n % 2 == 0 { "Leave / Apply Leave" } else { "PMS / Performance Cycle" });
+            v["description"] = json!("A long description of what this template does, ".repeat(6));
+            v["params"] = json!([
+                { "name": if n == 137 { "uniqueParam137".to_string() } else { "cycleName".to_string() },
+                  "type": "string", "required": true, "description": "The name the record is given in the list." },
+                { "name": "startDate", "type": "string", "description": "The first day, as the screen shows it." },
+            ]);
+            v["outputs"] = json!(["cycleId", "cycleCode", "cycleStatus"]);
+            let t: v2_lib::api_templates::ApiTemplate = serde_json::from_value(v).unwrap();
+            v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        }
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-set-eval-rules", "Set the evaluation rules", "rules");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        dir
+    }
+
+    async fn list(target: &str) -> (u16, serde_json::Value, String) {
+        let (status, out) = route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        let v = serde_json::from_str(&out).unwrap_or(serde_json::Value::Null);
+        (status, v, out)
+    }
+
+    /// Review Focus 4: no arguments on a project of 300 templates is a
+    /// compact index of the first page, well under 20K characters, that
+    /// says how to page and how to get the detail.
+    #[tokio::test]
+    async fn no_arguments_on_300_templates_is_a_compact_index_under_20k() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_300_templates();
+        let (status, v, out) = list("/api-templates").await;
+        assert_eq!(status, 200, "{out}");
+        assert!(out.len() < 20_000, "{} characters", out.len());
+        let rows = v["templates"].as_array().unwrap();
+        assert_eq!(rows.len(), 25, "the default page");
+        let row = &rows[0];
+        for key in ["id", "title", "module", "effect", "proven", "stage"] {
+            assert!(row.get(key).is_some(), "the index row carries {key}: {row}");
+        }
+        for key in ["params", "outputs", "last_run"] {
+            assert!(row.get(key).is_none(), "the index row leaves out {key}: {row}");
+        }
+        assert!(v.get("test_files").is_none(), "{v}");
+        assert_eq!(v["paging"], json!({ "total": 301, "offset": 0, "returned": 25, "next_offset": 25 }));
+        let f = &v["flows"][0];
+        assert_eq!((f["id"].as_str(), f["title"].as_str()), (Some(FLOW), Some("Performance cycle wizard")));
+        assert_eq!(f["stage_count"], 5, "{f}");
+        assert!(f.get("stages").is_none(), "{f}");
+        assert_eq!(
+            v["note"],
+            "This is the index of 301 templates. Narrow it with module, search or flow until at most 25 match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most 100)."
+        );
+    }
+
+    #[tokio::test]
+    async fn the_list_pages_with_offset_and_limit() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_300_templates();
+        let (_, v, out) = list("/api-templates?offset=290&limit=25").await;
+        assert_eq!(v["paging"], json!({ "total": 301, "offset": 290, "returned": 11 }), "{out}");
+        assert_eq!(v["templates"].as_array().unwrap().len(), 11);
+        // A limit over 100 is 100.
+        let (_, hundred, _) = list("/api-templates?limit=500").await;
+        assert_eq!(hundred["paging"], json!({ "total": 301, "offset": 0, "returned": 100, "next_offset": 100 }));
+        let (_, v, _) = list("/api-templates?offset=25").await;
+        assert_eq!(v["templates"][0]["id"], hundred["templates"][25]["id"], "the second page starts where the first ended");
+        for bad in ["offset=-1", "offset=abc", "limit=0", "limit=two"] {
+            let (status, _, out) = list(&format!("/api-templates?{bad}")).await;
+            assert_eq!(status, 400, "{bad}: {out}");
+            assert!(out.contains("a whole number"), "{bad}: {out}");
+        }
+    }
+
+    /// `module` is a case-insensitive substring; `search` matches the id,
+    /// the title, or a param or output name. A filtered result that fits
+    /// in one page carries the full detail.
+    #[tokio::test]
+    async fn module_and_search_filter_and_a_small_result_is_in_full() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_300_templates();
+        let (_, v, out) = list("/api-templates?module=leave%20%2F%20APPLY").await;
+        assert_eq!(v["paging"]["total"], 150, "{out}");
+        assert!(v["templates"].as_array().unwrap().iter().all(|r| r["module"] == "Leave / Apply Leave"));
+        assert!(v["templates"][0].get("params").is_none(), "150 is the index: {out}");
+
+        let (status, v, out) = list("/api-templates?search=UNIQUEPARAM137").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["paging"], json!({ "total": 1, "offset": 0, "returned": 1 }));
+        let row = &v["templates"][0];
+        assert_eq!(row["id"], "tpl-137");
+        assert_eq!(row["params"][0]["name"], "uniqueParam137", "in full: {row}");
+        assert_eq!(row["outputs"], json!(["cycleId", "cycleCode", "cycleStatus"]));
+        assert!(row.get("last_run").is_some(), "{row}");
+        assert!(v["test_files"].is_array(), "{v}");
+        assert!(v.get("note").is_none(), "{v}");
+
+        let (_, v, _) = list("/api-templates?search=cyclestatus&module=pms&limit=100").await;
+        assert_eq!(v["paging"]["total"], 150, "an output name matches");
+        let (_, v, _) = list("/api-templates?search=tpl-01").await;
+        assert_eq!(v["paging"]["total"], 10, "an id matches: {v}");
+        let (_, v, _) = list("/api-templates?search=number%20299%20that").await;
+        assert_eq!(v["templates"][0]["id"], "tpl-299", "a title matches: {v}");
+    }
+
+    /// `flow` keeps that flow's templates and that flow alone, in full.
+    #[tokio::test]
+    async fn flow_restricts_templates_and_flows() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_300_templates();
+        let c = ctx();
+        let mut other = crate::common::cycle_flow_json();
+        other["id"] = json!("leave-request");
+        other["title"] = json!("Leave request");
+        let other: v2_lib::api_templates::flow::Flow = serde_json::from_value(other).unwrap();
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &other).unwrap();
+
+        let (status, v, out) = list(&format!("/api-templates?flow={FLOW}")).await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["paging"], json!({ "total": 1, "offset": 0, "returned": 1 }));
+        assert_eq!(v["templates"][0]["id"], "pms-set-eval-rules");
+        assert_eq!(v["flows"].as_array().unwrap().len(), 1, "{v}");
+        assert_eq!(v["flows"][0]["stages"][1]["templates"], json!(["pms-set-eval-rules"]), "in full: {v}");
+
+        let (status, _, out) = list("/api-templates?flow=never-saved").await;
+        assert_eq!(status, 404, "{out}");
+        assert_eq!(out, "no flow called \"never-saved\" is saved for this project - list_api_templates shows the ones that are");
+    }
+
+    /// `id` returns that one template in full, with the flow it is on.
+    #[tokio::test]
+    async fn id_returns_one_template_in_full() {
+        let _root = crate::serial::autorun();
+        let _dir = root_with_300_templates();
+        let (status, v, out) = list("/api-templates?id=tpl-042").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["paging"], json!({ "total": 1, "offset": 0, "returned": 1 }));
+        assert_eq!(v["templates"][0]["id"], "tpl-042");
+        assert_eq!(v["templates"][0]["params"][1]["name"], "startDate");
+        assert!(v["test_files"].is_array(), "{v}");
+
+        let (_, v, _) = list("/api-templates?id=pms-set-eval-rules").await;
+        assert_eq!(v["flows"].as_array().unwrap().len(), 1, "the flow it is on: {v}");
+        assert_eq!(v["flows"][0]["id"], FLOW);
+
+        let (status, _, out) = list("/api-templates?id=tpl-999").await;
+        assert_eq!(status, 404, "{out}");
+        assert_eq!(out, "no template called \"tpl-999\" is saved for this project - list_api_templates shows the ones that are");
     }
 }
 

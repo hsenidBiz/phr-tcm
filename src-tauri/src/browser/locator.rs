@@ -343,8 +343,12 @@ async fn dedupe_by_backend<D: Driver>(d: &mut D, handles: Vec<Handle>) -> Result
 /// cannot be reached: a frame from another site, a sandboxed one, or one
 /// with no document yet. `frame` is that frame step's `describe()`.
 pub fn frame_unreachable(frame: &str) -> String {
-    format!("the frame {frame} holds a page from another site (or has not loaded), which Auto Run cannot reach")
+    format!("the frame {frame} {FRAME_UNREACHABLE}")
 }
+
+/// The words `frame_unreachable` ends with, which `autorun::patterns`
+/// reads a failure's class from.
+pub const FRAME_UNREACHABLE: &str = "holds a page from another site (or has not loaded), which Auto Run cannot reach";
 
 /// Every element the target matches right now. Empty is an answer, not an
 /// error: callers decide whether "nothing yet" means wait or fail.

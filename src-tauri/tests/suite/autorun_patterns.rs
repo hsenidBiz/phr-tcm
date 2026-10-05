@@ -106,6 +106,35 @@ fn the_classifier_reads_the_real_failure_sentences() {
     assert_eq!(classify("waited 5000ms: text \"not found\" is disabled", Some("text \"not found\"")), ErrorClass::Disabled);
 }
 
+/// "Cannot reach this frame" is its own class: the driver's own sentence
+/// (`locator::frame_unreachable`), alone or behind the waited prefix and a
+/// chain's target. Its key and label are fixed.
+#[test]
+fn a_frame_auto_run_cannot_reach_is_its_own_class() {
+    let frame = v2_lib::browser::locator::frame_unreachable("css \"iframe#pay\"");
+    let chain = "css \"iframe#pay\" >> button \"Pay\"";
+    for detail in [frame.clone(), format!("waited 5000ms: {chain} {frame}"), format!("waited 5000ms: {frame}")] {
+        assert_eq!(classify(&detail, Some(chain)), ErrorClass::FrameUnreachable, "with the target: {detail}");
+        assert_eq!(classify(&detail, None), ErrorClass::FrameUnreachable, "without the target: {detail}");
+    }
+    assert_eq!(ErrorClass::FrameUnreachable.key(), "frame");
+    assert_eq!(ErrorClass::FrameUnreachable.label(), "a frame Auto Run cannot reach");
+}
+
+/// It is about the application, so get_autorun_failures groups it in
+/// patterns like any other such class (a browser failure never is one).
+#[test]
+fn two_cases_failing_on_the_same_unreachable_frame_are_one_pattern() {
+    let frame = v2_lib::browser::locator::frame_unreachable("css \"iframe#pay\"");
+    let r = run(vec![
+        failed_case(11, 2, &format!("waited 5000ms: {frame}")),
+        failed_case(12, 4, &format!("waited 5000ms: {frame}")),
+    ]);
+    let scripts = vec![script(11, 2, click("Pay")), script(12, 4, click("Pay"))];
+    let text = describe_failures(&r, &scripts);
+    assert!(text.contains("- click on button \"Pay\" - a frame Auto Run cannot reach (in 2 cases)"), "{text}");
+}
+
 #[test]
 fn an_api_checks_target_drops_the_query_string_and_fragment() {
     let watch: Action = serde_json::from_value(serde_json::json!({

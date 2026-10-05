@@ -309,7 +309,7 @@ pub async fn route(
         // both also need the person's own switch (`ctx.api_writes`); the
         // guide and the list are reads and answer either way.
         ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
-        ("GET", "/api-templates") => api_template_list(ctx),
+        ("GET", "/api-templates") => api_template_list(ctx, target),
         ("POST", "/api-template-prove") => {
             api_template_prove(
                 ctx,
@@ -525,16 +525,51 @@ fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
     (200, serde_json::json!({ "test_files": rows }).to_string())
 }
 
-/// Every saved template for this project, as a summary: what it is, what
-/// it takes and gives back, the flow stage it performs, whether it is
-/// proven on this site (an imported one is not - `unproven` says what to
-/// do about it), and its newest run
-/// (null before its first - the prove that saved it is history, not a
-/// run). Beside them, every saved flow with its stages and the templates
-/// on each - a flow file that no longer parses is left out (and logged by
+/// How many templates one answer of the list carries when no `limit` is
+/// given, and the most it ever carries.
+pub const TEMPLATE_PAGE: usize = 25;
+pub const TEMPLATE_PAGE_MAX: usize = 100;
+
+/// The saved templates for this project, filtered and paged.
+///
+/// Arguments, all optional, from the query: `module` (a case-insensitive
+/// substring), `search` (a case-insensitive substring of the id, the
+/// title, or a param or output name), `flow` (that flow's templates, and
+/// that flow alone), `offset` and `limit` (25 by default, 100 at most),
+/// and `id` (that one template in full, with the flow it is on).
+///
+/// A filtered result of at most `limit` templates comes back in full:
+/// what each one takes and gives back, the flow stage it performs,
+/// whether it is proven on this site (an imported one is not - `unproven`
+/// says what to do about it), its newest run (null before its first - the
+/// prove that saved it is history, not a run), every flow with its stages
+/// and the templates on each, and the project's Test files. A larger one
+/// is a compact index: per template the id, title, module, effect, proven
+/// state and stage, and per flow its id, title and stage count, with a
+/// `note` saying how to narrow it. Every answer carries `paging`. Owner's
+/// report: a project's whole list in full was 210K characters, too big to
+/// read. A flow file that no longer parses is left out (and logged by
 /// `flow_store::list`), never the whole answer.
-fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
+fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     use crate::api_templates::{flow_store, gate, store};
+    let arg = |key: &str| q(target, key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let number = |key: &str, min: usize| -> Result<Option<usize>, (u16, String)> {
+        match arg(key) {
+            None => Ok(None),
+            Some(v) => match v.parse::<usize>() {
+                Ok(n) if n >= min => Ok(Some(n)),
+                _ => Err((400, format!("\"{key}\" is a whole number, {min} or more"))),
+            },
+        }
+    };
+    let offset = match number("offset", 0) {
+        Ok(n) => n.unwrap_or(0),
+        Err(refused) => return refused,
+    };
+    let limit = match number("limit", 1) {
+        Ok(n) => n.unwrap_or(TEMPLATE_PAGE).min(TEMPLATE_PAGE_MAX),
+        Err(refused) => return refused,
+    };
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -546,13 +581,62 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
             return (500, "the saved templates could not be read - see Settings, Logs".to_string());
         }
     };
-    let flows = flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_else(|e| {
+    let mut flows = flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_else(|e| {
         crate::applog::warn(format!("api template flows: the list could not be read: {e}"));
         Vec::new()
     });
+
+    // Which templates this answer is about.
+    let lower = |s: &str| s.to_lowercase();
+    let matched: Vec<&store::SavedTemplate> = if let Some(id) = arg("id") {
+        let Some(one) = saved.iter().find(|s| s.template.id == id) else {
+            return (
+                404,
+                format!("no template called \"{id}\" is saved for this project - list_api_templates shows the ones that are"),
+            );
+        };
+        let on = one.template.stage.as_ref().map(|r| r.flow.clone());
+        flows.retain(|f| Some(&f.id) == on.as_ref());
+        vec![one]
+    } else {
+        let flow = arg("flow");
+        if let Some(flow) = &flow {
+            if !flows.iter().any(|f| &f.id == flow) {
+                return (
+                    404,
+                    format!("no flow called \"{flow}\" is saved for this project - list_api_templates shows the ones that are"),
+                );
+            }
+            flows.retain(|f| &f.id == flow);
+        }
+        let module = arg("module").map(|m| lower(&m));
+        let search = arg("search").map(|s| lower(&s));
+        saved
+            .iter()
+            .filter(|s| {
+                let t = &s.template;
+                let hit = |text: &str, part: &str| lower(text).contains(part);
+                module.as_deref().is_none_or(|m| hit(&t.module, m))
+                    && flow.as_ref().is_none_or(|f| t.stage.as_ref().is_some_and(|r| &r.flow == f))
+                    && search.as_deref().is_none_or(|q| {
+                        hit(&t.id, q)
+                            || hit(&t.title, q)
+                            || t.params.iter().any(|p| hit(&p.name, q))
+                            || t.outputs.iter().any(|o| hit(o, q))
+                    })
+            })
+            .collect()
+    };
+    let total = matched.len();
+    let full = total <= limit;
+    let page: Vec<&store::SavedTemplate> = matched.into_iter().skip(offset).take(limit).collect();
+
     let flow_rows: Vec<serde_json::Value> = flows
         .iter()
         .map(|f| {
+            if !full {
+                return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
+            }
             let stages: Vec<serde_json::Value> = f
                 .stages
                 .iter()
@@ -578,10 +662,20 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
             })
         })
         .collect();
-    let rows: Vec<serde_json::Value> = saved
-        .into_iter()
+    let rows: Vec<serde_json::Value> = page
+        .iter()
         .map(|s| {
-            let t = s.template;
+            let t = &s.template;
+            if !full {
+                return serde_json::json!({
+                    "id": t.id,
+                    "title": t.title,
+                    "module": t.module,
+                    "effect": t.effect,
+                    "proven": t.proven.is_some(),
+                    "stage": t.stage,
+                });
+            }
             serde_json::json!({
                 "id": t.id,
                 "title": t.title,
@@ -594,16 +688,28 @@ fn api_template_list(ctx: &BridgeContext) -> (u16, String) {
                 // runs of it are allowed, so the assistant is told plainly.
                 "proven": t.proven.is_some(),
                 "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
-                "last_run": s.runs.into_iter().find(|r| r.mode == store::MODE_RUN),
+                "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN),
             })
         })
         .collect();
-    // Names and sizes only: what a template's `files` may name.
-    let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
-        .into_iter()
-        .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
-        .collect();
-    (200, serde_json::json!({ "templates": rows, "flows": flow_rows, "test_files": test_files }).to_string())
+    let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
+    if offset + rows.len() < total {
+        paging["next_offset"] = serde_json::json!(offset + rows.len());
+    }
+    let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
+    if full {
+        // Names and sizes only: what a template's `files` may name.
+        let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
+            .into_iter()
+            .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
+            .collect();
+        answer["test_files"] = serde_json::json!(test_files);
+    } else {
+        answer["note"] = serde_json::json!(format!(
+            "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
+        ));
+    }
+    (200, answer.to_string())
 }
 
 /// Every saved template for this project, for naming the ones on a stage.
@@ -2140,18 +2246,44 @@ fn bad_scripts(e: serde_json::Error) -> String {
     )
 }
 
+fn bad_edits(e: serde_json::Error) -> String {
+    format!(
+        "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional) }}."
+    )
+}
+
 /// Either shape: the bare array a new bundle has always been, or the
 /// object that carries the declarations a repair needs alongside it.
+///
+/// A declaration may also travel INSIDE its script, as `"edits"` on the
+/// script object (one entry or a list, its `case_id` taken from the
+/// script when left out). `CaseScript` ignores keys it does not know, so
+/// before this was read here a nested declaration was dropped without a
+/// word and the repair was refused as undeclared - the shape behind the
+/// owner's "save_autorun_script drops the edits list". `"edits": null` is
+/// no declaration, the same as leaving it out.
 fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(bad_scripts)?;
-    let map = match v {
-        serde_json::Value::Array(_) => {
-            return Ok(SaveRequest {
-                scripts: serde_json::from_value(v).map_err(bad_scripts)?,
-                edits: vec![],
-            })
+    let (mut scripts_value, edits_value) = match v {
+        serde_json::Value::Array(_) => (v, None),
+        serde_json::Value::Object(mut map) => {
+            let unknown: Vec<String> = map
+                .keys()
+                .filter(|k| !SAVE_BODY_KEYS.contains(&k.as_str()))
+                .map(|k| format!("\"{k}\""))
+                .collect();
+            if !unknown.is_empty() {
+                return Err(format!(
+                    "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\" and \"edits\".",
+                    if unknown.len() == 1 { "a key" } else { "keys" },
+                    unknown.join(", ")
+                ));
+            }
+            let scripts = map.remove("scripts").ok_or_else(|| {
+                "this body has no \"scripts\". Send { \"scripts\": [...], \"edits\": [...] }.".to_string()
+            })?;
+            (scripts, map.remove("edits").filter(|e| !e.is_null()))
         }
-        serde_json::Value::Object(map) => map,
         _ => {
             return Err(
                 "that is not a list of action scripts. Send the array, or { \"scripts\": [...], \"edits\": [...] }."
@@ -2159,30 +2291,53 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
             )
         }
     };
-    let unknown: Vec<String> = map
-        .keys()
-        .filter(|k| !SAVE_BODY_KEYS.contains(&k.as_str()))
-        .map(|k| format!("\"{k}\""))
-        .collect();
-    if !unknown.is_empty() {
-        return Err(format!(
-            "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\" and \"edits\".",
-            if unknown.len() == 1 { "a key" } else { "keys" },
-            unknown.join(", ")
-        ));
-    }
-    let scripts_value = map.get("scripts").cloned().ok_or_else(|| {
-        "this body has no \"scripts\". Send { \"scripts\": [...], \"edits\": [...] }.".to_string()
-    })?;
-    let edits = match map.get("edits") {
+    let mut edit_values: Vec<serde_json::Value> = match edits_value {
         None => vec![],
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-            format!(
-                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional) }}."
-            )
-        })?,
+        Some(serde_json::Value::Array(list)) => list,
+        // Not a list: refused in serde's own words for what it is.
+        Some(other) => {
+            return Err(match serde_json::from_value::<Vec<crate::autorun::edits::Edit>>(other) {
+                Err(e) => bad_edits(e),
+                Ok(_) => "that is not a list of declared edits.".to_string(),
+            })
+        }
     };
-    Ok(SaveRequest { scripts: serde_json::from_value(scripts_value).map_err(bad_scripts)?, edits })
+    if let serde_json::Value::Array(items) = &mut scripts_value {
+        for script in items.iter_mut().filter_map(|s| s.as_object_mut()) {
+            let Some(nested) = script.remove("edits") else { continue };
+            let case_id = script.get("case_id").cloned();
+            let list = match nested {
+                serde_json::Value::Null => vec![],
+                serde_json::Value::Array(list) => list,
+                one => vec![one],
+            };
+            for mut edit in list {
+                if let (Some(fields), Some(id)) = (edit.as_object_mut(), case_id.as_ref()) {
+                    fields.entry("case_id").or_insert_with(|| id.clone());
+                }
+                edit_values.push(edit);
+            }
+        }
+    }
+    let scripts = serde_json::from_value(scripts_value).map_err(bad_scripts)?;
+    // The same declaration sent twice (nested and at the top) is one; two
+    // DIFFERENT declarations for one case are refused, since the gate
+    // could only ever read one of them.
+    let mut edits: Vec<crate::autorun::edits::Edit> = Vec::with_capacity(edit_values.len());
+    for value in edit_values {
+        let edit: crate::autorun::edits::Edit = serde_json::from_value(value).map_err(bad_edits)?;
+        if edits.contains(&edit) {
+            continue;
+        }
+        if edits.iter().any(|e| e.case_id == edit.case_id) {
+            return Err(format!(
+                "case {} is declared twice in \"edits\", with different contents - send one entry per case",
+                edit.case_id
+            ));
+        }
+        edits.push(edit);
+    }
+    Ok(SaveRequest { scripts, edits })
 }
 
 /// The case and steps a repair's quirk is about, with the class of the
@@ -2337,6 +2492,19 @@ async fn save_autorun_scripts(
             }
             Some(old) => {
                 if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
+                    // A body with no declarations at all, refused for
+                    // something a declaration would cover (the sentences
+                    // that point at "edits"): say first that the list
+                    // itself is missing, which is the actual fix.
+                    if edits.is_empty() && why.contains("\"edits\"") {
+                        return (
+                            400,
+                            format!(
+                                "case {} already has a script, so this save is a repair, and \"edits\" is missing. {why}",
+                                sent.case_id
+                            ),
+                        );
+                    }
                     return (400, why);
                 }
                 match crate::autorun::edits::next_repairs(&old) {

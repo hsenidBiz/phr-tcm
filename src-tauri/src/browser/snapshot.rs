@@ -354,7 +354,8 @@ async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64)
 /// The locator step for an iframe: by role and name when it has a name
 /// (Chrome's role `Iframe` matches visible iframes by their title - proven
 /// in `browser_live::frame_spike_role_lookup_through_a_frame_document`),
-/// else by its `id`, else by its `title`, else as the `k`th iframe.
+/// else by its `id`, else by its `title`, else as the `k`th iframe. Any id
+/// or title prints a valid selector that matches it (`css_quoted`).
 pub fn frame_step(name: &str, attrs: &Value, k: usize) -> Value {
     if !name.trim().is_empty() {
         return json!({ "role": "Iframe", "name": name, "exact": true });
@@ -364,12 +365,42 @@ pub fn frame_step(name: &str, attrs: &Value, k: usize) -> Value {
         list.chunks(2).find(|p| p[0].as_str() == Some(want)).and_then(|p| p.get(1)?.as_str().map(str::to_string))
     };
     if let Some(id) = attr("id").filter(|s| !s.trim().is_empty()) {
-        return json!({ "css": format!("iframe#{id}") });
+        if plain_css_identifier(&id) {
+            return json!({ "css": format!("iframe#{id}") });
+        }
+        return json!({ "css": format!("iframe[id='{}']", css_quoted(&id)) });
     }
     if let Some(title) = attr("title").filter(|s| !s.trim().is_empty()) {
-        return json!({ "css": format!("iframe[title='{}']", title.replace('\'', "\\'")) });
+        return json!({ "css": format!("iframe[title='{}']", css_quoted(&title)) });
     }
     json!({ "css": "iframe", "nth": k })
+}
+
+/// Whether `id` can follow `#` in a selector as it is: a letter or `_`
+/// first, then letters, digits, `_` and `-`. Anything else (a space, a
+/// colon, a leading digit, a quote) goes in an attribute step instead.
+fn plain_css_identifier(id: &str) -> bool {
+    let mut chars = id.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// `value` as the inside of a single-quoted CSS string: `\` and `'`
+/// escaped, and a control character (a line break among them), which a CSS
+/// string may not hold raw, written as its code point.
+fn css_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' | '\'' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c.is_control() => out.push_str(&format!("\\{:x} ", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// `this` is the element. One call for everything `probe` prints besides
