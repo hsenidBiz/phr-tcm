@@ -1094,6 +1094,72 @@ test("a wiki link is added by pasting it, and an entry can be removed", async ()
   expect(saved[1]).toEqual(["https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
 });
 
+// Only .md files and Azure DevOps wiki links can be specs: the picker
+// offers markdown alone, and anything the save refuses is shown with the
+// save's own sentence.
+
+test("Attach spec's picker offers markdown files only", async () => {
+  let attachFilters: { name: string; extensions: string[] }[] | undefined;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") {
+      const a = args as {
+        options?: { multiple?: boolean; filters?: { name: string; extensions: string[] }[] };
+      };
+      if (a.options?.multiple) {
+        attachFilters = a.options.filters;
+        return null;
+      }
+      return "C:/w/cases.json";
+    }
+    if (cmd === "parse_import_file")
+      return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Step13.md");
+  fireEvent.click(screen.getByRole("button", { name: /Attach spec/i }));
+  await waitFor(() => expect(attachFilters).toBeDefined());
+  expect(attachFilters).toEqual([{ name: "Markdown documents", extensions: ["md", "markdown"] }]);
+});
+
+test("a pasted link that is not a wiki page is refused with the save's sentence", async () => {
+  const refusal =
+    "https://example.com/spec cannot be a spec - only .md files and Azure DevOps wiki links can be added";
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:/w/cases.json";
+    if (cmd === "parse_import_file")
+      return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "save_specs") throw refusal;
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  render(<Toaster />);
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Step13.md");
+  fireEvent.click(screen.getByRole("button", { name: /Add wiki link/i }));
+  const box = screen.getByLabelText("Wiki page link");
+  fireEvent.change(box, { target: { value: "https://example.com/spec" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(await screen.findByText(new RegExp(refusal.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")))).toBeInTheDocument();
+  // The list is unchanged: the refused link was never added.
+  expect(screen.queryByText("https://example.com/spec")).not.toBeInTheDocument();
+});
+
 // ---------------------------------------------------------------------
 // specEntryFor: a picked spec path is stored relative to the JSON file's
 // directory when it lives there (so the pair travels together), else as

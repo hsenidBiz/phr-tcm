@@ -427,6 +427,9 @@ pub fn save_general_comment(
 #[tauri::command]
 #[specta::specta]
 pub fn save_specs(app: tauri::AppHandle, path: String, specs: Vec<String>) -> Result<String, String> {
+    // The rule first: a refused entry refuses the whole save, and the person
+    // is told which entry and why before anything else is looked at.
+    import_parser::specs::check_specs(&specs)?;
     // Same guard as the comment saves: one read-patch-write at a time.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     writable(&app, &path)?;

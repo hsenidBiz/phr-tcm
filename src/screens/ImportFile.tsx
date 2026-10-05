@@ -80,7 +80,8 @@ function FileSpecs({
   const attach = async () => {
     const picked = await open({
       multiple: true,
-      filters: [{ name: "Spec documents", extensions: ["md", "markdown", "txt"] }],
+      // Only markdown can be a spec (the save refuses anything else).
+      filters: [{ name: "Markdown documents", extensions: ["md", "markdown"] }],
     });
     const list = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
     if (list.length === 0) return;

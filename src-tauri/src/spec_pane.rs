@@ -1,6 +1,7 @@
 //! The review page's spec pane: each entry of a draft file's `specs` list
 //! becomes one rendered document. A file on disk is read and rendered with
-//! the same sanitised markdown the notes use; a wiki page is fetched with
+//! the same sanitised markdown the notes use (markdown only - see
+//! `import_parser::specs::check_spec`); a wiki page is fetched with
 //! the signed-in user's token and cached, then rendered the same way. Every
 //! failure is a document with an `error` - the page shows the message in
 //! that tab and the rest of the review is unaffected.
@@ -8,7 +9,6 @@
 use std::path::{Path, PathBuf};
 
 use crate::ado::{AdoClient, AdoError};
-use crate::import_parser::esc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpecSource {
@@ -92,9 +92,10 @@ fn first_heading(md: &str) -> Option<String> {
 pub fn render_file(path: &Path) -> SpecDoc {
     let name = file_name(path);
     let source = path.to_string_lossy().to_string();
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    if ext != "md" && ext != "markdown" && ext != "txt" {
-        return SpecDoc { title: name, kind: "file".into(), source, html: String::new(), error: Some("Not a text spec".into()) };
+    // The same rule the list is read with, so nothing but markdown is ever
+    // opened here, whatever path reaches this.
+    if let Err(reason) = crate::import_parser::specs::check_spec(&source) {
+        return SpecDoc { title: name, kind: "file".into(), source, html: String::new(), error: Some(reason) };
     }
     match std::fs::read_to_string(path) {
         Err(e) => SpecDoc {
@@ -106,9 +107,6 @@ pub fn render_file(path: &Path) -> SpecDoc {
         },
         Ok(text) => {
             let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
-            if ext == "txt" {
-                return SpecDoc { title: name, kind: "file".into(), source, html: format!("<pre>{}</pre>", esc(&text)), error: None };
-            }
             SpecDoc {
                 title: first_heading(&text).unwrap_or(name),
                 kind: "file".into(),
@@ -208,12 +206,18 @@ fn user_sentence(e: &AdoError) -> String {
 
 /// Every `specs` entry of every file, paired with that file's directory
 /// (relative entries resolve against it). Files with no specs add nothing.
+/// An entry the rule refuses (`specs::check_spec`) is left out: the pane
+/// never opens one, even from a file written before the rule existed, and
+/// a non-wiki URL never asks for a sign-in token.
 pub fn spec_entries(files: &[crate::import_parser::DraftFile]) -> Vec<(String, PathBuf)> {
     files
         .iter()
         .flat_map(|f| {
             let base = Path::new(&f.path).parent().map(Path::to_path_buf).unwrap_or_default();
-            f.specs.iter().map(move |s| (s.clone(), base.clone()))
+            f.specs
+                .iter()
+                .filter(|s| crate::import_parser::specs::check_spec(s).is_ok())
+                .map(move |s| (s.clone(), base.clone()))
         })
         .collect()
 }

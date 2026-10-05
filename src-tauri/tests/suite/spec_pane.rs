@@ -46,15 +46,17 @@ fn a_markdown_file_renders_with_its_first_heading_as_the_title() {
 }
 
 #[test]
-fn a_file_without_a_heading_is_titled_by_its_name_and_txt_is_preformatted() {
+fn a_file_without_a_heading_is_titled_by_its_name_and_txt_is_never_opened() {
     let p = dir().join("notes.md");
     std::fs::write(&p, "just a paragraph").unwrap();
     assert_eq!(render_file(&p).title, "notes.md");
+    // Only markdown is a spec: a text file is an error doc, never read.
     let t = dir().join("rules.txt");
     std::fs::write(&t, "1 < 2 & done").unwrap();
     let doc = render_file(&t);
     assert_eq!(doc.title, "rules.txt");
-    assert_eq!(doc.html, "<pre>1 &lt; 2 &amp; done</pre>");
+    assert!(doc.html.is_empty(), "{}", doc.html);
+    assert!(doc.error.as_deref().unwrap_or("").ends_with("cannot be a spec - only .md files and Azure DevOps wiki links can be added"), "{:?}", doc.error);
 }
 
 #[test]
@@ -65,7 +67,8 @@ fn a_missing_or_non_text_file_is_an_error_doc_not_a_failure() {
     assert!(missing.html.is_empty());
     let docx = dir().join("spec.docx");
     std::fs::write(&docx, b"PK").unwrap();
-    assert_eq!(render_file(&docx).error.as_deref(), Some("Not a text spec"));
+    let err = render_file(&docx).error.unwrap_or_default();
+    assert!(err.ends_with("spec.docx cannot be a spec - only .md files and Azure DevOps wiki links can be added"), "{err}");
 }
 
 #[test]
@@ -155,4 +158,26 @@ fn spec_entries_pair_each_spec_with_its_files_directory() {
     assert_eq!(e[0], ("A.md".to_string(), Path::new("C:/w/one").to_path_buf()));
     assert_eq!(e[1].1, Path::new("C:/w/one").to_path_buf());
     assert_eq!(e[2], ("B.md".to_string(), Path::new("C:/w/two").to_path_buf()));
+}
+
+/// A file written before the rule may still list a `.cshtml` or a non-wiki
+/// URL. The pane never opens either: they are not even entries.
+#[test]
+fn spec_entries_leave_out_what_the_rule_refuses() {
+    use v2_lib::import_parser::DraftFile;
+    use v2_lib::spec_pane::spec_entries;
+    let files = vec![DraftFile {
+        path: "C:/w/cases.json".into(),
+        label: "cases.json".into(),
+        comment: String::new(),
+        specs: vec![
+            "Views/Index.cshtml".into(),
+            "A.md".into(),
+            "https://example.com/page".into(),
+            "notes.txt".into(),
+            "https://dev.azure.com/o/p/_wiki/wikis/w/1/X".into(),
+        ],
+    }];
+    let e: Vec<String> = spec_entries(&files).into_iter().map(|(s, _)| s).collect();
+    assert_eq!(e, vec!["A.md".to_string(), "https://dev.azure.com/o/p/_wiki/wikis/w/1/X".to_string()]);
 }

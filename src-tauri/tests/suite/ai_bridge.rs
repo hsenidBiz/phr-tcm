@@ -1764,6 +1764,11 @@ async fn the_guide_asks_for_the_specs_list() {
     assert!(section.contains("\"specs\""), "{section}");
     assert!(section.contains("wiki"), "wiki URLs are valid entries: {section}");
     assert!(section.contains("relative"), "paths relative to the file: {section}");
+    // Only markdown files and wiki links are specs; code is cited, not listed.
+    assert!(section.contains("Only `.md` files and Azure DevOps wiki links may be listed"), "{section}");
+    assert!(section.contains(".cshtml"), "{section}");
+    assert!(section.contains("reviewer_notes"), "{section}");
+    assert!(section.contains("refused"), "{section}");
 }
 
 /// A draft on disk with everything a file carries besides its cases: the
@@ -1832,6 +1837,75 @@ async fn transform_in_place_keeps_the_files_specs_and_comments() {
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert!(on_disk.contains("\"smoke\""), "the cases were rewritten: {on_disk}");
     assert_file_kept_its_other_keys(&on_disk);
+}
+
+/// A file that lists a `.cshtml` (an assistant attached the views it read)
+/// comes back from an in-place tool run with only the allowed specs, and
+/// the response names each one it dropped.
+#[tokio::test]
+async fn an_in_place_tool_run_keeps_only_allowed_specs_and_warns() {
+    let refused = "Views/Payroll/Index.cshtml";
+    let sentence = format!(
+        "specs: {refused} cannot be a spec - only .md files and Azure DevOps wiki links can be added"
+    );
+    let write_draft = |dir: &TempDir| {
+        let path = dir.0.join("draft-with-cshtml.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "specs": ["Spec.md", refused, "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"],
+                "comments": "whole-set note",
+                "test_cases": [{ "title": "A", "steps": [{ "action": "Open the module.", "expected": "It opens." }] }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        path
+    };
+    let allowed = serde_json::json!(["Spec.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
+
+    // transform_cases
+    let dir = TempDir::new();
+    let rc = repo_ctx(&dir);
+    let path = in_repo(&dir, &write_draft(&dir));
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "in_place": true,
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (status, out) = route(&rc, None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["import_warnings"].as_array().unwrap().iter().any(|w| w.as_str() == Some(sentence.as_str())), "{out}");
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("smoke"), "the cases were rewritten: {raw}");
+    let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(on_disk["specs"], allowed, "{raw}");
+    assert_eq!(on_disk["comments"], "whole-set note", "{raw}");
+
+    // optimize_cases
+    let dir = TempDir::new();
+    let rc = repo_ctx(&dir);
+    let path = in_repo(&dir, &write_draft(&dir));
+    let target = format!("/optimize?in_place=true&path={}", path.to_string_lossy().replace('\\', "%5C"));
+    let (status, out) = route(&rc, None, "POST", &target, "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains(&sentence), "{out}");
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(on_disk["specs"], allowed, "{raw}");
+
+    // Without in_place, the echoed specs carry only the allowed entries.
+    let dir = TempDir::new();
+    let path = write_draft(&dir);
+    let body = serde_json::json!({ "path": path.to_string_lossy(), "operations": [{ "op": "set_tags", "value": "smoke" }] })
+        .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["specs"], allowed, "{out}");
+    assert!(out.contains(&sentence), "{out}");
 }
 
 /// Without in_place the tool echoes the cases for the assistant to write
