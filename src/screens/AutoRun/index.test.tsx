@@ -366,7 +366,7 @@ test("a double click on a run button asks once and starts one run", async () => 
   expect(plans).toBe(1);
 });
 
-test("when the plan fails no run starts and the error is shown", async () => {
+test("when the plan fails no run starts and a fixed sentence is shown, not the raw error", async () => {
   mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => {
     if (cmd === "auto_run_plan") throw "the store is unreadable";
     return null;
@@ -375,9 +375,34 @@ test("when the plan fails no run starts and the error is shown", async () => {
   await screen.findByText("Alpha check");
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
-  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("Could not work out the order. Try again, or see Settings → Logs."),
+  );
+  expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).not.toContain("unreadable");
   expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeEnabled();
+});
+
+test("a run is not started if the PBI changed while the plan was on its way", async () => {
+  let resolvePlan: (v: unknown) => void = () => {};
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) =>
+    cmd === "auto_run_plan" ? new Promise((r) => (resolvePlan = r)) : null,
+  );
+  const view = renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
+  view.rerender(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AutoRun org="acme" project="proj" pbi={{ ...pbi, id: 43 } as never} />
+    </QueryClientProvider>,
+  );
+  await act(async () => {
+    resolvePlan(PLANNED([1]));
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /#1 Alpha check/ })).not.toBeInTheDocument();
 });
 
 test("a plan that is not these cases runs in list order", async () => {

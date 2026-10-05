@@ -46,6 +46,7 @@ import {
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
+import { logUi } from "../../lib/uiLog";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
@@ -548,8 +549,11 @@ export default function AutoRun({
     if (!pbi || planningRef.current) return;
     planningRef.current = true;
     setPlanning(true);
+    const asked = pbi.id;
     try {
-      const plan = await fetchPlan(org, project, pbi.id, selectedInOrder);
+      const plan = await fetchPlan(org, project, asked, selectedInOrder);
+      // The person moved to another PBI while the plan was on its way.
+      if (pbiIdNow.current !== asked) return;
       const order = plan?.order ?? selectedInOrder;
       if (kind === "supervised") setRunning(order);
       else {
@@ -557,7 +561,9 @@ export default function AutoRun({
         setReplaying(order);
       }
     } catch (e) {
-      toast.error(`Could not work out the order: ${e instanceof Error ? e.message : String(e)}`);
+      // The raw error goes to the app log; the person gets a sentence.
+      logUi(`auto-run: the plan for PBI ${asked} could not be worked out: ${e instanceof Error ? e.message : String(e)}`);
+      if (pbiIdNow.current === asked) toast.error("Could not work out the order. Try again, or see Settings → Logs.");
     } finally {
       planningRef.current = false;
       setPlanning(false);
