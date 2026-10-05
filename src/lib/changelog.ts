@@ -16,6 +16,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.4",
+    date: "2026-10-05",
+    items: [
+      "Auto Run scripts can check a downloaded file: its name, and for spreadsheets, CSV and text files, its headers, cells or text. A run's downloads show in Past runs, the review and the report, with an Open button.",
+    ],
+  },
+  {
     version: "2.1.1-beta.3",
     date: "2026-10-05",
     items: [
