@@ -9,6 +9,7 @@
 //! are the values a template run hands back (see `runner`, which reports
 //! only the declared outputs), so they are all a later step can read.
 
+use super::flow::{creating_stage, required_before, Flow};
 use super::{exec, ApiTemplate, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -99,10 +100,82 @@ fn is_step_value(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, v
         && comes_from(f, templates, &names[0], f.steps.len())
 }
 
+/// The step (1-based, before `n`) a whole `{{steps.<m>.<capture>}}` value
+/// reads from.
+fn step_of(value: &str, n: usize) -> Option<usize> {
+    let v = value.trim();
+    let names = exec::placeholders(v);
+    if names.len() != 1 || !v.starts_with("{{") || !v.ends_with("}}") || v.matches("{{").count() != 1 {
+        return None;
+    }
+    steps_ref(&names[0]).map(|(m, _)| m).filter(|m| *m >= 1 && *m < n)
+}
+
+/// A step whose template performs a stage of a flow that is not the
+/// creating stage: with no database to ask, the fixture must perform the
+/// flow's earlier stages itself. Its subject must be one value captured by
+/// an earlier step on the same flow, and every stage the gate would ask
+/// about (`flow::required_before`) must be performed by an earlier step.
+/// A template on no flow, or on a flow that is not saved (the run refuses
+/// that template itself), is not this rule's.
+fn flow_problems(
+    f: &Fixture,
+    n: usize,
+    t: &ApiTemplate,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Vec<String> {
+    let Some(r) = &t.stage else { return vec![] };
+    let Some(flow) = flows(&r.flow) else { return vec![] };
+    let Some(stage) = flow.stages.iter().find(|s| s.id == r.id) else { return vec![] };
+    if creating_stage(&flow).is_some_and(|s| s.id == stage.id) {
+        return vec![];
+    }
+    // The stages the earlier steps perform on this flow, by step.
+    let on_flow = |m: usize| -> Option<String> {
+        let earlier = templates(&f.steps[m - 1].template)?;
+        earlier.stage.filter(|s| s.flow == flow.id).map(|s| s.id)
+    };
+    let performed: Vec<String> = (1..n).filter_map(on_flow).collect();
+    let mut problems = Vec::new();
+    let missing: Vec<&str> = required_before(&flow, &stage.id)
+        .into_iter()
+        .filter(|s| !performed.iter().any(|p| p == &s.id))
+        .map(|s| s.title.as_str())
+        .collect();
+    if !missing.is_empty() {
+        problems.push(format!(
+            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {}",
+            t.id,
+            stage.title,
+            flow.title,
+            missing.join(", ")
+        ));
+    }
+    let subject = &flow.subject.name;
+    let from_the_flow = f.steps[n - 1]
+        .params
+        .get(subject)
+        .and_then(|v| step_of(v, n))
+        .is_some_and(|m| on_flow(m).is_some());
+    if !from_the_flow {
+        problems.push(format!(
+            "step {n}: template {} performs {} of flow {}, so its {subject} must be one {{{{steps.<m>.<output>}}}} of an earlier step on that flow",
+            t.id, stage.title, flow.title
+        ));
+    }
+    problems
+}
+
 /// Every problem with `f`, one sentence each. `templates` looks a template
-/// up by id; a template with no `proven` is not proven. `Ok` is fit to
-/// save.
-pub fn validate(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>) -> Result<(), Vec<String>> {
+/// up by id; a template with no `proven` is not proven. `flows` looks a
+/// saved flow up by id, for the steps whose template performs a stage of
+/// one. `Ok` is fit to save.
+pub fn validate(
+    f: &Fixture,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Result<(), Vec<String>> {
     let mut problems = Vec::new();
 
     if f.steps.is_empty() {
@@ -120,6 +193,7 @@ pub fn validate(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>) ->
                         step.template
                     ));
                 }
+                problems.extend(flow_problems(f, n, &t, templates, flows));
             }
             _ => problems.push(format!("step {n}: template {} is not proven", step.template)),
         }

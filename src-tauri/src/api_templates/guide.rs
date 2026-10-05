@@ -336,7 +336,13 @@ output of an earlier step, `n` counting from 1), `{{now:<format>}}` (the
 run's start time in local time, with the letters `yyyy MM dd HH mm ss`) and
 `{{prefix}}` (the active environment's test name prefix). Text for a number,
 boolean or list param is read as one. `outputs` and each `creates` entry
-name one `{{steps.<n>.<output>}}` each.
+name one `{{steps.<n>.<output>}}` each. A placeholder whose step gave no
+value stops the run at that step; it is never sent as text.
+
+A fixture performs a flow's stages itself, in order: a step whose template
+performs a later stage of a flow needs earlier steps that perform every
+stage before it, and takes the flow's subject as one
+`{{steps.<m>.<output>}}` of an earlier step on that flow.
 
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even

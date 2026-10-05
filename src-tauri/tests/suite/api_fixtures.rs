@@ -77,13 +77,17 @@ fn fixture() -> Fixture {
     }
 }
 
+fn no_flow(_: &str) -> Option<v2_lib::api_templates::flow::Flow> {
+    None
+}
+
 fn problems(f: &Fixture) -> Vec<String> {
-    validate(f, &lookup).unwrap_err()
+    validate(f, &lookup, &no_flow).unwrap_err()
 }
 
 #[test]
 fn a_valid_fixture_has_no_problems() {
-    validate(&fixture(), &lookup).unwrap();
+    validate(&fixture(), &lookup, &no_flow).unwrap();
 }
 
 #[test]
@@ -165,7 +169,7 @@ fn a_fixture_with_creates_must_use_the_prefix() {
     assert_eq!(problems(&f), vec!["a fixture with creates must use {{prefix}} in a step's params"]);
     // Without creates the prefix is not required.
     f.creates.clear();
-    validate(&f, &lookup).unwrap();
+    validate(&f, &lookup, &no_flow).unwrap();
 }
 
 #[test]
@@ -283,7 +287,7 @@ fn whitespace_inside_the_braces_is_accepted() {
     f.steps[1].params.insert("cycleId".into(), "{{ steps.1.cycleId }}".into());
     f.outputs.insert("spaced".into(), " {{ steps.1.cycleId }} ".into());
     f.creates[0].id = "{{ steps.1.cycleId }}".into();
-    validate(&f, &lookup).unwrap();
+    validate(&f, &lookup, &no_flow).unwrap();
 }
 
 #[test]
@@ -298,7 +302,7 @@ fn a_malformed_step_reference_is_refused() {
 fn a_placeholder_inside_other_text_is_checked_and_accepted() {
     let mut f = fixture();
     f.steps[1].params.insert("cycleName".into(), "copy of {{steps.1.cycleName}} for {{prefix}}".into());
-    validate(&f, &lookup).unwrap();
+    validate(&f, &lookup, &no_flow).unwrap();
     f.steps[1].params.insert("cycleName".into(), "copy of {{steps.2.cycleName}}".into());
     assert_eq!(problems(&f), vec!["step 2: {{steps.2.cycleName}} does not come from an earlier step"]);
 }
@@ -365,6 +369,101 @@ fn the_guide_explains_fixtures() {
     assert!(one_line.contains("Name what it makes with `{{prefix}}`"), "{one_line}");
     assert!(one_line.contains("use Rebuild (run the fixture again), never a hand fix"), "{one_line}");
     assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "no em or en dashes");
+}
+
+// ---- a fixture performs a flow's earlier stages itself --------------------
+
+/// A three-stage flow: setup creates the cycle, rules needs setup, publish
+/// needs rules.
+fn cycle_flow() -> v2_lib::api_templates::flow::Flow {
+    serde_json::from_value(json!({
+        "id": "cycle-flow",
+        "title": "Performance cycle wizard",
+        "module": "PMS",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [
+            { "id": "setup", "title": "Cycle setup", "creates": true, "check": "SELECT 1 FROM t WHERE id = {{cycleId}}" },
+            { "id": "rules", "title": "Evaluation rules", "requires": ["setup"], "check": "SELECT 1 FROM r WHERE id = {{cycleId}}" },
+            { "id": "publish", "title": "Publish", "requires": ["rules"], "check": "SELECT 1 FROM p WHERE id = {{cycleId}}" }
+        ]
+    }))
+    .unwrap()
+}
+
+fn flow_lookup(id: &str) -> Option<ApiTemplate> {
+    let on = |stage: &str| {
+        let mut t = template(id, "create", true);
+        t.stage = Some(v2_lib::api_templates::flow::StageRef { flow: "cycle-flow".into(), id: stage.into() });
+        Some(t)
+    };
+    match id {
+        "flow-setup" => on("setup"),
+        "flow-rules" => on("rules"),
+        "flow-publish" => on("publish"),
+        _ => lookup(id),
+    }
+}
+
+fn flows(id: &str) -> Option<v2_lib::api_templates::flow::Flow> {
+    (id == "cycle-flow").then(cycle_flow)
+}
+
+fn flow_fixture(steps: Vec<FixtureStep>) -> Fixture {
+    Fixture { steps, outputs: BTreeMap::new(), creates: vec![], ..fixture() }
+}
+
+fn flow_problems(f: &Fixture) -> Vec<String> {
+    validate(f, &flow_lookup, &flows).unwrap_err()
+}
+
+#[test]
+fn a_later_stage_alone_is_refused() {
+    let f = flow_fixture(vec![step("flow-publish", &[("cycleId", "274")])]);
+    assert_eq!(
+        flow_problems(&f),
+        vec![
+            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules",
+            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow",
+        ]
+    );
+}
+
+#[test]
+fn a_fixture_that_performs_every_stage_in_order_is_accepted() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleId}}")]),
+        step("flow-publish", &[("cycleId", "{{ steps.1.cycleId }}")]),
+    ]);
+    validate(&f, &flow_lookup, &flows).unwrap();
+    // A template on no flow is unaffected, and so is one whose flow is not saved.
+    validate(&fixture(), &flow_lookup, &flows).unwrap();
+    validate(&f, &flow_lookup, &no_flow).unwrap();
+}
+
+#[test]
+fn a_missing_middle_stage_is_refused() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    assert_eq!(
+        flow_problems(&f),
+        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules"]
+    );
+}
+
+#[test]
+fn a_subject_from_a_step_not_on_the_flow_is_refused() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("make-cycle", &[("cycleName", "{{prefix}} other")]),
+        step("flow-rules", &[("cycleId", "{{steps.2.cycleId}}")]),
+    ]);
+    assert_eq!(
+        flow_problems(&f),
+        vec!["step 3: template flow-rules performs Evaluation rules of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow"]
+    );
 }
 
 /// Running fixtures against the fake page the template runner's own tests
@@ -457,7 +556,12 @@ mod running {
 
     /// A rig whose root holds both templates and the fixture.
     fn rig_with(responses: Vec<Value>, f: &Fixture, templates: &[ApiTemplate]) -> Rig {
-        let r = rig(responses, None);
+        rig_broken(responses, None, f, templates)
+    }
+
+    /// `rig_with` on a page that lacks `broken`, so signing in fails.
+    fn rig_broken(responses: Vec<Value>, broken: Option<&'static str>, f: &Fixture, templates: &[ApiTemplate]) -> Rig {
+        let r = rig(responses, broken);
         for t in templates {
             store::save(r.root.path(), ORG, PROJECT, t).unwrap();
         }
@@ -657,6 +761,127 @@ mod running {
         assert_eq!(runs[0].detail, report.failed);
     }
 
+    /// Whether the fixture's account lease is free again: one can be taken
+    /// at once.
+    async fn lease_is_free(r: &Rig) -> bool {
+        let env = v2_lib::environments::active(r.root.path()).unwrap().id;
+        v2_lib::autorun::lease::acquire(&env, "admin", v2_lib::autorun::lease::Holder::Browser, std::time::Duration::ZERO)
+            .await
+            .is_ok()
+    }
+
+    /// A step that runs out of its own limit stops the run there: the
+    /// browser is closed, the lease let go, the run kept in the history,
+    /// and what step 1 made recorded.
+    #[tokio::test]
+    async fn a_step_that_times_out_stops_the_run_and_leaves_nothing_held() {
+        let _leases = crate::serial::account_leases();
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
+        r.script.lock().unwrap().hang_after = Some(1);
+        let report = run_fixture_within(
+            &mut r.browsers,
+            r.root.path(),
+            ORG,
+            PROJECT,
+            &f,
+            &quick(),
+            std::time::Duration::from_secs(2),
+            &QUICK_PAUSES,
+            CLOCK,
+        )
+        .await;
+        assert!(!report.ok);
+        let failed = report.failed.clone().unwrap();
+        assert!(failed.starts_with("step 2: "), "{failed}");
+        assert!(failed.ends_with("the run took longer than 3 minutes"), "{failed}");
+        assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
+        assert!(lease_is_free(&r).await, "the lease was let go");
+        let runs = history(&r, "draft-cycle");
+        assert_eq!((runs.len(), runs[0].failed_step), (1, Some(2)));
+        let made = test_made::list(r.root.path());
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].id, "274");
+    }
+
+    #[tokio::test]
+    async fn a_failed_sign_in_stops_the_run_and_leaves_nothing_held() {
+        let _leases = crate::serial::account_leases();
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_broken(vec![], Some("#go"), &f, &[make_cycle(), add_suite()]);
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        let failed = report.failed.clone().unwrap();
+        assert!(failed.starts_with("step 1: nothing had been captured yet; failed at Sign in: could not sign in"), "{failed}");
+        assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
+        assert!(r.fetched().is_empty(), "nothing was sent");
+        assert!(lease_is_free(&r).await, "the lease was let go");
+        let runs = history(&r, "draft-cycle");
+        assert_eq!((runs.len(), runs[0].failed_step), (1, Some(1)));
+        assert!(test_made::list(r.root.path()).is_empty(), "nothing was made");
+    }
+
+    #[tokio::test]
+    async fn a_refused_lease_stops_the_run_before_any_browser() {
+        let _leases = crate::serial::account_leases();
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
+        let env = v2_lib::environments::active(r.root.path()).unwrap().id;
+        let held = v2_lib::autorun::lease::acquire(
+            &env,
+            "admin",
+            v2_lib::autorun::lease::Holder::Browser,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        let failed = report.failed.clone().unwrap();
+        assert!(failed.starts_with("step 1: nothing had been captured yet; failed at Sign in: "), "{failed}");
+        assert!(failed.contains("the Auto Run browser"), "says who had it: {failed}");
+        assert_eq!((r.browsers.opened, r.browsers.closed), (0, 0), "no browser was opened");
+        let runs = history(&r, "draft-cycle");
+        assert_eq!((runs.len(), runs[0].failed_step), (1, Some(1)));
+        assert!(test_made::list(r.root.path()).is_empty(), "nothing was made");
+        drop(held);
+        assert!(lease_is_free(&r).await, "the run took no lease of its own");
+    }
+
+    /// Step 1 passed but gave no value for what step 2 reads: step 2 is
+    /// refused, the placeholder as written, rather than sent as text.
+    #[test]
+    fn a_placeholder_with_no_value_is_refused_not_sent() {
+        use v2_lib::api_templates::fixture_run::step_values;
+        let vars = BTreeMap::from([("prefix".to_string(), json!("AUTOTEST"))]);
+        let params = BTreeMap::from([("cycleId".to_string(), "{{ steps.1.cycleId }}".to_string())]);
+        assert_eq!(
+            step_values(2, &add_suite(), &params, &vars, &CLOCK),
+            Err("step 2: {{ steps.1.cycleId }} has no value - the step that should give it did not".to_string())
+        );
+        // Inside other text too, and a now or prefix the run did not set.
+        let params = BTreeMap::from([("cycleName".to_string(), "copy of {{steps.1.cycleName}}".to_string())]);
+        assert_eq!(
+            step_values(2, &make_cycle(), &params, &vars, &CLOCK).unwrap_err(),
+            "step 2: {{steps.1.cycleName}} has no value - the step that should give it did not"
+        );
+        let params = BTreeMap::from([("cycleName".to_string(), "{{prefix}}".to_string())]);
+        assert_eq!(
+            step_values(1, &make_cycle(), &params, &BTreeMap::new(), &CLOCK).unwrap_err(),
+            "step 1: {{prefix}} has no value - the step that should give it did not"
+        );
+        // With the value there, it is filled in, and typed for a number param.
+        let vars = BTreeMap::from([("steps.1.cycleId".to_string(), json!(274))]);
+        let params = BTreeMap::from([("cycleId".to_string(), "{{steps.1.cycleId}}".to_string())]);
+        assert_eq!(step_values(2, &add_suite(), &params, &vars, &CLOCK).unwrap()["cycleId"], json!(274));
+        // A placeholder that is not a fixture's is the template's own business.
+        let params = BTreeMap::from([("cycleName".to_string(), "{{other}}".to_string())]);
+        assert!(step_values(1, &make_cycle(), &params, &BTreeMap::new(), &CLOCK).is_ok());
+    }
+
     /// `run_api_template` (a run) refuses a delete template; proving one is
     /// left as it is.
     #[test]
@@ -795,7 +1020,16 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
     assert!(routes.len() > 20 && tools.len() > 20, "the scan found too little: {routes:?} {tools:?}");
 
     for (name, text) in [("src/ai_bridge.rs", &bridge), ("src/mcp.rs", &mcp)] {
-        for writer in ["test_made::record", "test_made::set_status", "test-made.json", "approvals/", "\"approvals\""] {
+        // Lexical: it catches the writers named, a `use` of the module's
+        // items and the file names, not a writer reached some other way.
+        for writer in [
+            "test_made::record",
+            "test_made::set_status",
+            "test_made::{",
+            "test-made.json",
+            "approvals/",
+            "\"approvals\"",
+        ] {
             assert!(!text.contains(writer), "{name} reaches {writer}");
         }
     }

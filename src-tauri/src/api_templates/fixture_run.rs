@@ -10,8 +10,10 @@
 //!
 //! Whatever the run made - even when a later step failed - goes into the
 //! record of test-made drafts (`autorun::test_made`), so Clean up can find a
-//! half-made draft too. Every run, failed or not, is added to the fixture's
-//! history; only a successful one changes its current outputs.
+//! half-made draft too. A history row is written for every run that
+//! starts, failed or not - one refused before it starts (another run holds
+//! the slot, or there is no such fixture) writes none. Only a successful
+//! run changes the fixture's current outputs.
 //!
 //! Nothing here formats a password, a cookie, a host or a query string:
 //! the step reports are the runner's own sentences, and the app log gets
@@ -150,17 +152,32 @@ fn typed(t: &ApiTemplate, name: &str, v: Value) -> Value {
     }
 }
 
-/// Step `n`'s run request: its params with every placeholder filled in from
-/// `vars` (earlier steps' outputs and the prefix) and the clock.
-fn step_request(
-    org: &str,
-    project: &str,
-    account: &str,
+/// Every `{{...}}` in `raw`, with its inner text as written.
+fn inner_texts(raw: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = raw;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        out.push(&after[..end]);
+        rest = &after[end + 2..];
+    }
+    out
+}
+
+/// Step `n`'s values: its params with every placeholder filled in from
+/// `vars` (earlier steps' outputs and the prefix) and the clock. A fixture
+/// placeholder with no value - `{{steps.<m>.<output>}}` an earlier step
+/// did not give, and so on - is refused rather than sent to the
+/// application as text: `step <n>: {{<placeholder>}} has no value - the
+/// step that should give it did not`, the placeholder as written.
+pub fn step_values(
+    n: usize,
     t: &ApiTemplate,
     params: &BTreeMap<String, String>,
     vars: &BTreeMap<String, Value>,
     clock: &Clock,
-) -> RunRequest {
+) -> Result<serde_json::Map<String, Value>, String> {
     let mut values = serde_json::Map::new();
     for (name, raw) in params {
         let mut here = vars.clone();
@@ -169,17 +186,39 @@ fn step_request(
                 here.insert(p.clone(), Value::String(format_now(clock, format)));
             }
         }
+        for inner in inner_texts(raw) {
+            let p = inner.trim();
+            let ours = p.starts_with("steps.") || p.starts_with("now:") || p == "prefix";
+            if ours && !here.contains_key(p) {
+                return Err(format!("step {n}: {{{{{inner}}}}} has no value - the step that should give it did not"));
+            }
+        }
         let v = exec::substitute(&Value::String(raw.clone()), &here);
         values.insert(name.clone(), typed(t, name, v));
     }
-    RunRequest {
+    Ok(values)
+}
+
+/// Step `n`'s run request, from `step_values`.
+#[allow(clippy::too_many_arguments)]
+fn step_request(
+    n: usize,
+    org: &str,
+    project: &str,
+    account: &str,
+    t: &ApiTemplate,
+    params: &BTreeMap<String, String>,
+    vars: &BTreeMap<String, Value>,
+    clock: &Clock,
+) -> Result<RunRequest, String> {
+    Ok(RunRequest {
         org: org.to_string(),
         project: project.to_string(),
         account: account.to_string(),
-        values,
+        values: step_values(n, t, params, vars, clock)?,
         mode: Mode::Run,
         template: t.clone(),
-    }
+    })
 }
 
 /// The value a whole `{{steps.<n>.<output>}}` stands for, if it was captured.
@@ -221,7 +260,8 @@ async fn run_steps<B: Browsers>(
     // The save rules again: a template may have been replaced, re-proven
     // as a delete, or removed since the fixture was saved.
     let lookup = |id: &str| template_store::load(root, org, project, id).ok().flatten();
-    if let Err(problems) = validate(f, &lookup) {
+    let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
+    if let Err(problems) = validate(f, &lookup, &flows) {
         ran.failed = Some((None, problems.join("; ")));
         return ran;
     }
@@ -240,7 +280,13 @@ async fn run_steps<B: Browsers>(
     // Step 1 is checked before the lease and the browser: its values can
     // only use the prefix and the clock, so nothing is opened for a run
     // that cannot start.
-    let first = step_request(org, project, &f.account, &templates[0], &f.steps[0].params, &ran.vars, clock);
+    let first = match step_request(1, org, project, &f.account, &templates[0], &f.steps[0].params, &ran.vars, clock) {
+        Ok(r) => r,
+        Err(why) => {
+            ran.failed = Some((Some(1), why));
+            return ran;
+        }
+    };
     if let Err(problems) = preflight(root, &first, None) {
         ran.failed = Some((Some(1), format!("step 1: {}", problems.join("; "))));
         return ran;
@@ -280,7 +326,15 @@ async fn run_steps<B: Browsers>(
                 let req = if n == 1 {
                     first.clone()
                 } else {
-                    let req = step_request(org, project, &f.account, t, &step.params, &ran.vars, clock);
+                    // Nothing is sent for a step with a placeholder that
+                    // has no value: the run stops here, as at a failed step.
+                    let req = match step_request(n, org, project, &f.account, t, &step.params, &ran.vars, clock) {
+                        Ok(r) => r,
+                        Err(why) => {
+                            ran.failed = Some((Some(n), why));
+                            break;
+                        }
+                    };
                     if let Err(problems) = preflight(root, &req, None) {
                         ran.failed = Some((Some(n), format!("step {n}: {}", problems.join("; "))));
                         break;

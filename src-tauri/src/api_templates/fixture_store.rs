@@ -72,7 +72,8 @@ pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Ve
         return Err(vec![invalid_id(&f.id)]);
     }
     let lookup = |id: &str| template_store::load(root, org, project, id).ok().flatten();
-    validate(f, &lookup)?;
+    let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
+    validate(f, &lookup, &flows)?;
     let dir = fixtures_dir(root, org, project);
     std::fs::create_dir_all(&dir).map_err(|e| vec![e.to_string()])?;
     let json = serde_json::to_string_pretty(f).map_err(|e| vec![e.to_string()])?;

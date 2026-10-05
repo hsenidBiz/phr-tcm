@@ -41,6 +41,8 @@ pub(crate) struct Script {
     responses: VecDeque<Value>,
     /// `FETCH_FN` never answers - the page is stuck.
     hang_fetch: bool,
+    /// `FETCH_FN` answers this many requests, then never answers again.
+    pub(crate) hang_after: Option<usize>,
     /// `Page.navigate` starts but its page never finishes loading.
     never_loads: bool,
     /// `Page.navigate` fails as a browser that has gone away does.
@@ -93,7 +95,8 @@ impl Driver for App {
             let (hang, reply) = {
                 let mut s = self.script.lock().unwrap();
                 s.fetched.push(args);
-                (s.hang_fetch, s.responses.pop_front())
+                let past = s.hang_after.is_some_and(|k| s.fetched.len() > k);
+                (s.hang_fetch || past, s.responses.pop_front())
             };
             if hang {
                 std::future::pending::<()>().await;
