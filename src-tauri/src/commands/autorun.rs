@@ -185,11 +185,13 @@ pub async fn auto_run_step(
     app: tauri::AppHandle,
     organization: String,
     project: String,
+    case_id: i32,
     step: StepScript,
 ) -> Result<Vec<ActionOutcome>, String> {
     let root = root(&app)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     crate::autorun::runner::run_step(
         &mut session.cdp,
         &root,
@@ -200,6 +202,72 @@ pub async fn auto_run_step(
         &mut session.account,
     )
     .await
+}
+
+/// How often the supervised browser is read between commands while it
+/// guards a no-save case, and for how long each time.
+const ANSWER_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+const ANSWER_FOR: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Whether the task that answers the supervised browser between commands
+/// is running. Only ever changed with the session lock held, so starting
+/// one and the last one ending can never miss each other.
+static ANSWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Put the supervised browser's no-save guard where this case needs it.
+/// A case whose script on this machine is marked `no_save` is guarded
+/// (with the project's save words read afresh, so an edit on the Setup tab
+/// counts from the next step); `may_lift` lets a case without the flag
+/// switch an earlier case's guard off. The assistant's try never lifts
+/// one: it can only add the guard, never take it from the person's case.
+/// `Err` is the step refused: a no-save case never runs unguarded.
+pub(crate) async fn guard_supervised(
+    session: &mut Session,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    may_lift: bool,
+) -> Result<(), String> {
+    let no_save = store::load_script(root, case_id)?.is_some_and(|s| s.no_save);
+    if no_save {
+        let guarded = match crate::autorun::nav::load_nav(root, organization, project) {
+            Err(why) => Err(why),
+            Ok(nav) => session.cdp.guard_saves(&nav.save_words).await.map_err(|e| e.to_string()),
+        };
+        guarded.map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
+        answer_between_commands();
+    } else if may_lift && session.cdp.is_guarding_saves() {
+        session.cdp.stop_guarding_saves().await;
+    }
+    Ok(())
+}
+
+/// A guarded browser pauses every request until it is answered, and the
+/// client only reads the socket while something calls it. Between two
+/// commands - a person reading the page before pressing the next step -
+/// this task reads it, so the page is never held up waiting. It ends once
+/// the browser is closed or no longer guarded. Called with the session lock
+/// held.
+fn answer_between_commands() {
+    use std::sync::atomic::Ordering;
+    if ANSWERING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async {
+        loop {
+            tokio::time::sleep(ANSWER_EVERY).await;
+            // A command holding the session reads the socket itself.
+            let Ok(mut slot) = SESSION.try_lock() else { continue };
+            match slot.as_mut() {
+                Some(s) if s.cdp.is_guarding_saves() => s.cdp.pump(ANSWER_FOR).await,
+                _ => {
+                    ANSWERING.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// One failure screenshot as a data URL the webview can show. The name is
@@ -641,6 +709,21 @@ pub fn auto_run_load_nav(
     project: String,
 ) -> Result<crate::autorun::nav::NavView, String> {
     let nav = crate::autorun::nav::load_nav(&root(&app)?, &organization, &project)?;
+    Ok(crate::autorun::nav::view(&nav))
+}
+
+/// The project's own save words (Setup, Save words), replaced as a whole
+/// list. The built-in words are not in it and cannot be removed.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_set_save_words(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    words: Vec<String>,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::nav::set_save_words(&root(&app)?, &organization, &project, &words)?;
+    crate::applog::info(format!("Auto-run: the project has {} save words of its own", nav.save_words.len()));
     Ok(crate::autorun::nav::view(&nav))
 }
 

@@ -78,11 +78,16 @@ pub struct NavFile {
     pub direct_urls: bool,
     #[serde(default)]
     pub modules: Vec<ModulePath>,
+    /// The project's own save words, beside the built-in ones
+    /// (`browser::save_guard`): a no-save script's browser stops a writing
+    /// request whose path holds any of them. Kept trimmed and lowercased.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub save_words: Vec<String>,
 }
 
 impl Default for NavFile {
     fn default() -> Self {
-        NavFile { direct_urls: true, modules: vec![] }
+        NavFile { direct_urls: true, modules: vec![], save_words: vec![] }
     }
 }
 
@@ -102,6 +107,10 @@ pub struct ModuleView {
 pub struct NavView {
     pub direct_urls: bool,
     pub modules: Vec<ModuleView>,
+    /// The project's own save words, which the Setup tab can remove.
+    pub save_words: Vec<String>,
+    /// The built-in ones, shown beside them and never removable.
+    pub built_in_save_words: Vec<String>,
 }
 
 pub fn view(nav: &NavFile) -> NavView {
@@ -118,6 +127,8 @@ pub fn view(nav: &NavFile) -> NavView {
                 recorded: m.recorded.clone(),
             })
             .collect(),
+        save_words: nav.save_words.clone(),
+        built_in_save_words: crate::browser::save_guard::SAVE_WORDS.iter().map(|w| w.to_string()).collect(),
     }
 }
 
@@ -321,6 +332,17 @@ pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<
     let mut nav = load_nav(root, org, project)?;
     let key = module_key(area);
     nav.modules.retain(|m| module_key(m.name()) != key);
+    save_nav(root, org, project, &nav)?;
+    Ok(nav)
+}
+
+/// Replace the project's own save words. Each is checked
+/// (`save_guard::check_words`) before the file is touched, so a refused
+/// list leaves the words already saved exactly as they were.
+pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -> Result<NavFile, String> {
+    let words = crate::browser::save_guard::check_words(words)?;
+    let mut nav = load_nav(root, org, project)?;
+    nav.save_words = words;
     save_nav(root, org, project, &nav)?;
     Ok(nav)
 }
@@ -631,7 +653,7 @@ pub async fn go_to_module<D: Driver>(
                 harness: false,
             });
         }
-        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
     }
 }
 

@@ -365,7 +365,7 @@ export const commands = {
 	 *  which does the actual work; this command is just the IPC-facing shell
 	 *  around it.
 	 */
-	autoRunStep: (organization: string, project: string, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, step })),
+	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -405,6 +405,15 @@ export const commands = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -541,6 +550,11 @@ export const commands = {
 	autoRunLoadNav: (organization: string, project: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_load_nav", { organization, project })),
 	/**  "Scripts may open pages by address", saved the moment it is flipped. */
 	autoRunSetDirectUrls: (organization: string, project: string, allowed: boolean) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_direct_urls", { organization, project, allowed })),
+	/**
+	 *  The project's own save words (Setup, Save words), replaced as a whole
+	 *  list. The built-in words are not in it and cannot be removed.
+	 */
+	autoRunSetSaveWords: (organization: string, project: string, words: string[]) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_save_words", { organization, project, words })),
 	/**
 	 *  Forget one area, by name. The module's other areas stay. The dialog
 	 *  asks first.
@@ -1614,6 +1628,15 @@ export type CaseScript_Deserialize = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
 };
 
 /**
@@ -1659,6 +1682,15 @@ export type CaseScript_Serialize = {
 	 *  `repairs` or `last_repair`.
 	 */
 	suspected_defect?: SuspectedDefect | null,
+	/**
+	 *  The case works on a shared draft and must never change it: while it
+	 *  runs, its browser stops every save the page tries to send
+	 *  (`browser::save_guard`) and the case fails. Set in the editor (Must
+	 *  not save), by an assistant's save or through import; only a person
+	 *  saving from the editor can turn it off (`edits::check_edits`).
+	 *  Written only when true.
+	 */
+	no_save?: boolean,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -2288,6 +2320,10 @@ export type ModuleView = {
 export type NavView = {
 	direct_urls: boolean,
 	modules: ModuleView[],
+	/**  The project's own save words, which the Setup tab can remove. */
+	save_words: string[],
+	/**  The built-in ones, shown beside them and never removable. */
+	built_in_save_words: string[],
 };
 
 /**

@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Shared draft</title></head>
+<body>
+<!-- Served by the no-save live tests' own server, never opened as a file:
+     the requests below must go to a real http origin to be intercepted. -->
+<h1>Shared draft</h1>
+<button id="save" onclick="send('/api/Save')">Save</button>
+<button id="search" onclick="send('/api/Search')">Search</button>
+<p id="out"></p>
+<script>
+  function send(path) {
+    // A token in the query, which no outcome may ever repeat.
+    fetch(path + '?token=hunter2', { method: 'POST' })
+      .then(function (r) { return r.text(); })
+      .then(function (t) { document.getElementById('out').textContent = t; },
+            function (e) { document.getElementById('out').textContent = 'failed: ' + e; });
+  }
+  // A page that saves the moment it opens.
+  if (location.search.indexOf('autosave') >= 0) send('/api/Save');
+</script>
+</body>
+</html>

@@ -10,6 +10,12 @@
 //! - a JavaScript dialog is accepted the moment it opens. Measured on real
 //!   Edge: an `alert()` leaves every later call pending until it is handled.
 //!
+//! A no-save script's connection also intercepts every request
+//! (`guard_saves`). A paused request holds the page up, so it is answered
+//! the moment it is read, inside whichever call read it; between calls a
+//! wait loop's pause keeps reading (`idle`), and the supervised browser
+//! has a task that does the same between commands.
+//!
 //! The socket sits behind `Transport` and the client behind `Driver`, so
 //! both layers are tested without starting a browser.
 
@@ -168,6 +174,19 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// When the wait loop that owns this connection runs out of time. See
     /// `set_deadline`.
     deadline: Option<Instant>,
+    /// A no-save script's guard (`guard_saves`): `None` while requests are
+    /// not intercepted.
+    guard: Option<SaveGuard>,
+}
+
+/// What a guarded connection does with each paused request.
+struct SaveGuard {
+    /// The project's own save words, beside the built-in ones.
+    patterns: Vec<String>,
+    /// While true (a sign-in), every request goes on, saves included.
+    hold: bool,
+    /// The first save stopped and not yet reported, as the case's sentence.
+    blocked: Option<String>,
 }
 
 impl Cdp<WsTransport> {
@@ -215,12 +234,131 @@ impl<T: Transport> Cdp<T> {
             page_log: Default::default(),
             net_record: Default::default(),
             deadline: None,
+            guard: None,
         }
     }
 
     /// For tests that need to see what was sent.
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// For tests that feed frames in after the client was made.
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+
+    /// Intercept every request the page makes, and fail the saves among
+    /// them (`save_guard::is_save`) before they leave the browser. Every
+    /// paused request is answered in `on_event`, the moment it is read, so
+    /// nothing waits on the caller. `Err` leaves the connection as it was,
+    /// and the caller must not run a no-save script on it. Asked again, it
+    /// takes the new words and keeps a stopped save not yet reported.
+    pub async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
+        self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await?;
+        let blocked = self.guard.as_mut().and_then(|g| g.blocked.take());
+        self.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
+        Ok(())
+    }
+
+    /// Stop intercepting. Housekeeping: a browser that does not answer is
+    /// left as it is, and a request it pauses later is still continued.
+    pub async fn stop_guarding_saves(&mut self) {
+        self.guard = None;
+        let _ = self.call("Fetch.disable", serde_json::json!({})).await;
+    }
+
+    pub fn is_guarding_saves(&self) -> bool {
+        self.guard.is_some()
+    }
+
+    /// Let every request through for a while, saves included, without
+    /// switching interception off: a sign-in is the runner's own, and what
+    /// it sends is not the script's draft.
+    pub fn hold_saves(&mut self, hold: bool) {
+        if let Some(g) = self.guard.as_mut() {
+            g.hold = hold;
+        }
+    }
+
+    /// The first save stopped since the last time this was asked, as the
+    /// case's sentence (`save_guard::blocked`). Reported once.
+    pub fn take_save_blocked(&mut self) -> Option<String> {
+        self.guard.as_mut().and_then(|g| g.blocked.take())
+    }
+
+    /// Wait this long. A guarded connection keeps reading while it waits,
+    /// so a request the page makes between two calls is answered at once
+    /// rather than left paused until the next call; an unguarded one just
+    /// sleeps, as every wait loop always did.
+    pub async fn idle(&mut self, wait: Duration) {
+        if self.guard.is_some() {
+            self.pump(wait).await;
+        } else {
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    /// Read and handle whatever the browser sends for this long. Only the
+    /// wait for a frame is ever cut short - a frame already read is handled
+    /// to the end, so an answer to a paused request is never half sent.
+    pub async fn pump(&mut self, wait: Duration) {
+        let until = Instant::now() + wait;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            match tokio::time::timeout(left, self.next_frame()).await {
+                Err(_) => return,
+                // The socket is gone: nothing more will come, so the rest
+                // of the wait is a plain one.
+                Ok(Err(_)) => {
+                    tokio::time::sleep(left).await;
+                    return;
+                }
+                Ok(Ok(raw)) => {
+                    if let Some(ev) = event_of(&raw) {
+                        if self.on_event(ev).await.is_err() {
+                            tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Continue or fail one paused request, at once. Sent without waiting,
+    /// like the dialog answer: its reply carries an id nobody waits on and
+    /// falls through `read_reply` harmlessly. A connection that is not
+    /// guarded (any more) continues it - a request is never left paused.
+    async fn answer_paused(&mut self, params: &serde_json::Value) -> Result<(), CdpError> {
+        let request_id = params["requestId"].as_str().unwrap_or("").to_string();
+        let method = params["request"]["method"].as_str().unwrap_or("GET");
+        let url = params["request"]["url"].as_str().unwrap_or("");
+        let stop = match self.guard.as_mut() {
+            Some(g) if !g.hold && super::save_guard::is_save(method, url, &g.patterns) => {
+                if g.blocked.is_none() {
+                    g.blocked = Some(super::save_guard::blocked(method, url));
+                }
+                true
+            }
+            _ => false,
+        };
+        let (what, params) = if stop {
+            crate::applog::warn(format!(
+                "Auto Run stopped a save the page tried to send: {} {}",
+                method.to_ascii_uppercase(),
+                super::save_guard::path_of(url)
+            ));
+            ("Fetch.failRequest", serde_json::json!({ "requestId": request_id, "errorReason": "BlockedByClient" }))
+        } else {
+            ("Fetch.continueRequest", serde_json::json!({ "requestId": request_id }))
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.transport.send(frame(id, what, params)).await.map_err(CdpError::Transport)
     }
 
     /// Cap every later `call` at this instant as well as at
@@ -295,6 +433,12 @@ impl<T: Transport> Cdp<T> {
     }
 
     async fn on_event(&mut self, ev: Event) -> Result<(), CdpError> {
+        // A paused request holds the page up until it is answered, so it is
+        // answered here, the moment it is read - inside whichever call or
+        // idle wait read it.
+        if ev.method == "Fetch.requestPaused" {
+            return self.answer_paused(&ev.params).await;
+        }
         if ev.method == "Page.javascriptDialogOpening" {
             let kind = ev.params["type"].as_str().unwrap_or("dialog");
             let message = ev.params["message"].as_str().unwrap_or("");
@@ -442,6 +586,28 @@ pub trait Driver {
     /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
     /// every path out.
     fn set_deadline(&mut self, deadline: Option<Instant>);
+    /// See `Cdp::guard_saves`. A driver with no guard of its own (a test's
+    /// fake) is asked for `Fetch.enable` like any other call, so it can
+    /// answer or refuse it.
+    fn guard_saves(&mut self, _patterns: &[String]) -> impl Future<Output = Result<(), CdpError>> {
+        async move { self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await.map(|_| ()) }
+    }
+    /// See `Cdp::stop_guarding_saves`.
+    fn stop_guarding_saves(&mut self) -> impl Future<Output = ()> {
+        async move {
+            let _ = self.call("Fetch.disable", serde_json::json!({})).await;
+        }
+    }
+    /// See `Cdp::hold_saves`. Nothing to hold without a guard.
+    fn hold_saves(&mut self, _hold: bool) {}
+    /// See `Cdp::take_save_blocked`. A driver with no guard stopped nothing.
+    fn take_save_blocked(&mut self) -> Option<String> {
+        None
+    }
+    /// See `Cdp::idle`: a wait loop's pause between two looks.
+    fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
+        tokio::time::sleep(wait)
+    }
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -480,5 +646,20 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         Cdp::set_deadline(self, deadline)
+    }
+    async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
+        Cdp::guard_saves(self, patterns).await
+    }
+    async fn stop_guarding_saves(&mut self) {
+        Cdp::stop_guarding_saves(self).await
+    }
+    fn hold_saves(&mut self, hold: bool) {
+        Cdp::hold_saves(self, hold)
+    }
+    fn take_save_blocked(&mut self) -> Option<String> {
+        Cdp::take_save_blocked(self)
+    }
+    async fn idle(&mut self, wait: Duration) {
+        Cdp::idle(self, wait).await
     }
 }

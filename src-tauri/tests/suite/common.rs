@@ -51,6 +51,11 @@ pub struct ScriptedDriver {
     /// `Network.*` events go to it and not to `events`, as they do in
     /// `Cdp`. `None` keeps the trait's defaults: no record at all.
     pub net: Option<NetRecord>,
+    /// A save the guard stopped, noticed once a call to the named method
+    /// has been made - how a test says "the click made the page save".
+    pub block_after: Option<(String, String)>,
+    /// The sentence `take_save_blocked` hands over, once.
+    pub save_blocked: Option<String>,
 }
 
 impl ScriptedDriver {
@@ -70,6 +75,8 @@ impl ScriptedDriver {
             closed_when_drained: false,
             page_log: vec![],
             net: None,
+            block_after: None,
+            save_blocked: None,
         }
     }
 
@@ -101,6 +108,9 @@ impl Driver for ScriptedDriver {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CdpError> {
         self.calls.push((method.to_string(), params.clone()));
+        if self.block_after.as_ref().is_some_and(|(m, _)| m == method) {
+            self.save_blocked = self.block_after.take().map(|(_, s)| s);
+        }
         let mut fired = vec![];
         self.on_call_events.retain(|(m, ev)| {
             if m == method {
@@ -157,6 +167,10 @@ impl Driver for ScriptedDriver {
 
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.deadlines.push(deadline);
+    }
+
+    fn take_save_blocked(&mut self) -> Option<String> {
+        self.save_blocked.take()
     }
 }
 

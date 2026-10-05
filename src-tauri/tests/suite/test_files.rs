@@ -516,6 +516,7 @@ fn script_with(action: Value) -> CaseScript {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
     }
 }
 

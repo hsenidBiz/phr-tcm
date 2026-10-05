@@ -1601,10 +1601,26 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    // The case being worked on, when the assistant names it: a no-save
+    // case's saves are stopped while its actions are tried, as in a run.
+    let case_id = match serde_json::from_str::<serde_json::Value>(body).ok().map(|v| v["case_id"].clone()) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => match v.as_i64().and_then(|n| i32::try_from(n).ok()) {
+            Some(id) => Some(id),
+            None => return (400, "case_id must be a number".to_string()),
+        },
+    };
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
+    if let Some(id) = case_id {
+        if let Err(why) =
+            crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, id, false).await
+        {
+            return (409, why);
+        }
+    }
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. `run_step` is still what carries it out, so a tried
     // action behaves exactly as it will inside a script - the runner's own
@@ -2382,15 +2398,18 @@ fn repair_source(
 ///
 /// Compared the way the declared-edit gate compares steps - by
 /// `step_signature`, so JSON formatting does not count as a change -
-/// plus the three fields outside the steps a save can carry, `title`,
-/// `account` and `area` (a blank area is no area; case does not tell two
-/// area names apart). Positional rather than keyed by step number, so a bundle
+/// plus the fields outside the steps a save can carry, `title`,
+/// `account`, `no_save` and `area` (a blank area is no area; case does not
+/// tell two area names apart). `no_save` counts: a re-send that leaves it
+/// out of a script marked Must not save is a repair turning it off, which
+/// the gate refuses - never a quiet "unchanged". Positional rather than keyed by step number, so a bundle
 /// that merely REORDERS the same steps counts as a change and goes
 /// through the gate rather than around it. `repairs` is deliberately
 /// not compared: it is never the sender's to set.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
     old.title == sent.title
         && old.account == sent.account
+        && old.no_save == sent.no_save
         && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
         && old.steps.iter().zip(&sent.steps).all(|(a, b)| {

@@ -369,7 +369,7 @@ async fn keep_looking<D: Driver>(
                 Blocked::Harness(browser_silent(timing.action_ms, &target.describe()))
             });
         }
-        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
     }
 }
 

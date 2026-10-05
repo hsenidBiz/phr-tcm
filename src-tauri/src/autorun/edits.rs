@@ -30,6 +30,10 @@ pub struct Edit {
     pub area: bool,
 }
 
+/// Said when a repair would turn `no_save` off.
+pub const NO_SAVE_KEPT: &str =
+    "this script is marked Must not save, and a repair cannot turn that off - send \"no_save\": true, or ask a person to change it in the app";
+
 /// How many times a script may be repaired by an assistant before a person
 /// must open it in the app and save it there, which resets the count.
 pub const MAX_REPAIRS: u32 = 3;
@@ -129,6 +133,13 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
             "the account a script runs as cannot be changed by a repair - a person picks it in the app"
                 .to_string(),
         );
+    }
+
+    // Rule 11: a script that must not save keeps that promise through every
+    // repair - leaving `no_save` out of a repair IS turning it off. Only a
+    // person saving from the editor can. Turning it on is always allowed.
+    if old.no_save && !new.no_save {
+        return Err(NO_SAVE_KEPT.to_string());
     }
 
     // Rule 10: where the case starts is part of the script. A repair that

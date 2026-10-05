@@ -45,6 +45,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
+        no_save: false,
     }
 }
 

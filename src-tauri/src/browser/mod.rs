@@ -12,7 +12,8 @@
 //! uses it for real; `expect` looks until something holds; `actions` is
 //! what a script is written in. Beside them, `page_log` keeps what the page
 //! was doing (failed requests, console errors) for a failure to explain,
-//! and `net_record` keeps every request for a step that checks one.
+//! and `net_record` keeps every request for a step that checks one;
+//! `save_guard` says which requests a no-save script's page may not send.
 //!
 //! `tests/suite/browser_live.rs` runs the whole stack against a real headless
 //! browser; everything else is tested against a scripted fake.
@@ -21,6 +22,7 @@ pub mod launch;
 pub mod cdp;
 pub mod page_log;
 pub mod net_record;
+pub mod save_guard;
 pub mod timing;
 pub mod page;
 pub mod session;

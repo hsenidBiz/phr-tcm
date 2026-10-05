@@ -366,6 +366,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "type": "object",
                     "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
                 },
+                "case_id": {
+                    "type": "number",
+                    "description": "The case you are working on. A case marked no_save is tried with its saves stopped, as in a run.",
+                },
             }), &["action"]),
         },
         {

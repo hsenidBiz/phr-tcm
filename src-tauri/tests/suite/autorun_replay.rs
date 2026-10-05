@@ -691,7 +691,7 @@ async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
     save_accounts(root, &[common::account()]).unwrap();
-    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules }).unwrap();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules, save_words: vec![] }).unwrap();
     store::save_script(root, &one_check(Some("admin"))).unwrap();
     let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
     let mut browsers = browsers_of(vec![d]);
@@ -1555,7 +1555,7 @@ async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() 
 async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_navigate() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
     // `save_script` does not apply the rule: this is a file from before.
     store::save_script(
         root,

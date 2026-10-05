@@ -15,6 +15,7 @@ use super::{recipe, signin, transient};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
+use crate::browser::save_guard;
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
 use std::path::Path;
@@ -115,6 +116,20 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
             .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
             .filter(|(_, _, o)| was_run(o))
     };
+    // A no-save script whose page tried to save failed, wherever that
+    // happened - even on the way to the module, which would otherwise read
+    // as a run that could not start the case. Only the runner writes this
+    // sentence, and only for a no-save script.
+    if script.no_save {
+        if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok && save_guard::is_blocked(&o.detail)) {
+            let at = match n {
+                SIGN_IN_STEP => "while signing in".to_string(),
+                MODULE_STEP => "while going to the module".to_string(),
+                _ => format!("step {n}"),
+            };
+            return Proposal { verdict: "Failed", reason: format!("{at}: {}", o.detail) };
+        }
+    }
     if let Some((n, _, o)) = ran().find(|(_, _, o)| !o.ok && o.harness) {
         let at = match n {
             SIGN_IN_STEP => "while signing in".to_string(),
@@ -206,6 +221,21 @@ pub async fn run_case_as<D: Driver>(
         None
     };
 
+    // A no-save script never runs unguarded: the guard goes on before
+    // anything happens in the browser, or the case does not run at all.
+    if skip.is_none() && script.no_save {
+        let words = nav::load_nav(root, organization, project).map(|n| n.save_words);
+        let guarded = match words {
+            Err(why) => Err(why),
+            Ok(words) => d.guard_saves(&words).await.map_err(|e| e.to_string()),
+        };
+        if let Err(why) = guarded {
+            let mut record = blocked_before_start(script, account, save_guard::setup_failed(&why));
+            record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+            return record;
+        }
+    }
+
     if skip.is_none() {
         if let Some(key) = account {
             on_step(SIGN_IN_STEP);
@@ -235,13 +265,27 @@ pub async fn run_case_as<D: Driver>(
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
             let mut out = nav::reach_module(d, r, from, timing, &who(script.case_id)).await;
-            if !out.ok && !out.harness {
+            // A save the module's page sent as it opened fails the case
+            // here, before step 1 acts on it.
+            if let Some(sentence) = d.take_save_blocked() {
+                out = ActionOutcome::failed(sentence);
+                out.screenshot = runner::picture(d, root).await;
+            } else if !out.ok && !out.harness {
                 out.screenshot = runner::picture(d, root).await;
                 // Read after the picture: taking it read every event the
-                // page had sent by then.
-                log_the_page(d, script.case_id, &mut out);
+                // page had sent by then - a save among them is the reason.
+                match d.take_save_blocked() {
+                    Some(sentence) => {
+                        let shot = out.screenshot.take();
+                        out = ActionOutcome::failed(sentence);
+                        out.screenshot = shot;
+                    }
+                    None => log_the_page(d, script.case_id, &mut out),
+                }
             }
-            if !out.ok {
+            if save_guard::is_blocked(&out.detail) {
+                skip = Some(AFTER_FAILED_STEP);
+            } else if !out.ok {
                 skip = Some(AFTER_UNREACHED);
             }
             steps.push(StepRecord { step_number: MODULE_STEP, outcomes: vec![out], screenshot: None });
@@ -263,8 +307,18 @@ pub async fn run_case_as<D: Driver>(
                 Ok(o) => o,
                 Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
             };
+        let mut outcomes = outcomes;
         let harness = outcomes.iter().any(|o| !o.ok && o.harness);
         let screenshot = if harness { None } else { runner::picture(d, root).await };
+        // A save the page sent after the step's last action had already
+        // passed (read while the picture was taken) is still this step's.
+        if let Some(sentence) = d.take_save_blocked() {
+            if outcomes.iter().all(|o| o.ok) {
+                if let Some(last) = outcomes.last_mut() {
+                    *last = ActionOutcome::failed(sentence);
+                }
+            }
+        }
         if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }

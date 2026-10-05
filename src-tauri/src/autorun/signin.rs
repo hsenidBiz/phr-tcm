@@ -133,7 +133,24 @@ pub async fn sign_in_fresh<D: Driver>(
     sign_in_with(d, root, recipe, account, timing, false).await
 }
 
+/// A no-save case's guard is held for the whole sign-in, on every path out:
+/// the sign-in is the runner's own, and what it sends (a login form, the
+/// home page's own requests) is not the script's shared draft.
 async fn sign_in_with<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    try_saved_session: bool,
+) -> SignInOutcome {
+    d.hold_saves(true);
+    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session).await;
+    d.hold_saves(false);
+    out
+}
+
+async fn sign_in_held<D: Driver>(
     d: &mut D,
     root: &Path,
     recipe: &SignInRecipe,

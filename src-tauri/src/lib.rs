@@ -210,6 +210,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_delete_quirk,
             autorun::auto_run_load_nav,
             autorun::auto_run_set_direct_urls,
+            autorun::auto_run_set_save_words,
             autorun::auto_run_remove_module_path,
             autorun::auto_run_sign_in,
             autorun::auto_run_forget_session,

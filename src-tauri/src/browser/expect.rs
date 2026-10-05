@@ -245,6 +245,6 @@ async fn keep_looking<D: Driver>(
                 harness_timeout(timeout_ms, &target.describe())
             };
         }
-        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+        d.idle(Duration::from_millis(poll_ms)).await;
     }
 }

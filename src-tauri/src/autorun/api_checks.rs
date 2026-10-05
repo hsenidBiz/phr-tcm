@@ -660,7 +660,7 @@ async fn watch<D: Driver>(
                 Pick::None { seen } => Err(ActionOutcome::failed(no_request(url_contains, wait_ms, seen))),
             };
         }
-        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+        d.idle(Duration::from_millis(poll_ms)).await;
     }
 }
 

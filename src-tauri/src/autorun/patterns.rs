@@ -59,6 +59,9 @@ pub enum ErrorClass {
     /// A request the page made, or the answer to it, was not what the
     /// case expected (`expect_response`).
     Api,
+    /// The page tried to send a save while a no-save script ran, and the
+    /// browser stopped it (`browser::save_guard`).
+    SaveBlocked,
     /// The script itself was refused before it reached the page.
     CannotRun,
     /// The browser connection, not the page. Never a pattern about the
@@ -94,6 +97,7 @@ impl ErrorClass {
             ErrorClass::NoFileChooser => "no_file_chooser",
             ErrorClass::FrameUnreachable => "frame",
             ErrorClass::Api => "api",
+            ErrorClass::SaveBlocked => "no-save",
             ErrorClass::CannotRun => "cannot_run",
             ErrorClass::Browser => "browser",
             ErrorClass::Other => "other",
@@ -125,6 +129,7 @@ impl ErrorClass {
             ErrorClass::NoFileChooser => "no file chooser opened".to_string(),
             ErrorClass::FrameUnreachable => "a frame Auto Run cannot reach".to_string(),
             ErrorClass::Api => "the server was asked or answered differently".to_string(),
+            ErrorClass::SaveBlocked => "the page tried to save, and the script must not".to_string(),
             ErrorClass::CannotRun => "the action could not run".to_string(),
             ErrorClass::Browser => "the browser stopped answering".to_string(),
             ErrorClass::Other => "failed another way".to_string(),
@@ -170,6 +175,11 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     }
     if whole.starts_with(act::CANNOT_RUN) {
         return ErrorClass::CannotRun;
+    }
+    // The guard's own sentence, before anything that reads an ending: it
+    // ends with a path, which could read as anything.
+    if crate::browser::save_guard::is_blocked(whole) {
+        return ErrorClass::SaveBlocked;
     }
     // Before anything that reads a sentence's ending: an API check's
     // failure can end with an excerpt of whatever the server answered.

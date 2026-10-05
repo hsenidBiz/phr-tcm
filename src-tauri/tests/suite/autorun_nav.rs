@@ -26,7 +26,7 @@ fn path(module: &str, arrived: &str) -> ModulePath {
 }
 
 fn with(modules: Vec<ModulePath>) -> NavFile {
-    NavFile { direct_urls: true, modules }
+    NavFile { direct_urls: true, modules, save_words: vec![] }
 }
 
 /// A named area under a module, as the Areas dialog records one.
@@ -60,7 +60,7 @@ fn no_file_and_a_file_without_the_switch_both_allow_addresses() {
 #[test]
 fn the_file_sits_beside_the_sign_in_recipe_and_round_trips() {
     let dir = tempfile::tempdir().unwrap();
-    let nav = NavFile { direct_urls: false, modules: vec![area("Leave Apply", "Leave", "/hr/leave/apply")] };
+    let nav = NavFile { direct_urls: false, modules: vec![area("Leave Apply", "Leave", "/hr/leave/apply")], save_words: vec![] };
     save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
     let expected = dir.path().join("projects").join(format!("{}.nav.json", project_slug("Acme", "Web")));
     assert_eq!(nav_path(dir.path(), "Acme", "Web"), expected);
@@ -280,7 +280,7 @@ fn the_address_sentence_is_the_designs_own_words() {
 
 #[test]
 fn with_the_switch_off_any_navigate_absolute_or_relative_is_refused_and_named() {
-    let off = NavFile { direct_urls: false, modules: vec![] };
+    let off = NavFile { direct_urls: false, modules: vec![], save_words: vec![] };
     for url in ["https://hr.example.internal/hr/leave", "/hr/leave/apply"] {
         let sc = case_with(json!([{ "kind": "navigate", "url": url }]));
         assert_eq!(check_no_addresses(&off, &[sc.clone()]).unwrap_err(), format!("case 7: {}", no_address(2)));
@@ -293,7 +293,7 @@ fn with_the_switch_off_any_navigate_absolute_or_relative_is_refused_and_named() 
 #[test]
 fn the_guide_section_is_there_only_while_the_switch_is_off() {
     assert_eq!(guide_section(&NavFile::default()), "");
-    let text = guide_section(&NavFile { direct_urls: false, modules: vec![] });
+    let text = guide_section(&NavFile { direct_urls: false, modules: vec![], save_words: vec![] });
     assert!(text.starts_with("## This project's runs start on the module screen"), "{text}");
     for must in ["before step 1", "starts there", "Never use `navigate`", "`sign_in`"] {
         assert!(text.contains(must), "missing {must:?}: {text}");

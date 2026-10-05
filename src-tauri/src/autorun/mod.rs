@@ -83,6 +83,14 @@ pub struct CaseScript {
     /// `repairs` or `last_repair`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspected_defect: Option<SuspectedDefect>,
+    /// The case works on a shared draft and must never change it: while it
+    /// runs, its browser stops every save the page tries to send
+    /// (`browser::save_guard`) and the case fails. Set in the editor (Must
+    /// not save), by an assistant's save or through import; only a person
+    /// saving from the editor can turn it off (`edits::check_edits`).
+    /// Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_save: bool,
 }
 
 /// One case's suspected application defect: the step, and what the

@@ -104,6 +104,7 @@ mod pipelines;
 mod relink;
 mod report;
 mod run_order;
+mod save_guard;
 mod saved_session;
 mod spec_pane;
 mod speccov;

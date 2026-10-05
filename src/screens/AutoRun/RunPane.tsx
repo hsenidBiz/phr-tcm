@@ -162,7 +162,7 @@ export default function RunPane({
     if (!step) return;
     setBusy(true);
     try {
-      const r = await commands.autoRunStep(org, project, step);
+      const r = await commands.autoRunStep(org, project, caseId, step);
       if (r.status === "error") {
         toast.error(r.error);
         return;

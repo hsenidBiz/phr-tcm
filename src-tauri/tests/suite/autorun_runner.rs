@@ -330,7 +330,7 @@ async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_se
         dir.path(),
         "Acme",
         "Web",
-        &v2_lib::autorun::nav::NavFile { direct_urls: false, modules: vec![] },
+        &v2_lib::autorun::nav::NavFile { direct_urls: false, modules: vec![], save_words: vec![] },
     )
     .unwrap();
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));

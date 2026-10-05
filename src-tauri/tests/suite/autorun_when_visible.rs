@@ -115,7 +115,7 @@ fn a_navigate_inside_a_guard_is_still_an_address() {
         { "step_number": 2, "actions": [ guarded(json!([{ "kind": "navigate", "url": "/hr/home" }])) ] }
     ] }))
     .unwrap();
-    let off = NavFile { direct_urls: false, modules: vec![] };
+    let off = NavFile { direct_urls: false, modules: vec![], save_words: vec![] };
     assert_eq!(check_no_addresses(&off, &[sc]).unwrap_err(), format!("case 7: {}", no_address(2)));
 }
 
@@ -174,7 +174,7 @@ async fn a_then_action_that_fails_fails_the_step() {
 #[tokio::test]
 async fn with_addresses_switched_off_a_guarded_navigate_never_reaches_the_browser() {
     let dir = tempfile::tempdir().unwrap();
-    save_nav(dir.path(), "Acme", "Web", &NavFile { direct_urls: false, modules: vec![] }).unwrap();
+    save_nav(dir.path(), "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
     let (mut d, _state) = stateful_app(false, None);
     let mut acc: Option<String> = None;
     let a = action(guarded(json!([{ "kind": "navigate", "url": "/hr/home" }])));

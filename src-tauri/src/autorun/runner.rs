@@ -23,6 +23,8 @@ use std::time::Duration;
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in before this action failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached after the sign-in";
 const AFTER_REFUSED_ADDRESS: &str = "not run: this step opened a page by address, which this project does not allow";
+/// The rest of a step after the page tried to save in a no-save script.
+pub const AFTER_SAVE_BLOCKED: &str = "not run: the page tried to save, and this script must not";
 
 /// Where an authored `navigate` may go for this project: everywhere when
 /// there is no recipe to run (no saved recipe and no site address), else
@@ -124,6 +126,15 @@ pub async fn run_step_routed<D: Driver>(
             out.push(ActionOutcome::failed(why));
             continue;
         }
+        // A save stopped before this action began - while the page loaded,
+        // or between two steps - fails the step here, before it acts.
+        if let Some(sentence) = d.take_save_blocked() {
+            let mut stopped = ActionOutcome::failed(sentence);
+            stopped.screenshot = picture(d, root).await;
+            out.push(stopped);
+            blocked = Some(AFTER_SAVE_BLOCKED);
+            continue;
+        }
         let mut outcome = match action {
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
@@ -165,6 +176,12 @@ pub async fn run_step_routed<D: Driver>(
                 outcome
             }
         };
+        // A save the page tried while this action ran is the step's
+        // failure, whatever the action itself made of the page.
+        if let Some(sentence) = d.take_save_blocked() {
+            outcome = ActionOutcome::failed(sentence);
+            blocked = Some(AFTER_SAVE_BLOCKED);
+        }
         if !outcome.ok && !outcome.harness {
             outcome.screenshot = picture(d, root).await;
         }
