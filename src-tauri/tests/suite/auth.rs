@@ -263,6 +263,24 @@ fn the_same_redirect_again_after_the_code_still_gets_the_page() {
     assert!(favicon.starts_with("HTTP/1.1 404"), "{favicon}");
 }
 
+/// A browser preconnect that sends nothing used to hold the linger for the
+/// whole per-connection budget (10 s in the app), with the retry queued
+/// behind it. After sign-in each connection gets a second.
+#[test]
+fn a_silent_connection_in_the_linger_cannot_hold_up_the_retry() {
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_secs(10), Duration::from_secs(10))
+    });
+    browser_get(port, &browser_request("s1")).unwrap();
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let asked = Instant::now();
+    let again = browser_get(port, &browser_request("s1")).expect("the retry got no answer in time");
+    assert!(again.contains("You're signed in"), "{again}");
+    assert!(asked.elapsed() < Duration::from_millis(2500), "the retry waited {:?}", asked.elapsed());
+}
+
 /// The linger is for a browser's retry, not a port held open for good.
 #[test]
 fn the_linger_stops_after_its_window() {

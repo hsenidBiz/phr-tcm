@@ -26,6 +26,11 @@ const LOOPBACK_DRAIN: Duration = Duration::from_millis(500);
 /// How long the loopback keeps answering after a sign-in, for a browser
 /// that retries the redirect.
 pub const SIGN_IN_LINGER: Duration = Duration::from_secs(30);
+/// How long one connection may take to send its request during the
+/// linger. Connections there are served one at a time, so a browser
+/// preconnect that sends nothing must not hold the retry behind it for
+/// the full `LOOPBACK_READ_TIMEOUT`.
+const LINGER_READ_TIMEOUT: Duration = Duration::from_secs(1);
 /// What a sign-in nobody finished says.
 pub const SIGN_IN_TIMEOUT: &str = "Sign-in timed out. Try again.";
 
@@ -509,7 +514,9 @@ fn linger(loopback: Loopback, expected_state: String, linger_for: Duration, read
             while Instant::now() < until {
                 match loopback.accept() {
                     Ok(Some(stream)) => {
-                        let budget = read_timeout.min(until.saturating_duration_since(Instant::now()));
+                        let budget = read_timeout
+                            .min(LINGER_READ_TIMEOUT)
+                            .min(until.saturating_duration_since(Instant::now()));
                         let _ = serve(stream, &expected_state, budget, read_timeout);
                     }
                     Ok(None) => std::thread::sleep(Duration::from_millis(50)),
