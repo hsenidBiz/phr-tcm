@@ -308,6 +308,55 @@ test("with cases ticked the bar offers both a supervised and an unattended run",
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
 });
 
+// ---- Execution order: both run buttons use the plan ----
+
+const PLANNED = (order: number[]) => ({ order, phases: [order], resets: [], counts: null, saved: true });
+
+test("Run selected starts from the planned order, not list order", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
+    cmd === "auto_run_plan" ? PLANNED([2, 1]) : null,
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 selected" }));
+
+  const progress = await screen.findByText("case 1 of 2");
+  expect(progress.closest("h2")).toHaveTextContent("#2 Beta check");
+});
+
+test("Run unattended starts from the planned order and shows no plan for a single phase", async () => {
+  const replays: { cases: { case_id: number }[] }[] = [];
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd, args) => {
+    if (cmd === "auto_run_plan") return PLANNED([2, 1]);
+    if (cmd === "auto_run_replay") {
+      replays.push(args as never);
+      return new Promise(() => {});
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
+  await screen.findByRole("heading", { name: "Unattended run" });
+  expect(screen.queryByLabelText("Run plan")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(replays).toHaveLength(1));
+  expect(replays[0].cases.map((c) => c.case_id)).toEqual([2, 1]);
+});
+
+test("the Execution order item in More opens the dialog", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /Execution order/ }));
+  expect(await screen.findByRole("heading", { name: "Execution order" })).toBeInTheDocument();
+});
+
 // ---- Clear scripts / Clear results (shown wherever Auto Run is: dev, or unlocked) ----
 
 test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {

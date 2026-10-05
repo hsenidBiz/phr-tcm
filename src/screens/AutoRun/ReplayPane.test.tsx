@@ -795,3 +795,50 @@ test("scrolling the list by keyboard or touch also pauses following, but a plain
     mq.restore();
   }
 });
+
+// ---- the plan in the run dialog ----
+
+const planOf = (phases: number[][], resets: unknown[]) =>
+  ({ order: phases.flat(), phases, resets, counts: null, saved: false }) as never;
+
+test("with more than one phase the dialog lists the phases and the reset line", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[
+        { id: 1, title: "Publish the cycle" },
+        { id: 2, title: "Open the report" },
+      ]}
+      plan={planOf([[1], [2]], [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] }])}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+  const plan = await screen.findByLabelText("Run plan");
+  expect(within(plan).getByText("Phase 1: 1 case")).toBeInTheDocument();
+  expect(within(plan).getByText("Phase 2: 1 case")).toBeInTheDocument();
+  expect(
+    within(plan).getByText('Reset: revert "Cycle" (changed by #1 Publish the cycle)'),
+  ).toBeInTheDocument();
+});
+
+test("with one phase the dialog shows nothing extra", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  render(
+    <ReplayPane
+      org="acme"
+      project="Web"
+      pbiId={42}
+      cases={[{ id: 1, title: "A" }, { id: 2, title: "B" }]}
+      plan={planOf([[1, 2]], [])}
+      onClose={vi.fn()}
+      onFinished={vi.fn()}
+    />,
+  );
+  await screen.findByRole("button", { name: "Start" });
+  expect(screen.queryByLabelText("Run plan")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Phase \d/)).not.toBeInTheDocument();
+});

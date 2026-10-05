@@ -8,7 +8,7 @@
 // reviews it, and only a reviewed run can ever reach Azure DevOps.
 
 import { useEffect, useId, useRef, useState } from "react";
-import { commands, events, type StepRecord } from "../../bindings";
+import { commands, events, type PlanView, type StepRecord } from "../../bindings";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -26,6 +26,7 @@ import {
 import { cn } from "../../lib/cn";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
+import { resetLines } from "./plan";
 
 // Same two browsers, same values, as the supervised pane's picker - and the
 // same storage key, so a person's choice there is their choice here too.
@@ -82,11 +83,34 @@ export function statusOf(p: {
   return "Waiting";
 }
 
+/** Each phase with its case count, and a reset line at each boundary. */
+function PlanSummary({ plan, cases }: { plan: PlanView; cases: { id: number; title: string }[] }) {
+  const titleOf = (id: number) => cases.find((c) => c.id === id)?.title;
+  return (
+    <div aria-label="Run plan" className="space-y-1 rounded-md border border-border bg-surface-2 p-2 text-xs">
+      {plan.phases.map((ids, i) => {
+        const lines = i === 0 ? [] : plan.resets.filter((r) => r.before_case_id === ids[0]).flatMap((r) => resetLines(r, titleOf));
+        return (
+          <div key={ids[0]} className="space-y-1">
+            {lines.map((l) => (
+              <p key={l} className="border-l-2 border-l-warning pl-2 text-warning">{l}</p>
+            ))}
+            <p className="text-text">
+              Phase {i + 1}: {ids.length} {ids.length === 1 ? "case" : "cases"}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ReplayPane({
   org,
   project,
   pbiId,
   cases,
+  plan = null,
   onClose,
   onFinished,
 }: {
@@ -96,6 +120,9 @@ export default function ReplayPane({
   /** The selection, run in this order - same contract as the supervised
    * pane's `cases` prop. `module` is the case's Module field. */
   cases: { id: number; title: string; module?: string; steps?: WrittenStep[] }[];
+  /** The plan for `cases`. Its phases and reset points show before Start,
+   * and only when there is more than one phase. */
+  plan?: PlanView | null;
   onClose: () => void;
   /** Called with the finished run's id once `auto_run_replay` resolves.
    * The review screen opens from it. */
@@ -327,6 +354,7 @@ export default function ReplayPane({
       {phase !== "running" ? (
         <div className="space-y-3">
           {error && <p className="text-xs text-danger">{error}</p>}
+          {plan && plan.phases.length > 1 && <PlanSummary plan={plan} cases={cases} />}
           <label className="flex items-center gap-2 text-xs text-muted">
             Sign in as
             <Select

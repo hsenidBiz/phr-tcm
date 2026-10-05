@@ -17,7 +17,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { commands, type PbiHit } from "../../bindings";
+import { commands, type PbiHit, type PlanView } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -49,6 +49,8 @@ import { toast } from "../../lib/toast";
 import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
+import ExecutionOrderDialog from "./ExecutionOrderDialog";
+import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import ReadinessStrip from "./ReadinessStrip";
@@ -388,6 +390,10 @@ export default function AutoRun({
    * the same selection dock), but they are different flows with different
    * dialogs. */
   const [replaying, setReplaying] = useState<number[] | null>(null);
+  /** The plan the unattended run dialog shows: phases and reset points. */
+  const [replayPlan, setReplayPlan] = useState<PlanView | null>(null);
+  /** The Execution order dialog, with the cases it orders. */
+  const [orderingOpen, setOrderingOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
    * unattended run opens straight into this once it finishes - see
    * ReplayPane's `onFinished` below. */
@@ -528,6 +534,19 @@ export default function AutoRun({
   /** List order, not click order - the run reads top to bottom the way
    * the screen does. */
   const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
+
+  /** Both run buttons start from the plan, not from list order: the saved
+   * order for this PBI, else the suggested one. A plan that cannot be had
+   * leaves list order, as before. */
+  const startPlanned = async (kind: "supervised" | "unattended") => {
+    const plan = pbi ? await fetchPlan(org, project, pbi.id, selectedInOrder) : null;
+    const order = plan?.order ?? selectedInOrder;
+    if (kind === "supervised") setRunning(order);
+    else {
+      setReplayPlan(plan);
+      setReplaying(order);
+    }
+  };
 
   /** One case row, by its index in `rows` - grouped and flat both render
    * the same thing, and `scripts[i]` is indexed the same way. */
@@ -1004,6 +1023,12 @@ export default function AutoRun({
                           onSelect: () => importScripts.mutate(),
                         },
                         {
+                          label: "Execution order",
+                          description: "The order Auto Run uses for this PBI, and where the shared state is put back.",
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setOrderingOpen(true),
+                        },
+                        {
                           label: "Clear scripts",
                           danger: true,
                           disabled: !rows.some((_, i) => hasScript(i)),
@@ -1086,7 +1111,7 @@ export default function AutoRun({
                         <Button
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
-                          onClick={() => setRunning(selectedInOrder)}
+                          onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
                           Run {selectedInOrder.length} selected
@@ -1095,7 +1120,7 @@ export default function AutoRun({
                           size="sm"
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
-                          onClick={() => setReplaying(selectedInOrder)}
+                          onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />
                           Run {selectedInOrder.length} unattended
@@ -1158,6 +1183,19 @@ export default function AutoRun({
           project={project}
           caseModules={caseModules}
           onClose={() => setNavOpen(false)}
+        />
+      )}
+
+      {orderingOpen && (
+        <ExecutionOrderDialog
+          org={org}
+          project={project}
+          pbiId={pbi.id}
+          cases={(selectedInOrder.length > 0
+            ? rows.filter((c) => selected.has(c.id))
+            : rows.filter((_, i) => hasScript(i))
+          ).map((c) => ({ id: c.id, title: c.title }))}
+          onClose={() => setOrderingOpen(false)}
         />
       )}
 
@@ -1252,6 +1290,7 @@ export default function AutoRun({
               project={project}
               pbiId={pbi.id}
               cases={picked}
+              plan={replayPlan}
               onClose={() => setReplaying(null)}
               onFinished={(runId) => {
                 setReplaying(null);
