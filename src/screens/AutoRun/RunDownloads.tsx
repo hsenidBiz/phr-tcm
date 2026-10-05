@@ -34,6 +34,10 @@ export default function RunDownloads({
     queryKey: downloadSizesKey(runId),
     queryFn: () => unwrapStr(commands.autoRunDownloadSizes(runId)),
     enabled: names.length > 0,
+    // Read again every time a list mounts, whatever the app's defaults: a
+    // file removed since the last look must show as gone.
+    staleTime: 0,
+    refetchOnMount: "always",
     retry: false,
   });
   const open = useMutation({

@@ -450,21 +450,28 @@ pub const NOT_THIS_RUNS_DOWNLOAD: &str = "that file is not one of this run's dow
 pub const DOWNLOAD_GONE: &str = "that download is no longer on this machine";
 
 /// A download's name as a run records it: a plain file name, with no
-/// separator, no `..`, no drive or stream colon, and not absolute.
+/// separator, no drive or stream colon, not absolute, and not `.` or `..`.
+/// Two dots inside a name (`report..csv`) are an ordinary name: with no
+/// separator they can lead nowhere.
 fn plain_download_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
+        && name != ".."
         && !name.contains(['/', '\\', ':'])
-        && !name.contains("..")
         && !Path::new(name).is_absolute()
 }
 
-/// The file `name` in run `run_id`'s own download folder, canonicalised:
-/// the only path Open hands to the default app. Refused with
-/// [`NOT_THIS_RUNS_DOWNLOAD`] unless the run id is a run's own (never the
-/// supervised folder or the fallback for an unsafe id), the name is plain,
-/// and the file, links resolved, sits directly in the run's canonical
-/// folder as an ordinary file. [`DOWNLOAD_GONE`] when it is not there.
+/// The file `name` in run `run_id`'s own download folder: the only path
+/// Open hands to the default app. Refused with [`NOT_THIS_RUNS_DOWNLOAD`]
+/// unless the run id is a run's own (never the supervised folder or the
+/// fallback for an unsafe id), the name is plain, and the file, links
+/// resolved, sits directly in the run's canonical folder as an ordinary
+/// file. [`DOWNLOAD_GONE`] when it is not there.
+///
+/// The canonical paths are for that check only. What comes back is the
+/// plain `downloads_dir(root, run_id).join(name)`: on Windows a canonical
+/// path is the verbatim `\\?\C:\...` form, which the shell's opener
+/// handles unreliably.
 pub fn download_file(root: &Path, run_id: &str, name: &str) -> Result<PathBuf, String> {
     let refused = || NOT_THIS_RUNS_DOWNLOAD.to_string();
     if !safe_run_id(run_id) || run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) || !plain_download_name(name) {
@@ -480,7 +487,7 @@ pub fn download_file(root: &Path, run_id: &str, name: &str) -> Result<PathBuf, S
     if file.parent() != Some(folder.as_path()) || !std::fs::metadata(&file).is_ok_and(|m| m.is_file()) {
         return Err(refused());
     }
-    Ok(file)
+    Ok(candidate)
 }
 
 /// The size of one of a run's downloads, `None` when it is not one

@@ -20,9 +20,22 @@ fn a_file_in_the_runs_own_folder_resolves_to_that_file() {
     let root = tempfile::tempdir().unwrap();
     let dir = run_folder_with(root.path(), "run-1", &[("Template.xlsx", 10), ("x (2).csv", 3)]);
     let got = download_path_at(true, root.path(), "run-1", "Template.xlsx").unwrap();
-    assert_eq!(got, std::fs::canonicalize(dir.join("Template.xlsx")).unwrap());
+    // The plain path, never the verbatim `\\?\` form canonicalising gives on
+    // Windows, which the shell's opener handles unreliably.
+    assert_eq!(got, dir.join("Template.xlsx"));
+    assert!(!got.to_string_lossy().starts_with(r"\\?\"), "{}", got.display());
     // A numbered name is an ordinary name.
     assert!(download_path_at(true, root.path(), "run-1", "x (2).csv").is_ok());
+}
+
+#[test]
+fn two_dots_inside_a_name_open_but_dot_and_dot_dot_are_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = run_folder_with(root.path(), "run-1", &[("report..csv", 4)]);
+    assert_eq!(download_path_at(true, root.path(), "run-1", "report..csv").unwrap(), dir.join("report..csv"));
+    for name in ["..", "."] {
+        assert_eq!(download_path_at(true, root.path(), "run-1", name).unwrap_err(), NOT_THIS_RUNS_DOWNLOAD, "{name:?}");
+    }
 }
 
 #[test]
@@ -85,6 +98,10 @@ fn a_folder_in_the_runs_folder_is_not_a_download() {
     assert!(download_files(root.path(), "run-1").is_empty());
 }
 
+/// A link in the run's folder that leads out of it is refused. A file
+/// symlink needs a privilege an ordinary account may not have, so it is
+/// checked where it can be made; a directory junction to an outside folder
+/// needs none, and is always made and checked.
 #[cfg(windows)]
 #[test]
 fn a_link_out_of_the_runs_folder_is_refused() {
@@ -92,12 +109,26 @@ fn a_link_out_of_the_runs_folder_is_refused() {
     let dir = run_folder_with(root.path(), "run-1", &[]);
     let outside = root.path().join("outside.txt");
     std::fs::write(&outside, b"x").unwrap();
-    // Making a symbolic link needs a privilege an ordinary account may not
-    // have; without it there is nothing to test.
-    if std::os::windows::fs::symlink_file(&outside, dir.join("link.txt")).is_err() {
-        return;
+    if std::os::windows::fs::symlink_file(&outside, dir.join("link.txt")).is_ok() {
+        assert_eq!(download_path_at(true, root.path(), "run-1", "link.txt").unwrap_err(), NOT_THIS_RUNS_DOWNLOAD);
     }
-    assert_eq!(download_path_at(true, root.path(), "run-1", "link.txt").unwrap_err(), NOT_THIS_RUNS_DOWNLOAD);
+
+    let outside_dir = root.path().join("outside-folder");
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("a.csv"), b"x").unwrap();
+    let junction = dir.join("junction");
+    let made = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(&junction)
+        .arg(&outside_dir)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&made.stderr));
+    assert!(std::fs::symlink_metadata(&junction).is_ok(), "the junction was not made");
+    assert_eq!(download_path_at(true, root.path(), "run-1", "junction").unwrap_err(), NOT_THIS_RUNS_DOWNLOAD);
+    assert!(download_files(root.path(), "run-1").iter().all(|f| f.name != "junction"));
 }
 
 #[test]
