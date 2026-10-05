@@ -96,6 +96,25 @@ pub fn show_main<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Whether a request that needs the person brings the main window forward:
+/// when it is hidden in the tray or minimised. One already on screen is
+/// left where it is.
+pub fn should_present(visible: bool, minimised: bool) -> bool {
+    !visible || minimised
+}
+
+/// Bring the main window forward, the way the tray's Open does, when it is
+/// hidden or minimised (`should_present`): for a prompt the person has to
+/// answer, such as the assistant asking to replay a must-not-save script.
+pub fn present_main<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else { return };
+    let visible = window.is_visible().unwrap_or(false);
+    let minimised = window.is_minimized().unwrap_or(false);
+    if should_present(visible, minimised) {
+        show_main(app);
+    }
+}
+
 /// Build the tray icon and its menu. Called once from setup; a failure is
 /// logged by the caller and leaves `TRAY_OK` false.
 pub fn build(app: &tauri::App) -> tauri::Result<()> {

@@ -7,7 +7,7 @@
 // arrives then is held here and shown when the window is opened again. It
 // is state, not a toast: it stays until it is answered or the request
 // stops waiting (answered elsewhere, timed out, or the assistant gone).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, events, type AutorunReplayRequest } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -22,6 +22,9 @@ export function replayRequestText(r: AutorunReplayRequest): string {
 export default function ReplayRequestModal() {
   const [request, setRequest] = useState<AutorunReplayRequest | null>(null);
   const [answering, setAnswering] = useState(false);
+  // Read by every way out, not only the buttons: Escape or a backdrop click
+  // just after Allow must not send a second answer (a Deny) behind it.
+  const inFlight = useRef(false);
 
   useEffect(() => {
     const asked = events.autorunReplayRequest.listen((e) => setRequest(e.payload));
@@ -36,8 +39,11 @@ export default function ReplayRequestModal() {
   if (!request) return null;
 
   const answer = async (allow: boolean) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setAnswering(true);
     const r = await commands.autoRunAnswerReplayRequest(request.id, allow);
+    inFlight.current = false;
     setAnswering(false);
     // Closed whatever came back: a request that is no longer waiting has
     // nothing left to answer.

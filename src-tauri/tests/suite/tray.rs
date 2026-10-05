@@ -74,3 +74,28 @@ fn a_launch_stays_hidden_only_when_asked_and_start_minimized_is_on() {
     assert!(!launch_hidden(false, true));
     assert!(!launch_hidden(false, false));
 }
+
+/// A request that needs the person - the assistant asking to replay a
+/// must-not-save script - brings the main window forward when it is hidden
+/// in the tray or minimised, so the prompt is seen. A window already on
+/// screen is left where it is.
+#[test]
+fn a_request_brings_a_hidden_or_minimised_window_forward() {
+    use v2_lib::tray::should_present;
+    // (visible, minimised) -> bring it forward
+    assert!(should_present(false, false), "hidden in the tray");
+    assert!(should_present(true, true), "minimised");
+    assert!(should_present(false, true), "hidden and minimised");
+    assert!(!should_present(true, false), "already on screen");
+
+    // The app's replay host presents the window as it shows the prompt,
+    // through the same restore the tray's Open uses.
+    let tray = read("src/tray.rs");
+    let present = &tray[tray.find("pub fn present_main").expect("present_main")..];
+    let present = &present[..present.find("\n}\n").unwrap()];
+    assert!(present.contains("show_main(app)"), "{present}");
+    let host = read("src/commands/ai_bridge.rs");
+    let asked = &host[host.find("Notice::Asked(ask) =>").expect("the Asked arm")..];
+    let asked = &asked[..asked.find("Notice::Ended").unwrap()];
+    assert!(asked.contains("crate::tray::present_main(&self.0)"), "{asked}");
+}

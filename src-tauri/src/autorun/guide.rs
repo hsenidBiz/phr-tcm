@@ -622,9 +622,10 @@ person has open on the Auto Run tab:
 The person opens the browser and signs in - you cannot do either, except
 through a replay to a failing step (see "Repairing a script that failed"),
 which the app opens and signs in for. You never navigate away from where
-they are unless the case's own step says to. A `fill` you try really types into the application, so use test
-data, not the real thing. Never try `sign_in`: the person signs in,
-always.
+they are unless the case's own step says to. A `fill` you try really types
+into the application, so use test data, not the real thing. Never try
+`sign_in`: a tried sign-in is refused, and outside a replay the person
+signs in.
 
 ## Three things that make a source-derived selector wrong
 

@@ -84,3 +84,21 @@ test("a late answer closes the prompt and says the request is no longer waiting"
   await waitFor(() => expect(toast.warning).toHaveBeenCalledWith("that replay request is no longer waiting"));
   await waitFor(() => expect(screen.queryByText(TEXT)).not.toBeInTheDocument());
 });
+
+test("Escape while an answer is in flight sends nothing more", async () => {
+  let release: () => void = () => {};
+  const held = new Promise<null>((resolve) => {
+    release = () => resolve(null);
+  });
+  const answers = mount(() => held);
+  await send("autorun-replay-request", REQUEST);
+  fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+  await waitFor(() => expect(answers).toHaveLength(1));
+  fireEvent.keyDown(window, { key: "Escape" });
+  await act(async () => {
+    release();
+    await held;
+  });
+  await waitFor(() => expect(screen.queryByText(TEXT)).not.toBeInTheDocument());
+  expect(answers).toEqual([{ id: "replay-1-ab", allow: true }]);
+});

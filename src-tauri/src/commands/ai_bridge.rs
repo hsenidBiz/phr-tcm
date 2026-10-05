@@ -88,9 +88,9 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
 }
 
 /// The app behind the bridge's `/autorun-replay`: the Allow prompt goes to
-/// the window as events (it stays loaded while the window is hidden in the
-/// tray, so the prompt is there when it is shown again), and the replay
-/// takes the person's own path, as the assistant's.
+/// the window as events, and the window is brought forward when it is
+/// hidden in the tray or minimised, so the person sees it. The replay takes
+/// the person's own path, as the assistant's.
 struct AppReplayHost(tauri::AppHandle);
 
 impl crate::ai_bridge::ReplayHost for AppReplayHost {
@@ -98,7 +98,11 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
         use crate::autorun::replay_ask::Notice;
         use tauri_specta::Event as _;
         let _ = match notice {
-            Notice::Asked(ask) => ask.clone().emit(&self.0),
+            Notice::Asked(ask) => {
+                let shown = ask.clone().emit(&self.0);
+                crate::tray::present_main(&self.0);
+                shown
+            }
             Notice::Ended(id) => crate::events::AutorunReplayRequestEnded { id: id.to_string() }.emit(&self.0),
         };
     }
