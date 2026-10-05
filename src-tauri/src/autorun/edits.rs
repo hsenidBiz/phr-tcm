@@ -34,6 +34,10 @@ pub struct Edit {
 pub const NO_SAVE_KEPT: &str =
     "this script is marked Must not save, and a repair cannot turn that off - send \"no_save\": true, or ask a person to change it in the app";
 
+/// Said when a repair would change a script's preconditions.
+pub const PRECONDITIONS_KEPT: &str =
+    "a repair cannot change a script's preconditions - save the script itself to change them";
+
 /// How many times a script may be repaired by an assistant before a person
 /// must open it in the app and save it there, which resets the count.
 pub const MAX_REPAIRS: u32 = 3;
@@ -140,6 +144,15 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     // person saving from the editor can. Turning it on is always allowed.
     if old.no_save && !new.no_save {
         return Err(NO_SAVE_KEPT.to_string());
+    }
+
+    // Rule 12: the records a case relies on are part of what the case
+    // means, not something a repair tunes until the case runs. Added,
+    // changed or left out, a repair that sends other preconditions than
+    // the saved script's is refused; the editor, an import or a fresh save
+    // changes them.
+    if old.preconditions != new.preconditions {
+        return Err(PRECONDITIONS_KEPT.to_string());
     }
 
     // Rule 10: where the case starts is part of the script. A repair that

@@ -425,3 +425,39 @@ fn a_blank_area_or_one_in_another_case_is_no_change() {
         Err("the area was declared but not changed".to_string())
     );
 }
+
+/// A repair cannot add, change or drop a precondition, declared or not:
+/// the records a case relies on are part of what it means. Sending them
+/// back as they are is fine.
+#[test]
+fn a_repair_cannot_change_preconditions() {
+    use v2_lib::autorun::edits::PRECONDITIONS_KEPT;
+    assert_eq!(
+        PRECONDITIONS_KEPT,
+        "a repair cannot change a script's preconditions - save the script itself to change them"
+    );
+    let with = |pre: serde_json::Value| {
+        script(json!({
+            "case_id": 1, "title": "t", "preconditions": pre,
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": "#old" }] }]
+        }))
+    };
+    let publish = json!([{ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }]);
+    let old = with(publish.clone());
+    let declared = edit(&[1], "the button moved");
+    let mut fixed = with(publish.clone());
+    fixed.steps[0] = serde_json::from_value(json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": "#new" }] })).unwrap();
+    assert_eq!(check_edits(&old, &fixed, Some(&declared)), Ok(()), "the same preconditions sent back");
+
+    let mut dropped = fixed.clone();
+    dropped.preconditions.clear();
+    assert_eq!(check_edits(&old, &dropped, Some(&declared)), Err(PRECONDITIONS_KEPT.to_string()));
+
+    let mut changed = fixed.clone();
+    changed.preconditions[0].value = json!(275);
+    assert_eq!(check_edits(&old, &changed, Some(&declared)), Err(PRECONDITIONS_KEPT.to_string()));
+
+    let none = with(json!([]));
+    let added = with(publish);
+    assert_eq!(check_edits(&none, &added, None), Err(PRECONDITIONS_KEPT.to_string()));
+}

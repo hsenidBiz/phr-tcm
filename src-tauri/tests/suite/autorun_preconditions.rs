@@ -344,6 +344,7 @@ fn the_guide_teaches_preconditions() {
         "precondition 1: no flow",
         "has no stage",
         "give the value the flow's checks take",
+        "A repair sends",
     ] {
         assert!(section.contains(term), "the preconditions section never says {term:?}");
     }

@@ -2,7 +2,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import ScriptEditor from "./ScriptEditor";
 
@@ -254,6 +254,44 @@ test("a script with no preconditions is saved without the key", async () => {
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);
   const box = await screen.findByRole("checkbox", { name: "Must not save" });
   await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("preconditions");
+});
+
+const TWO_PRECONDITIONS = [
+  { flow: "pms-performance-cycle", stage: "publish", value: 274 },
+  { flow: "pms-named-cycle", stage: "setup", value: "Q4 cycle" },
+];
+
+test("a script's preconditions are listed under its steps by flow, stage and value", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, preconditions: TWO_PRECONDITIONS }, ACCOUNTS, []);
+  const list = await screen.findByRole("list", { name: "Preconditions" });
+  const rows = within(list).getAllByRole("listitem");
+  expect(rows.map((r) => r.textContent)).toEqual([
+    "pms-performance-cycle / publish: 274Remove",
+    "pms-named-cycle / setup: Q4 cycleRemove",
+  ]);
+  expect(screen.getByRole("button", { name: "Remove precondition 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove precondition 2" })).toBeInTheDocument();
+});
+
+test("Remove then Save sends the script without that precondition", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, preconditions: TWO_PRECONDITIONS }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove precondition 1" }));
+  expect(screen.queryByRole("button", { name: "Remove precondition 1" })).not.toBeInTheDocument();
+  expect(saved).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { preconditions?: unknown }).preconditions).toEqual([TWO_PRECONDITIONS[1]]);
+});
+
+test("removing every precondition saves the script without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, preconditions: [TWO_PRECONDITIONS[0]] }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove precondition 1" }));
+  expect(screen.queryByRole("list", { name: "Preconditions" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).not.toHaveProperty("preconditions");

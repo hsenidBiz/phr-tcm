@@ -1677,7 +1677,9 @@ async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_
         blocked.reason,
         "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle"
     );
-    assert!(blocked.steps.iter().all(|s| s.step_number > 0), "no sign-in step: {:?}", blocked.steps);
+    let asked = db.as_ref().unwrap().calls();
+    assert_eq!(asked.len(), 1, "only the case with a precondition asks the database: {asked:?}");
+    assert!(asked[0].contains("cycle_id = 274"), "{asked:?}");
     assert_eq!(run.cases[1].proposed, "Passed", "{:?}", run.cases[1]);
 }
 

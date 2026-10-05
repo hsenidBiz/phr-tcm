@@ -139,13 +139,15 @@ pub async fn stage_state_within<D: StageDb>(
     }
     activity_log::record(Kind::Db, entry);
 
-    // No SQL here, and no error text: the activity log has both.
+    // No SQL, no error text and no server here: the activity log has all
+    // three. The app log ships in a bug report, so it says only which
+    // stage was asked, why, and what came back.
     let said = match state {
         StageState::Done => "done",
         StageState::NotDone => "not done",
         StageState::CouldNotRun => "could not run",
     };
-    crate::applog::info(format!("db flow check on {label}: {}/{} {said}", flow.id, stage.id));
+    crate::applog::info(format!("db flow check for {}: {}/{} {said}", why.purpose, flow.id, stage.id));
     state
 }
 

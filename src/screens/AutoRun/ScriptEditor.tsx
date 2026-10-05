@@ -15,7 +15,7 @@ import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { floorOf } from "./floor";
 
@@ -86,6 +86,14 @@ export default function ScriptEditor({
   const [pickedNoSave, setPickedNoSave] = useState<boolean | null>(null);
   const noSave = pickedNoSave ?? existing.data?.no_save ?? false;
 
+  // Preconditions are not edited here, only removed: by their place in the
+  // saved script, taking effect on Save. Removing is what gets a script
+  // whose flow or stage has since been deleted saved again.
+  const [removedPre, setRemovedPre] = useState<number[]>([]);
+  const preconditions = (existing.data?.preconditions ?? [])
+    .map((p, i) => ({ p, n: i + 1 }))
+    .filter(({ n }) => !removedPre.includes(n));
+
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
   const value =
@@ -139,9 +147,9 @@ export default function ScriptEditor({
       // Left out when blank: the module's default area.
       ...(area === "" ? {} : { area }),
       ...(noSave ? { no_save: true } : {}),
-      // Not edited here: carried through, so saving from the editor keeps
-      // them (the save checks them again).
-      ...(existing.data?.preconditions?.length ? { preconditions: existing.data.preconditions } : {}),
+      // Carried through, less any removed here (the save checks them
+      // again).
+      ...(preconditions.length ? { preconditions: preconditions.map(({ p }) => p) } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -254,6 +262,30 @@ export default function ScriptEditor({
                     {state.kind === "checked" && `Step ${step_number}: checked`}
                     {state.kind === "explained" && `Step ${step_number}: not checked - ${state.reason}`}
                     {state.kind === "unchecked" && `Step ${step_number}: NOT CHECKED`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {preconditions.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Preconditions</span>
+              <ul aria-label="Preconditions" className="space-y-1 text-xs">
+                {preconditions.map(({ p, n }) => (
+                  <li key={n} className="flex items-center justify-between gap-2">
+                    <span className="id-mono min-w-0 break-words text-text">
+                      {`${p.flow} / ${p.stage}: ${typeof p.value === "string" ? p.value : JSON.stringify(p.value)}`}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Remove precondition ${n}`}
+                      onClick={() => setRemovedPre((r) => [...r, n])}
+                    >
+                      <IconRemove aria-hidden />
+                      Remove
+                    </Button>
                   </li>
                 ))}
               </ul>

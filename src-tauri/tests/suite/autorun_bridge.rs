@@ -107,9 +107,10 @@ fn case_7(selector: &str, value: &str) -> serde_json::Value {
 }
 
 /// A re-send that changes only the preconditions is not "unchanged": it is
-/// a repair, and takes one off the cap - never a free change.
+/// a repair, and a repair cannot change them - only a save of the script
+/// itself can. Sent back as they are, they cost nothing.
 #[tokio::test]
-async fn changing_only_the_preconditions_is_a_repair() {
+async fn an_assistant_cannot_change_a_saved_scripts_preconditions() {
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
@@ -119,20 +120,26 @@ async fn changing_only_the_preconditions_is_a_repair() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
-    let plain = case_7("#toast", "Saved").to_string();
-    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &plain, "1.0.0").await;
-    assert_eq!(status, 200, "{out}");
-
     let mut with = case_7("#toast", "Saved");
     with[0]["preconditions"] =
         serde_json::json!([{ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }]);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &with.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (new)", "a new script may carry them");
+
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &with.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (unchanged)");
+
+    let plain = case_7("#toast", "Saved").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &plain, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, v2_lib::autorun::edits::PRECONDITIONS_KEPT);
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
-    assert_eq!(saved.preconditions.len(), 1);
-    assert_eq!(saved.repairs, 1);
+    assert_eq!(saved.preconditions.len(), 1, "the saved script keeps them");
+    assert_eq!(saved.repairs, 0);
 }
 
 /// The declaration that goes with a change to case 7's step 2.
