@@ -18,6 +18,13 @@
   }
   // A page that saves the moment it opens.
   if (location.search.indexOf('autosave') >= 0) send('/api/Save');
+  // A page that saves its draft as it is left, the way pages do: a beacon
+  // on pagehide, which outlives the page that sent it.
+  if (location.search.indexOf('unloadsave') >= 0) {
+    window.addEventListener('pagehide', function () {
+      navigator.sendBeacon('/api/SaveDraft?token=hunter2', 'draft');
+    });
+  }
 </script>
 </body>
 </html>

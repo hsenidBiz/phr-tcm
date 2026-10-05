@@ -10,6 +10,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
+use v2_lib::ai_bridge::{try_case_id, try_in, TRY_NEEDS_CASE};
 use v2_lib::autorun::edits::check_edits;
 use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::nav::{load_nav, set_save_words, view};
@@ -23,6 +24,7 @@ use v2_lib::browser::save_guard::{
     blocked, check_words, is_blocked, is_save, path_of, setup_failed, SAVE_WORDS,
 };
 use v2_lib::browser::timing::Timing;
+use v2_lib::commands::autorun::guard_for_case;
 
 fn words(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
@@ -150,16 +152,23 @@ fn a_settings_file_without_save_words_loads_as_before() {
 struct FakeTransport {
     incoming: VecDeque<String>,
     sent: Vec<String>,
+    /// The first frame sent for this method never finishes writing - a
+    /// write a deadline then cuts short.
+    stall_once: Option<&'static str>,
 }
 
 impl FakeTransport {
     fn new(frames: &[&str]) -> Self {
-        FakeTransport { incoming: frames.iter().map(|f| f.to_string()).collect(), sent: vec![] }
+        FakeTransport { incoming: frames.iter().map(|f| f.to_string()).collect(), sent: vec![], stall_once: None }
     }
 }
 
 impl Transport for FakeTransport {
     async fn send(&mut self, text: String) -> Result<(), String> {
+        if self.stall_once.is_some_and(|m| text.contains(m)) {
+            self.stall_once = None;
+            std::future::pending::<()>().await;
+        }
         self.sent.push(text);
         Ok(())
     }
@@ -191,20 +200,43 @@ fn answer_to(cdp: &Cdp<FakeTransport>, request_id: &str) -> Option<serde_json::V
     sent(cdp).into_iter().find(|f| f["params"]["requestId"] == request_id)
 }
 
-#[tokio::test]
-async fn guarding_switches_on_interception_for_every_request() {
-    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#]));
-    cdp.guard_saves(&words(&["recalc"])).await.unwrap();
-    let f = &sent(&cdp)[0];
-    assert_eq!(f["method"], "Fetch.enable");
-    assert_eq!(f["params"]["patterns"][0]["urlPattern"], "*");
-    assert_eq!(f["params"]["patterns"][0]["requestStage"], "Request");
-    assert!(cdp.is_guarding_saves());
+/// A client guarded with these words: the bypass and `Fetch.enable` took
+/// ids 1 and 2, so its next frame is 3.
+async fn guarded(patterns: &[&str]) -> Cdp<FakeTransport> {
+    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#, r#"{"id":2,"result":{}}"#]));
+    cdp.guard_saves(&words(patterns)).await.unwrap();
+    cdp
 }
 
 #[tokio::test]
-async fn a_refused_guard_is_an_error_and_leaves_the_client_unguarded() {
+async fn guarding_bypasses_service_workers_then_intercepts_every_request() {
+    let cdp = guarded(&["recalc"]).await;
+    let f = sent(&cdp);
+    assert_eq!(f[0]["method"], "Network.setBypassServiceWorker");
+    assert_eq!(f[0]["params"]["bypass"], true);
+    assert_eq!(f[1]["method"], "Fetch.enable");
+    assert_eq!(f[1]["params"]["patterns"][0]["urlPattern"], "*");
+    assert_eq!(f[1]["params"]["patterns"][0]["requestStage"], "Request");
+    assert!(cdp.is_guarding_saves());
+}
+
+/// Fail closed: a browser that will not bypass its service workers is not
+/// guarded at all, and interception is never even asked for.
+#[tokio::test]
+async fn a_refused_service_worker_bypass_leaves_the_client_unguarded() {
     let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"error":{"code":-32000,"message":"nope"}}"#]));
+    let err = cdp.guard_saves(&[]).await.unwrap_err();
+    assert!(err.to_string().contains("Network.setBypassServiceWorker") && err.to_string().contains("nope"), "{err}");
+    assert!(!cdp.is_guarding_saves());
+    assert_eq!(sent(&cdp).len(), 1, "Fetch.enable was asked for anyway");
+}
+
+#[tokio::test]
+async fn a_refused_interception_is_an_error_and_leaves_the_client_unguarded() {
+    let mut cdp = Cdp::over(FakeTransport::new(&[
+        r#"{"id":1,"result":{}}"#,
+        r#"{"id":2,"error":{"code":-32000,"message":"nope"}}"#,
+    ]));
     let err = cdp.guard_saves(&[]).await.unwrap_err();
     assert!(err.to_string().contains("nope"), "{err}");
     assert!(!cdp.is_guarding_saves());
@@ -214,14 +246,13 @@ async fn a_refused_guard_is_an_error_and_leaves_the_client_unguarded() {
 /// another call waits for its own reply - and that reply still arrives.
 #[tokio::test]
 async fn paused_requests_are_answered_while_a_call_waits() {
-    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#]));
-    cdp.guard_saves(&words(&["search"])).await.unwrap();
+    let mut cdp = guarded(&["search"]).await;
     let frames = [
         paused("r1", "POST", "https://hr.example/api/Save?token=x"),
         paused("r2", "GET", "https://hr.example/api/Save"),
         paused("r3", "POST", "https://hr.example/api/Search"),
         paused("r4", "POST", "https://hr.example/api/List"),
-        r#"{"id":2,"result":{"done":true}}"#.to_string(),
+        r#"{"id":3,"result":{"done":true}}"#.to_string(),
     ];
     cdp.transport_mut().incoming.extend(frames);
     let got = cdp.call("Runtime.evaluate", json!({})).await.unwrap();
@@ -244,6 +275,27 @@ async fn paused_requests_are_answered_while_a_call_waits() {
     assert_eq!(cdp.take_save_blocked(), None);
 }
 
+/// Minor (a): a call's deadline that cuts the answer to a paused request
+/// short mid-write never leaves the request paused - the answer is written
+/// again before the next frame goes out.
+#[tokio::test]
+async fn an_answer_a_deadline_cut_short_is_sent_again() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().stall_once = Some("Fetch.continueRequest");
+    cdp.transport_mut().incoming.push_back(paused("r1", "GET", "https://hr.example/app.js"));
+    let cut = cdp.call_within("Runtime.evaluate", json!({}), Duration::from_millis(50)).await;
+    assert!(matches!(cut, Err(CdpError::Timeout { .. })), "{cut:?}");
+    assert!(answer_to(&cdp, "r1").is_none(), "the stalled write finished after all");
+    // The call after it writes the answer first.
+    cdp.transport_mut().incoming.push_back(r#"{"id":5,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    let f = sent(&cdp);
+    let answer = f.iter().position(|x| x["params"]["requestId"] == "r1").expect("never answered");
+    let call = f.iter().position(|x| x["id"] == 5).unwrap();
+    assert!(answer < call, "the answer went after the next call: {f:?}");
+    assert_eq!(f[answer]["method"], "Fetch.continueRequest");
+}
+
 #[tokio::test]
 async fn an_unguarded_client_continues_a_paused_request_rather_than_leave_it() {
     let mut cdp = Cdp::over(FakeTransport::new(&[
@@ -257,21 +309,20 @@ async fn an_unguarded_client_continues_a_paused_request_rather_than_leave_it() {
 
 #[tokio::test]
 async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
-    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#]));
-    cdp.guard_saves(&[]).await.unwrap();
+    let mut cdp = guarded(&[]).await;
     cdp.hold_saves(true);
     cdp.transport_mut().incoming.extend([
         paused("r1", "POST", "https://hr.example/Account/SubmitLogin"),
-        r#"{"id":2,"result":{}}"#.to_string(),
+        r#"{"id":3,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(cdp.take_save_blocked(), None);
     cdp.hold_saves(false);
-    // The continue for r1 took id 3, so this call is 4.
+    // The continue for r1 took id 4, so this call is 5.
     cdp.transport_mut().incoming.extend([
         paused("r2", "POST", "https://hr.example/api/Save"),
-        r#"{"id":4,"result":{}}"#.to_string(),
+        r#"{"id":5,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
@@ -281,8 +332,7 @@ async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
 /// so a paused request is not left waiting for the next call.
 #[tokio::test]
 async fn a_guarded_client_answers_paused_requests_while_it_idles() {
-    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#]));
-    cdp.guard_saves(&[]).await.unwrap();
+    let mut cdp = guarded(&[]).await;
     cdp.transport_mut().incoming.push_back(paused("r1", "GET", "https://hr.example/app.js"));
     cdp.idle(Duration::from_millis(60)).await;
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
@@ -303,11 +353,70 @@ async fn an_unguarded_client_idles_without_reading() {
 
 #[tokio::test]
 async fn stopping_the_guard_switches_interception_off() {
-    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#, r#"{"id":2,"result":{}}"#]));
-    cdp.guard_saves(&[]).await.unwrap();
-    cdp.stop_guarding_saves().await;
-    assert_eq!(sent(&cdp)[1]["method"], "Fetch.disable");
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.stop_guarding_saves().await.unwrap();
+    assert_eq!(sent(&cdp)[2]["method"], "Fetch.disable");
     assert!(!cdp.is_guarding_saves());
+}
+
+/// Minor (b): a browser that refuses to stop intercepting is still guarded
+/// - its paused saves are still stopped, not continued.
+#[tokio::test]
+async fn a_refused_stop_keeps_the_guard_answering() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"error":{"code":-32000,"message":"busy"}}"#.to_string());
+    assert!(cdp.stop_guarding_saves().await.is_err());
+    assert!(cdp.is_guarding_saves());
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/api/Save"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// Minor (d): the supervised browser's between-commands reader. It answers
+/// a request paused while no command runs, and ends - clearing its flag -
+/// once the slot is empty.
+#[tokio::test]
+async fn the_between_commands_reader_answers_and_ends_with_the_browser() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(paused("r1", "GET", "https://hr.example/poll"));
+    let slot = tokio::sync::Mutex::new(Some(cdp));
+    let running = AtomicBool::new(true);
+    let reader = v2_lib::commands::autorun::keep_answering(
+        &slot,
+        &running,
+        |c: &mut Cdp<FakeTransport>| c,
+        Duration::from_millis(10),
+        Duration::from_millis(5),
+    );
+    let closer = async {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        slot.lock().await.take().expect("the browser was taken early")
+    };
+    let ((), cdp) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(reader, closer) })
+        .await
+        .expect("the reader never ended");
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert!(!running.load(Ordering::SeqCst), "the reader ended without clearing its flag");
+}
+
+#[tokio::test]
+async fn the_between_commands_reader_ends_when_the_guard_is_lifted() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let cdp = Cdp::over(FakeTransport::new(&[]));
+    let slot = tokio::sync::Mutex::new(Some(cdp));
+    let running = AtomicBool::new(true);
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        v2_lib::commands::autorun::keep_answering(&slot, &running, |c: &mut Cdp<FakeTransport>| c, Duration::from_millis(5), Duration::from_millis(5)),
+    )
+    .await
+    .expect("an unguarded browser kept the reader going");
+    assert!(!running.load(Ordering::SeqCst));
 }
 
 // ---------------------------------------------------------------- classes and proposals
@@ -432,7 +541,7 @@ async fn a_no_save_case_switches_the_guard_on_before_anything_else() {
     set_save_words(dir.path(), "acme", "PMS", &words(&["recalc"])).unwrap();
     let mut d = common::FakePage::default().driver();
     let rec = run_case(&mut d, dir.path(), "acme", "PMS", &no_save_script(one_click()), &quick(), &AtomicBool::new(false), &mut |_| {}).await;
-    assert_eq!(d.methods()[0], "Fetch.enable");
+    assert_eq!(d.methods()[..2], ["Network.setBypassServiceWorker".to_string(), "Fetch.enable".to_string()]);
     assert_eq!(rec.proposed, "Passed", "{rec:?}");
 }
 
@@ -457,7 +566,7 @@ async fn a_guard_that_cannot_start_blocks_the_case_before_step_1() {
     let rec = run_case(&mut d, dir.path(), "acme", "PMS", &no_save_script(one_click()), &quick(), &AtomicBool::new(false), &mut |_| {}).await;
     assert_eq!(rec.proposed, "Blocked");
     assert!(rec.reason.starts_with("the no-save guard could not be set up: "), "{}", rec.reason);
-    assert_eq!(d.methods(), vec!["Fetch.enable".to_string()], "nothing ran after the refusal");
+    assert_eq!(d.methods(), vec!["Network.setBypassServiceWorker".to_string(), "Fetch.enable".to_string()], "nothing ran after the refusal");
     assert!(rec.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.detail.starts_with("not run:")));
 }
 
@@ -495,4 +604,151 @@ async fn a_save_blocked_before_step_1_fails_the_case_without_running_it() {
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
     assert!(rec.reason.ends_with(SENTENCE), "{}", rec.reason);
     assert!(!d.methods().iter().any(|m| m == "Input.dispatchMouseEvent"), "the click ran: {:?}", d.methods());
+}
+
+#[tokio::test]
+async fn a_browser_that_will_not_bypass_service_workers_blocks_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Network.setBypassServiceWorker" => {
+            Err(CdpError::Protocol { method: "Network.setBypassServiceWorker".into(), message: "not allowed".into() })
+        }
+        _ => page.answer(method, params),
+    });
+    let rec = run_case(&mut d, dir.path(), "acme", "PMS", &no_save_script(one_click()), &quick(), &AtomicBool::new(false), &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked");
+    assert!(rec.reason.starts_with("the no-save guard could not be set up: "), "{}", rec.reason);
+    assert_eq!(d.methods(), vec!["Network.setBypassServiceWorker".to_string()], "anything ran after the refusal");
+}
+
+// ---------------------------------------------------------------- the supervised browser and the try
+
+fn on_disk(dir: &std::path::Path, case_id: i32, no_save: bool) {
+    let mut s = no_save_script(one_click());
+    s.case_id = case_id;
+    s.no_save = no_save;
+    v2_lib::autorun::store::save_script(dir, &s).unwrap();
+}
+
+/// Minor (d): a step of a no-save case guards the browser; a step of a case
+/// without the flag lifts the guard again.
+#[tokio::test]
+async fn the_guard_follows_the_case_whose_step_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, true);
+    on_disk(dir.path(), 8, false);
+    set_save_words(dir.path(), "acme", "PMS", &words(&["recalc"])).unwrap();
+    let mut d = common::FakePage::default().driver();
+    let mut held = None;
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    assert_eq!(held, Some(7));
+    assert!(d.methods().contains(&"Fetch.enable".to_string()));
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    assert_eq!(held, None);
+    assert_eq!(d.methods().last().map(String::as_str), Some("Fetch.disable"));
+}
+
+#[tokio::test]
+async fn a_case_with_no_script_on_this_machine_is_not_guarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = common::FakePage::default().driver();
+    let mut held = None;
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 99).await.unwrap();
+    assert!(!d.methods().iter().any(|m| m.starts_with("Fetch.")), "{:?}", d.methods());
+}
+
+#[tokio::test]
+async fn a_supervised_guard_that_cannot_start_refuses_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, true);
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Fetch.enable" => Err(CdpError::Protocol { method: "Fetch.enable".into(), message: "not allowed".into() }),
+        _ => page.answer(method, params),
+    });
+    let mut held = None;
+    let why = guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap_err();
+    assert!(why.starts_with("the no-save guard could not be set up: "), "{why}");
+    assert_eq!(held, None);
+}
+
+/// Minor (c): a save stopped for one case and not yet reported is that
+/// case's - written to the log under it - and never carried into the next.
+#[tokio::test]
+async fn a_stopped_save_is_not_carried_into_the_next_case() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, true);
+    on_disk(dir.path(), 8, true);
+    let mut d = common::FakePage::default().driver();
+    let mut held = None;
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    d.save_blocked = Some(SENTENCE.to_string());
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    assert_eq!(held, Some(8));
+    assert_eq!(d.save_blocked, None, "case 7's save was carried into case 8");
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(lines.iter().any(|l| l == &format!("Auto Run, case 7: {SENTENCE}")), "{lines:?}");
+    // The same case asked again keeps what it has not reported yet.
+    d.save_blocked = Some(SENTENCE.to_string());
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    assert_eq!(d.save_blocked.as_deref(), Some(SENTENCE));
+}
+
+/// Minor (d): the try route's guard. A try for a no-save case runs in a
+/// guarded browser, and a save the page tries fails it with the run's own
+/// sentence.
+#[tokio::test]
+async fn a_try_for_a_no_save_case_is_guarded_and_fails_on_a_save() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, true);
+    let mut d = common::FakePage::default().driver();
+    d.block_after = Some(("Input.dispatchMouseEvent".into(), SENTENCE.into()));
+    let mut held = None;
+    let mut account = None;
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    let click: v2_lib::browser::actions::Action =
+        serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let (status, text) = try_in(&mut d, &mut account, dir.path(), "acme", "PMS", &click).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with(&format!("failed: {SENTENCE}")), "{text}");
+    let m = d.methods();
+    let enabled = m.iter().position(|x| x == "Fetch.enable").expect("never guarded");
+    let clicked = m.iter().position(|x| x == "Input.dispatchMouseEvent").expect("never clicked");
+    assert!(enabled < clicked, "the click ran before the guard: {m:?}");
+}
+
+#[test]
+fn a_try_must_name_its_case_as_a_number() {
+    assert_eq!(try_case_id(r#"{ "action": {} }"#), Err((400, TRY_NEEDS_CASE.to_string())));
+    assert_eq!(try_case_id(r#"{ "action": {}, "case_id": null }"#), Err((400, TRY_NEEDS_CASE.to_string())));
+    assert_eq!(try_case_id(r#"{ "case_id": "7" }"#), Err((400, "case_id must be a number".to_string())));
+    assert_eq!(try_case_id(r#"{ "case_id": 7.5 }"#), Err((400, "case_id must be a number".to_string())));
+    assert_eq!(try_case_id(r#"{ "case_id": 7 }"#), Ok(7));
+    assert_eq!(TRY_NEEDS_CASE, "name the case this try is for (case_id), so its no-save guard applies");
+}
+
+// ---------------------------------------------------------------- import
+
+#[test]
+fn an_import_keeps_must_not_save_on_a_script_that_has_it() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, true);
+    let mut plain = no_save_script(one_click());
+    plain.no_save = false;
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, serde_json::to_string(&vec![plain]).unwrap()).unwrap();
+    v2_lib::commands::autorun::import_scripts_from_path(dir.path(), "acme", "PMS", file.to_str().unwrap()).unwrap();
+    assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().no_save, "the import cleared it");
+}
+
+#[test]
+fn an_import_can_turn_must_not_save_on() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 7, false);
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, serde_json::to_string(&vec![no_save_script(one_click())]).unwrap()).unwrap();
+    v2_lib::commands::autorun::import_scripts_from_path(dir.path(), "acme", "PMS", file.to_str().unwrap()).unwrap();
+    assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().no_save);
 }

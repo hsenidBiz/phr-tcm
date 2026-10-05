@@ -1252,7 +1252,7 @@ async fn page_routes_need_the_supervised_browser() {
     assert_eq!(out, expected);
 
     let try_body =
-        serde_json::json!({ "action": { "kind": "click", "selector": "#save" } }).to_string();
+        serde_json::json!({ "action": { "kind": "click", "selector": "#save" }, "case_id": 7 }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &try_body, "1.0.0").await;
     assert_eq!(status, 409, "{out}");
     assert_eq!(out, expected);
@@ -1303,6 +1303,26 @@ async fn try_refuses_a_sign_in_and_an_invalid_action() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &unknown, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("teleport"), "{out}");
+}
+
+/// A try names the case it is for, so that case's no-save guard applies
+/// (run safety §1): without one, or with one that is not a number, it is
+/// refused before the browser is asked.
+#[tokio::test]
+async fn try_refuses_a_body_that_names_no_case() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let none = serde_json::json!({ "action": { "kind": "click", "selector": "#save" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &none, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "name the case this try is for (case_id), so its no-save guard applies");
+
+    let words = serde_json::json!({ "action": { "kind": "click", "selector": "#save" }, "case_id": "seven" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &words, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case_id must be a number");
 }
 
 /// The applog line for a tried action never carries a `fill`'s VALUE -

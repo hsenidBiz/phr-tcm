@@ -1590,6 +1590,13 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if action.each().iter().any(to_a_file) {
         return (400, "a tried navigate goes to http or https only".to_string());
     }
+    // The case the try is for: its no-save guard applies, exactly as it
+    // does to a step of that case, so a try can never send the save the
+    // case itself would have stopped.
+    let case_id = match try_case_id(body) {
+        Ok(id) => id,
+        Err(refused) => return refused,
+    };
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -1601,31 +1608,47 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    // The case being worked on, when the assistant names it: a no-save
-    // case's saves are stopped while its actions are tried, as in a run.
-    let case_id = match serde_json::from_str::<serde_json::Value>(body).ok().map(|v| v["case_id"].clone()) {
-        None | Some(serde_json::Value::Null) => None,
-        Some(v) => match v.as_i64().and_then(|n| i32::try_from(n).ok()) {
-            Some(id) => Some(id),
-            None => return (400, "case_id must be a number".to_string()),
-        },
-    };
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    if let Some(id) = case_id {
-        if let Err(why) =
-            crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, id, false).await
-        {
-            return (409, why);
-        }
+    if let Err(why) = crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, case_id).await {
+        return (409, why);
     }
+    try_in(&mut session.cdp, &mut session.account, &root, &ctx.org, &ctx.project, &action).await
+}
+
+/// Said to a try that does not name its case.
+pub const TRY_NEEDS_CASE: &str = "name the case this try is for (case_id), so its no-save guard applies";
+
+/// The `case_id` a try body must carry.
+pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    match v.get("case_id") {
+        None | Some(serde_json::Value::Null) => Err((400, TRY_NEEDS_CASE.to_string())),
+        Some(id) => id
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or((400, "case_id must be a number".to_string())),
+    }
+}
+
+/// One tried action in a browser already guarded for its case
+/// (`commands::autorun::guard_for_case`), as the route answers it.
+pub async fn try_in<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    account: &mut Option<String>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    action: &crate::browser::actions::Action,
+) -> (u16, String) {
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. `run_step` is still what carries it out, so a tried
     // action behaves exactly as it will inside a script - the runner's own
     // kinds included: a tried `expect_response` takes its mark as the try
-    // starts, and checks a request the page makes while it waits.
+    // starts, and checks a request the page makes while it waits - and a
+    // save the guard stops fails it with the run's own sentence.
     //
     // `{{username}}` and `{{password}}` are refused where a script is
     // SAVED, not here: a tried `fill` is not on its way into a file, and
@@ -1633,13 +1656,13 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // anything a recipe would have substituted.
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let outcomes = match crate::autorun::runner::run_step(
-        &mut session.cdp,
-        &root,
-        &ctx.org,
-        &ctx.project,
+        d,
+        root,
+        organization,
+        project,
         &step,
         &crate::browser::timing::Timing::default(),
-        &mut session.account,
+        account,
     )
     .await
     {
@@ -1652,7 +1675,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // Shown to a person reading Settings -> Logs, never returned to the
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
     // even looks at.
-    crate::applog::info(describe_try(&action, outcome.ok));
+    crate::applog::info(describe_try(action, outcome.ok));
     let mut text =
         format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {

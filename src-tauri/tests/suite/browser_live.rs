@@ -2108,3 +2108,57 @@ async fn a_guarded_browser_answers_requests_made_between_calls() {
     let out = page::eval_value(&mut live.cdp, "document.getElementById('out').textContent").await.unwrap();
     assert_eq!(out.as_str(), Some("searched"));
 }
+
+const DRAFT_STOPPED: &str =
+    "this script must not save, but the page tried to send POST /api/SaveDraft - it was stopped before it reached the server";
+
+/// The App's recipe, with the draft server's origin allowed, so a script
+/// may open the draft and then sign in.
+fn recipe_with_draft(app: &App, server: &SaveServer) -> SignInRecipe {
+    let mut r = recipe_for(app);
+    r.allowed_origins = vec![format!("http://127.0.0.1:{}", server.port)];
+    r.validate().expect("the test wrote an invalid recipe");
+    r
+}
+
+/// Review fix 3: the sign-in's exemption starts only once it has arrived
+/// on its start page. A save the draft page sends as it is left (a beacon
+/// on pagehide) is still stopped - and the sign-in's own login POST, which
+/// a project word would otherwise catch, still goes through.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_save_sent_while_a_sign_in_leaves_the_draft_is_still_stopped() {
+    let app = App::start();
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("?unloadsave=1") })).await);
+    live.cdp.guard_saves(&["login".to_string()]).await.expect("the guard did not start");
+    let out = sign_in(&mut live.cdp, root.path(), &recipe_with_draft(&app, &server), &kim(), &timing()).await;
+    assert!(out.ok, "the sign-in itself was stopped: {} / {:?}", out.detail, out.steps);
+    assert_eq!(app.logins.load(Ordering::SeqCst), 1, "the login POST never reached the server");
+    assert!(!server.got("POST /api/SaveDraft"), "the draft's save reached the server: {:?}", server.seen.lock().unwrap());
+    assert_eq!(live.cdp.take_save_blocked().as_deref(), Some(DRAFT_STOPPED));
+}
+
+/// The same through a script: a `sign_in` in the middle of a no-save case,
+/// on the draft, fails the step with the sentence.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_mid_script_sign_in_that_leaves_a_saving_draft_fails_the_case() {
+    let app = App::start();
+    let server = SaveServer::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "PMS", &recipe_with_draft(&app, &server)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+    let mut live = open().await;
+    let script = save_case(
+        true,
+        &server.page("?unloadsave=1"),
+        json!([{ "step_number": 2, "actions": [{ "kind": "sign_in", "account": "kim" }] }]),
+    );
+    let rec = run_save_case(&mut live, root.path(), &script).await;
+    assert!(!server.got("POST /api/SaveDraft"), "the draft's save reached the server");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert_eq!(rec.reason, format!("step 2: {DRAFT_STOPPED}"));
+}

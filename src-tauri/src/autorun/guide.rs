@@ -430,9 +430,10 @@ person has open on the Auto Run tab:
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script.
 - `try_autorun_action` runs one action in that same browser and says what
-  happened - a rehearsal, not a run; nothing is recorded. Send the
-  `case_id` you are working on beside the `action`: a case marked
-  `no_save` is then tried with its saves stopped, as in a run.
+  happened - a rehearsal, not a run; nothing is recorded. Every try names
+  the case it is for, `case_id` beside the `action`, and is refused
+  without it: a case marked `no_save` is tried with its saves stopped,
+  as in a run.
 
 The person opens the browser and signs in - you cannot do either. You
 never navigate away from where they are unless the case's own step says

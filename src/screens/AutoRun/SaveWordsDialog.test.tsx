@@ -86,3 +86,16 @@ test("a refusal from the app is shown and the dialog stays open", async () => {
   expect(await screen.findByText(/cannot match - a save word is matched against the path/)).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
 });
+
+test("the dialog is named by its heading", () => {
+  mount([], []);
+  expect(screen.getByRole("dialog", { name: "Save words" })).toBeInTheDocument();
+});
+
+test("a word typed but not yet added is added when Save is pressed", async () => {
+  const sent: string[][] = [];
+  mount(["recalc"], sent);
+  fireEvent.change(screen.getByRole("textbox", { name: "New save word" }), { target: { value: " Approve2 " } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(sent).toEqual([["recalc", "approve2"]]));
+});

@@ -177,6 +177,12 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// A no-save script's guard (`guard_saves`): `None` while requests are
     /// not intercepted.
     guard: Option<SaveGuard>,
+    /// Answers to paused requests not yet known to be sent, oldest first.
+    /// A deadline can cut a call short while one is being written; whatever
+    /// is still here is written again before the next frame goes out, so a
+    /// request is never left paused. A request answered twice gets a refusal
+    /// for the second answer, which nobody reads.
+    unsent_answers: VecDeque<String>,
 }
 
 /// What a guarded connection does with each paused request.
@@ -235,6 +241,7 @@ impl<T: Transport> Cdp<T> {
             net_record: Default::default(),
             deadline: None,
             guard: None,
+            unsent_answers: VecDeque::new(),
         }
     }
 
@@ -254,18 +261,30 @@ impl<T: Transport> Cdp<T> {
     /// nothing waits on the caller. `Err` leaves the connection as it was,
     /// and the caller must not run a no-save script on it. Asked again, it
     /// takes the new words and keeps a stopped save not yet reported.
+    ///
+    /// Service workers are bypassed first: a page's worker could otherwise
+    /// send a request the page's own interception never sees. A browser that
+    /// refuses the bypass is not guarded at all (fail closed).
+    ///
+    /// What is still NOT covered: out-of-process (cross-site) iframes and
+    /// popups are separate targets with their own requests, and this
+    /// connection intercepts the page's own target only. A save sent from a
+    /// cross-site frame or a new window would go through.
     pub async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
+        self.call("Network.setBypassServiceWorker", serde_json::json!({ "bypass": true })).await?;
         self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await?;
         let blocked = self.guard.as_mut().and_then(|g| g.blocked.take());
         self.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
         Ok(())
     }
 
-    /// Stop intercepting. Housekeeping: a browser that does not answer is
-    /// left as it is, and a request it pauses later is still continued.
-    pub async fn stop_guarding_saves(&mut self) {
+    /// Stop intercepting. The guard goes only once the browser has said it
+    /// stopped: until then requests may still be paused, and they are still
+    /// answered as a guarded connection answers them.
+    pub async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
+        self.call("Fetch.disable", serde_json::json!({})).await?;
         self.guard = None;
-        let _ = self.call("Fetch.disable", serde_json::json!({})).await;
+        Ok(())
     }
 
     pub fn is_guarding_saves(&self) -> bool {
@@ -304,6 +323,10 @@ impl<T: Transport> Cdp<T> {
     /// to the end, so an answer to a paused request is never half sent.
     pub async fn pump(&mut self, wait: Duration) {
         let until = Instant::now() + wait;
+        if self.send_unsent_answers().await.is_err() {
+            tokio::time::sleep(wait).await;
+            return;
+        }
         loop {
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -358,7 +381,19 @@ impl<T: Transport> Cdp<T> {
         };
         let id = self.next_id;
         self.next_id += 1;
-        self.transport.send(frame(id, what, params)).await.map_err(CdpError::Transport)
+        // Kept until it is known to be written: see `unsent_answers`.
+        self.unsent_answers.push_back(frame(id, what, params));
+        self.send_unsent_answers().await
+    }
+
+    /// Write every answer still waiting, oldest first. Each leaves the list
+    /// only once its write finished, so one cut short is written again.
+    async fn send_unsent_answers(&mut self) -> Result<(), CdpError> {
+        while let Some(next) = self.unsent_answers.front().cloned() {
+            self.transport.send(next).await.map_err(CdpError::Transport)?;
+            self.unsent_answers.pop_front();
+        }
+        Ok(())
     }
 
     /// Cap every later `call` at this instant as well as at
@@ -395,6 +430,7 @@ impl<T: Transport> Cdp<T> {
         params: serde_json::Value,
         limit: Duration,
     ) -> Result<serde_json::Value, CdpError> {
+        self.send_unsent_answers().await?;
         let id = self.next_id;
         self.next_id += 1;
         self.transport
@@ -478,6 +514,7 @@ impl<T: Transport> Cdp<T> {
         if let Some(i) = self.events.iter().position(|e| e.method == method) {
             return Ok(self.events.remove(i).expect("position was just found"));
         }
+        self.send_unsent_answers().await?;
         let what = method.to_string();
         match tokio::time::timeout(limit, self.read_event(method)).await {
             Ok(answer) => answer,
@@ -590,13 +627,19 @@ pub trait Driver {
     /// fake) is asked for `Fetch.enable` like any other call, so it can
     /// answer or refuse it.
     fn guard_saves(&mut self, _patterns: &[String]) -> impl Future<Output = Result<(), CdpError>> {
-        async move { self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await.map(|_| ()) }
+        async move {
+            self.call("Network.setBypassServiceWorker", serde_json::json!({ "bypass": true })).await?;
+            self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await.map(|_| ())
+        }
     }
     /// See `Cdp::stop_guarding_saves`.
-    fn stop_guarding_saves(&mut self) -> impl Future<Output = ()> {
-        async move {
-            let _ = self.call("Fetch.disable", serde_json::json!({})).await;
-        }
+    fn stop_guarding_saves(&mut self) -> impl Future<Output = Result<(), CdpError>> {
+        async move { self.call("Fetch.disable", serde_json::json!({})).await.map(|_| ()) }
+    }
+    /// See `Cdp::is_guarding_saves`. A driver with no guard of its own
+    /// never is.
+    fn is_guarding_saves(&self) -> bool {
+        false
     }
     /// See `Cdp::hold_saves`. Nothing to hold without a guard.
     fn hold_saves(&mut self, _hold: bool) {}
@@ -650,8 +693,11 @@ impl<T: Transport> Driver for Cdp<T> {
     async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
         Cdp::guard_saves(self, patterns).await
     }
-    async fn stop_guarding_saves(&mut self) {
+    async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
         Cdp::stop_guarding_saves(self).await
+    }
+    fn is_guarding_saves(&self) -> bool {
+        Cdp::is_guarding_saves(self)
     }
     fn hold_saves(&mut self, hold: bool) {
         Cdp::hold_saves(self, hold)

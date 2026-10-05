@@ -9,7 +9,7 @@
 // Run settings file, beside its areas, so it shares their query key.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { commands, type NavView } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -37,22 +37,32 @@ export default function SaveWordsDialog({
   const [words, setWords] = useState<string[]>(view?.save_words ?? []);
   const [draft, setDraft] = useState("");
   const [problem, setProblem] = useState("");
+  const headingId = useId();
+
+  /** The list with the typed word added, or why it cannot be. A word typed
+   * and not yet added when Save is pressed is added - what the person sees
+   * in the box is what gets saved. */
+  const withDraft = (): string[] | string => {
+    const word = draft.trim().toLowerCase();
+    if (!word) return words;
+    if (builtIn.includes(word)) return `"${word}" is already a built-in save word`;
+    return words.includes(word) ? words : [...words, word];
+  };
 
   const add = () => {
-    const word = draft.trim().toLowerCase();
-    if (!word) return;
-    if (builtIn.includes(word)) {
-      setProblem(`"${word}" is already a built-in save word`);
+    const next = withDraft();
+    if (typeof next === "string") {
+      setProblem(next);
       return;
     }
     setProblem("");
-    if (!words.includes(word)) setWords([...words, word]);
+    setWords(next);
     setDraft("");
   };
 
   const save = useMutation({
-    mutationFn: async () => {
-      const res = await commands.autoRunSetSaveWords(org, project, words);
+    mutationFn: async (list: string[]) => {
+      const res = await commands.autoRunSetSaveWords(org, project, list);
       if (res.status === "error") throw new Error(res.error);
       return res.data;
     },
@@ -65,8 +75,10 @@ export default function SaveWordsDialog({
   });
 
   return (
-    <Modal onClose={onClose} className="flex w-full max-w-lg flex-col gap-3 p-5">
-      <h2 className="text-sm font-semibold text-text">Save words</h2>
+    <Modal onClose={onClose} labelledBy={headingId} className="flex w-full max-w-lg flex-col gap-3 p-5">
+      <h2 id={headingId} className="text-sm font-semibold text-text">
+        Save words
+      </h2>
       <p className="text-xs text-muted">
         A script marked Must not save has a request stopped before it reaches the server when it is a
         POST, PUT, PATCH or DELETE whose address path holds one of these words. Case does not matter,
@@ -134,8 +146,13 @@ export default function SaveWordsDialog({
           size="sm"
           disabled={save.isPending}
           onClick={() => {
+            const next = withDraft();
+            if (typeof next === "string") {
+              setProblem(next);
+              return;
+            }
             setProblem("");
-            save.mutate();
+            save.mutate(next);
           }}
         >
           <IconConfirm aria-hidden />

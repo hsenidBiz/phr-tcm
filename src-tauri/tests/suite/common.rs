@@ -172,6 +172,12 @@ impl Driver for ScriptedDriver {
     fn take_save_blocked(&mut self) -> Option<String> {
         self.save_blocked.take()
     }
+
+    /// Guarding since the last `Fetch.enable` that no `Fetch.disable`
+    /// followed.
+    fn is_guarding_saves(&self) -> bool {
+        self.calls.iter().rev().find(|(m, _)| m == "Fetch.enable" || m == "Fetch.disable").is_some_and(|(m, _)| m == "Fetch.enable")
+    }
 }
 
 /// The actionability probe's answer for an element that is fully ready:

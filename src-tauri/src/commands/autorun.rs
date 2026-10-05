@@ -9,7 +9,7 @@
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::ActionOutcome;
-use crate::browser::cdp::Cdp;
+use crate::browser::cdp::{Cdp, Driver};
 use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
 use base64::Engine;
 use std::path::PathBuf;
@@ -26,6 +26,9 @@ pub(crate) struct Session {
     /// sign-in succeeds. Written on every sign-in; nothing reads it yet -
     /// unattended replay (a later phase) is what will.
     pub(crate) account: Option<String>,
+    /// The case whose no-save guard this browser holds, if any
+    /// (`guard_for_case`).
+    pub(crate) guarded_case: Option<i32>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -117,7 +120,7 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
     if let Err(e) = crate::browser::page_log::watch(&mut cdp).await {
         crate::applog::warn(format!("auto-run: the page log could not be switched on: {e}"));
     }
-    *slot = Some(Session { browser, cdp, account: None });
+    *slot = Some(Session { browser, cdp, account: None, guarded_case: None });
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
 }
@@ -191,7 +194,7 @@ pub async fn auto_run_step(
     let root = root(&app)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    guard_supervised(session, &root, &organization, &project, case_id, true).await?;
+    guard_supervised(session, &root, &organization, &project, case_id).await?;
     crate::autorun::runner::run_step(
         &mut session.cdp,
         &root,
@@ -204,6 +207,64 @@ pub async fn auto_run_step(
     .await
 }
 
+/// Put the supervised browser's no-save guard where this case needs it
+/// (`guard_for_case`), for a step or an assistant's try alike.
+pub(crate) async fn guard_supervised(
+    session: &mut Session,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+) -> Result<(), String> {
+    let out = guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id).await;
+    if session.cdp.is_guarding_saves() {
+        answer_between_commands();
+    }
+    out
+}
+
+/// Put a browser's no-save guard where this case needs it. A case whose
+/// script on this machine is marked `no_save` is guarded, with the
+/// project's save words read afresh, so an edit on the Setup tab counts
+/// from the next step; any other case has an earlier case's guard lifted.
+/// A save stopped for the case that held the guard before, and not yet
+/// reported, is that case's: it is written to the application log under
+/// that case and never carried into this one. `Err` is the step or try
+/// refused: a no-save case never runs unguarded.
+pub async fn guard_for_case<D: Driver>(
+    d: &mut D,
+    guarded_case: &mut Option<i32>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+) -> Result<(), String> {
+    let no_save = store::load_script(root, case_id)?.is_some_and(|s| s.no_save);
+    if let Some(before) = guarded_case.filter(|c| *c != case_id) {
+        if let Some(sentence) = d.take_save_blocked() {
+            crate::applog::warn(format!("Auto Run, case {before}: {sentence}"));
+        }
+    }
+    if no_save {
+        let guarded = match crate::autorun::nav::load_nav(root, organization, project) {
+            Err(why) => Err(why),
+            Ok(nav) => d.guard_saves(&nav.save_words).await.map_err(|e| e.to_string()),
+        };
+        guarded.map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
+        *guarded_case = Some(case_id);
+    } else if d.is_guarding_saves() {
+        // Lifted only once the browser says so; until then it keeps
+        // answering every paused request as a guarded browser does.
+        match d.stop_guarding_saves().await {
+            Ok(()) => *guarded_case = None,
+            Err(e) => crate::applog::warn(format!("Auto Run: the no-save guard could not be lifted yet: {e}")),
+        }
+    } else {
+        *guarded_case = None;
+    }
+    Ok(())
+}
+
 /// How often the supervised browser is read between commands while it
 /// guards a no-save case, and for how long each time.
 const ANSWER_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
@@ -214,60 +275,40 @@ const ANSWER_FOR: std::time::Duration = std::time::Duration::from_millis(10);
 /// one and the last one ending can never miss each other.
 static ANSWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Put the supervised browser's no-save guard where this case needs it.
-/// A case whose script on this machine is marked `no_save` is guarded
-/// (with the project's save words read afresh, so an edit on the Setup tab
-/// counts from the next step); `may_lift` lets a case without the flag
-/// switch an earlier case's guard off. The assistant's try never lifts
-/// one: it can only add the guard, never take it from the person's case.
-/// `Err` is the step refused: a no-save case never runs unguarded.
-pub(crate) async fn guard_supervised(
-    session: &mut Session,
-    root: &std::path::Path,
-    organization: &str,
-    project: &str,
-    case_id: i32,
-    may_lift: bool,
-) -> Result<(), String> {
-    let no_save = store::load_script(root, case_id)?.is_some_and(|s| s.no_save);
-    if no_save {
-        let guarded = match crate::autorun::nav::load_nav(root, organization, project) {
-            Err(why) => Err(why),
-            Ok(nav) => session.cdp.guard_saves(&nav.save_words).await.map_err(|e| e.to_string()),
-        };
-        guarded.map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
-        answer_between_commands();
-    } else if may_lift && session.cdp.is_guarding_saves() {
-        session.cdp.stop_guarding_saves().await;
-    }
-    Ok(())
-}
-
 /// A guarded browser pauses every request until it is answered, and the
 /// client only reads the socket while something calls it. Between two
 /// commands - a person reading the page before pressing the next step -
-/// this task reads it, so the page is never held up waiting. It ends once
-/// the browser is closed or no longer guarded. Called with the session lock
-/// held.
+/// a task reads it (`keep_answering`), so the page is never held up
+/// waiting. Called with the session lock held.
 fn answer_between_commands() {
-    use std::sync::atomic::Ordering;
-    if ANSWERING.swap(true, Ordering::SeqCst) {
+    if ANSWERING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    tauri::async_runtime::spawn(async {
-        loop {
-            tokio::time::sleep(ANSWER_EVERY).await;
-            // A command holding the session reads the socket itself.
-            let Ok(mut slot) = SESSION.try_lock() else { continue };
-            match slot.as_mut() {
-                Some(s) if s.cdp.is_guarding_saves() => s.cdp.pump(ANSWER_FOR).await,
-                _ => {
-                    ANSWERING.store(false, Ordering::SeqCst);
-                    return;
-                }
+    tauri::async_runtime::spawn(keep_answering(&SESSION, &ANSWERING, |s: &mut Session| &mut s.cdp, ANSWER_EVERY, ANSWER_FOR));
+}
+
+/// Every `every`, read the browser in `slot` for `read_for` while it is
+/// guarded; a command holding the slot reads it itself and is never waited
+/// on. Ends, clearing `running` with the slot still locked, once the slot
+/// is empty or its browser no longer guarded.
+pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
+    slot: &tokio::sync::Mutex<Option<S>>,
+    running: &std::sync::atomic::AtomicBool,
+    cdp_of: fn(&mut S) -> &mut Cdp<T>,
+    every: std::time::Duration,
+    read_for: std::time::Duration,
+) {
+    loop {
+        tokio::time::sleep(every).await;
+        let Ok(mut held) = slot.try_lock() else { continue };
+        match held.as_mut().map(cdp_of) {
+            Some(cdp) if cdp.is_guarding_saves() => cdp.pump(read_for).await,
+            _ => {
+                running.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
             }
         }
-    });
+    }
 }
 
 /// One failure screenshot as a data URL the webview can show. The name is
@@ -397,7 +438,7 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
-    let scripts: Vec<CaseScript> = serde_json::from_str(content).map_err(|e| {
+    let mut scripts: Vec<CaseScript> = serde_json::from_str(content).map_err(|e| {
         format!(
             "that file is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps }}."
         )
@@ -406,6 +447,13 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
         return Err("that file has no scripts in it".to_string());
     }
     crate::autorun::nav::check_project_rules(root, organization, project, &scripts)?;
+    // An import can mark a script Must not save, never unmark one: only a
+    // person saving from the editor turns the flag off.
+    for sc in scripts.iter_mut() {
+        if !sc.no_save && store::load_script(root, sc.case_id)?.is_some_and(|old| old.no_save) {
+            sc.no_save = true;
+        }
+    }
     store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
