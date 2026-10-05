@@ -388,6 +388,56 @@ async fn an_unreachable_frame_yields_nothing_and_says_why() {
     assert_eq!(r.unreachable_frame, Some(frame_unreachable("iframe")));
 }
 
+/// Two frames match the same step: `locked` cannot be entered, `open` can
+/// and holds nothing that matches the next step. `order` is the order the
+/// step finds them in.
+fn two_frames(order: [&'static str; 2]) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| {
+        let on = params["objectId"].as_str().unwrap_or("");
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.releaseObjectGroup" => Ok(json!({})),
+            "Runtime.callFunctionOn" if f == FRAME_JS => {
+                Ok(json!({ "result": { "value": if on == "locked" { "unreachable" } else { "frame" } } }))
+            }
+            "Runtime.callFunctionOn" if f == FRAME_DOC_JS => Ok(json!({ "result": { "objectId": "a-doc" } })),
+            "Runtime.callFunctionOn" if f == CSS_JS => {
+                Ok(json!({ "result": { "objectId": if on == "doc" { "a-top" } else { "a-in" } } }))
+            }
+            "Runtime.getProperties" => {
+                let items: Vec<&str> = match on {
+                    "a-top" => order.to_vec(),
+                    "a-doc" => vec!["doc-parent"],
+                    _ => vec![],
+                };
+                let props: Vec<serde_json::Value> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, o)| json!({ "name": i.to_string(), "value": { "objectId": o } }))
+                    .collect();
+                Ok(json!({ "result": props }))
+            }
+            "DOM.describeNode" => Ok(json!({ "node": { "backendNodeId": 42 } })),
+            "DOM.resolveNode" => Ok(json!({ "object": { "objectId": "frame-doc" } })),
+            other => panic!("unexpected {other}"),
+        }
+    })
+}
+
+/// Spec 9: the "cannot reach" sentence is for a step where NO frame could be
+/// entered. When another frame at that step was entered and simply holds no
+/// match, the honest answer is "not found", whichever frame came first.
+#[tokio::test]
+async fn an_unreachable_frame_beside_an_entered_one_records_no_sentence() {
+    for order in [["locked", "open"], ["open", "locked"]] {
+        let mut d = two_frames(order);
+        let r = resolve_explained(&mut d, &through_frame()).await.unwrap();
+        assert!(r.handles.is_empty(), "{order:?}");
+        assert_eq!(r.unreachable_frame, None, "{order:?}");
+    }
+}
+
 #[tokio::test]
 async fn no_check_passes_on_nothing_behind_an_unreachable_frame() {
     for check in [Check::Hidden, Check::Count(0)] {

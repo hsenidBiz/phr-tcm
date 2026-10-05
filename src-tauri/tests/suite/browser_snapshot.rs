@@ -592,3 +592,42 @@ fn render_without_frames_is_unchanged() {
     let (parent, _) = page_with_frame(1);
     assert_eq!(render(&parent, DEFAULT_LIMIT), render_frames(&parent, &[], DEFAULT_LIMIT));
 }
+
+/// A frame tree holding one iframe (AX id `inner`) and nothing else, its
+/// own tree `frames` inside it.
+fn nested(id: &str, title: &str, frames: Vec<FrameTree>) -> FrameTree {
+    FrameTree {
+        iframe_id: id.to_string(),
+        step: json!({ "css": format!("iframe[title='{title}']") }),
+        nodes: vec![node("r", "RootWebArea", "", &["inner"]), node("inner", "Iframe", &format!("{title} child"), &[])],
+        unreadable: None,
+        frames,
+    }
+}
+
+/// Spec 9: frames are followed three deep. A frame inside the third one is
+/// not silently missing - one line under its iframe says it is not shown.
+#[test]
+fn a_frame_deeper_than_three_says_it_is_not_shown() {
+    let parent = vec![node("1", "RootWebArea", "Frames", &["f1"]), node("f1", "Iframe", "One", &[])];
+    let three = nested("inner", "Three", vec![]);
+    let two = nested("inner", "Two", vec![three]);
+    let one = nested("f1", "One", vec![two]);
+    let out = render_frames(&parent, &[one], DEFAULT_LIMIT);
+    let lines: Vec<&str> = out.lines().collect();
+    let deep = lines.iter().position(|l| l.contains("\"Three child\"")).unwrap_or_else(|| panic!("{out}"));
+    let note = lines.get(deep + 1).copied().unwrap_or("");
+    assert_eq!(note.trim(), "(frames nested deeper than 3 are not shown)", "{out}");
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    assert!(indent(note) > indent(lines[deep]), "the note sits under the frame's line: {out}");
+    assert_eq!(out.matches("nested deeper than 3").count(), 1, "{out}");
+}
+
+/// Shallower frames that were not followed (no tree for them) print no note.
+#[test]
+fn a_shallow_frame_with_no_tree_prints_no_deep_note() {
+    let parent = vec![node("1", "RootWebArea", "Frames", &["f1"]), node("f1", "Iframe", "One", &[])];
+    let out = render_frames(&parent, &[nested("f1", "One", vec![])], DEFAULT_LIMIT);
+    assert!(!out.contains("nested deeper"), "{out}");
+    assert!(out.contains("\"One child\""), "{out}");
+}

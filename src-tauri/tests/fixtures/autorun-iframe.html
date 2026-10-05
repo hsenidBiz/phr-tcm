@@ -7,7 +7,9 @@
   page. Below a tall spacer (it has to be scrolled to) and inside a
   bordered, offset box (the click point has to add both). Also: a hidden
   twin of that frame, a sandboxed frame the page cannot enter, a frame
-  with neither id nor title, and an overlay that can cover the frame.
+  with neither id nor title, an overlay that can cover the frame, a frame
+  inside a frame that sits half past its parent frame's edge, and a hidden
+  frame whose words are not on the page.
 
   Everything a test reads back is written by the FRAME's own handlers.
 -->
@@ -20,6 +22,12 @@
 <main>
   <h1>Frames</h1>
   <button id="show-cover" onclick="document.getElementById('cover').style.display = 'block'">Show cover</button>
+  <!-- Its own frame (#edge-inner) is fixed 150px past its right edge, so the
+       button inside shows only its left half: the middle of the whole
+       button is exactly on that edge, outside what can be clicked. Above
+       the spacer, so it is on screen from the start: below it, scrolling
+       the button into view did not bring this frame up (Edge, 2026-10-05). -->
+  <iframe id="edge-frame" title="Edge frame" style="border:0;width:400px;height:120px"></iframe>
   <div id="spacer"></div>
 
   <div id="es-wrap">
@@ -34,6 +42,7 @@
   <!-- Padding sits between the border and the frame's viewport: a click
        point that adds only the border lands short of the button. -->
   <iframe id="pad-frame" title="Padded frame" style="border:0;padding:40px 0 0 60px;width:300px;height:120px"></iframe>
+  <div style="display:none"><iframe id="hidden-words"></iframe></div>
 </main>
 <div id="cover"></div>
 <script>
@@ -52,4 +61,12 @@
   fill(document.querySelector('iframe[data-k="bare"]'), '<button>Bare inner</button>');
   fill(document.getElementById('pad-frame'),
     '<button id="pad-btn" style="width:40px;height:20px" onclick="document.getElementById(\x27pout\x27).textContent = \x27hit\x27">Pad</button><div id="pout"></div>');
+  const edge = document.getElementById('edge-frame');
+  fill(edge, '<style>html, body { margin: 0; overflow: hidden; }</style>' +
+    '<iframe id="edge-inner" style="position:fixed;right:-150px;top:10px;width:300px;height:80px;border:0"></iframe>');
+  fill(edge.contentDocument.getElementById('edge-inner'),
+    '<style>body { margin: 0; }</style><div id="deep">Deep frame words</div><div id="eout"></div>' +
+    '<button id="edge-btn" style="position:absolute;left:100px;top:40px;width:100px;height:30px" ' +
+    'onclick="document.getElementById(\x27eout\x27).textContent = \x27hit\x27">Edge</button>');
+  fill(document.getElementById('hidden-words'), '<p>Hidden frame words</p>');
 </script>

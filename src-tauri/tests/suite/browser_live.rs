@@ -1740,7 +1740,13 @@ async fn frame_spike_role_lookup_through_a_frame_document() {
         .expect("queryAXTree for the iframe role failed");
     assert_eq!(
         names(&r),
-        vec!["Employee Search".to_string(), "Locked frame".to_string(), String::new(), "Padded frame".to_string()],
+        vec![
+            "Edge frame".to_string(),
+            "Employee Search".to_string(),
+            "Locked frame".to_string(),
+            String::new(),
+            "Padded frame".to_string()
+        ],
         "(b) role Iframe did not list the visible frames by title"
     );
 }
@@ -1863,6 +1869,33 @@ async fn frame_a_click_inside_a_padded_frame_lands_on_the_element() {
     let pad = |inner: serde_json::Value| json!([{ "css": "#pad-frame" }, inner]);
     must(run(&mut live, json!({ "kind": "click", "selector": pad(json!({ "css": "#pad-btn" })) })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": pad(json!({ "css": "#pout" })), "equals": "hit" })).await);
+}
+
+/// Spec 9: `#edge-inner` sits half past `#edge-frame`'s right edge, so only
+/// the left half of the button inside shows. The middle of the whole button
+/// is on that edge, where nothing can be clicked; the point is re-centred
+/// inside the half that is left, and the click lands.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_a_button_half_hidden_by_a_frames_edge_is_clicked_in_its_visible_part() {
+    let mut live = open_iframes().await;
+    let edge = |inner: serde_json::Value| json!([{ "css": "#edge-frame" }, { "css": "#edge-inner" }, inner]);
+    must(run(&mut live, json!({ "kind": "click", "selector": edge(json!({ "css": "#edge-btn" })) })).await);
+    must(run(&mut live, json!({ "kind": "expect_text",
+        "selector": edge(json!({ "css": "#eout", "visible": false })), "equals": "hit" })).await);
+}
+
+/// Spec 9: `check_text` means anywhere on the page, so it reads the words of
+/// same-origin frames at any depth - but not a hidden frame's, which no one
+/// can see, and not a frame from another site, which it cannot read.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn frame_check_text_reads_same_origin_frames_at_any_depth() {
+    let mut live = open_iframes().await;
+    must(run(&mut live, json!({ "kind": "check_text", "value": "Deep frame words" })).await);
+    must(run(&mut live, json!({ "kind": "check_text", "value": "bare inner" })).await);
+    refused(run(&mut live, json!({ "kind": "check_text", "value": "Hidden frame words" })).await, "page does NOT contain");
+    refused(run(&mut live, json!({ "kind": "check_text", "value": "Locked" })).await, "page does NOT contain");
 }
 
 /// The step the snapshot prints for an iframe with an odd id or title

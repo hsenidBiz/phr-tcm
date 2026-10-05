@@ -12,7 +12,7 @@ use v2_lib::autorun::nav::{
     is_setup_problem, nav_path, no_address, no_path, save_nav, NavFile, Route, AFTER_SIGN_IN, NO_ACCOUNT, NO_MODULE,
     TRIED_TWICE, UNREACHED_PREFIX,
 };
-use v2_lib::autorun::transient::{FIRST_TRY, RETRY_PASSED};
+use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
     propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
@@ -1102,6 +1102,34 @@ async fn a_retry_that_fails_otherwise_proposes_what_the_second_go_found() {
     assert_eq!(rec.proposed, "Failed");
     assert!(rec.reason.starts_with("step 1: "), "{}", rec.reason);
     assert!(rec.reason.ends_with(&format!("{FIRST_TRY}{first})")), "{}", rec.reason);
+}
+
+/// When the second go's browser never opens, there is no second record to
+/// keep: the first go's steps and evidence stay the case's record, its
+/// sentence stays in `retried`, and the reason says the retry could not
+/// start - never "the browser did not open" in place of what really failed.
+#[tokio::test]
+async fn a_retry_whose_browser_never_opens_keeps_the_first_gos_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers =
+        FakeBrowsers { queue: vec![Some(harness_driver()), None].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-t");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!((browsers.opened, browsers.closed), (2, 1), "one retry, whose browser never opened");
+    assert_eq!(run.cases.len(), 1);
+    let rec = &run.cases[0];
+    let first = rec.retried.clone().expect("the first try's sentence is kept");
+    assert!(first.starts_with("the browser stopped answering at step 1: "), "{first}");
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(rec.reason, format!("{first}{RETRY_NOT_STARTED}Edge is not installed)"));
+    assert_eq!(RETRY_NOT_STARTED, " (a second try could not start: the browser did not open: ");
+    let failed: Vec<&ActionOutcome> = rec.steps.iter().flat_map(|s| &s.outcomes).filter(|o| !o.ok).collect();
+    assert!(failed.iter().any(|o| o.harness), "the first go's steps are the record: {:?}", rec.steps);
 }
 
 #[tokio::test]

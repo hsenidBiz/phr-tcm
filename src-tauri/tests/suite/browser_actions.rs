@@ -762,3 +762,14 @@ async fn the_driver_alone_never_runs_the_response_steps() {
         assert!(d.calls.is_empty());
     }
 }
+
+/// Spec 9: `check_text` reads the words of every same-origin frame too, at
+/// any depth, skipping a frame no one can see and one it cannot enter.
+/// Proven live in `browser_live::frame_check_text_reads_same_origin_frames_at_any_depth`.
+#[test]
+fn check_text_walks_into_same_origin_frames() {
+    let js = v2_lib::browser::actions::CHECK_TEXT_JS;
+    assert!(js.contains("contentDocument"), "{js}");
+    assert!(js.contains("try"), "a frame from another site throws or answers null, and is skipped: {js}");
+    assert!(js.contains("checkVisibility"), "a hidden frame's words are not on the page: {js}");
+}

@@ -406,9 +406,14 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
         }
         if i + 1 < steps.len() {
             let mut entered = Vec::with_capacity(next.len());
+            // Whether a frame at this step was entered, and whether one
+            // could not be: a step that entered another frame and found
+            // nothing in it is "not found", not "cannot reach".
+            let (mut frame_entered, mut blocked) = (false, false);
             for handle in next {
                 match page::call_value(d, &handle, FRAME_JS, &[]).await?.as_str() {
                     Some("frame") => {
+                        frame_entered = true;
                         // Chrome runs a function in the context its handle
                         // came from. Read through the parent, the frame's
                         // document would make every later search and probe
@@ -421,11 +426,12 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
                             entered.push(page::resolve_backend(d, backend).await?);
                         }
                     }
-                    Some("unreachable") => {
-                        unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
-                    }
+                    Some("unreachable") => blocked = true,
                     _ => entered.push(handle),
                 }
+            }
+            if blocked && !frame_entered {
+                unreachable_frame.get_or_insert_with(|| frame_unreachable(&step.describe()));
             }
             next = entered;
         }

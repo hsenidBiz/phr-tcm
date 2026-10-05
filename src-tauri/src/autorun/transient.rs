@@ -22,6 +22,9 @@ pub const RETRY_PASSED: &str = "passed on a second try after a transient failure
 /// `)`: the second go's words first, so a reason still begins the way
 /// every reader of it expects (`step N:`, the trip's sentence...).
 pub const FIRST_TRY: &str = " (first try: ";
+/// After the first go's reason when the second go's browser never opened,
+/// followed by why and closed by `)`.
+pub const RETRY_NOT_STARTED: &str = " (a second try could not start: the browser did not open: ";
 
 /// Chrome's prefix for a request that failed at the network level.
 const NET_ERR: &str = "net::ERR_";
@@ -64,6 +67,16 @@ pub fn after_retry(first: String, first_ms: Option<i32>, mut second: CaseRecord)
     };
     second.retried = Some(first);
     second
+}
+
+/// The record a retried case keeps when the second go's browser never
+/// opened: there is no second go to keep, so the first go's steps,
+/// evidence, proposal and time stay; `retried` holds its sentence, and the
+/// reason adds that the second try could not start, and why.
+pub fn retry_not_started(mut first: CaseRecord, why: &str) -> CaseRecord {
+    first.retried = Some(first.reason.clone());
+    first.reason = format!("{}{RETRY_NOT_STARTED}{why})", first.reason);
+    first
 }
 
 /// A failure the network or the server's gateway made, read from the

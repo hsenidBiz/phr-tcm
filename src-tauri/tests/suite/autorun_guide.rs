@@ -523,3 +523,13 @@ fn the_guide_teaches_when_visible_with_its_two_examples() {
     }
     assert!(seen >= 2, "the section has {seen} when_visible examples, wants the cookie banner and the session prompt");
 }
+
+/// Spec 9: "anywhere on the page" now includes same-origin frames, and the
+/// guide says which frames are not read.
+#[test]
+fn the_guide_says_which_frames_check_text_reads() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.contains("\"kind\": \"check_text\"")).expect("no check_text line");
+    assert!(line.contains("same-origin frames included"), "{line}");
+    assert!(line.contains("a frame holding a page from another site is not searched"), "{line}");
+}

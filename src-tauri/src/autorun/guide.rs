@@ -98,7 +98,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }`
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
-- `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page, right now?
+- `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional

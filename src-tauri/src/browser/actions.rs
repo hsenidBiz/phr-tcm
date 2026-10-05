@@ -529,9 +529,27 @@ pub const HIGHLIGHT_JS: &str = r#"function() {
 }"#;
 
 /// `this` is the document. Argument: the words to look for.
+///
+/// "Anywhere on the page" includes what same-origin frames show, at any
+/// depth: a page's own `innerText` stops at each iframe. A frame no one can
+/// see is skipped (a hidden frame's document is not rendered, and its
+/// `innerText` would hand back every word in it), and so is a frame from
+/// another site, whose document cannot be read (null, or a throw).
 pub const CHECK_TEXT_JS: &str = r#"function(want) {
-  const hay = (this.body ? this.body.innerText : '') || '';
-  return hay.toLowerCase().includes(String(want).toLowerCase());
+  const needle = String(want).toLowerCase();
+  const has = (doc) => {
+    const hay = (doc.body ? doc.body.innerText : '') || '';
+    if (hay.toLowerCase().includes(needle)) return true;
+    for (const f of doc.querySelectorAll('iframe, frame')) {
+      const r = f.getBoundingClientRect();
+      if (!f.checkVisibility({ visibilityProperty: true }) || r.width <= 0 || r.height <= 0) continue;
+      let inner = null;
+      try { inner = f.contentDocument; } catch (e) { inner = null; }
+      if (inner && has(inner)) return true;
+    }
+    return false;
+  };
+  return has(this);
 }"#;
 
 /// `this` is the document. Argument: the relative reference. Resolved in

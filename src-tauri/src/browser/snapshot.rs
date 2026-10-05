@@ -213,8 +213,18 @@ fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<String>, seen: &m
     }
     if let Some(frame) = tree.frames.get(id) {
         walk_frame(frame, depth + 1, &tree.path, out);
+    } else if node.role == "Iframe" && tree.path.len() >= MAX_FRAME_DEPTH {
+        // `snapshot` follows frames only so deep: say so rather than let a
+        // deeper frame's contents be silently missing.
+        out.push(format!("{}{DEEP_FRAMES_NOTE}", " ".repeat((depth + 1).min(12))));
     }
 }
+
+/// How many frames deep `snapshot` follows frames inside frames.
+pub const MAX_FRAME_DEPTH: usize = 3;
+
+/// The line under an iframe sitting inside the deepest frame followed.
+pub const DEEP_FRAMES_NOTE: &str = "(frames nested deeper than 3 are not shown)";
 
 /// A frame's own tree, under its iframe's line, every locator behind the
 /// frame's step.
@@ -283,7 +293,8 @@ pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpE
         Err(e) => return Err(e),
     };
     let nodes = parse_nodes(&result);
-    // Frames inside frames are followed three deep - written out rather
+    // Frames inside frames are followed three deep (`MAX_FRAME_DEPTH`; an
+    // iframe deeper still prints `DEEP_FRAMES_NOTE`) - written out rather
     // than recursive, because a recursive async fn needs a boxed future,
     // and the driver's futures do not promise to be `Send`.
     let mut frames = frames_in(d, &nodes).await;

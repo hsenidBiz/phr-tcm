@@ -185,11 +185,14 @@ async fn with_addresses_switched_off_a_guarded_navigate_never_reaches_the_browse
     assert!(d.calls_to("Page.navigate").is_empty());
 }
 
-/// A page whose `#late` banner shows up only `after` it was opened; every
-/// other css locator is there from the start and clickable. Each click is
-/// logged by the locator it was aimed at.
-fn late_banner_app(after: std::time::Duration) -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-    let opened = std::time::Instant::now();
+/// A page whose `#late` banner shows up only once something OTHER than it
+/// has been looked for - that is, just after a guard on it gave up, however
+/// many looks the guard took. No clock: the look count decides, the way
+/// `common::stalling_menu_app` lets its click count decide. Every other css
+/// locator is there from the start and clickable. Each click is logged by
+/// the locator it was aimed at.
+fn late_banner_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let mut shown = false;
     let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let log = clicked.clone();
     let mut last_selector = String::new();
@@ -205,10 +208,11 @@ fn late_banner_app(after: std::time::Duration) -> (ScriptedDriver, std::sync::Ar
             }
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                shown |= last_selector != "#late";
                 json!({ "result": { "objectId": "arr" } })
             }
             "Runtime.getProperties" => {
-                let there = last_selector != "#late" || opened.elapsed() >= after;
+                let there = last_selector != "#late" || shown;
                 json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
             }
             "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
@@ -229,7 +233,7 @@ fn late_banner_app(after: std::time::Duration) -> (ScriptedDriver, std::sync::Ar
 #[tokio::test]
 async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_runs() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut d, clicked) = late_banner_app(std::time::Duration::from_millis(150));
+    let (mut d, clicked) = late_banner_app();
     let mut acc: Option<String> = None;
     let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#late" }, "within_ms": 40,
                                "then": [ { "kind": "click", "selector": { "css": "#late" } } ] }));
@@ -237,12 +241,15 @@ async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_run
     assert!(first[0].ok, "{:?}", first[0]);
     assert_eq!(first[0].detail, format!("#late {NOT_SHOWN}"));
 
-    // The banner is up by the time the next step begins.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // The banner shows up as the next step begins: its first look is for
+    // `#save`. The step clicks what it names, and the banner is really up
+    // by then - the check after the click sees it.
     let save = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
-    let next = StepScript { step_number: 2, actions: vec![save], unchecked: None };
+    let banner_up = action(json!({ "kind": "expect_visible", "selector": { "css": "#late" } }));
+    let next = StepScript { step_number: 2, actions: vec![save, banner_up], unchecked: None };
     let second = run_step(&mut d, dir.path(), "Acme", "Web", &next, &quick(), &mut acc).await.unwrap();
     assert!(second[0].ok, "the next step runs as usual: {:?}", second[0]);
+    assert!(second[1].ok, "the banner did show up late: {:?}", second[1]);
     assert_eq!(*clicked.lock().unwrap(), vec!["#save".to_string()], "the late banner is never clicked");
 }
 

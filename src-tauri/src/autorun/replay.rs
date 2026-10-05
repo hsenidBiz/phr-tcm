@@ -370,17 +370,18 @@ struct Go<'a> {
 }
 
 /// One go at a case in a fresh browser: opened, the case run, and the
-/// browser given back.
+/// browser given back. `Err` is why the browser did not open: the case
+/// never ran, so the caller decides what record that leaves.
 async fn one_go<B: Browsers>(
     browsers: &mut B,
     go: &Go<'_>,
     at: &Place<'_>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
-) -> CaseRecord {
+) -> Result<CaseRecord, String> {
     let (run_id, index, total, case_id, title, count) = (at.run_id, at.index, at.total, at.case_id, at.title, at.count);
     progress(tell(run_id, index, total, case_id, title, "opening", 0, count, ""));
     match browsers.open().await {
-        Err(why) => unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")),
+        Err(why) => Err(why),
         Ok(mut d) => {
             let mut on_step = |n: i32| {
                 let phase = match n {
@@ -404,7 +405,7 @@ async fn one_go<B: Browsers>(
             )
             .await;
             browsers.close(d).await;
-            rec
+            Ok(rec)
         }
     }
 }
@@ -493,16 +494,20 @@ pub async fn run_cases<B: Browsers>(
                         let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
                         let at = Place { run_id: &run_id, index, total, case_id, title, count };
                         let go = Go { root, organization, project, script: &script, account, route: route.as_ref(), timing, cancel };
-                        let first = one_go(browsers, &go, &at, progress).await;
+                        let first = one_go(browsers, &go, &at, progress)
+                            .await
+                            .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
                         // One more go, from sign-in in a fresh browser, for a
                         // failure that looked transient - once, never again,
                         // and never after a stop.
                         let looked_transient = if retry_transient { transient::is_transient(&first, Some(&script)) } else { None };
                         match looked_transient {
-                            Some(why) if !cancel.load(Ordering::SeqCst) => {
-                                let second = one_go(browsers, &go, &at, progress).await;
-                                transient::after_retry(why, first.duration_ms, second)
-                            }
+                            Some(why) if !cancel.load(Ordering::SeqCst) => match one_go(browsers, &go, &at, progress).await {
+                                Ok(second) => transient::after_retry(why, first.duration_ms, second),
+                                // No second go to keep: the first go's steps
+                                // and evidence stay the record.
+                                Err(open) => transient::retry_not_started(first, &open),
+                            },
                             _ => first,
                         }
                     }
