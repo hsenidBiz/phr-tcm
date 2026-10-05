@@ -47,7 +47,7 @@ export const aiBridge: Screen = {
     },
     {
       id: CREDENTIALS,
-      route: [NAV, { click: { role: "button", name: "Manage credentials" } }, { waitFor: { role: "button", name: "Test connection" } }],
+      route: [NAV, { click: { role: "button", name: "Edit Dev - dev login" } }, { waitFor: { role: "button", name: "Test connection" } }],
       alt: "The credentials window of the chosen database",
     },
     {
@@ -245,12 +245,13 @@ export const aiBridge: Screen = {
       does: "The user the chosen database signs in as, or **No login saved**. The password is never shown.",
     },
     {
-      id: "manage-credentials",
+      id: "edit-database",
       shot: TAB,
       group: "company-database",
-      locate: { role: "button", name: "Manage credentials" },
-      name: "Manage credentials",
-      does: "Opens the login of the chosen database. Greyed out until a database is chosen.",
+      locate: { role: "button", name: "Edit Dev - dev login" },
+      name: "Edit (database)",
+      does:
+        "Every database is listed under the picker. **Edit** opens that database's login. **Add database** above the list adds one of your own, which can be removed again; the ones that come with the app cannot.",
     },
     {
       id: "writes",
@@ -283,7 +284,7 @@ export const aiBridge: Screen = {
     },
     {
       id: "breakdown",
-      shot: TAB,
+      shot: API,
       group: "tools-breakdown",
       locate: { role: "heading", name: "AI Tools Breakdown" },
       name: "AI Tools Breakdown",
@@ -419,7 +420,7 @@ export const aiBridge: Screen = {
     {
       title: "Let an assistant read the company database",
       steps: [
-        "Pick the database in **Database**. If it has no login yet, press **Manage credentials**, fill it in, **Test connection**, then **Save**.",
+        "Pick the database in **Database**. If it has no login yet, press **Edit** beside it in the list, fill it in, **Test connection**, then **Save**.",
         "Make sure **Database Read Access** is switched on in the tool list.",
       ],
     },

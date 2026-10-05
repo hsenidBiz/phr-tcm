@@ -89,7 +89,7 @@ export const settings: Screen = {
     },
     {
       id: "request-rate",
-      shot: MAIN,
+      shot: ADVANCED,
       group: "general",
       locate: { role: "button", nameRe: "^Full speed" },
       name: "Azure DevOps request rate",

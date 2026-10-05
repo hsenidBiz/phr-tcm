@@ -37,7 +37,10 @@ export const apiTemplates: Screen = {
         READY,
         { click: { role: "button", name: "Show details of Create a user" } },
         { waitFor: { role: "table", name: "Parameters" } },
-        { scrollTo: { role: "list", name: "Runs" } },
+        // The row under it, not the Runs list itself: that row moves while
+        // the details open, so the scroll waits until they have, and the
+        // Runs list ends just above it.
+        { scrollTo: { role: "listitem", name: "Lock a user account" } },
       ],
       alt: "One template opened: its parameters, steps, proof and runs",
     },
@@ -135,7 +138,7 @@ export const apiTemplates: Screen = {
       group: "templates",
       locate: { role: "button", name: "Show details of Create a user" },
       name: "Details (>)",
-      does: "Opens everything about the template below its line.",
+      does: "Opens everything about the template below its line. Press it again to fold the details away.",
     },
     {
       id: "template",
@@ -222,14 +225,6 @@ export const apiTemplates: Screen = {
       locate: { role: "list", name: "Runs" },
       name: "Runs",
       does: "Every proof and run, newest first: when, which kind, as which account, whether it worked or the step it failed at and why, and the values it created.",
-    },
-    {
-      id: "hide-details",
-      shot: DETAILS,
-      group: "details",
-      locate: { role: "button", name: "Hide details of Create a user" },
-      name: "Hide details (v)",
-      does: "Folds the details away again.",
     },
 
     // --- Flows -----------------------------------------------------------------
