@@ -976,9 +976,10 @@ export default function AiBridge() {
           application's own endpoints - a decision separate from whether
           the four tools are reachable at all (the "API templates" row
           above), the same shape as the database card's write switch.
-          Shown only where Auto Run is: capture mode and a locked release
-          build hide it, like every other Auto Run/API template control. */}
-      {autoRunToolsShown() && (
+          Shown wherever Auto Run is - a locked release build hides it, and
+          capture mode shows it, since the help site documents it. It names
+          no tool, so unlike the tool rows it needs no capture gate. */}
+      {environmentsShown && (
         <section data-tour="ai-api-templates" className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">API templates</h2>
           <div className="space-y-1 rounded-md border border-border/60 p-2">

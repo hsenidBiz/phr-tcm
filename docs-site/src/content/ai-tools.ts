@@ -16,6 +16,7 @@ const OTHER = "ai-bridge-other-tools";
 const SWITCHED_OFF = "ai-bridge-switched-off";
 const CREDENTIALS = "ai-bridge-credentials";
 const OPTIONS = "ai-bridge-options";
+const API = "ai-bridge-api-templates";
 
 const NAV: Step = { nav: "AI Bridge" };
 const REPO = "C:\\Projects\\customer-portal";
@@ -50,6 +51,11 @@ export const aiBridge: Screen = {
       alt: "The credentials window of the chosen database",
     },
     {
+      id: API,
+      route: [NAV, { scrollTo: { role: "switch", name: "API templates (create, edit and delete)" } }],
+      alt: "The API templates card, with the switch that lets an assistant prove and run templates",
+    },
+    {
       id: OPTIONS,
       route: [
         { click: { role: "button", name: "Settings" } },
@@ -68,6 +74,11 @@ export const aiBridge: Screen = {
       id: "environment",
       title: "Environment",
       summary: "The site and database Auto Run and API Templates work against. Shown while Enable Advanced Features is on, in Settings.",
+    },
+    {
+      id: "api-templates",
+      title: "API templates",
+      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while Enable Advanced Features is on, in Settings.",
     },
     { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
@@ -204,6 +215,17 @@ export const aiBridge: Screen = {
       locate: { role: "button", name: "Edit environments" },
       name: "Edit environments",
       does: "Adds, renames or removes environments, and sets each one's site address and database.",
+    },
+    {
+      id: "api-templates-switch",
+      shot: API,
+      group: "api-templates",
+      locate: { role: "switch", name: "API templates (create, edit and delete)" },
+      name: "API templates (create, edit and delete)",
+      does:
+        "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
+        "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
+        "The card is shown while **Enable Advanced Features** is on, in Settings, under General. The templates themselves are listed on the API Templates tab.",
     },
     {
       id: "database",
