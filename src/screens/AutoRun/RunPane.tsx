@@ -104,6 +104,13 @@ export default function RunPane({
     account: "",
     out: null,
   });
+  /** The current case's preconditions, checked once per browser before its
+   * sign-in. "blocked" carries the sentence: the case never signs in and
+   * none of its steps can run. */
+  const [pre, setPre] = useState<{ state: "idle" | "checking" | "blocked"; reason: string }>({
+    state: "idle",
+    reason: "",
+  });
 
   // The failure screenshot on show, as a data URL, or null.
   const [shot, setShot] = useState<string | null>(null);
@@ -215,18 +222,53 @@ export default function RunPane({
   // to never overlap a browser command already in flight (a step, another
   // sign-in) - an explicit guard instead of a lucky race.
   const scriptAccount = script.isSuccess ? (script.data?.account ?? "") : null;
+  const hasPreconditions = (script.data?.preconditions?.length ?? 0) > 0;
   useEffect(() => {
     if (!opened || launches === 0 || scriptAccount === null || busy) return;
     if (signedFor.current === launches) return;
     signedFor.current = launches;
+    if (hasPreconditions) {
+      void startCase(scriptAccount);
+      return;
+    }
     if (scriptAccount === "") {
       setSignIn({ state: "idle", account: "", out: null });
       return;
     }
     void signInAs(scriptAccount, false);
-    // signInAs is recreated every render; the values below are the only
-    // things that should start a sign-in.
-  }, [opened, launches, scriptAccount, busy]);
+    // startCase and signInAs are recreated every render; the values below
+    // are the only things that should start a case.
+  }, [opened, launches, scriptAccount, hasPreconditions, busy]);
+
+  /** A case whose script has preconditions: the app checks them first, and
+   * signs the case in only when every one is met. A case Blocked here keeps
+   * the sentence as its reason, never signs in, and runs no step. */
+  const startCase = async (account: string) => {
+    const forLaunch = launches;
+    setBusy(true);
+    setPre({ state: "checking", reason: "" });
+    let blocked: string | null;
+    try {
+      const r = await commands.autoRunCheckPreconditions(org, project, caseId);
+      blocked = r.status === "error" ? `precondition could not be checked: ${r.error}` : r.data;
+    } catch (e) {
+      blocked = `precondition could not be checked: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    // See signInAs: a result for a browser the pane has moved past is
+    // dropped, and must not clear a newer launch's busy flag.
+    if (launchRef.current !== forLaunch) return;
+    if (blocked) {
+      setPre({ state: "blocked", reason: blocked });
+      setBusy(false);
+      return;
+    }
+    setPre({ state: "idle", reason: "" });
+    if (account === "") {
+      setBusy(false);
+      return;
+    }
+    await signInAs(account, false);
+  };
 
   /** The verdict in front of the person right now, as a record. */
   const currentRecord = (): CaseRecord => ({
@@ -238,6 +280,9 @@ export default function RunPane({
       step_number: s.step_number,
       outcomes: results[s.step_number] ?? [],
     })),
+    // A case its preconditions blocked says so the way an unattended run
+    // does: proposed Blocked, with the sentence. The verdict stays theirs.
+    ...(pre.state === "blocked" ? { proposed: "Blocked", reason: pre.reason } : {}),
   });
 
   /** Every case starts from a clean browser. Keeping one profile across
@@ -279,6 +324,7 @@ export default function RunPane({
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });
+        setPre({ state: "idle", reason: "" });
         await freshBrowser();
         return;
       }
@@ -407,6 +453,14 @@ export default function RunPane({
         </div>
       ) : (
         <div className="space-y-2">
+          {pre.state === "checking" && (
+            <p className="rounded border border-border/60 px-2 py-1 text-xs text-muted">Checking the preconditions</p>
+          )}
+          {pre.state === "blocked" && (
+            <p role="status" className="rounded border border-border/60 px-2 py-1 text-xs text-danger">
+              Blocked before step 1: {pre.reason}
+            </p>
+          )}
           {signIn.state !== "idle" && (
             <div className="rounded border border-border/60 px-2 py-1 text-xs">
               {signIn.state === "working" ? (
@@ -444,7 +498,7 @@ export default function RunPane({
                     className="ml-auto"
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || pre.state !== "idle"}
                     onClick={() => runStep(s.step_number)}
                   >
                     Run step {s.step_number}

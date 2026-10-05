@@ -60,6 +60,7 @@ fn script() -> CaseScript {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }
 }
 
@@ -190,6 +191,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }
 }
 
@@ -236,7 +238,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![] }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -261,6 +263,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -287,6 +290,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());

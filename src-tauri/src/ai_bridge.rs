@@ -2053,32 +2053,11 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
 fn db_ready(
     ctx: &BridgeContext,
 ) -> Result<(crate::db::Connection, std::path::PathBuf), (u16, String)> {
-    let nothing_chosen = || (409, crate::db::query::NO_CONNECTION.to_string());
-    // An id this build does not know - one saved for a preset a later
-    // release removed - is nothing chosen too: the person's next step is
-    // the same, pick a database.
-    let store = ctx.db_secrets.as_deref().ok_or_else(nothing_chosen)?;
-    let id = ctx
-        .db_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| crate::db::credentials::is_known(store, id))
-        .ok_or_else(nothing_chosen)?;
     // Resolved now, not when the context was pushed: a login saved since
-    // is the one this call signs in with. `own` with nothing saved HAS been
-    // chosen, so it gets its own sentence - "pick one" would send the person
-    // back to a choice they already made. A store that cannot be read keeps
-    // its own sentence too: picking again won't help.
-    let chosen = crate::db::credentials::resolve(store, id)
-        .map_err(|why| (409, why))?
-        .ok_or_else(|| (409, crate::db::query::NO_LOGIN_SAVED.to_string()))?;
-    // The error names the missing key and nothing else - the rest of that
-    // string is a credential, and this sentence is shown to a person.
-    let connection = crate::db::parse_connection(&chosen)
-        .map_err(|why| (409, format!("{why} - choose a connection under Database Read Access on the AI Bridge tab")))?;
-    let exe = crate::db::sqlcmd_path()
-        .ok_or_else(|| (409, crate::db::NOT_INSTALLED.to_string()))?;
-    Ok((connection, exe))
+    // is the one this call signs in with. An id this build does not know -
+    // one saved for a preset a later release removed - is nothing chosen
+    // too: the person's next step is the same, pick a database.
+    crate::db::query::ready(ctx.db_secrets.as_deref(), ctx.db_id.as_deref()).map_err(|why| (409, why))
 }
 
 /// Said when a template on a flow is proven or run with no database chosen:
@@ -2422,8 +2401,8 @@ fn repair_source(
 /// Compared the way the declared-edit gate compares steps - by
 /// `step_signature`, so JSON formatting does not count as a change -
 /// plus the fields outside the steps a save can carry, `title`,
-/// `account`, `no_save` and `area` (a blank area is no area; case does not
-/// tell two area names apart). `no_save` counts: a re-send that leaves it
+/// `account`, `no_save`, `preconditions` and `area` (a blank area is no
+/// area; case does not tell two area names apart). `no_save` counts: a re-send that leaves it
 /// out of a script marked Must not save is a repair turning it off, which
 /// the gate refuses - never a quiet "unchanged". Positional rather than keyed by step number, so a bundle
 /// that merely REORDERS the same steps counts as a change and goes
@@ -2433,6 +2412,7 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
     old.title == sent.title
         && old.account == sent.account
         && old.no_save == sent.no_save
+        && old.preconditions == sent.preconditions
         && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
         && old.steps.iter().zip(&sent.steps).all(|(a, b)| {

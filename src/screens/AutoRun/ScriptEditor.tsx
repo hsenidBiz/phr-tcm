@@ -139,6 +139,9 @@ export default function ScriptEditor({
       // Left out when blank: the module's default area.
       ...(area === "" ? {} : { area }),
       ...(noSave ? { no_save: true } : {}),
+      // Not edited here: carried through, so saving from the editor keeps
+      // them (the save checks them again).
+      ...(existing.data?.preconditions?.length ? { preconditions: existing.data.preconditions } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);

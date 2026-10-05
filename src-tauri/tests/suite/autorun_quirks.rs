@@ -429,6 +429,7 @@ fn script_for(case_id: i32) -> CaseScript {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }
 }
 

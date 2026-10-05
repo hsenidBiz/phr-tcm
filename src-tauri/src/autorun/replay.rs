@@ -11,8 +11,9 @@
 
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
-use super::{recipe, signin, transient};
+use super::{preconditions, recipe, signin, transient};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
+use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
 use crate::browser::save_guard;
@@ -483,15 +484,9 @@ pub async fn run_selection<B: Browsers>(
     run_cases(browsers, root, organization, project, run, &cases, None, false, timing, cancel, progress).await
 }
 
-/// Run a whole selection, one fresh browser each, saving the run after
-/// every case so a crash or a stop loses nothing. `run_account`, the
-/// account the person picked for the run, signs in every case - over the
-/// account a script names, which only decides when nothing was picked. A
-/// `sign_in` step inside a script still changes to the account it names.
-/// The module paths file
-/// is read once, first: an unreadable one stops the run before any
-/// browser opens. With `retry_transient`, a case whose failure looked
-/// transient (`transient::is_transient`) runs once more in a fresh browser.
+/// `run_cases_checked` with no database for preconditions: a case that
+/// has any is Blocked with `preconditions::NEED_DB`, and every other case
+/// runs as it always has.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases<B: Browsers>(
     browsers: &mut B,
@@ -504,6 +499,51 @@ pub async fn run_cases<B: Browsers>(
     retry_transient: bool,
     timing: &Timing,
     cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(ReplayProgress) + Send),
+) -> Result<(), String> {
+    let no_db: Result<preconditions::NoDb, String> = Err(preconditions::NEED_DB.to_string());
+    run_cases_checked(
+        browsers,
+        root,
+        organization,
+        project,
+        run,
+        cases,
+        run_account,
+        retry_transient,
+        timing,
+        cancel,
+        &no_db,
+        progress,
+    )
+    .await
+}
+
+/// Run a whole selection, one fresh browser each, saving the run after
+/// every case so a crash or a stop loses nothing. `run_account`, the
+/// account the person picked for the run, signs in every case - over the
+/// account a script names, which only decides when nothing was picked. A
+/// `sign_in` step inside a script still changes to the account it names.
+/// The module paths file
+/// is read once, first: an unreadable one stops the run before any
+/// browser opens. With `retry_transient`, a case whose failure looked
+/// transient (`transient::is_transient`) runs once more in a fresh browser.
+/// A case with preconditions has them checked against `precondition_db`
+/// before its browser opens; one not met Blocks the case with its sentence
+/// (`preconditions::check_case`), it never signs in, and the run goes on.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_cases_checked<B: Browsers, P: StageDb>(
+    browsers: &mut B,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    run: &mut LocalRun,
+    cases: &[CaseToRun],
+    run_account: Option<&str>,
+    retry_transient: bool,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    precondition_db: &Result<P, String>,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
     // Each error says for itself where the run got to, so the command can
@@ -540,7 +580,16 @@ pub async fn run_cases<B: Browsers>(
             Ok(Some(script)) => {
                 count = script.steps.len() as u32;
                 let account = run_account.or(script.account.as_deref());
-                match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
+                // Where the case starts, then the records it relies on -
+                // both before its browser opens, so a case that cannot
+                // start never signs in.
+                let ready = match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
+                    Err(why) => Err(why),
+                    Ok(path) => preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                        .await
+                        .map(|()| path),
+                };
+                match ready {
                     Err(why) => blocked_before_start(&script, account, why),
                     Ok(path) => {
                         // A path but no recipe: the sign-in fails first and

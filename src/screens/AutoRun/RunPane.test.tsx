@@ -484,3 +484,81 @@ test("a saved run is counted toward the project's quirks once", async () => {
   expect(s.saved).toHaveLength(1);
   expect(s.counted).toEqual([{ organization: "acme", project: "Web", runId: "run-1" }]);
 });
+
+/** A session whose one case has preconditions, answering the check with
+ * `blocked` (null: every one met). Records the checks and sign-ins asked. */
+function mockPreconditions(blocked: string | null) {
+  const checked: unknown[] = [];
+  const asked: unknown[] = [];
+  const saved: { cases: Record<string, unknown>[] }[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script")
+      return {
+        case_id: 1,
+        title: "s",
+        steps: STEPS,
+        account: "hr.admin",
+        preconditions: [{ flow: "pms-performance-cycle", stage: "publish", value: 274 }],
+      };
+    if (cmd === "auto_run_check_preconditions") {
+      checked.push(args);
+      return blocked;
+    }
+    if (cmd === "auto_run_sign_in") {
+      asked.push(args);
+      return OK;
+    }
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_save_run") {
+      saved.push((args as { run: { cases: Record<string, unknown>[] } }).run);
+      return null;
+    }
+    return null;
+  });
+  return { checked, asked, saved };
+}
+
+const NOT_MET = "precondition not met: Publish for 274 (Performance cycle wizard)";
+
+test("a case whose precondition is not met is Blocked before its sign-in and runs no step", async () => {
+  const s = mockPreconditions(NOT_MET);
+  renderPane([{ id: 1, title: "Open a published cycle" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+
+  expect(await screen.findByText(`Blocked before step 1: ${NOT_MET}`)).toBeInTheDocument();
+  expect(s.checked).toEqual([{ organization: "acme", project: "Web", caseId: 1 }]);
+  expect(s.asked).toEqual([]);
+  expect(screen.getByRole("button", { name: /Run step 1/ })).toBeDisabled();
+
+  // The verdict is still the person's; the record carries the reason.
+  fireEvent.click(screen.getByRole("button", { name: "Blocked" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+  await waitFor(() => expect(s.saved).toHaveLength(1));
+  expect(s.saved[0].cases[0]).toMatchObject({ verdict: "Blocked", proposed: "Blocked", reason: NOT_MET });
+});
+
+test("a case whose preconditions are met signs in as usual", async () => {
+  const s = mockPreconditions(null);
+  renderPane([{ id: 1, title: "Open a published cycle" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+
+  expect(await screen.findByText("signed in as HR Admin from a saved session")).toBeInTheDocument();
+  expect(s.checked).toHaveLength(1);
+  expect(s.asked).toHaveLength(1);
+  expect(screen.queryByText(/Blocked before step 1/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Run step 1/ })).toBeEnabled();
+});
+
+test("a case with no preconditions is never checked", async () => {
+  const seen: string[] = [];
+  mockIPC((cmd) => {
+    seen.push(cmd);
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+    if (cmd === "auto_run_sign_in") return OK;
+    return null;
+  });
+  renderPane([{ id: 1, title: "Leave request" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  expect(await screen.findByText("signed in as HR Admin from a saved session")).toBeInTheDocument();
+  expect(seen).not.toContain("auto_run_check_preconditions");
+});

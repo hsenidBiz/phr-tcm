@@ -345,6 +345,47 @@ A repair can turn `no_save` on, never off - leaving it out of a repair is
 turning it off, and that is refused. Only a person, saving the script in
 the app, can turn it off.
 
+## Preconditions
+
+Some cases rely on a record built beforehand: a performance cycle set up
+and published, a leave type with its rules. Add a precondition whenever a
+script relies on such a record, so a run where the record is missing says
+so before step 1 instead of failing halfway with a locator that was never
+wrong:
+
+    { "case_id": 502, "title": "...", "preconditions": [
+        { "flow": "pms-performance-cycle", "stage": "publish", "value": 274,
+          "why": "the case opens a published cycle" }
+      ], "steps": [ ... ] }
+
+- `flow` and `stage` are ids of an API template flow and one of its
+  stages. Find them with `list_api_templates`: it lists the project's flows
+  and each flow's stages.
+- `value` is the flow's subject, as the flow's checks take it: a whole
+  number for a number subject (the cycle's id), a string for a string one
+  (the cycle's name).
+- `why` is optional: one sentence on what the case needs the record for.
+
+Before the case signs in, the app runs each precondition's stage check on
+the active environment's database, itself: it does not need Database Read
+Access switched on, but it does need a database chosen. When every stage
+is done the case runs. Otherwise it is Blocked before step 1, and never
+signs in, with one of:
+
+    precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle
+    precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs
+    preconditions need a database chosen on the AI Bridge tab
+
+A case Blocked by a precondition has nothing to repair: build the record,
+or tell the person it is missing.
+
+Every save checks each precondition and names what is missing, one
+sentence per problem, counting preconditions from 1:
+
+- `precondition 1: no flow pms-cycle` - no flow has that id
+- `precondition 1: flow Performance cycle wizard has no stage published` - the flow has no stage with that id
+- `precondition 1: give the value the flow's checks take` - the value is missing, or not the type the subject takes
+
 ## Every expected result is checked
 
 Every step whose test case has a non-empty expected result must be

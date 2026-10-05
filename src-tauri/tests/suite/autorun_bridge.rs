@@ -106,6 +106,35 @@ fn case_7(selector: &str, value: &str) -> serde_json::Value {
     }])
 }
 
+/// A re-send that changes only the preconditions is not "unchanged": it is
+/// a repair, and takes one off the cap - never a free change.
+#[tokio::test]
+async fn changing_only_the_preconditions_is_a_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let flow: v2_lib::api_templates::flow::Flow =
+        serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+    v2_lib::api_templates::flow_store::save(dir.path(), "acme", "Web", &flow).unwrap();
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let plain = case_7("#toast", "Saved").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &plain, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let mut with = case_7("#toast", "Saved");
+    with[0]["preconditions"] =
+        serde_json::json!([{ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }]);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &with.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.preconditions.len(), 1);
+    assert_eq!(saved.repairs, 1);
+}
+
 /// The declaration that goes with a change to case 7's step 2.
 fn edit_step_2(why: &str) -> serde_json::Value {
     serde_json::json!({ "case_id": 7, "steps": [2], "why": why })

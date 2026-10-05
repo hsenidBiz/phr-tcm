@@ -517,6 +517,7 @@ fn script_with(action: Value) -> CaseScript {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }
 }
 

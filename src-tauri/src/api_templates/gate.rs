@@ -72,7 +72,8 @@ pub enum StageState {
 
 /// Why a check is being run - recorded with it.
 pub struct CheckFor<'a> {
-    /// `"gate"`, `"prove"`, `"progress"` or `"save"`.
+    /// `"gate"`, `"prove"`, `"progress"`, `"save"` or `"precondition"`
+    /// (an Auto Run case's, checked before its sign-in).
     pub purpose: &'static str,
     pub template: Option<&'a str>,
 }
@@ -148,6 +149,12 @@ pub async fn stage_state_within<D: StageDb>(
     state
 }
 
+/// What a person is told when a stage's check could not run. No SQL and no
+/// error text: both are in the activity log, which this points at.
+pub fn could_not_run(stage: &Stage) -> String {
+    format!("the check for {} could not be run - see the activity folder in Settings, Logs", stage.title)
+}
+
 /// The saved templates that perform `stage` of `flow`, in the order given.
 pub fn templates_on<'a>(templates: &'a [SavedTemplate], flow: &str, stage: &str) -> Vec<&'a SavedTemplate> {
     templates
@@ -206,10 +213,7 @@ pub async fn gate<D: StageDb>(
     }
 
     if let Some((s, _)) = states.iter().find(|(_, st)| *st == StageState::CouldNotRun) {
-        return Err(format!(
-            "the check for {} could not be run - see the activity folder in Settings, Logs",
-            s.title
-        ));
+        return Err(could_not_run(s));
     }
 
     let done: HashMap<&str, bool> = states.iter().map(|(s, st)| (s.id.as_str(), *st == StageState::Done)).collect();

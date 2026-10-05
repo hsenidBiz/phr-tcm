@@ -243,6 +243,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }];
 
     let expected = [
@@ -338,6 +339,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }];
 
     let out = describe_failures(&run, &scripts);
@@ -429,6 +431,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     }];
     let out = describe_failures(&run, &scripts);
     assert!(out
@@ -540,6 +543,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         last_repair: None,
         suspected_defect: None,
         no_save: false,
+        preconditions: vec![],
     };
     let text = describe_failures(&run, std::slice::from_ref(&script));
     let lines: Vec<&str> = text.lines().collect();

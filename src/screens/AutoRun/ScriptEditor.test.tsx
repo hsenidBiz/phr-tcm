@@ -236,3 +236,25 @@ test("a script marked Must not save keeps the flag when saved untouched", async 
   await waitFor(() => expect(saved).toHaveLength(1));
   expect((saved[0] as { no_save?: boolean }).no_save).toBe(true);
 });
+
+test("a script's preconditions are kept when it is saved from the editor", async () => {
+  const saved: unknown[] = [];
+  const preconditions = [{ flow: "pms-performance-cycle", stage: "publish", value: 274, why: "it opens a published cycle" }];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true, preconditions }, ACCOUNTS, saved);
+  // The flag showing is the sign the saved script has loaded.
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { preconditions?: unknown }).preconditions).toEqual(preconditions);
+});
+
+test("a script with no preconditions is saved without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);
+  const box = await screen.findByRole("checkbox", { name: "Must not save" });
+  await waitFor(() => expect(box).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("preconditions");
+});

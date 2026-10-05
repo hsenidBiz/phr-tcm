@@ -189,8 +189,16 @@ pub async fn auto_run_replay(
         .collect();
     let timing = replay_timing(watch);
     let mut browsers = RealBrowsers::new(Browser::from_name(&browser_name), watch);
+    // Where the cases' preconditions are asked: the active environment's
+    // database, resolved once for the run. A case without preconditions
+    // never looks at it, so one that is not set up stops no other case.
+    let precondition_db = {
+        use tauri::Manager;
+        let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+        crate::autorun::preconditions::environment_db(&root, Some(secrets.as_ref()))
+    };
 
-    let outcome = replay::run_cases(
+    let outcome = replay::run_cases_checked(
         &mut browsers,
         &root,
         &organization,
@@ -201,6 +209,7 @@ pub async fn auto_run_replay(
         retry_transient,
         &timing,
         &CANCEL,
+        &precondition_db,
         &mut |p: ReplayProgress| {
             let _ = p.emit(&app);
         },

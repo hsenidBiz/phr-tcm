@@ -15,6 +15,7 @@ pub mod floor;
 pub mod guide;
 pub mod nav;
 pub mod patterns;
+pub mod preconditions;
 pub mod publish;
 pub mod quirks;
 pub mod recipe;
@@ -91,6 +92,31 @@ pub struct CaseScript {
     /// Written only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_save: bool,
+    /// Records the case relies on, built beforehand: each one a stage of an
+    /// API template flow that must be done for a value before step 1. The
+    /// run checks every one before it signs in (`preconditions`) and
+    /// blocks the case when one is not met. Every save validates them.
+    /// Written only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Precondition>,
+}
+
+/// One record a case relies on: `stage` of `flow` must be done for `value`,
+/// the flow's subject as its checks take it (a cycle's id, or its name).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Precondition {
+    pub flow: String,
+    pub stage: String,
+    /// Absent reads as null, so a save can say the value is missing rather
+    /// than fail to parse. See `FlowSaved::sample` on why this is declared
+    /// to TypeScript as `unknown`.
+    #[serde(default)]
+    #[specta(type = specta_typescript::Unknown)]
+    pub value: serde_json::Value,
+    /// One sentence on why the case needs it, said after the Blocked
+    /// sentence when the precondition is not met.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// One case's suspected application defect: the step, and what the

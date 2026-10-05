@@ -207,6 +207,27 @@ pub async fn auto_run_step(
     .await
 }
 
+/// A supervised case's preconditions, checked where the case starts and
+/// before its sign-in. `None`: the case may go on. `Some(sentence)`: it is
+/// Blocked, with the sentence as its reason, and the pane never signs it
+/// in. The active environment's database is looked up only when the
+/// case's script has preconditions.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_check_preconditions(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+) -> Result<Option<String>, String> {
+    let root = root(&app)?;
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
+        crate::autorun::preconditions::environment_db(&root, Some(secrets.as_ref()))
+    })
+    .await
+}
+
 /// Put the supervised browser's no-save guard where this case needs it
 /// (`guard_for_case`), for a step or an assistant's try alike.
 pub(crate) async fn guard_supervised(

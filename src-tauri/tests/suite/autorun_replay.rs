@@ -14,7 +14,7 @@ use v2_lib::autorun::nav::{
 };
 use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
-    propose, run_cases, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
+    propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
@@ -1615,4 +1615,107 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
     assert_eq!((one.confirmed, one.doubted), (1, 0), "the case this call ran confirms its note");
     assert!(one.last_confirmed.is_some());
     assert_eq!((two.confirmed, two.doubted), (0, 0), "the earlier record is not counted again");
+}
+
+// ------------------------------------------------------------ preconditions
+
+/// A script with one precondition: the cycle-flow's Publish stage for 274.
+fn needs_publish(case_id: i32, account: Option<&str>) -> CaseScript {
+    let mut sc = script(case_id, account, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+    ]));
+    sc.preconditions = vec![v2_lib::autorun::Precondition {
+        flow: "pms-performance-cycle".into(),
+        stage: "publish".into(),
+        value: serde_json::json!(274),
+        why: Some("the case opens a published cycle".into()),
+    }];
+    sc
+}
+
+fn save_cycle_flow(root: &Path) {
+    let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(common::cycle_flow_json()).unwrap();
+    v2_lib::api_templates::flow_store::save(root, "Acme", "Web", &flow).unwrap();
+}
+
+/// A precondition not met Blocks its case before a browser opens - so it
+/// never signs in - with the sentence as its reason, and the next case
+/// runs.
+#[tokio::test]
+async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_on() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, Some("lead"))).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let db: Result<common::FakeStageDb, String> =
+        Ok(common::FakeStageDb::new().answer("/*publish*/", Ok(false)));
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(
+        &mut browsers,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &[to_run(1, None), to_run(2, None)],
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &db,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(browsers.opened, 1, "only the second case opened a browser");
+    let blocked = &run.cases[0];
+    assert_eq!(blocked.proposed, "Blocked");
+    assert_eq!(
+        blocked.reason,
+        "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle"
+    );
+    assert!(blocked.steps.iter().all(|s| s.step_number > 0), "no sign-in step: {:?}", blocked.steps);
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", run.cases[1]);
+}
+
+#[tokio::test]
+async fn every_precondition_done_lets_the_case_run() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    let db: Result<common::FakeStageDb, String> = Ok(common::FakeStageDb::new().answer("/*publish*/", Ok(true)));
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &db, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+}
+
+/// With no database to ask, a case with preconditions is Blocked and one
+/// without runs as it always has.
+#[tokio::test]
+async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_cycle_flow(root);
+    store::save_script(root, &needs_publish(1, None)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.opened, 1);
+    assert_eq!(run.cases[0].proposed, "Blocked");
+    assert_eq!(run.cases[0].reason, "preconditions need a database chosen on the AI Bridge tab");
+    assert_eq!(run.cases[1].proposed, "Passed");
 }

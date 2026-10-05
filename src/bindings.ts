@@ -366,6 +366,14 @@ export const commands = {
 	 *  around it.
 	 */
 	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
+	/**
+	 *  A supervised case's preconditions, checked where the case starts and
+	 *  before its sign-in. `None`: the case may go on. `Some(sentence)`: it is
+	 *  Blocked, with the sentence as its reason, and the pane never signs it
+	 *  in. The active environment's database is looked up only when the
+	 *  case's script has preconditions.
+	 */
+	autoRunCheckPreconditions: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -414,6 +422,14 @@ export const commands = {
 	 *  Written only when true.
 	 */
 	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -1637,6 +1653,14 @@ export type CaseScript_Deserialize = {
 	 *  Written only when true.
 	 */
 	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Deserialize[],
 };
 
 /**
@@ -1691,6 +1715,14 @@ export type CaseScript_Serialize = {
 	 *  Written only when true.
 	 */
 	no_save?: boolean,
+	/**
+	 *  Records the case relies on, built beforehand: each one a stage of an
+	 *  API template flow that must be done for a value before step 1. The
+	 *  run checks every one before it signs in (`preconditions`) and
+	 *  blocks the case when one is not met. Every save validates them.
+	 *  Written only when there are any.
+	 */
+	preconditions?: Precondition_Serialize[],
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -2576,6 +2608,52 @@ export type PrWorkItem = {
 	/**  Hex (no '#') for the state dot, from the type's process states. */
 	state_color: string,
 	url: string,
+};
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition = Precondition_Serialize | Precondition_Deserialize;
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition_Deserialize = {
+	flow: string,
+	stage: string,
+	/**
+	 *  Absent reads as null, so a save can say the value is missing rather
+	 *  than fail to parse. See `FlowSaved::sample` on why this is declared
+	 *  to TypeScript as `unknown`.
+	 */
+	value?: unknown,
+	/**
+	 *  One sentence on why the case needs it, said after the Blocked
+	 *  sentence when the precondition is not met.
+	 */
+	why?: string | null,
+};
+
+/**
+ *  One record a case relies on: `stage` of `flow` must be done for `value`,
+ *  the flow's subject as its checks take it (a cycle's id, or its name).
+ */
+export type Precondition_Serialize = {
+	flow: string,
+	stage: string,
+	/**
+	 *  Absent reads as null, so a save can say the value is missing rather
+	 *  than fail to parse. See `FlowSaved::sample` on why this is declared
+	 *  to TypeScript as `unknown`.
+	 */
+	value: unknown,
+	/**
+	 *  One sentence on why the case needs it, said after the Blocked
+	 *  sentence when the precondition is not met.
+	 */
+	why?: string | null,
 };
 
 export type Project = {
