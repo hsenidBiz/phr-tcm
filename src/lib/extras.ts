@@ -4,6 +4,12 @@
 // the Settings screen (lib/extrasSequence.ts), off by that section's Reset
 // to default. While it is on, a release build shows Auto Run - its tab and
 // its AI tools - the way a development build always does.
+//
+// Beside it, Settings' Enable Advanced Features switch (`advanced`), saved
+// in the same Rust file. It shows the same things - Auto Run, API Templates
+// and their AI tools - but not the Extras card, which follows `unlocked`
+// alone. One listener set for both: a change to either can change what is
+// shown.
 import { useSyncExternalStore } from "react";
 import { commands } from "../bindings";
 import { isCaptureMode } from "../dev/capture";
@@ -13,9 +19,12 @@ import { isCaptureMode } from "../dev/capture";
 export const AUTO_RUN_DEV: boolean = import.meta.env.DEV;
 
 let unlocked = false;
+let advanced = false;
 /** Bumped by every save, so a read that started before it cannot put the
- * old value back when it answers late. */
+ * old value back when it answers late. One per flag: a save of one must not
+ * discard a read of the other. */
 let generation = 0;
+let advancedGeneration = 0;
 const listeners = new Set<() => void>();
 
 /** True once `hydrateExtras` has settled at least once, success or not.
@@ -26,10 +35,20 @@ const listeners = new Set<() => void>();
 let hydrated = false;
 const hydratedListeners = new Set<() => void>();
 
+function notify(): void {
+  for (const l of [...listeners]) l();
+}
+
 function publish(next: boolean): void {
   if (next === unlocked) return;
   unlocked = next;
-  for (const l of [...listeners]) l();
+  notify();
+}
+
+function publishAdvanced(next: boolean): void {
+  if (next === advanced) return;
+  advanced = next;
+  notify();
 }
 
 function publishHydrated(): void {
@@ -38,6 +57,7 @@ function publishHydrated(): void {
   for (const l of [...hydratedListeners]) l();
 }
 
+/** Fires on a change to either flag. */
 export function subscribeExtras(cb: () => void): () => void {
   listeners.add(cb);
   return () => {
@@ -60,19 +80,41 @@ export function extrasHydratedSnapshot(): boolean {
   return hydrated;
 }
 
-/** Ask Rust. Outside the app (a test without IPC, a browser preview) the
- * answer is simply "as it was" - locked, from a fresh start. Either way,
- * `hydrated` flips once this settles. */
+export function advancedFeaturesSnapshot(): boolean {
+  return advanced;
+}
+
+/** Whether Auto Run, API Templates and their AI tools are on for this
+ * machine, before the build kind and capture mode are applied: either
+ * flag. Mirrors Rust's `extras::features_on`. */
+export function featuresOnSnapshot(): boolean {
+  return unlocked || advanced;
+}
+
+/** Ask Rust for both flags. Outside the app (a test without IPC, a browser
+ * preview) the answer is simply "as it was" - off, from a fresh start.
+ * Either way, `hydrated` flips once this settles. */
 export async function hydrateExtras(): Promise<void> {
   const started = generation;
-  try {
-    const on = await commands.getExtrasUnlocked();
-    if (started === generation) publish(Boolean(on));
-  } catch {
-    // no IPC here
-  } finally {
-    if (started === generation) publishHydrated();
-  }
+  const startedAdvanced = advancedGeneration;
+  const readUnlocked = (async () => {
+    try {
+      const on = await commands.getExtrasUnlocked();
+      if (started === generation) publish(Boolean(on));
+    } catch {
+      // no IPC here
+    }
+  })();
+  const readAdvanced = (async () => {
+    try {
+      const on = await commands.getAdvancedFeatures();
+      if (startedAdvanced === advancedGeneration) publishAdvanced(Boolean(on));
+    } catch {
+      // no IPC here
+    }
+  })();
+  await Promise.all([readUnlocked, readAdvanced]);
+  if (started === generation && startedAdvanced === advancedGeneration) publishHydrated();
 }
 
 /** Save through Rust, then tell every screen. Throws - changing nothing -
@@ -84,17 +126,33 @@ export async function setExtrasUnlocked(on: boolean): Promise<void> {
   publish(on);
 }
 
-/** Whether Auto Run is shown right now: always in a development build,
- * and in a release build while this machine's extras are unlocked - except
- * in capture mode, which hides it whichever of those made it visible, since
- * the screenshot script must never shoot it. */
-export function autoRunVisible(): boolean {
-  if (isCaptureMode()) return false;
-  return AUTO_RUN_DEV || unlocked;
+/** Save Enable Advanced Features through Rust, then tell every screen.
+ * Throws - changing nothing - when the save fails. */
+export async function setAdvancedFeatures(on: boolean): Promise<void> {
+  advancedGeneration += 1;
+  const r = await commands.setAdvancedFeatures(on);
+  if (r.status === "error") throw new Error(r.error);
+  publishAdvanced(on);
 }
 
+/** Whether Auto Run is shown right now: always in a development build, and
+ * in a release build while this machine's extras are unlocked or Enable
+ * Advanced Features is on - except in capture mode, which hides it
+ * whichever of those made it visible, since the screenshot script must
+ * never shoot it. */
+export function autoRunVisible(): boolean {
+  if (isCaptureMode()) return false;
+  return AUTO_RUN_DEV || featuresOnSnapshot();
+}
+
+/** The hidden extras switch ALONE - only for what belongs to it (the Extras
+ * card). Anything that asks "is Auto Run shown" reads `useAutoRunVisible`. */
 export function useExtrasUnlocked(): boolean {
   return useSyncExternalStore(subscribeExtras, extrasUnlockedSnapshot);
+}
+
+export function useAdvancedFeatures(): boolean {
+  return useSyncExternalStore(subscribeExtras, advancedFeaturesSnapshot);
 }
 
 export function useExtrasHydrated(): boolean {
@@ -102,7 +160,7 @@ export function useExtrasHydrated(): boolean {
 }
 
 export function useAutoRunVisible(): boolean {
-  const on = useExtrasUnlocked();
+  const on = useSyncExternalStore(subscribeExtras, featuresOnSnapshot);
   // Capture mode hides Auto Run even in the dev build it always ships in.
   if (isCaptureMode()) return false;
   return AUTO_RUN_DEV || on;
@@ -124,6 +182,8 @@ export function shouldLeaveHidden(section: string, shown: boolean, hydrated: boo
 /** Tests only: back to locked and un-hydrated, without telling anyone. */
 export function resetExtrasStore(): void {
   unlocked = false;
+  advanced = false;
   generation = 0;
+  advancedGeneration = 0;
   hydrated = false;
 }

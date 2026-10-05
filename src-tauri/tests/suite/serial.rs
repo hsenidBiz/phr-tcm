@@ -100,3 +100,11 @@ pub fn account_leases() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The machine-wide extras switch and Enable Advanced Features
+/// (`extras::set_unlocked` / `set_advanced`), and the folder `extras::init`
+/// points them at - set at most once for the whole binary.
+pub fn extras() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

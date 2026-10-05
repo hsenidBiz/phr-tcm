@@ -1,11 +1,14 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
+  advancedFeaturesSnapshot,
   autoRunVisible,
   extrasHydratedSnapshot,
   extrasUnlockedSnapshot,
+  featuresOnSnapshot,
   hydrateExtras,
   resetExtrasStore,
+  setAdvancedFeatures,
   setExtrasUnlocked,
   shouldLeaveHidden,
   subscribeExtras,
@@ -129,6 +132,52 @@ test("a release build shows Auto Run only once unlocked", async () => {
   await fresh.setExtrasUnlocked(true);
   expect(fresh.autoRunVisible()).toBe(true);
   await fresh.setExtrasUnlocked(false);
+  expect(fresh.autoRunVisible()).toBe(false);
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+test("hydrating reads Enable Advanced Features too, and it alone does not unlock the extras", async () => {
+  mockIPC((cmd) => (cmd === "get_advanced_features" ? true : cmd === "get_extras_unlocked" ? false : undefined));
+  await hydrateExtras();
+  expect(advancedFeaturesSnapshot()).toBe(true);
+  expect(extrasUnlockedSnapshot()).toBe(false);
+  expect(featuresOnSnapshot()).toBe(true);
+  expect(extrasHydratedSnapshot()).toBe(true);
+});
+
+test("saving Enable Advanced Features goes through Rust first; a refused save changes nothing", async () => {
+  const saved: unknown[] = [];
+  let refuse = false;
+  mockIPC((cmd, args) => {
+    if (cmd === "set_advanced_features") {
+      if (refuse) throw "Could not save this setting. The app log in Settings has the details.";
+      saved.push(args);
+    }
+    return null;
+  });
+  const seen = vi.fn();
+  const off = subscribeExtras(seen);
+  await setAdvancedFeatures(true);
+  expect(saved).toEqual([{ on: true }]);
+  expect(advancedFeaturesSnapshot()).toBe(true);
+  expect(seen).toHaveBeenCalledTimes(1);
+  refuse = true;
+  await expect(setAdvancedFeatures(false)).rejects.toThrow("Could not save this setting");
+  expect(advancedFeaturesSnapshot()).toBe(true);
+  off();
+});
+
+test("a release build shows Auto Run while Enable Advanced Features is on", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const fresh = await import("./extras");
+  mockIPC(() => null);
+  expect(fresh.autoRunVisible()).toBe(false);
+  await fresh.setAdvancedFeatures(true);
+  expect(fresh.autoRunVisible()).toBe(true);
+  expect(fresh.extrasUnlockedSnapshot()).toBe(false);
+  await fresh.setAdvancedFeatures(false);
   expect(fresh.autoRunVisible()).toBe(false);
   vi.unstubAllEnvs();
   vi.resetModules();
