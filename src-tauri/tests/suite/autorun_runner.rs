@@ -554,3 +554,35 @@ async fn a_watched_step_has_no_stop_to_end_its_wait() {
     assert!(started.elapsed() >= Duration::from_millis(300));
     assert_eq!(out[0].detail, "no download started within 0.3 s");
 }
+
+/// A watched run or a try has no Stop, so its wait is capped: a script
+/// asking for two minutes waits the cap, and says the capped time.
+#[tokio::test]
+async fn a_watched_download_wait_is_capped_whatever_within_ms_says() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA, WATCHED_DOWNLOAD_WAIT_MS};
+    assert_eq!(WATCHED_DOWNLOAD_WAIT_MS, 30_000);
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut acc: Option<String> = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let s = download_step(json!({ "kind": "expect_download", "name": "report.csv", "within_ms": 120000 }));
+    let mut run = InRun { watched_cap_ms: Some(300), ..Default::default() };
+    let started = Instant::now();
+    let out = run_step_in_run(
+        &mut d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &s,
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+    assert_eq!(out[0].detail, "no download started within 0.3 s");
+}

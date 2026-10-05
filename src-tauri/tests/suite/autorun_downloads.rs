@@ -114,6 +114,23 @@ fn a_check_of_the_name_alone_says_what_was_downloaded_and_its_size() {
     assert_eq!(check_file(&path, "comma.csv", &named("*.csv")), Ok(passed("comma.csv", &[])));
 }
 
+/// A second download of one name is kept numbered; the sentence names both,
+/// so a person opening the run's folder finds the one that was checked.
+#[test]
+fn a_numbered_file_says_the_name_it_was_saved_as() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x (2).csv");
+    std::fs::copy(fixture("comma.csv"), &path).unwrap();
+    assert_eq!(
+        check_file(&path, "x.csv", &named("x.csv")),
+        Ok(format!("downloaded \"x.csv\" (saved as \"x (2).csv\", {})", size_of(&path)))
+    );
+    // Kept under its own name, the sentence is the plain one.
+    let plain = dir.path().join("x.csv");
+    std::fs::copy(fixture("comma.csv"), &plain).unwrap();
+    assert_eq!(check_file(&plain, "x.csv", &named("x.csv")), Ok(format!("downloaded \"x.csv\" ({})", size_of(&plain))));
+}
+
 #[test]
 fn a_file_with_another_name_says_what_it_got() {
     let path = fixture("comma.csv");

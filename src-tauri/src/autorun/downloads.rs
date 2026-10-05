@@ -122,7 +122,10 @@ pub fn check_file(path: &Path, shown_name: &str, check: &DownloadCheck) -> Resul
     let size = std::fs::metadata(path)
         .map_err(|e| format!("\"{shown_name}\" could not be read: {}", clip(&e.to_string())))?
         .len();
-    let mut sentence = format!("downloaded \"{shown_name}\" ({})", human_size(size));
+    let mut sentence = match saved_as(path, shown_name) {
+        Some(on_disk) => format!("downloaded \"{shown_name}\" (saved as \"{on_disk}\", {})", human_size(size)),
+        None => format!("downloaded \"{shown_name}\" ({})", human_size(size)),
+    };
 
     let wants_sheet = check.headers.is_some() || !check.cells.is_empty();
     let wants_text = !check.contains_text.is_empty();
@@ -159,6 +162,15 @@ pub fn check_file(path: &Path, shown_name: &str, check: &DownloadCheck) -> Resul
         }
     }
     Ok(sentence)
+}
+
+/// The name the file is kept under, when it is not the one it was matched
+/// by: a second download of one name is numbered (`x (2).csv`), and a
+/// person opening the run's folder looks for that one. Names that differ
+/// only in case are one name to Windows.
+fn saved_as(path: &Path, shown_name: &str) -> Option<String> {
+    let on_disk = path.file_name()?.to_string_lossy().into_owned();
+    (on_disk.to_lowercase() != shown_name.to_lowercase()).then_some(on_disk)
 }
 
 /// What a file is, by its name's extension.

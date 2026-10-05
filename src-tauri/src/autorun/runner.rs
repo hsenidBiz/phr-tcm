@@ -170,7 +170,16 @@ pub struct InRun<'a> {
     /// it (after reading what the browser had already sent). The step's
     /// record dates its downloads from the same moment.
     pub began: Option<Instant>,
+    /// With no Stop to hear, how long an `expect_download` may wait at most,
+    /// whatever its `within_ms` says: `WATCHED_DOWNLOAD_WAIT_MS` when `None`.
+    /// A test sets a shorter one.
+    pub watched_cap_ms: Option<u32>,
 }
+
+/// The longest an `expect_download` waits in a watched run or a try, which
+/// has no Stop to end it: the person, or the assistant, is waiting on the
+/// answer, and a step must never hold the browser for two minutes unasked.
+pub const WATCHED_DOWNLOAD_WAIT_MS: u32 = 30_000;
 
 /// What an action interrupted by the run's Stop, and every action after it
 /// in the step, records: what a stopped case records for what it never
@@ -290,7 +299,12 @@ pub async fn run_step_in_run<D: Driver>(
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
             Action::ExpectDownload { .. } => {
-                let outcome = expect_download(d, action, began, run.cancel).await;
+                // No Stop to hear: the wait is capped instead.
+                let cap = match run.cancel {
+                    Some(_) => None,
+                    None => Some(run.watched_cap_ms.unwrap_or(WATCHED_DOWNLOAD_WAIT_MS)),
+                };
+                let outcome = expect_download(d, action, began, run.cancel, cap).await;
                 if outcome.detail == AFTER_STOP {
                     blocked = Some(AFTER_STOP);
                 }
@@ -435,12 +449,14 @@ fn seconds(ms: u32) -> String {
 /// `autorun::downloads::check_file`. A download an earlier step started is
 /// never this step's, finished or not. The file is read off the async
 /// thread: a workbook can be up to the 50 MB cap. The run's Stop (`cancel`)
-/// ends either wait at its next look, as `AFTER_STOP`.
+/// ends either wait at its next look, as `AFTER_STOP`; with no Stop, `cap`
+/// bounds the whole wait, and its sentences name the capped time.
 async fn expect_download<D: Driver>(
     d: &mut D,
     action: &Action,
     began: Instant,
     cancel: Option<&AtomicBool>,
+    cap: Option<u32>,
 ) -> ActionOutcome {
     use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck};
     use crate::browser::actions::{CellMatch, HeadersSpec, DOWNLOAD_WAIT_MS};
@@ -450,7 +466,8 @@ async fn expect_download<D: Driver>(
     let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, .. } = action else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_download"));
     };
-    let within = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
+    let asked = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
+    let within = cap.map_or(asked, |c| asked.min(c));
     let deadline = Instant::now() + Duration::from_millis(u64::from(within));
     let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
     let guid = loop {

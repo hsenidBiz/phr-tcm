@@ -381,7 +381,11 @@ within the time. The content of a file over 50 MB is not read.
 
 Tried on its own with `try_autorun_action`, an `expect_download` is a
 step of its own: it sees only a download that starts while it waits, so
-let the person start the download while it waits.
+let the person start the download while it waits. In a watched run or a
+try it waits at most 30 seconds, whatever `within_ms` says.
+
+Watched runs list no downloads, because their download folder is emptied
+when the browser closes; only an unattended run keeps its files.
 
 ## Who the case runs as
 

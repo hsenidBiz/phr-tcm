@@ -395,3 +395,76 @@ async fn a_fake_driver_turns_downloads_on_without_a_call_and_keeps_none() {
     Driver::enable_downloads(&mut d, dir.path()).await.unwrap();
     assert!(Driver::downloads(&d).is_empty());
 }
+
+// ---------------------------------------------------------------- a held file
+
+fn sharing_violation() -> std::io::Error {
+    std::io::Error::from_raw_os_error(32)
+}
+
+/// A rename refused for a moment (a scanner holding the new file) is tried
+/// again every 100 ms, and goes through once the file is let go.
+#[test]
+fn a_refused_rename_is_tried_again_until_it_goes_through() {
+    use v2_lib::browser::downloads::{rename_patiently, RENAME_RETRY};
+    let mut tries = 0;
+    let mut pauses = vec![];
+    let out = rename_patiently(
+        Path::new("g-1"),
+        Path::new("report.csv"),
+        |_, _| {
+            tries += 1;
+            if tries < 3 { Err(sharing_violation()) } else { Ok(()) }
+        },
+        |d| pauses.push(d),
+    );
+    assert!(out.is_ok());
+    assert_eq!(tries, 3);
+    assert_eq!(pauses, [RENAME_RETRY, RENAME_RETRY]);
+}
+
+/// It gives up after two seconds of trying, and never waits for a file
+/// that is not there.
+#[test]
+fn a_rename_gives_up_after_two_seconds_and_never_waits_for_a_missing_file() {
+    use v2_lib::browser::downloads::{rename_patiently, RENAME_PATIENCE};
+    let mut waited = std::time::Duration::ZERO;
+    let out = rename_patiently(Path::new("a"), Path::new("b"), |_, _| Err(sharing_violation()), |d| waited += d);
+    assert_eq!(out.unwrap_err().raw_os_error(), Some(32));
+    assert_eq!(waited, RENAME_PATIENCE);
+
+    let mut tries = 0;
+    let out = rename_patiently(
+        Path::new("a"),
+        Path::new("b"),
+        |_, _| {
+            tries += 1;
+            Err(std::io::ErrorKind::NotFound.into())
+        },
+        |_| panic!("a missing file is not waited for"),
+    );
+    assert!(out.is_err());
+    assert_eq!(tries, 1);
+}
+
+/// The driver's own rename, against a file another handle holds without
+/// letting it be moved for 300 ms: it is still named.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_download_held_for_a_moment_is_still_named() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = temp();
+    let guid = dir.path().join("g-1");
+    std::fs::write(&guid, "Name,Age\n").unwrap();
+    let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&guid).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(held);
+    });
+    let cdp = following(dir.path(), vec![begin("g-1", "report.csv"), progress("g-1", "completed", 9)]).await;
+    release.join().unwrap();
+    let all = cdp.downloads();
+    assert_eq!(all[0].path, dir.path().join("report.csv"));
+    assert_eq!(std::fs::read_to_string(&all[0].path).unwrap(), "Name,Age\n");
+    assert!(!guid.exists(), "the guid file is gone");
+}

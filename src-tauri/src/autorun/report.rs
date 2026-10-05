@@ -424,13 +424,20 @@ figure{margin:8px 0}figure img{max-width:100%;border:1px solid #d0d7de}figcaptio
 /// the scripts on this machine now, as `failures` reads them too. `exists`
 /// says whether a screenshot is in the shots folder; it is only called for
 /// a name the screenshot guard accepts.
+///
+/// Each download's size is read from the run's own folder under the
+/// app's data root (`store::configured_root`), the way the report the app
+/// writes reads it (`store::download_size`). Before that root is set, a
+/// download reads as no longer on this machine.
 pub fn build(
     run: &LocalRun,
     scripts: &[CaseScript],
     ran_at: &str,
     exists: &dyn Fn(&str) -> bool,
 ) -> String {
-    build_with_downloads(run, scripts, ran_at, exists, &|_| None)
+    let root = super::store::configured_root();
+    let size_of = |name: &str| root.as_deref().and_then(|r| super::store::download_size(r, &run.id, name));
+    build_with_downloads(run, scripts, ran_at, exists, &size_of)
 }
 
 /// [`build`], with `size_of` giving the size of each of the run's

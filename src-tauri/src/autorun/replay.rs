@@ -358,7 +358,7 @@ pub async fn run_case_as<D: Driver>(
             Some(r) => runner::AreaRoute::To(r),
             None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
         };
-        let mut in_run = runner::InRun { cancel: Some(cancel), began: None };
+        let mut in_run = runner::InRun { cancel: Some(cancel), ..Default::default() };
         let outcomes = match runner::run_step_in_run(
             d,
             root,

@@ -573,6 +573,9 @@ fn the_guide_teaches_expect_download_with_its_two_examples() {
         "in the step before",
         "in the same step",
         "serial number",
+        "Watched runs list no downloads, because their download folder is emptied",
+        "when the browser closes",
+        "at most 30 seconds",
         "50%",
     ] {
         assert!(section.contains(term), "the downloads section never says {term:?}");

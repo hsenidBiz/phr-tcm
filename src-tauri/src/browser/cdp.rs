@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
-use super::downloads::{sanitise_name, unique_name, DownloadEntry, DownloadState};
+use super::downloads::{rename_patiently, sanitise_name, unique_name, DownloadEntry, DownloadState};
 
 /// How long any single protocol call may take.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -738,15 +738,18 @@ fn progress_download(dir: &Path, entry: &mut DownloadEntry, state: &str, receive
 
 /// A finished download, moved from its guid to its own name. A browser
 /// that names files itself (the Page domain's fallback) left it under its
-/// name already, so it is looked for there. A file that cannot be moved
-/// stays under its guid, and the log says why.
+/// name already, so it is looked for there. A rename that fails is tried
+/// again for a moment (`rename_patiently`); this runs while an event is
+/// handled, so that moment holds up the connection, and only when a file
+/// is held. A file that still cannot be moved stays under its guid, and
+/// the log says why.
 fn name_finished(dir: &Path, entry: &mut DownloadEntry) {
     let saved = dir.join(&entry.guid);
     if std::fs::symlink_metadata(&saved).is_ok_and(|m| m.is_file()) {
         // Check-then-act, and safe: the browser writes only guid names here
         // and this driver is the only one writing other names, one at a time.
         let to = dir.join(unique_name(dir, &entry.name));
-        match std::fs::rename(&saved, &to) {
+        match rename_patiently(&saved, &to, |a, b| std::fs::rename(a, b), std::thread::sleep) {
             Ok(()) => entry.path = to,
             Err(e) => crate::applog::warn(format!("Auto Run could not name a finished download: {e}")),
         }

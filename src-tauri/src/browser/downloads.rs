@@ -98,6 +98,38 @@ pub fn sanitise_name(suggested: &str) -> String {
     name
 }
 
+/// How often a finished download's rename is tried again after it failed.
+pub const RENAME_RETRY: std::time::Duration = std::time::Duration::from_millis(100);
+/// How long a failing rename keeps being tried before the file is left
+/// under its guid.
+pub const RENAME_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `rename(from, to)`, tried again every `RENAME_RETRY` for up to
+/// `RENAME_PATIENCE` while it fails: a virus scanner or an indexer opening
+/// a file the moment the browser finishes it holds it for a moment, and
+/// Windows refuses to move a file someone holds (os error 32). A file that
+/// is not there at all is not waited for. `pause` is how the wait is spent
+/// (a test's own, or a sleep).
+pub fn rename_patiently(
+    from: &Path,
+    to: &Path,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+    mut pause: impl FnMut(std::time::Duration),
+) -> std::io::Result<()> {
+    let retries = (RENAME_PATIENCE.as_millis() / RENAME_RETRY.as_millis()) as u32;
+    let mut tried = 0;
+    loop {
+        match rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound || tried >= retries => return Err(e),
+            Err(_) => {
+                tried += 1;
+                pause(RENAME_RETRY);
+            }
+        }
+    }
+}
+
 /// Whether anything at all sits at `path`, a dangling link included.
 fn taken(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()

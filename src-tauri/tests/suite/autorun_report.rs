@@ -558,3 +558,19 @@ fn the_written_report_reads_each_downloads_size_from_the_runs_folder() {
     assert!(html.contains("Template.xlsx (5.3 KB), errors.csv (1.1 KB)"), "{html}");
     assert!(html.contains("&lt;b&gt;x&lt;/b&gt;&amp;.csv (no longer on this machine)"));
 }
+
+/// `build` reads each download's size from the run's own folder under the
+/// app's data root, the way the written report does - it never just says a
+/// file that is there is gone.
+#[test]
+fn build_reads_each_downloads_size_from_the_data_root() {
+    let _serial = crate::serial::autorun();
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    let folder = downloads_dir(&root, "run-1786000200000");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Template.xlsx"), vec![0u8; 5427]).unwrap();
+    v2_lib::autorun::store::set_root(root.clone());
+    let html = build(&run_with_downloads(), &[script_201()], "x", &no_shots);
+    assert!(html.contains("Template.xlsx (5.3 KB), errors.csv (no longer on this machine)"), "{html}");
+}
