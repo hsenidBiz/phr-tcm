@@ -200,7 +200,7 @@ async fn a_supervised_sign_in_step_on_a_held_account_signs_nobody_in() {
     let (mut d, state) = common::stateful_app(false, None);
     let mut account = Some("manager".to_string());
     let mut held = Held::supervised();
-    let out = run_step_routed(&mut d, root, "Acme", "Web", &step, &quick(), &mut account, &mut held, None).await.unwrap();
+    let out = run_step_routed(&mut d, root, "Acme", "Web", &step, &quick(), &mut account, &mut held, None, v2_lib::autorun::runner::AreaRoute::Unknown(v2_lib::autorun::runner::NEEDS_SCRIPT_AREA)).await.unwrap();
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, "the account admin was in use by an unattended run - try again when it is free");
     assert!(!out[1].ok, "the rest of the step ran after a refused sign-in: {out:?}");
@@ -264,7 +264,7 @@ async fn a_sign_in_step_that_fails_keeps_its_account() {
     let mut account = Some("manager".to_string());
     let mut held = Held::supervised();
     held.hold(root, "manager").await.unwrap();
-    let out = run_step_routed(&mut d, root, "Acme", "Web", &step, &quick(), &mut account, &mut held, None).await.unwrap();
+    let out = run_step_routed(&mut d, root, "Acme", "Web", &step, &quick(), &mut account, &mut held, None, v2_lib::autorun::runner::AreaRoute::Unknown(v2_lib::autorun::runner::NEEDS_SCRIPT_AREA)).await.unwrap();
     assert!(!out[0].ok, "{out:?}");
     assert_eq!(held.account(), Some("admin"));
     assert!(lease::is_held(&env, "admin"), "a failed sign-in let its account go");

@@ -1531,7 +1531,12 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
     let what = match action {
         Action::Navigate { url } => url.clone(),
         Action::CheckUrl { contains } => contains.clone(),
-        Action::CheckText { .. } | Action::SignIn { .. } => String::new(),
+        Action::CheckText { .. }
+        | Action::SignIn { .. }
+        | Action::Reload
+        | Action::ExpireSession
+        | Action::ReturnToArea => String::new(),
+        Action::PressKey { key } => key.trim().to_string(),
         // Never a query string: a fragment or a path can carry a token there.
         Action::ExpectResponse { url_contains: address, .. } | Action::ApiRequest { path: address, .. } => {
             crate::autorun::report::without_query(address.trim()).to_string()
@@ -1545,6 +1550,7 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. } => selector.describe(),
     };
@@ -1618,7 +1624,8 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     {
         return (409, why);
     }
-    try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, &action).await
+    try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, case_id, &action)
+        .await
 }
 
 /// Said to a try that does not name its case.
@@ -1638,6 +1645,9 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
 
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
+/// `case_id` is the case the try is for: a tried `return_to_area` goes to
+/// the area that case's saved script names.
+#[allow(clippy::too_many_arguments)]
 pub async fn try_in<D: crate::browser::cdp::Driver>(
     d: &mut D,
     account: &mut Option<String>,
@@ -1645,8 +1655,17 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     root: &std::path::Path,
     organization: &str,
     project: &str,
+    case_id: i32,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
+    use crate::autorun::runner::{area_route, AreaRoute, NEEDS_SCRIPT_AREA};
+    let resolved = matches!(action, crate::browser::actions::Action::ReturnToArea)
+        .then(|| area_route(root, organization, project, case_id));
+    let area = match &resolved {
+        Some(Ok(r)) => AreaRoute::To(r),
+        Some(Err(why)) => AreaRoute::Unknown(why),
+        None => AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+    };
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. The runner's step loop still carries it out, so a tried
     // action behaves exactly as it will inside a script - the runner's own
@@ -1669,6 +1688,7 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
         account,
         lease,
         None,
+        area,
     )
     .await
     {

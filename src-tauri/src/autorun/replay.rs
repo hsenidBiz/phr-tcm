@@ -342,8 +342,15 @@ pub async fn run_case_as<D: Driver>(
             continue;
         }
         on_step(step.step_number);
+        // `return_to_area` goes where the run went before step 1.
+        let area = match route {
+            Some(r) => runner::AreaRoute::To(r),
+            None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
+        };
         let outcomes =
-            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, lease, route).await {
+            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, lease, route, area)
+                .await
+            {
                 Ok(o) => o,
                 Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
             };

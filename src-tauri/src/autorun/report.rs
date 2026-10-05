@@ -105,6 +105,11 @@ pub fn action_words(action: &Action) -> String {
             let what: Vec<String> = then.iter().map(action_words).collect();
             format!("if {} shows up, {}", selector.describe(), what.join(", then "))
         }
+        Action::Reload => "reload the page".to_string(),
+        Action::ExpireSession => "end the session".to_string(),
+        Action::ReturnToArea => "go back to the case's area".to_string(),
+        Action::PressKey { key } => format!("press {}", key.trim()),
+        Action::ExpectFocused { selector, .. } => format!("expect {} to have the focus", selector.describe()),
     }
 }
 

@@ -712,7 +712,7 @@ async fn a_try_for_a_no_save_case_is_guarded_and_fails_on_a_save() {
     let click: v2_lib::browser::actions::Action =
         serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
     let mut lease = v2_lib::autorun::lease::Held::supervised();
-    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", &click).await;
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", 1, &click).await;
     assert_eq!(status, 200);
     assert!(text.starts_with(&format!("failed: {SENTENCE}")), "{text}");
     let m = d.methods();
@@ -780,7 +780,7 @@ async fn a_try_naming_another_case_never_lifts_the_guard() {
         serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
     let mut account = None;
     let mut lease = v2_lib::autorun::lease::Held::supervised();
-    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", &click).await;
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", 1, &click).await;
     assert_eq!(status, 200);
     assert!(text.starts_with(&format!("failed: {SENTENCE}")), "{text}");
 

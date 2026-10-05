@@ -206,6 +206,16 @@ pub async fn auto_run_step(
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
+    // A watched run makes no trip of its own: `return_to_area` builds the
+    // case's route from its saved script, and only when the step has one.
+    use crate::autorun::runner::{area_route, AreaRoute};
+    let wants_area = step.actions.iter().any(|a| matches!(a, crate::browser::actions::Action::ReturnToArea));
+    let resolved = if wants_area { Some(area_route(&root, &organization, &project, case_id)) } else { None };
+    let area = match &resolved {
+        Some(Ok(r)) => AreaRoute::To(r),
+        Some(Err(why)) => AreaRoute::Unknown(why),
+        None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
+    };
     crate::autorun::runner::run_step_routed(
         &mut session.cdp,
         &root,
@@ -216,6 +226,7 @@ pub async fn auto_run_step(
         &mut session.account,
         &mut session.lease,
         None,
+        area,
     )
     .await
 }

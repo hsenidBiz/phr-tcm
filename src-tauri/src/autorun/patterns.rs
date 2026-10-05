@@ -361,8 +361,15 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. } => Some(selector.describe()),
+        // Each acts on the page as a whole; a key is pressed on whatever
+        // has the focus.
+        Action::Reload => Some("the page".to_string()),
+        Action::ExpireSession => Some("the session".to_string()),
+        Action::ReturnToArea => Some("the case's area".to_string()),
+        Action::PressKey { key } => Some(format!("the {} key", key.trim())),
         Action::Navigate { url } => {
             let url = url.trim();
             let end = url.find(['?', '#']).unwrap_or(url.len());

@@ -1041,7 +1041,7 @@ async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
     let mut held = Held::supervised();
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route), v2_lib::autorun::runner::AreaRoute::To(&route))
         .await
         .unwrap();
     assert!(outcomes[0].ok && outcomes[0].detail.ends_with("; then Go to Leave"), "{outcomes:?}");
@@ -1506,7 +1506,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
     let mut held = Held::supervised();
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route), v2_lib::autorun::runner::AreaRoute::To(&route))
         .await
         .unwrap();
     assert!(!outcomes[0].ok, "{outcomes:?}");

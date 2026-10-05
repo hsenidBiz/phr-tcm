@@ -25,7 +25,26 @@ pub enum Check<'a> {
     ContainsText(&'a str),
     Count(u32),
     Attribute { name: &'a str, equals: &'a str },
+    /// The focus is on the one match, or inside it.
+    Focused,
 }
+
+/// `this` is the element. Does it, or something inside it, have the focus
+/// in its own document (an element in a frame is asked in that frame)?
+/// Open shadow roots are followed, so a control a component draws inside
+/// its own root still counts as its host's.
+pub const FOCUSED_JS: &str = r#"function() {
+  let a = this.ownerDocument.activeElement;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+  if (!a) return false;
+  if (a === this || this.contains(a)) return true;
+  let host = a.getRootNode && a.getRootNode().host;
+  while (host) { if (host === this || this.contains(host)) return true; host = host.getRootNode && host.getRootNode().host; }
+  return false;
+}"#;
+
+/// `expect_focused` on an element that does not have the focus.
+pub const NOT_FOCUSED: &str = "does not have the focus";
 
 /// `this` is the element. What a person would read: a field's value, a
 /// list's chosen option, otherwise the rendered text.
@@ -181,6 +200,18 @@ async fn look<D: Driver>(
                     None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
                     Some(v) if v == *equals => Ok(format!("{what} has {name}={equals:?}")),
                     Some(v) => Err(format!("expected {name}={equals:?} but saw {v:?}")),
+                }
+            }
+        },
+        Check::Focused => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let has = page::call_value(d, h, FOCUSED_JS, &[]).await?;
+                if has.as_bool().unwrap_or(false) {
+                    Ok(format!("{what} has the focus"))
+                } else {
+                    // Where it is instead is the evidence a failure needs.
+                    Err(format!("{NOT_FOCUSED} - {}", super::actions::focus_now(d).await))
                 }
             }
         },
