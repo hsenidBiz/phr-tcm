@@ -1615,7 +1615,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if let Err(why) = crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, case_id).await {
         return (409, why);
     }
-    try_in(&mut session.cdp, &mut session.account, &root, &ctx.org, &ctx.project, &action).await
+    try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, &action).await
 }
 
 /// Said to a try that does not name its case.
@@ -1638,13 +1638,14 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
 pub async fn try_in<D: crate::browser::cdp::Driver>(
     d: &mut D,
     account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
     root: &std::path::Path,
     organization: &str,
     project: &str,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     // A step of one, numbered 0 - it belongs to no case, and nothing
-    // records it. `run_step` is still what carries it out, so a tried
+    // records it. The runner's step loop still carries it out, so a tried
     // action behaves exactly as it will inside a script - the runner's own
     // kinds included: a tried `expect_response` takes its mark as the try
     // starts, and checks a request the page makes while it waits - and a
@@ -1655,7 +1656,7 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     // it types the literal text it was given rather than standing in for
     // anything a recipe would have substituted.
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
-    let outcomes = match crate::autorun::runner::run_step(
+    let outcomes = match crate::autorun::runner::run_step_routed(
         d,
         root,
         organization,
@@ -1663,6 +1664,8 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
         &step,
         &crate::browser::timing::Timing::default(),
         account,
+        lease,
+        None,
     )
     .await
     {

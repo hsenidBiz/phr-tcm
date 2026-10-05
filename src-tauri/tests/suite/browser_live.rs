@@ -82,7 +82,7 @@ fn iframe_fixture_url() -> String {
 /// Short enough that a failing test fails fast, long enough for the
 /// fixture's 700 ms of being disabled and covered.
 fn timing() -> Timing {
-    Timing { action_ms: 4000, expect_ms: 3000, nav_ms: 15000, poll_ms: 100, highlight_ms: 0 }
+    Timing { action_ms: 4000, expect_ms: 3000, nav_ms: 15000, poll_ms: 100, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 fn action_of(value: serde_json::Value) -> Action {

@@ -670,7 +670,7 @@ async fn unattended(root: &std::path::Path, sc: &CaseScript) -> LocalRun {
     set_suspected_defect(root, sc.case_id, sc.suspected_defect.clone()).unwrap();
     let mut browsers = Fake([checking_driver()].into());
     let mut run = run_of("run-x", "1700000000000", vec![]);
-    let quick = Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0 };
+    let quick = Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0, lease_wait_ms: 300 };
     let cancel = AtomicBool::new(false);
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(sc.case_id, sc.title.clone())], &quick, &cancel, &mut |_| {})
         .await

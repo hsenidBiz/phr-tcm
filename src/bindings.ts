@@ -578,7 +578,10 @@ export const commands = {
 	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
-	 *  first step, and by the `sign_in` action in the middle of one.
+	 *  first step, and by the `sign_in` action in the middle of one. An account
+	 *  an unattended case or an API template run is signed in as is refused at
+	 *  once, with the sentence that says who has it, and the browser is left
+	 *  as it was.
 	 */
 	autoRunSignIn: (organization: string, project: string, accountKey: string) => typedError<SignInOutcome_Serialize, string>(__TAURI_INVOKE("auto_run_sign_in", { organization, project, accountKey })),
 	/**  Throw a saved session away, so the next sign-in goes through the form. */

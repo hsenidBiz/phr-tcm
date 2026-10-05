@@ -11,6 +11,7 @@
 
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
+use super::lease::{Held, Holder};
 use super::{preconditions, recipe, signin, transient};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use crate::api_templates::gate::StageDb;
@@ -184,7 +185,7 @@ pub async fn run_case<D: Driver>(
     cancel: &AtomicBool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    run_case_as(d, root, organization, project, script, script.account.as_deref(), None, timing, cancel, on_step).await
+    run_case_as(d, root, organization, project, "", script, script.account.as_deref(), None, timing, cancel, on_step).await
 }
 
 /// Run one whole case: an optional sign-in as `account` (step
@@ -192,12 +193,19 @@ pub async fn run_case<D: Driver>(
 /// (`MODULE_STEP`), then every scripted step in order, stopping the case
 /// (but not the run) after the first step that fails or once `cancel` is
 /// set.
+///
+/// The case signs in only once it holds its account (`lease`), waiting up
+/// to `timing`'s lease wait for whoever has it; a case that cannot get it
+/// is Blocked with the sentence that says who had it, and never signs in.
+/// It holds the account to its end - the lease is a local, so an end, a
+/// stop (this future dropped) and a panic all let it go.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_case_as<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
     project: &str,
+    run_id: &str,
     script: &CaseScript,
     account: Option<&str>,
     route: Option<&Route>,
@@ -210,6 +218,7 @@ pub async fn run_case_as<D: Driver>(
     let mut signed_in = None;
     let mut current = None;
     let mut stopped = false;
+    let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, timing.lease_wait());
 
     // Why the rest of the case is not being run, once something decided
     // that. Checked here too, before the sign-in - a stop asked for while
@@ -240,6 +249,17 @@ pub async fn run_case_as<D: Driver>(
     if skip.is_none() {
         if let Some(key) = account {
             on_step(SIGN_IN_STEP);
+            // The account is this case's from before its sign-in to its
+            // end, whichever way the sign-in goes: one that fails partway
+            // may still have signed the account in.
+            match lease.ready(root, key).await {
+                Ok(ready) => lease.keep(ready),
+                Err(why) => {
+                    let mut record = blocked_before_start(script, account, why);
+                    record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+                    return record;
+                }
+            }
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
@@ -304,7 +324,7 @@ pub async fn run_case_as<D: Driver>(
         }
         on_step(step.step_number);
         let outcomes =
-            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, route).await {
+            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, &mut lease, route).await {
                 Ok(o) => o,
                 Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
             };
@@ -451,6 +471,7 @@ async fn one_go<B: Browsers>(
                 go.root,
                 go.organization,
                 go.project,
+                run_id,
                 go.script,
                 go.account,
                 go.route,

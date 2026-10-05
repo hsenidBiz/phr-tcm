@@ -13,6 +13,7 @@ pub mod edits;
 pub mod failures;
 pub mod floor;
 pub mod guide;
+pub mod lease;
 pub mod nav;
 pub mod patterns;
 pub mod preconditions;

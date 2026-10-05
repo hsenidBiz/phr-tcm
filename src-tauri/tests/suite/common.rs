@@ -335,7 +335,7 @@ pub fn activity_records(dir: &std::path::Path, kind: &str) -> Vec<Value> {
 pub const PASSWORD: &str = "s3cret-Value";
 
 pub fn quick() -> Timing {
-    Timing { action_ms: 400, expect_ms: 150, nav_ms: 300, poll_ms: 10, highlight_ms: 0 }
+    Timing { action_ms: 400, expect_ms: 150, nav_ms: 300, poll_ms: 10, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 pub fn account() -> Account {

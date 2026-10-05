@@ -6,6 +6,7 @@
 //! Pulled out of the Tauri command so it can be exercised directly, the
 //! same way `autorun::store` and `autorun::signin` already are.
 
+use super::lease::Held;
 use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
@@ -74,6 +75,10 @@ pub(crate) async fn picture<D: Driver>(d: &mut D, root: &Path) -> Option<String>
 /// results that mean nothing - so once a `sign_in` action fails, every
 /// remaining action of that step is not executed and is reported as such.
 /// The outcomes list still has one entry per action, in order.
+///
+/// A `sign_in` here takes its account's lease (`lease`) only for the step:
+/// a browser that stays signed in between steps keeps its lease in its own
+/// session and runs them through `run_step_routed`.
 pub async fn run_step<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -83,14 +88,19 @@ pub async fn run_step<D: Driver>(
     timing: &Timing,
     account: &mut Option<String>,
 ) -> Result<Vec<ActionOutcome>, String> {
-    run_step_routed(d, root, organization, project, step, timing, account, None).await
+    let mut lease = Held::supervised();
+    run_step_routed(d, root, organization, project, step, timing, account, &mut lease, None).await
 }
 
-/// `run_step`, for an unattended run in a project with module paths. A
-/// `sign_in` lands on the home page, so the runner takes the browser back
-/// to the case's module screen before the next action; the `sign_in`'s one
-/// outcome then says both halves. When the module is not reached, the rest
-/// of the step is not run: it would act on the wrong screen.
+/// `run_step` with the browser's own account lease: a `sign_in` is first
+/// cleared with `lease` (`Held::ready`), and one that is refused signs
+/// nobody in and fails the step with the sentence that says who has the
+/// account. With a `route` - an unattended run in a project with module
+/// paths - a `sign_in` lands on the home page, so the runner takes the
+/// browser back to the case's module screen before the next action; the
+/// `sign_in`'s one outcome then says both halves. When the module is not
+/// reached, the rest of the step is not run: it would act on the wrong
+/// screen.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_step_routed<D: Driver>(
     d: &mut D,
@@ -100,6 +110,7 @@ pub async fn run_step_routed<D: Driver>(
     step: &StepScript,
     timing: &Timing,
     account: &mut Option<String>,
+    lease: &mut Held,
     route: Option<&Route>,
 ) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
@@ -142,25 +153,34 @@ pub async fn run_step_routed<D: Driver>(
                     blocked = Some(AFTER_FAILED_SIGN_IN);
                     ActionOutcome::failed(why)
                 }
-                Ok((r, who)) => {
-                    let signed = signin::sign_in(d, root, &r, &who, timing).await;
-                    *account = signed.ok.then(|| who.key.clone());
-                    match route {
-                        _ if !signed.ok => {
-                            blocked = Some(AFTER_FAILED_SIGN_IN);
-                            as_action_outcome(&signed)
-                        }
-                        None => as_action_outcome(&signed),
-                        Some(rt) => {
-                            let who = format!("Auto Run, step {}", step.step_number);
-                            let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who).await;
-                            if !went.ok {
-                                blocked = Some(AFTER_UNREACHED);
+                Ok((r, who)) => match lease.ready(root, &who.key).await {
+                    // Someone else is signed in as this account: nobody is
+                    // signed in here, and the browser stays as it was.
+                    Err(why) => {
+                        blocked = Some(AFTER_FAILED_SIGN_IN);
+                        ActionOutcome::failed(why)
+                    }
+                    Ok(ready) => {
+                        let signed = signin::sign_in(d, root, &r, &who, timing).await;
+                        lease.signed_in(ready, signed.ok);
+                        *account = signed.ok.then(|| who.key.clone());
+                        match route {
+                            _ if !signed.ok => {
+                                blocked = Some(AFTER_FAILED_SIGN_IN);
+                                as_action_outcome(&signed)
                             }
-                            signed_then_went(&signed, went)
+                            None => as_action_outcome(&signed),
+                            Some(rt) => {
+                                let who = format!("Auto Run, step {}", step.step_number);
+                                let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who).await;
+                                if !went.ok {
+                                    blocked = Some(AFTER_UNREACHED);
+                                }
+                                signed_then_went(&signed, went)
+                            }
                         }
                     }
-                }
+                },
             },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,

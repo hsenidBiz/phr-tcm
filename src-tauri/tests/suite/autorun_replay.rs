@@ -16,6 +16,7 @@ use v2_lib::autorun::transient::{FIRST_TRY, RETRY_NOT_STARTED, RETRY_PASSED};
 use v2_lib::autorun::replay::{
     propose, run_cases, run_cases_checked, run_selection, Browsers, CaseToRun, MODULE_STEP, PAGE_LOG_NOTE, SIGN_IN_STEP,
 };
+use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::runner::run_step_routed;
 use v2_lib::autorun::{store, CaseScript, LocalRun, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
@@ -47,7 +48,7 @@ impl Browsers for FakeBrowsers {
 }
 
 fn quick() -> Timing {
-    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0 }
+    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 fn new_run(id: &str) -> LocalRun {
@@ -1038,7 +1039,8 @@ async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
     let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+    let mut held = Held::supervised();
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
         .await
         .unwrap();
     assert!(outcomes[0].ok && outcomes[0].detail.ends_with("; then Go to Leave"), "{outcomes:?}");
@@ -1502,7 +1504,8 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
-    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, Some(&route))
+    let mut held = Held::supervised();
+    let outcomes = run_step_routed(&mut d, root, "Acme", "Web", &signs_in.steps[0], &quick(), &mut account, &mut held, Some(&route))
         .await
         .unwrap();
     assert!(!outcomes[0].ok, "{outcomes:?}");

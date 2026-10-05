@@ -532,7 +532,7 @@ fn the_guide_tells_the_assistant_about_the_flag() {
 // ---------------------------------------------------------------- the runner
 
 fn quick() -> Timing {
-    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0 }
+    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0, lease_wait_ms: 300 }
 }
 
 #[tokio::test]
@@ -710,7 +710,8 @@ async fn a_try_for_a_no_save_case_is_guarded_and_fails_on_a_save() {
     guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
     let click: v2_lib::browser::actions::Action =
         serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
-    let (status, text) = try_in(&mut d, &mut account, dir.path(), "acme", "PMS", &click).await;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", &click).await;
     assert_eq!(status, 200);
     assert!(text.starts_with(&format!("failed: {SENTENCE}")), "{text}");
     let m = d.methods();

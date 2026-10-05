@@ -1,0 +1,218 @@
+//! One sign-in per account at a time.
+//!
+//! PeoplesHR allows one session per user: signing an account in anywhere
+//! ends that account's session everywhere else. So whatever signs in as an
+//! Auto Run account - an unattended case, the supervised Auto Run browser,
+//! an API template run or prove - first takes a lease on (environment id,
+//! account key), process-wide, and holds it while it uses that session.
+//!
+//! A lease is released when it is dropped, and only then: a case that ends,
+//! returns early with an error, is stopped (its future dropped) or panics
+//! lets its account go as its stack unwinds.
+//!
+//! The key is an account key, never a login. Nothing here logs a login or
+//! a password: the log lines name the account key only.
+
+use crate::applog;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
+
+/// How long an unattended case or an API template run waits for an
+/// account someone else holds. The supervised browser never waits.
+pub const WAIT: Duration = Duration::from_secs(60);
+
+/// Between looks while waiting.
+const POLL: Duration = Duration::from_millis(250);
+
+/// Who holds a lease, as the sentence names it to whoever is asking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Holder {
+    /// The supervised Auto Run browser.
+    Browser,
+    /// An API template run or prove.
+    Template,
+    /// A case of the unattended run with this id.
+    Case { run: String },
+}
+
+impl Holder {
+    /// This holder as `asking` reads it: a case of the asker's own run is
+    /// "another case in this run", one of any other run "an unattended run".
+    fn seen_by(&self, asking: &Holder) -> &'static str {
+        match (self, asking) {
+            (Holder::Browser, _) => "the Auto Run browser",
+            (Holder::Template, _) => "an API template run",
+            (Holder::Case { run }, Holder::Case { run: mine }) if run == mine => "another case in this run",
+            (Holder::Case { .. }, _) => "an unattended run",
+        }
+    }
+}
+
+struct Entry {
+    ticket: u64,
+    holder: Holder,
+}
+
+type Table = HashMap<(String, String), Entry>;
+
+static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
+
+/// The registry. Never held across an await or anything that can panic,
+/// so a panic elsewhere cannot poison it; a poisoned one is still used.
+fn table() -> MutexGuard<'static, Table> {
+    static TABLE: OnceLock<Mutex<Table>> = OnceLock::new();
+    TABLE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The account `key` in environment `env`, held until this is dropped.
+#[derive(Debug)]
+pub struct Lease {
+    env: String,
+    key: String,
+    ticket: u64,
+}
+
+impl Lease {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let mut t = table();
+        let at = (std::mem::take(&mut self.env), std::mem::take(&mut self.key));
+        // Only its own entry: a ticket is never reused, so a lease can
+        // never free one somebody else took after it.
+        if t.get(&at).is_some_and(|e| e.ticket == self.ticket) {
+            t.remove(&at);
+        }
+    }
+}
+
+/// The sentence a refused or timed-out request gets.
+fn in_use(key: &str, holder: &str) -> String {
+    format!("the account {key} was in use by {holder} - try again when it is free")
+}
+
+/// One look: the lease, or who has it, as `holder` reads them.
+fn take(env: &str, key: &str, holder: &Holder) -> Result<Lease, &'static str> {
+    let mut t = table();
+    let at = (env.to_string(), key.to_string());
+    if let Some(e) = t.get(&at) {
+        return Err(e.holder.seen_by(holder));
+    }
+    let ticket = NEXT_TICKET.fetch_add(1, Ordering::SeqCst);
+    t.insert(at, Entry { ticket, holder: holder.clone() });
+    Ok(Lease { env: env.to_string(), key: key.to_string(), ticket })
+}
+
+/// Whether anyone holds the account `key` in `env` right now. Only looks.
+pub fn is_held(env: &str, key: &str) -> bool {
+    table().contains_key(&(env.to_string(), key.to_string()))
+}
+
+/// The lease, now, or the sentence that says who has it.
+pub fn try_acquire(env: &str, key: &str, holder: Holder) -> Result<Lease, String> {
+    take(env, key, &holder).map_err(|by| in_use(key, by))
+}
+
+/// The lease, waiting up to `wait` for whoever has it to let it go; then
+/// the sentence that says who had it. A zero wait looks once.
+pub async fn acquire(env: &str, key: &str, holder: Holder, wait: Duration) -> Result<Lease, String> {
+    let deadline = Instant::now() + wait;
+    let mut waiting = false;
+    loop {
+        let by = match take(env, key, &holder) {
+            Ok(lease) => {
+                if waiting {
+                    applog::info(format!("account lease: {key} is free now"));
+                }
+                return Ok(lease);
+            }
+            Err(by) => by,
+        };
+        let now = Instant::now();
+        if now >= deadline {
+            let sentence = in_use(key, by);
+            applog::info(format!("account lease: {sentence}"));
+            return Err(sentence);
+        }
+        if !waiting {
+            waiting = true;
+            applog::info(format!(
+                "account lease: {key} is in use by {by} - waiting up to {} s",
+                wait.as_secs_f32()
+            ));
+        }
+        tokio::time::sleep(POLL.min(deadline - now)).await;
+    }
+}
+
+/// What `Held::ready` hands the sign-in it is for: the new lease, or
+/// nothing when the browser already holds that account.
+#[derive(Debug)]
+pub struct Ready(Option<Lease>);
+
+/// The lease one browser holds for the account it is signed in as.
+///
+/// A sign-in asks `ready` first and tells `signed_in` how it went. One that
+/// worked holds its account from then on, letting go of the account before
+/// it; one that failed holds nothing new and keeps what was held. Dropping
+/// this - the case ends, the supervised browser closes - lets the account go.
+#[derive(Debug)]
+pub struct Held {
+    holder: Holder,
+    wait: Duration,
+    lease: Option<Lease>,
+}
+
+impl Held {
+    pub fn new(holder: Holder, wait: Duration) -> Self {
+        Held { holder, wait, lease: None }
+    }
+
+    /// The supervised Auto Run browser's: a held account is refused at
+    /// once, never waited for.
+    pub fn supervised() -> Self {
+        Held::new(Holder::Browser, Duration::ZERO)
+    }
+
+    /// The account this browser holds, if any.
+    pub fn account(&self) -> Option<&str> {
+        self.lease.as_ref().map(Lease::key)
+    }
+
+    /// Before a sign-in as `key` in `root`'s active environment: the lease
+    /// for it - kept when this browser already holds it, otherwise taken,
+    /// waiting as this holder waits. `Err` is the sentence, and nothing may
+    /// sign in.
+    pub async fn ready(&self, root: &Path, key: &str) -> Result<Ready, String> {
+        let env = crate::environments::active_id(root)?;
+        if self.lease.as_ref().is_some_and(|l| l.env == env && l.key == key) {
+            return Ok(Ready(None));
+        }
+        acquire(&env, key, self.holder.clone(), self.wait).await.map(|l| Ready(Some(l)))
+    }
+
+    /// After the sign-in `ready` was for: one that worked holds its
+    /// account from now on (`keep`); one that failed lets `ready`'s lease go
+    /// and keeps what was held.
+    pub fn signed_in(&mut self, ready: Ready, ok: bool) {
+        if ok {
+            self.keep(ready);
+        }
+    }
+
+    /// The account `ready` was for is this holder's from now on, however
+    /// its sign-in went: an unattended case holds its account from its
+    /// sign-in to its end. The account held before it is let go.
+    pub fn keep(&mut self, ready: Ready) {
+        if let Some(lease) = ready.0 {
+            self.lease = Some(lease);
+        }
+    }
+}

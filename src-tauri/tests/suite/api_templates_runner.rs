@@ -2048,3 +2048,113 @@ mod test_files {
         assert!(problems[0].contains("larger than 25 MB"), "{problems:?}");
     }
 }
+
+// ---- one sign-in per account at a time --------------------------------
+
+/// The environment `r`'s root signs in to.
+fn env_of(r: &Rig) -> String {
+    v2_lib::environments::active_id(r.root.path()).unwrap()
+}
+
+async fn run_waiting(r: &mut Rig, wait_ms: u64) -> RunReport {
+    let req = request(template(), prove());
+    let timing = v2_lib::browser::timing::Timing { lease_wait_ms: wait_ms, ..quick() };
+    run_template_within(&mut r.browsers, r.root.path(), &req, &timing, RUN_LIMIT, &QUICK_PAUSES).await
+}
+
+#[tokio::test]
+async fn a_template_run_waits_for_an_unattended_case_then_proceeds() {
+    use v2_lib::autorun::lease::{self, Holder};
+    let _act = crate::serial::activity_log();
+    let _l = crate::serial::account_leases();
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    let env = env_of(&r);
+    let case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
+    let released = Arc::new(Mutex::new(None::<Instant>));
+    let noted = released.clone();
+    let case_ends = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        *noted.lock().unwrap() = Some(Instant::now());
+        drop(case);
+    });
+    let began = Instant::now();
+    let report = run_waiting(&mut r, 5_000).await;
+    case_ends.await.unwrap();
+    assert!(report.ok, "{}", report.message());
+    assert!(began.elapsed() >= Duration::from_millis(250), "it did not wait for the case: {:?}", began.elapsed());
+    assert!(released.lock().unwrap().is_some());
+    assert_eq!(r.sign_ins(), 1);
+    assert!(!lease::is_held(&env, "admin"), "the run kept the account after it ended");
+}
+
+#[tokio::test]
+async fn a_template_run_on_an_account_held_too_long_is_refused_and_opens_no_browser() {
+    use v2_lib::autorun::lease::{self, Holder};
+    let _act = crate::serial::activity_log();
+    let _l = crate::serial::account_leases();
+    let mut r = rig(vec![], None);
+    let env = env_of(&r);
+    let _browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let began = Instant::now();
+    let report = run_waiting(&mut r, 200).await;
+    assert!(began.elapsed() >= Duration::from_millis(150), "it gave up before its wait: {:?}", began.elapsed());
+    assert!(!report.ok);
+    assert_eq!(report.failed.as_deref(), Some("Sign in"));
+    assert_eq!(
+        report.steps.last().unwrap().detail,
+        "the account admin was in use by the Auto Run browser - try again when it is free"
+    );
+    assert_eq!((r.browsers.opened, r.browsers.closed), (0, 0), "a browser was opened for a run that could not sign in");
+    assert_eq!(r.sign_ins(), 0);
+    assert!(lease::is_held(&env, "admin"), "the refusal took the browser's lease");
+}
+
+#[tokio::test]
+async fn a_template_run_holds_its_account_and_lets_it_go_on_every_path_out() {
+    use v2_lib::autorun::lease;
+    let _act = crate::serial::activity_log();
+    let _l = crate::serial::account_leases();
+
+    // While it runs, the account is the run's: the page is stuck mid-step.
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().hang_fetch = true;
+    let env = env_of(&r);
+    let req = request(template(), prove());
+    let watching = {
+        let env = env.clone();
+        tokio::spawn(async move {
+            let began = Instant::now();
+            while !lease::is_held(&env, "admin") {
+                if began.elapsed() > Duration::from_secs(5) {
+                    return false;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            true
+        })
+    };
+    let report =
+        run_template_within(&mut r.browsers, r.root.path(), &req, &quick(), Duration::from_millis(800), &QUICK_PAUSES).await;
+    assert!(watching.await.unwrap(), "the run never held its account");
+    assert!(!report.ok, "a run cut off by its limit");
+    assert!(!lease::is_held(&env, "admin"), "a run cut off by its limit kept the account");
+
+    // A sign-in that fails: an early return.
+    let mut r = rig(vec![], Some("#go"));
+    let env = env_of(&r);
+    let report = run(&mut r, template()).await;
+    assert!(!report.ok);
+    assert!(!lease::is_held(&env, "admin"), "a run whose sign-in failed kept the account");
+
+    // A run that passes.
+    let mut r = rig(
+        vec![answer(200, json!({ "success": true, "cycleId": 274 })), answer(200, json!({ "success": true }))],
+        None,
+    );
+    let env = env_of(&r);
+    assert!(run(&mut r, template()).await.ok);
+    assert!(!lease::is_held(&env, "admin"), "a run that passed kept the account");
+}
