@@ -80,6 +80,20 @@ pub fn stamp() -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
+/// The same clock as `stamp`, as ISO 8601 UTC "YYYY-MM-DDTHH:MM:SSZ" - the
+/// form Azure DevOps' `asOf` takes, stamped on every saved Auto Run script.
+pub fn iso_stamp() -> String {
+    iso_of(SystemTime::now())
+}
+
+/// `t` as ISO 8601 UTC "YYYY-MM-DDTHH:MM:SSZ" (whole seconds).
+pub fn iso_of(t: SystemTime) -> String {
+    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let (y, mo, d) = civil(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
+    format!("{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
 /// The same clock as `stamp`, in a form a file name can carry:
 /// "YYYYMMDD-HHMMSS".
 pub fn file_stamp() -> String {

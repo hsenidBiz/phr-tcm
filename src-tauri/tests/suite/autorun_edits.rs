@@ -3,7 +3,7 @@
 //! Pure functions over `CaseScript` - no browser, no filesystem.
 
 use serde_json::json;
-use v2_lib::autorun::edits::{check_edits, next_repairs, Edit};
+use v2_lib::autorun::edits::{check_edits, check_edits_following_case, next_repairs, steps_changed_by_case, Edit};
 use v2_lib::autorun::CaseScript;
 
 
@@ -468,4 +468,119 @@ fn a_repair_may_add_preconditions_but_never_drop_or_change_one() {
     let mut another = fixed.clone();
     another.preconditions.insert(0, serde_json::from_value(json!({ "flow": "pms-performance-cycle", "stage": "rules", "value": 274 })).unwrap());
     assert_eq!(check_edits(&old, &another, Some(&declared)), Ok(()), "kept, with one added in front");
+}
+
+// --- a repair that follows a changed test case ---------------------------
+
+fn case_step(action: &str, expected: &str) -> v2_lib::steps_xml::Step {
+    v2_lib::steps_xml::Step { action: action.to_string(), expected: expected.to_string(), shared: None }
+}
+
+/// A step counts as changed by the case when its action or expected result
+/// differs from what the case said when the script was saved, or the case
+/// no longer has it. A step the case only gained is not "changed": the
+/// script had nothing there to lose.
+#[test]
+fn the_steps_a_case_changed_are_the_reworded_and_the_removed_ones() {
+    let before = vec![
+        case_step("Open", "The page opens"),
+        case_step("Pick Position", "The Position card is active"),
+        case_step("Save", "Saved"),
+        case_step("Reload", "The pick is kept"),
+    ];
+    let now = vec![
+        case_step("Open", "The page opens"),
+        case_step("Pick Designation", "The Designation card is active"),
+        case_step("Save", "Saved"),
+    ];
+    let changed = steps_changed_by_case(&before, &now);
+    assert_eq!(changed.into_iter().collect::<Vec<_>>(), vec![2, 4]);
+
+    let grown = vec![
+        case_step("Open", "The page opens"),
+        case_step("Pick Position", "The Position card is active"),
+        case_step("Save", "Saved"),
+        case_step("Reload", "The pick is kept"),
+        case_step("Exit", "Manage opens"),
+    ];
+    assert!(steps_changed_by_case(&before, &grown).is_empty(), "a step the case only gained changes nothing");
+}
+
+/// Two steps with three checks between them. Used by the tests below as the
+/// script on disk.
+fn three_checks() -> CaseScript {
+    script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [
+                { "kind": "click", "selector": "#a" },
+                { "kind": "expect_visible", "selector": "#ok" }
+            ]},
+            { "step_number": 2, "actions": [
+                { "kind": "expect_visible", "selector": "#b" },
+                { "kind": "expect_visible", "selector": "#c" }
+            ]}
+        ]
+    }))
+}
+
+/// Step 2's case text changed, so the script may follow it, checks and all;
+/// the step is still declared like any other change.
+#[test]
+fn a_step_the_case_changed_may_lose_checks() {
+    let old = three_checks();
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [
+                { "kind": "click", "selector": "#a" },
+                { "kind": "expect_visible", "selector": "#ok" }
+            ]},
+            { "step_number": 2, "actions": [{ "kind": "expect_visible", "selector": "#b" }] }
+        ]
+    }));
+    let changed_by_case = std::collections::BTreeSet::from([2]);
+    let declared = edit(&[2], "the case's step 2 no longer asks for #c");
+    assert_eq!(check_edits_following_case(&old, &new, Some(&declared), &changed_by_case), Ok(()));
+    // Undeclared, it is still refused: following the case is still a change.
+    let err = check_edits_following_case(&old, &new, None, &changed_by_case).unwrap_err();
+    assert!(err.contains("step 2 was changed but not declared"), "{err}");
+}
+
+/// The case dropped its step 2, so the script may drop it too.
+#[test]
+fn a_step_the_case_removed_may_be_removed() {
+    let old = three_checks();
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [
+                { "kind": "click", "selector": "#a" },
+                { "kind": "expect_visible", "selector": "#ok" }
+            ]}
+        ]
+    }));
+    let declared = edit(&[2], "the case no longer has a step 2");
+    let changed_by_case = std::collections::BTreeSet::from([2]);
+    assert_eq!(check_edits_following_case(&old, &new, Some(&declared), &changed_by_case), Ok(()));
+}
+
+/// The case changed step 2 only: step 1 may still not lose its check, and
+/// with no case change at all the old rule holds everywhere.
+#[test]
+fn a_step_the_case_left_alone_still_keeps_its_checks() {
+    let old = three_checks();
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] },
+            { "step_number": 2, "actions": [{ "kind": "expect_visible", "selector": "#b" }] }
+        ]
+    }));
+    let declared = edit(&[1, 2], "following the case");
+    let err = check_edits_following_case(&old, &new, Some(&declared), &std::collections::BTreeSet::from([2]))
+        .unwrap_err();
+    assert!(err.contains("step 1 had 1 checks and now has 0"), "{err}");
+    let err = check_edits(&old, &new, Some(&declared)).unwrap_err();
+    assert!(err.contains("an assertion is never removed"), "{err}");
 }

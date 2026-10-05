@@ -135,6 +135,9 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
 
+    // One moment for the whole bundle: it lands as one unit.
+    let saved_at = crate::applog::iso_stamp();
+
     // Pass 1: validate + serialise.
     let mut seen = std::collections::HashSet::new();
     let mut entries: Vec<(PathBuf, String)> = Vec::with_capacity(scripts.len());
@@ -216,7 +219,9 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
             }
             still_there
         });
-        let kept = CaseScript { suspected_defect: disk_mark, ..sc.clone() };
+        // Every save is stamped with when it happened, whatever it was sent:
+        // a later repair reads the test case as of this moment.
+        let kept = CaseScript { suspected_defect: disk_mark, saved_at: Some(saved_at.clone()), ..sc.clone() };
         let json = serde_json::to_string_pretty(&kept).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
         entries.push((dir.join(format!("case-{}.json", sc.case_id)), json));
     }
@@ -305,6 +310,15 @@ fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
         return Err(e.to_string());
     }
     Ok(())
+}
+
+/// When the script's file was last written, as ISO 8601 UTC - what stands in
+/// for `saved_at` on a script saved before that field existed. `None` when
+/// there is no such file or the filesystem cannot say.
+pub fn script_modified(root: &Path, case_id: i32) -> Option<String> {
+    let path = scripts_dir(root).join(format!("case-{case_id}.json"));
+    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(crate::applog::iso_of(t))
 }
 
 /// `Ok(None)` for a case nobody has scripted yet - that is the normal

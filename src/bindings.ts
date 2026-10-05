@@ -432,6 +432,15 @@ export const commands = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
+	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
+	 *  repair reads the test case as of this moment to see which steps the
+	 *  case itself has changed since (`edits::check_edits_following_case`).
+	 *  Absent on scripts saved before it existed; the file's own modified
+	 *  time stands in for it then.
+	 */
+	saved_at?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -1688,6 +1697,15 @@ export type CaseScript_Deserialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Deserialize[],
+	/**
+	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
+	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
+	 *  repair reads the test case as of this moment to see which steps the
+	 *  case itself has changed since (`edits::check_edits_following_case`).
+	 *  Absent on scripts saved before it existed; the file's own modified
+	 *  time stands in for it then.
+	 */
+	saved_at?: string | null,
 };
 
 /**
@@ -1750,6 +1768,15 @@ export type CaseScript_Serialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
+	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
+	 *  repair reads the test case as of this moment to see which steps the
+	 *  case itself has changed since (`edits::check_edits_following_case`).
+	 *  Absent on scripts saved before it existed; the file's own modified
+	 *  time stands in for it then.
+	 */
+	saved_at?: string | null,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
