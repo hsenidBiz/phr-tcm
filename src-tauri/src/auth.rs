@@ -16,8 +16,16 @@ const TOKEN_URL: &str = "https://login.microsoftonline.com/organizations/oauth2/
 
 /// How long the browser has to come back with the redirect.
 pub const SIGN_IN_WINDOW: Duration = Duration::from_secs(300);
-/// How long one loopback connection may take to send its request line.
+/// How long one loopback connection may take to send its request.
 pub const LOOPBACK_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most of one loopback request's head that is read before answering.
+const LOOPBACK_HEAD_CAP: usize = 16 * 1024;
+/// How long a closing loopback connection waits for the browser to close
+/// its side (see `respond`).
+const LOOPBACK_DRAIN: Duration = Duration::from_millis(500);
+/// How long the loopback keeps answering after a sign-in, for a browser
+/// that retries the redirect.
+pub const SIGN_IN_LINGER: Duration = Duration::from_secs(30);
 /// What a sign-in nobody finished says.
 pub const SIGN_IN_TIMEOUT: &str = "Sign-in timed out. Try again.";
 
@@ -351,96 +359,210 @@ pub fn read_redirect(request_line: &str, expected_state: &str) -> Redirect {
     }
 }
 
+/// Write one answer and close the connection the way a browser expects.
+///
+/// Windows answers a socket closed with received bytes still unread by
+/// resetting the connection, so the browser showed "connection was reset"
+/// even after the page had been sent. So: write, half-close, then read
+/// whatever the browser still sends until it closes its side (or
+/// `LOOPBACK_DRAIN` passes), and only then drop the socket.
 fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
-    use std::io::Write;
+    use std::io::{Read, Write};
     let _ = write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
+    let _ = stream.flush();
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let until = Instant::now() + LOOPBACK_DRAIN;
+    let mut sink = [0u8; 4096];
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            return;
+        }
+        match stream.read(&mut sink) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
 }
 
-/// The first line of one loopback request, read against ONE budget for the
-/// whole line. A per-read timeout alone restarts with every byte, so a
+/// The request line of one loopback request, after reading its whole head
+/// (up to the blank line, at most `LOOPBACK_HEAD_CAP` bytes) against ONE
+/// budget. A per-read timeout alone restarts with every byte, so a
 /// connection that sent a byte at a time just inside it could hold the wait
-/// far past the sign-in window. `None` when no whole line came in time.
+/// far past the sign-in window. Reading the whole head matters: headers
+/// left unread when the socket closes turn into a reset (see `respond`).
+/// A head that ends early (the budget, the cap, the peer closing) still
+/// answers if its request line came whole. `None` when no whole line came.
 fn read_request_line(stream: &mut std::net::TcpStream, budget: Duration) -> Option<String> {
     use std::io::Read;
     let until = Instant::now() + budget;
-    let mut line: Vec<u8> = Vec::with_capacity(256);
-    let mut chunk = [0u8; 512];
+    let mut head: Vec<u8> = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+    let line = |head: &[u8]| -> Option<String> {
+        let end = head.iter().position(|&b| b == b'\n')?;
+        String::from_utf8(head[..=end].to_vec()).ok()
+    };
     loop {
+        if head.windows(4).any(|w| w == b"\r\n\r\n") || head.len() >= LOOPBACK_HEAD_CAP {
+            return line(&head);
+        }
         let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return None;
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            return line(&head);
         }
-        stream.set_read_timeout(Some(left)).ok()?;
-        let n = stream.read(&mut chunk).ok()?;
-        if n == 0 {
-            return None;
-        }
-        line.extend_from_slice(&chunk[..n]);
-        if let Some(end) = line.iter().position(|&b| b == b'\n') {
-            line.truncate(end + 1);
-            return String::from_utf8(line).ok();
-        }
-        if line.len() >= 8192 {
-            return None;
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return line(&head),
+            Ok(n) => head.extend_from_slice(&chunk[..n.min(LOOPBACK_HEAD_CAP - head.len())]),
         }
     }
+}
+
+/// The loopback's listening sockets: IPv4 always, and IPv6 (`[::1]`, same
+/// port) when it was free, so a browser that tries `localhost` over IPv6
+/// first is answered rather than refused.
+pub struct Loopback {
+    listeners: Vec<std::net::TcpListener>,
+}
+
+impl From<std::net::TcpListener> for Loopback {
+    fn from(listener: std::net::TcpListener) -> Self {
+        Loopback { listeners: vec![listener] }
+    }
+}
+
+impl Loopback {
+    /// Bind `127.0.0.1` on a free port, then `[::1]` on the same port if it
+    /// can be had. IPv4 alone is enough to go on with.
+    pub fn bind() -> std::io::Result<(Loopback, u16)> {
+        use std::net::TcpListener;
+        let v4 = TcpListener::bind("127.0.0.1:0")?;
+        let port = v4.local_addr()?.port();
+        let mut listeners = vec![v4];
+        if let Ok(v6) = TcpListener::bind(("::1", port)) {
+            listeners.push(v6);
+        }
+        Ok((Loopback { listeners }, port))
+    }
+
+    /// Whether `[::1]` is being answered too.
+    pub fn has_ipv6(&self) -> bool {
+        self.listeners.iter().any(|l| l.local_addr().is_ok_and(|a| a.is_ipv6()))
+    }
+
+    /// The next waiting connection on any listener, made blocking.
+    fn accept(&self) -> std::io::Result<Option<std::net::TcpStream>> {
+        use std::io::ErrorKind;
+        for listener in &self.listeners {
+            match listener.accept() {
+                Ok((s, _)) => {
+                    // An accepted socket inherits the listener's
+                    // non-blocking mode on Windows; reads must block (up
+                    // to their timeout).
+                    if s.set_nonblocking(false).is_ok() {
+                        return Ok(Some(s));
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Answer one loopback connection: read its request, send the page that
+/// fits, close gracefully. What the request was, for the caller to act on.
+fn serve(
+    mut stream: std::net::TcpStream,
+    expected_state: &str,
+    budget: Duration,
+    write_timeout: Duration,
+) -> Option<Redirect> {
+    let _ = stream.set_write_timeout(Some(write_timeout));
+    let line = read_request_line(&mut stream, budget)?; // no whole line in time: drop it
+    let redirect = read_redirect(&line, expected_state);
+    match &redirect {
+        Redirect::NotTheRedirect => respond(&mut stream, "404 Not Found", ""),
+        Redirect::Code(_) => respond(&mut stream, "200 OK", SIGNED_IN_PAGE),
+        Redirect::Refused(_) => respond(&mut stream, "200 OK", FAILED_PAGE),
+    }
+    Some(redirect)
+}
+
+/// After a sign-in, keep answering for `linger_for` on a background thread:
+/// a browser that retries the redirect (or reloads the tab) gets the same
+/// "You're signed in" page instead of "localhost refused to connect". It
+/// only serves pages; the code has already been taken and is never used
+/// again.
+fn linger(loopback: Loopback, expected_state: String, linger_for: Duration, read_timeout: Duration) {
+    if linger_for.is_zero() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("sign-in-linger".into())
+        .spawn(move || {
+            let until = Instant::now() + linger_for;
+            while Instant::now() < until {
+                match loopback.accept() {
+                    Ok(Some(stream)) => {
+                        let budget = read_timeout.min(until.saturating_duration_since(Instant::now()));
+                        let _ = serve(stream, &expected_state, budget, read_timeout);
+                    }
+                    Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                    Err(_) => return,
+                }
+            }
+        });
 }
 
 /// Wait on the loopback for the browser's redirect, for at most `window`.
 ///
 /// Non-blocking accept so the deadline is real (a closed browser tab used
 /// to leave sign-in pending forever, leaking a thread and a port). Each
-/// connection gets `read_timeout` in all to send its request line (never
-/// past `window`); one that sends nothing (a browser preconnect) or
-/// something else (a favicon) is dropped and the wait goes on, so it
-/// cannot hide the real redirect behind it.
+/// connection gets `read_timeout` in all to send its request (never past
+/// `window`); one that sends nothing (a browser preconnect) or something
+/// else (a favicon) is dropped or answered with a 404 and the wait goes
+/// on, so it cannot hide the real redirect behind it. Once the code is in,
+/// the loopback keeps answering for `linger_for` (see `linger`); a refusal
+/// does not linger.
 pub fn await_redirect(
-    listener: std::net::TcpListener,
+    loopback: impl Into<Loopback>,
     expected_state: &str,
     window: Duration,
     read_timeout: Duration,
+    linger_for: Duration,
 ) -> Result<String, String> {
-    use std::io::ErrorKind;
-    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let loopback = loopback.into();
+    for listener in &loopback.listeners {
+        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    }
     let deadline = Instant::now() + window;
     loop {
         if Instant::now() >= deadline {
             return Err(SIGN_IN_TIMEOUT.into());
         }
-        let mut stream = match listener.accept() {
-            Ok((s, _)) => s,
-            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+        let stream = match loopback.accept() {
+            Ok(Some(s)) => s,
+            Ok(None) => {
                 std::thread::sleep(Duration::from_millis(50));
                 continue;
             }
             Err(e) => return Err(e.to_string()),
         };
-        // An accepted socket inherits the listener's non-blocking mode on
-        // Windows; the read below must block (up to its timeout).
-        if stream.set_nonblocking(false).is_err() {
-            continue;
-        }
-        let _ = stream.set_write_timeout(Some(read_timeout));
-        // The whole request line within `read_timeout`, and never past the
+        // The whole request within `read_timeout`, and never past the
         // sign-in window itself.
         let budget = read_timeout.min(deadline.saturating_duration_since(Instant::now()));
-        let Some(line) = read_request_line(&mut stream, budget) else {
-            continue; // no whole line in time: drop it, keep waiting
-        };
-        match read_redirect(&line, expected_state) {
-            Redirect::NotTheRedirect => respond(&mut stream, "404 Not Found", ""),
-            Redirect::Code(code) => {
-                respond(&mut stream, "200 OK", SIGNED_IN_PAGE);
+        match serve(stream, expected_state, budget, read_timeout) {
+            None | Some(Redirect::NotTheRedirect) => continue,
+            Some(Redirect::Code(code)) => {
+                linger(loopback, expected_state.to_string(), linger_for, read_timeout);
                 return Ok(code);
             }
-            Redirect::Refused(why) => {
-                respond(&mut stream, "200 OK", FAILED_PAGE);
-                return Err(why);
-            }
+            Some(Redirect::Refused(why)) => return Err(why),
         }
     }
 }
@@ -449,14 +571,12 @@ pub fn await_redirect(
 /// waits for the loopback redirect, exchanges the code. `choose_account`
 /// makes Microsoft ask which account to use (see `choosing_account`).
 pub async fn sign_in_interactive(open_url: impl Fn(&str), choose_account: bool) -> Result<TokenSet, String> {
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let (loopback, port) = Loopback::bind().map_err(|e| e.to_string())?;
     // Entra ID only allows arbitrary ports on "http://localhost" (RFC 8252
     // loopback), NOT on the literal 127.0.0.1 - using the IP form fails with
     // AADSTS50011 against the Azure CLI app registration. The socket still
-    // binds to 127.0.0.1; localhost resolves there for the browser redirect.
+    // binds to 127.0.0.1 (and [::1] when it can), which is where localhost
+    // resolves for the browser redirect.
     let redirect_uri = format!("http://localhost:{port}");
     let (verifier, challenge) = pkce_pair();
     let state = b64url(&rand::random::<[u8; 16]>());
@@ -464,7 +584,7 @@ pub async fn sign_in_interactive(open_url: impl Fn(&str), choose_account: bool) 
     open_url(&if choose_account { choosing_account(url) } else { url });
 
     let code = tokio::task::spawn_blocking(move || {
-        await_redirect(listener, &state, SIGN_IN_WINDOW, LOOPBACK_READ_TIMEOUT)
+        await_redirect(loopback, &state, SIGN_IN_WINDOW, LOOPBACK_READ_TIMEOUT, SIGN_IN_LINGER)
     })
     .await
     .map_err(|e| e.to_string())??;
