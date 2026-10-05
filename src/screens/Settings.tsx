@@ -748,21 +748,19 @@ export default function Settings({ org, project }: { org: string; project: strin
             {selectedRate.hint}
           </p>
         </SettingRow>
-        {/* Hidden in capture mode, so the help-site shots stay as they are. */}
-        {!isCaptureMode() && (
-          <SettingRow
-            asLabel
-            name="Enable Advanced Features"
-            description="Shows Auto Run and API Templates, and the AI tools that go with them."
-            control={
-              <Switch
-                checked={advancedOn}
-                onCheckedChange={toggleAdvanced}
-                ariaLabel="Enable Advanced Features"
-              />
-            }
-          />
-        )}
+        {/* Shown in capture mode too: the help site documents it. */}
+        <SettingRow
+          asLabel
+          name="Enable Advanced Features"
+          description="Shows Auto Run and API Templates, and the AI tools that go with them."
+          control={
+            <Switch
+              checked={advancedOn}
+              onCheckedChange={toggleAdvanced}
+              ariaLabel="Enable Advanced Features"
+            />
+          }
+        />
       </SettingsCard>
 
       {!tiles.spareStack && aiToolsCard}

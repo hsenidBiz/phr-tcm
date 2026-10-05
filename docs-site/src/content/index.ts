@@ -4,6 +4,8 @@
 
 import type { Intro, Screen } from "../types";
 import { aiBridge } from "./ai-tools";
+import { apiTemplates } from "./api-templates";
+import { autoRun } from "./auto-run";
 import { board } from "./board";
 import { gettingStarted } from "./getting-started";
 import { importFile } from "./import-file";
@@ -28,12 +30,14 @@ export const screens: Screen[] = [
   viewTestCases,
   reviewPage,
   runTests,
+  autoRun,
   searchSuites,
   suiteManagement,
   pullRequests,
   board,
   newWorkItem,
   aiBridge,
+  apiTemplates,
   settings,
 ];
 

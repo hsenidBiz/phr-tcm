@@ -29,7 +29,7 @@ export const aiBridge: Screen = {
     "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
-    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and Database Read Access" },
+    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools, the environment and Database Read Access" },
     {
       id: OTHER,
       route: [NAV, { click: { text: "Other tools" } }, { waitFor: { role: "button", name: "Copy command" } }],
@@ -64,6 +64,11 @@ export const aiBridge: Screen = {
     { id: "repositories", title: "Working repositories", summary: "The folders your test cases belong to, and whether the bridge is running." },
     { id: "connect", title: "Connect your AI tools", summary: "Register the bridge with the AI tools installed on this computer." },
     { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call." },
+    {
+      id: "environment",
+      title: "Environment",
+      summary: "The site and database Auto Run and API Templates work against. Shown while Enable Advanced Features is on, in Settings.",
+    },
     { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
   ],
@@ -181,6 +186,24 @@ export const aiBridge: Screen = {
       name: "Tool switch",
       does:
         "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Database Read Access, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
+    },
+    {
+      id: "environment-pick",
+      shot: TAB,
+      group: "environment",
+      locate: { role: "combobox", name: "Environment" },
+      name: "Environment",
+      does:
+        "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
+        "Switching moves the **Database** below with it, and the environment's name shows in the title bar.",
+    },
+    {
+      id: "edit-environments",
+      shot: TAB,
+      group: "environment",
+      locate: { role: "button", name: "Edit environments" },
+      name: "Edit environments",
+      does: "Adds, renames or removes environments, and sets each one's site address and database.",
     },
     {
       id: "database",

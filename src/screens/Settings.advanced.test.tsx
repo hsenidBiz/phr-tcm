@@ -106,13 +106,18 @@ test("it does not bring the Extras card with it", async () => {
   expect(view.container.querySelector('[data-settings-card="extras"]')).toBeNull();
 });
 
-test("capture mode hides the row, so the help-site shots stay as they are", async () => {
+// The help site documents the row, so capture mode shows it - on, as the
+// sample data answers - with Auto Run and API Templates beside it. The
+// Extras card stays out (Settings.test.tsx pins that).
+test("capture mode shows the row, on, with Auto Run and API Templates in the rail", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   ipc({ advanced: true });
-  await renderScreen({ release: false });
-  await screen.findByRole("heading", { name: "General" });
-  expect(screen.queryByRole("switch", { name: NAME })).not.toBeInTheDocument();
-  expect(screen.queryByText(DESCRIPTION)).not.toBeInTheDocument();
+  const { rail } = await renderScreen({ release: false });
+  await waitFor(() => expect(theSwitch()).toHaveAttribute("aria-checked", "true"));
+  expect(screen.getByText(DESCRIPTION)).toBeInTheDocument();
+  expect(rail.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(rail.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
 });
 
 test("a save that fails leaves the switch off and says so", async () => {

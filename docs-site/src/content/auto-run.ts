@@ -1,0 +1,767 @@
+// Auto Run: the app drives a real browser through a test case's steps from
+// a script, with a person watching (one case or a selection) or unattended,
+// and keeps the results on this computer until they are reviewed and sent.
+// Three tabs: Test cases, Past runs and Setup.
+//
+// Locates come from screens/AutoRun/index.tsx, ScriptEditor.tsx,
+// RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
+// SiteAddressDialog.tsx, AccountsDialog.tsx, ReadinessStrip.tsx and
+// SuspectedDefectMark.tsx. The sample data (src/dev/demo.ts) gives the
+// first Product Backlog Item's cases scripts: #5002 carries a suspected
+// defect, #5003 a precondition, #5004 is marked Must not save, and #5005 has
+// no script. One unattended run holds a case of each result, one of them
+// retried. No route sends anything: every shot stops before Save, Start or
+// Send.
+
+import type { Screen, Step } from "../types";
+
+const CASES = "auto-run-cases";
+const SELECTED = "auto-run-selected";
+const SCRIPT = "auto-run-script";
+const WATCH = "auto-run-watch";
+const UNATTENDED = "auto-run-unattended";
+const RUNS = "auto-run-past-runs";
+const REVIEW = "auto-run-review";
+const SETUP = "auto-run-setup";
+const SITE = "auto-run-site-address";
+const ACCOUNTS = "auto-run-accounts";
+
+const NAV: Step = { nav: "Auto Run" };
+const READY: Step = { waitFor: { role: "button", name: "Run #5001" } };
+const PICK_TWO: Step[] = [
+  { click: { role: "checkbox", name: "Select #5001" } },
+  { click: { role: "checkbox", name: "Select #5004" } },
+];
+const TO_RUNS: Step[] = [NAV, READY, { click: { role: "tab", nameRe: "^Past runs" } }, { waitFor: { role: "button", name: "Clear results" } }];
+const TO_SETUP: Step[] = [NAV, READY, { click: { role: "tab", nameRe: "^Setup" } }, { waitFor: { role: "button", name: "Edit site address" } }];
+
+export const autoRun: Screen = {
+  id: "auto-run",
+  title: "Auto Run",
+  group: "Running tests",
+  summary:
+    "Let the app run a test case for you. A script tells it what to do at each step, and the app does it in a real browser: with you watching and deciding the result, or unattended while you work on something else. " +
+    "Results stay on this computer until you review a run and send it to Azure DevOps. " +
+    "Auto Run is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears in the sidebar under Run Tests.",
+  shots: [
+    { id: CASES, route: [NAV, READY], alt: "Auto Run on its Test cases tab: the cases with their scripts, last results and Run buttons" },
+    { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
+    {
+      id: SCRIPT,
+      route: [NAV, READY, { click: { role: "button", name: "Edit script for #5003" } }, { waitFor: { role: "textbox", name: "Action script JSON" } }],
+      alt: "The script of a case with a precondition, beside the case's own steps",
+    },
+    {
+      id: WATCH,
+      route: [
+        NAV,
+        READY,
+        { click: { role: "button", name: "Run #5004" } },
+        { click: { role: "button", name: "Open browser" } },
+        { waitFor: { role: "button", name: "Sign in again" } },
+        { click: { role: "button", name: "Run step 1" } },
+        { waitFor: { text: 'Found heading "Dashboard"' } },
+        { click: { role: "button", name: "Passed" } },
+      ],
+      alt: "Running one case while you watch: signed in, the first step run, and Passed chosen",
+    },
+    {
+      id: UNATTENDED,
+      route: [NAV, READY, ...PICK_TWO, { click: { role: "button", name: "Run 2 unattended" } }, { waitFor: { role: "button", name: "Start" } }],
+      alt: "The Unattended run window, before it starts",
+    },
+    { id: RUNS, route: TO_RUNS, alt: "Past runs: an unattended run with a passed, a failed, a blocked and a retried case" },
+    {
+      id: REVIEW,
+      route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept every proposal" } }],
+      alt: "Reviewing an unattended run before sending it to Azure DevOps",
+    },
+    { id: SETUP, route: TO_SETUP, alt: "The Setup tab: site address, sign-in, accounts, areas, test files and save words" },
+    {
+      id: SITE,
+      route: [...TO_SETUP, { click: { role: "button", name: "Edit site address" } }, { waitFor: { role: "textbox", name: "Start address" } }],
+      alt: "The Site address window",
+    },
+    {
+      id: ACCOUNTS,
+      route: [...TO_SETUP, { click: { role: "button", name: "Edit accounts" } }, { waitFor: { role: "button", name: "Save accounts" } }],
+      alt: "The Accounts window, with a login the assistant proposed",
+    },
+  ],
+  groups: [
+    { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
+    { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
+    { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
+    { id: "unattended", title: "Run unattended", summary: "The app runs the selection by itself and proposes a result for each case." },
+    { id: "runs", title: "Past runs and reviews", summary: "What came of each run, and sending the results you confirm to Azure DevOps." },
+    { id: "setup", title: "Set up", summary: "The site, the sign-in, your test accounts, the areas of the site, and the files scripts upload." },
+  ],
+  controls: [
+    // --- Test cases ------------------------------------------------------------
+    {
+      id: "tab-cases",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "tab", nameRe: "^Test cases" },
+      name: "Test cases",
+      does: "The Product Backlog Item's test cases, with how many there are. Auto Run opens here when the setup is complete, and on **Setup** when something a run needs is missing.",
+    },
+    {
+      id: "tab-runs",
+      shot: CASES,
+      group: "runs",
+      locate: { role: "tab", nameRe: "^Past runs" },
+      name: "Past runs",
+      does: "Every run saved on this computer, with how many there are.",
+    },
+    {
+      id: "tab-setup",
+      shot: CASES,
+      group: "setup",
+      locate: { role: "tab", nameRe: "^Setup" },
+      name: "Setup",
+      does: "What a run needs before it can start. A warning sign on the tab means something is missing.",
+    },
+    {
+      id: "readiness",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "group", name: "Readiness" },
+      name: "Readiness",
+      does:
+        "One line on where runs go and whether the setup is in place: the environment and its site, the sign-in, and how many accounts, areas and test files there are. " +
+        "A tick means that part is ready; a warning names what is missing.",
+    },
+    {
+      id: "open-setup",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "button", name: "Open setup" },
+      name: "Open setup",
+      does: "Goes to the **Setup** tab.",
+    },
+    {
+      id: "group-by-title",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "checkbox", name: "Group by title" },
+      name: "Group by title",
+      does: "Groups the cases whose titles start the same way, as the other test case screens do. Each group can be folded and selected as a whole.",
+    },
+    {
+      id: "select-all-shown",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "checkbox", name: "Select all shown" },
+      name: "Select all shown",
+      does: "Selects every case the list shows that has a script. Cases without a script cannot be selected.",
+    },
+    {
+      id: "last-result-filter",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "group", name: "Filter by last result" },
+      name: "Last result",
+      does:
+        "Each case shows its last result beside its title: how it did in the newest run that reached it. " +
+        "These buttons show only the cases whose last result was **Passed**, **Failed**, **Blocked** or **Not run**, with how many there are of each. Press more than one to see them together, and press one again to drop it.",
+      tips: ["To run the failed cases again: press **Failed**, then **Select all shown**."],
+    },
+    {
+      id: "more",
+      shot: CASES,
+      group: "scripts",
+      locate: { role: "button", name: "More" },
+      name: "More",
+      does:
+        "**Import scripts** reads one JSON file that can carry the scripts of every case in the Product Backlog Item, the way an assistant writes them. " +
+        "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes.",
+    },
+    {
+      id: "select-case",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "checkbox", name: "Select #5001" },
+      name: "Select",
+      does: "Adds the case to the selection. Only a case with a script has this box.",
+    },
+    {
+      id: "suspected-defect",
+      shot: CASES,
+      group: "cases",
+      locate: { text: "Suspected defect" },
+      name: "Suspected defect",
+      does:
+        "An assistant looked at a failure and found the script was right and the site did not do what the case expects. Hover it to read at which step and why. " +
+        "Worth checking by hand, and worth a bug if it holds.",
+    },
+    {
+      id: "clear-suspected-defect",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "button", name: "Clear suspected defect for #5002" },
+      name: "Clear",
+      does: "Removes the suspected defect mark once you have looked into it. It asks first; the script itself does not change.",
+    },
+    {
+      id: "edit-script",
+      shot: CASES,
+      group: "scripts",
+      locate: { role: "button", name: "Edit script for #5001" },
+      name: "Script",
+      does: "Opens the case's script. On a case without one, the button reads **Add script**.",
+    },
+    {
+      id: "add-script",
+      shot: CASES,
+      group: "scripts",
+      locate: { role: "button", name: "Add script for #5005" },
+      name: "Add script",
+      does: "Writes a script for a case that has none yet. Until it has one, the case cannot be run or selected.",
+    },
+    {
+      id: "run-one",
+      shot: CASES,
+      group: "watch",
+      locate: { role: "button", name: "Run #5001" },
+      name: "Run",
+      does: "Runs this one case while you watch. Only a case with a script has it.",
+    },
+
+    // --- A selection -------------------------------------------------------------
+    {
+      id: "run-selected",
+      shot: SELECTED,
+      group: "watch",
+      locate: { role: "button", nameRe: "^Run \\d+ selected$" },
+      name: "Run N selected",
+      does:
+        "Runs the selected cases one after another while you watch, in the order the list shows them. Each case starts in a fresh browser, so one case never passes only because the one before it signed in. " +
+        "When the list scrolls away, these buttons float at the bottom right.",
+    },
+    {
+      id: "run-unattended",
+      shot: SELECTED,
+      group: "unattended",
+      locate: { role: "button", nameRe: "^Run \\d+ unattended$" },
+      name: "Run N unattended",
+      does: "Opens the Unattended run window for the selected cases.",
+    },
+    {
+      id: "clear-selection",
+      shot: SELECTED,
+      group: "cases",
+      locate: { role: "button", name: "Clear selection" },
+      name: "Clear selection (x)",
+      does: "Clears the selection.",
+    },
+
+    // --- The script --------------------------------------------------------------
+    {
+      id: "case-steps",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { text: "The case's steps" },
+      name: "The case's steps",
+      does: "The test case's own steps and expected results, to write the script against. They are read from Azure DevOps and do not change here.",
+    },
+    {
+      id: "runs-as",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "combobox", name: "Runs as" },
+      name: "Runs as",
+      does:
+        "The account the case signs in as before step 1, picked from your own accounts. A script names an account by its key, so the same script works for every tester with their own login. " +
+        "**No sign-in** starts the case signed out.",
+    },
+    {
+      id: "area",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "combobox", name: "Area" },
+      name: "Area",
+      does: "The recorded area of the site the case starts in. Left on **the case's Module**, it starts in the area named like the case's Module.",
+    },
+    {
+      id: "must-not-save",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "checkbox", name: "Must not save" },
+      name: "Must not save",
+      does:
+        "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
+        "The save words on the **Setup** tab decide what counts as a save. Only you can turn it off, here.",
+    },
+    {
+      id: "script-json",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "textbox", name: "Action script JSON" },
+      name: "Action script",
+      does:
+        "What the app does at each step, as JSON: open a page, click, type, upload a test file, and check what the page shows. " +
+        "Most scripts are written by an assistant from the case's steps and imported with **More**, **Import scripts**.",
+    },
+    {
+      id: "checks",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { text: "Checks" },
+      name: "Checks",
+      does:
+        "Whether the script checks each step's expected result, updated as you type. A step whose expected result is not checked says why, or reads **NOT CHECKED**.",
+    },
+    {
+      id: "preconditions",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "list", name: "Preconditions" },
+      name: "Preconditions",
+      does:
+        "Records the case relies on, each one a stage of a flow on the API Templates tab that must be done for a value. The run checks them before it signs in, and a case whose precondition is not met is **Blocked** and runs no step. " +
+        "Preconditions are checked in the company database, so they are skipped, and the case says **Not checked**, while Database Read Access is off.",
+    },
+    {
+      id: "remove-precondition",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "button", name: "Remove precondition 1" },
+      name: "Remove",
+      does: "Takes the precondition off the script when you press **Save script**. Preconditions are added by an assistant, not here.",
+    },
+    {
+      id: "save-script",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "button", name: "Save script" },
+      name: "Save script",
+      does: "Saves the script on this computer. Scripts never go to Azure DevOps.",
+    },
+
+    // --- Watching a run ------------------------------------------------------------
+    {
+      id: "signed-in",
+      shot: WATCH,
+      group: "watch",
+      locate: { text: "Signed in as portal.tester" },
+      name: "Sign-in",
+      does:
+        "The account the case signed in as, once the browser opened. A case with preconditions has them checked first; one that is not met says **Blocked before step 1** and why.",
+    },
+    {
+      id: "sign-in-again",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "button", name: "Sign in again" },
+      name: "Sign in again",
+      does: "Forgets the saved sign-in for this account and signs in afresh.",
+    },
+    {
+      id: "run-step",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "button", name: "Run step 1" },
+      name: "Run step N",
+      does:
+        "Does that step's actions in the browser and lists what each one did. A failed action is shown in red, with **View screenshot** when the browser took one. Run the steps in order, and look at the browser as they run.",
+    },
+    {
+      id: "your-verdict",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "group", name: "Your verdict" },
+      name: "Your verdict",
+      does:
+        "**Passed**, **Failed** or **Blocked**: the result is yours to decide. Nothing is chosen for you, because a green step can still hide a problem you saw, and a red one can be the script's fault rather than the site's.",
+    },
+    {
+      id: "result-note",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "textbox", name: "Result note" },
+      name: "Result note",
+      does: "What you saw, if you want to say. It is saved with the result.",
+    },
+    {
+      id: "save-result",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "button", name: "Save result" },
+      name: "Save result",
+      does:
+        "Saves the result on this computer and closes the browser. Running a selection, it reads **Save and next case** until the last case, and the whole selection is saved as one run.",
+    },
+    {
+      id: "close-run",
+      shot: WATCH,
+      group: "watch",
+      locate: { role: "button", name: "Close" },
+      name: "Close",
+      does: "Stops here and closes the browser. Results you already chose are kept.",
+    },
+
+    // --- Unattended ----------------------------------------------------------------
+    {
+      id: "sign-in-as",
+      shot: UNATTENDED,
+      group: "unattended",
+      locate: { role: "combobox", name: "Sign in as" },
+      name: "Sign in as",
+      does:
+        "**Each script's own account** signs every case in as its script says. Pick one of your accounts instead, and that account signs in every case, over the account a script names.",
+    },
+    {
+      id: "browser",
+      shot: UNATTENDED,
+      group: "unattended",
+      locate: { role: "combobox", name: "Browser to run in" },
+      name: "Browser",
+      does: "Microsoft Edge or Google Chrome. The app remembers your choice.",
+    },
+    {
+      id: "watch-browser",
+      shot: UNATTENDED,
+      group: "unattended",
+      locate: { role: "checkbox", name: "Watch the browser" },
+      name: "Watch the browser",
+      does: "Off: the browser runs out of sight and you can keep working. On: a window opens for every case.",
+    },
+    {
+      id: "retry-transient",
+      shot: UNATTENDED,
+      group: "unattended",
+      locate: { role: "checkbox", name: "Retry transient failures once" },
+      name: "Retry transient failures once",
+      does:
+        "A case that fails on something passing, such as a gateway error, a dropped connection or a browser that stops answering, runs once more. Its result is labelled **Retried**.",
+    },
+    {
+      id: "start",
+      shot: UNATTENDED,
+      group: "unattended",
+      locate: { role: "button", name: "Start" },
+      name: "Start",
+      does:
+        "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go; **Stop** ends the run after the step it is on. " +
+        "When the run finishes, its review opens.",
+    },
+
+    // --- Past runs -----------------------------------------------------------------
+    {
+      id: "clear-results",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "button", name: "Clear results" },
+      name: "Clear results",
+      does: "Removes every run and screenshot saved on this computer, after asking. Runs already sent stay in Azure DevOps.",
+    },
+    {
+      id: "runs-filter",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "group", name: "Filter by result" },
+      name: "Filter by result",
+      does: "Shows only the runs with a case of that result, and in each of them only those cases. The numbers count runs.",
+    },
+    {
+      id: "run-kind",
+      shot: RUNS,
+      group: "runs",
+      locate: { text: "unattended" },
+      name: "Kind of run",
+      does: "**supervised** for a run you watched, **unattended** for one the app ran by itself, then the environment it ran in.",
+    },
+    {
+      id: "to-review",
+      shot: RUNS,
+      group: "runs",
+      locate: { text: "3 to review" },
+      name: "To review",
+      does: "How many cases of an unattended run still need your verdict. A run already sent says **Sent** instead.",
+    },
+    {
+      id: "review",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "button", name: "Review" },
+      name: "Review",
+      does: "Opens the run's review, where you confirm each case's result and send the run to Azure DevOps. A supervised run needs no review: you decided each result as it ran.",
+    },
+    {
+      id: "report",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "button", nameRe: "^Open a report of the run from" },
+      name: "Report",
+      does: "Opens a report of the run in your browser: each case, its steps, what failed and the screenshots. It changes nothing.",
+    },
+    {
+      id: "run-results",
+      shot: RUNS,
+      group: "runs",
+      locate: { role: "group", name: "Results" },
+      name: "Results",
+      does: "How many cases of the run passed, failed, were blocked or did not run.",
+    },
+    {
+      id: "retried",
+      shot: RUNS,
+      group: "runs",
+      locate: { text: "Retried" },
+      name: "Retried",
+      does: "The case failed on something passing and was run once more. Hover it to see why the first try failed. A case that says **Not checked** went on without its preconditions being checked.",
+    },
+
+    // --- Review --------------------------------------------------------------------
+    {
+      id: "review-case",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "listitem", name: "Case #5002 Login - wrong password shows an error" },
+      name: "Case",
+      does:
+        "One case of the run, with what the app proposes and why: **Proposed: Failed**, and the step that failed. A proposal is never a result until you confirm it. **Show steps** lists what each step did, with any screenshot.",
+    },
+    {
+      id: "review-verdict",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "group", name: "Verdict for #5002" },
+      name: "Verdict",
+      does: "Confirms the case's result. Press the chosen one again to clear it.",
+    },
+    {
+      id: "review-note",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "textbox", name: "Note for #5002" },
+      name: "Note",
+      does: "What you saw, sent with the result.",
+    },
+    {
+      id: "accept-all",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "button", name: "Accept every proposal" },
+      name: "Accept every proposal",
+      does: "Confirms every case's proposed result in one press. Beside it, how many cases are confirmed so far.",
+    },
+    {
+      id: "save-review",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "button", name: "Save review" },
+      name: "Save review",
+      does: "Saves your verdicts and notes on this computer, to finish the review later.",
+    },
+    {
+      id: "send",
+      shot: REVIEW,
+      group: "runs",
+      locate: { role: "button", name: "Send to Azure DevOps" },
+      name: "Send to Azure DevOps",
+      does:
+        "Creates one test run in Azure DevOps for the Product Backlog Item with the results you confirmed. It asks first, and says how many cases are left out. Save the review before sending. " +
+        "Nothing in Azure DevOps is deleted or overwritten, and this is the only way a result leaves this computer.",
+    },
+
+    // --- Setup ---------------------------------------------------------------------
+    {
+      id: "site-address-row",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "group", name: "Site address" },
+      name: "Site address",
+      does:
+        "Where runs go: the address of the site you test, in the active environment. Environments, each with its own site, accounts and saved sign-ins, are chosen on the AI Bridge tab.",
+    },
+    {
+      id: "edit-site-address",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Edit site address" },
+      name: "Edit (site address)",
+      does: "Opens the Site address window.",
+    },
+    {
+      id: "record-sign-in",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Record sign-in" },
+      name: "Record",
+      does:
+        "For a site whose sign-in page the app does not know: a browser opens, you sign in once by hand, and the app saves how to do it. **Built-in** means the app's own sign-in is used.",
+    },
+    {
+      id: "edit-recipe",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Edit sign-in recipe" },
+      name: "Edit (sign-in)",
+      does: "The saved sign-in as JSON, for what a recording cannot capture, and the notes kept about how the site behaves.",
+    },
+    {
+      id: "edit-accounts",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Edit accounts" },
+      name: "Edit (accounts)",
+      does: "Opens the Accounts window. The row says how many accounts this computer has for the environment.",
+    },
+    {
+      id: "edit-areas",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Edit areas" },
+      name: "Edit (areas)",
+      does:
+        "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser.",
+    },
+    {
+      id: "manage-test-files",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Manage test files" },
+      name: "Manage (test files)",
+      does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder.",
+    },
+    {
+      id: "edit-save-words",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "Edit save words" },
+      name: "Edit (save words)",
+      does:
+        "The words that mark a button as a save, which **Must not save** stops: the built-in ones, which cannot be removed, and your project's own.",
+    },
+
+    // --- Site address --------------------------------------------------------------
+    {
+      id: "start-address",
+      shot: SITE,
+      group: "setup",
+      locate: { role: "textbox", name: "Start address" },
+      name: "Start address",
+      does: "The page runs sign in on and start from. Changing it forgets the environment's saved sign-ins, so the next run signs in afresh.",
+    },
+    {
+      id: "also-allowed",
+      shot: SITE,
+      group: "setup",
+      locate: { role: "textbox", name: "Also allowed" },
+      name: "Also allowed",
+      does: "Other sites a script may open, such as a separate sign-in page, one per line. A script cannot open anything else.",
+    },
+    {
+      id: "save-site",
+      shot: SITE,
+      group: "setup",
+      locate: { role: "button", name: "Save" },
+      name: "Save",
+      does: "Saves the address for the environment named at the top.",
+    },
+
+    // --- Accounts ------------------------------------------------------------------
+    {
+      id: "account-key",
+      shot: ACCOUNTS,
+      group: "setup",
+      locate: { role: "textbox", name: "Key for account 1" },
+      name: "Key",
+      does: "The name a script uses for the account. Keep the keys your team's scripts use, and fill in your own login beside them.",
+    },
+    {
+      id: "account-password",
+      shot: ACCOUNTS,
+      group: "setup",
+      // A password field has no role of its own: found by its label.
+      locate: { label: "Password for account 1" },
+      name: "Password",
+      does: "Your password for the test site, kept on this computer only. **Show passwords** below shows what you typed.",
+    },
+    {
+      id: "proposed",
+      shot: ACCOUNTS,
+      group: "setup",
+      locate: { role: "heading", nameRe: "^Proposed by the assistant" },
+      name: "Proposed by the assistant",
+      does:
+        "Logins an assistant found for this environment. Tick the ones you want and press **Add selected**: leave the password empty to use the one the assistant found in the database, or type one. **Dismiss** drops the list.",
+    },
+    {
+      id: "add-account",
+      shot: ACCOUNTS,
+      group: "setup",
+      locate: { role: "button", name: "Add account" },
+      name: "Add account",
+      does: "Adds an empty row for another account.",
+    },
+    {
+      id: "save-accounts",
+      shot: ACCOUNTS,
+      group: "setup",
+      locate: { role: "button", name: "Save accounts" },
+      name: "Save accounts",
+      does: "Saves the accounts for the active environment. A changed login forgets that account's saved sign-in.",
+    },
+  ],
+  tips: [
+    "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
+    "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
+    "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
+    "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
+  ],
+  howTo: [
+    {
+      title: "Turn Auto Run on",
+      steps: [
+        "Open Settings with the gear at the top right.",
+        "Under **General**, turn on **Enable Advanced Features**.",
+        "**Auto Run** appears in the sidebar under Run Tests, and **API Templates** at the end.",
+      ],
+    },
+    {
+      title: "Set up for the first run",
+      steps: [
+        "Pick the Product Backlog Item, open **Auto Run** and go to **Setup**.",
+        "Press **Edit** beside **Site address**, type the address of the site you test, and save.",
+        "Press **Edit** beside **Accounts** and add your test accounts with the keys your team's scripts use, or add the ones the assistant proposed.",
+        "Press **Edit** beside **Areas** and record the areas of the site your cases start in.",
+        "If your scripts upload files, add them with **Manage** beside **Test files**.",
+      ],
+    },
+    {
+      title: "Write or import scripts",
+      steps: [
+        "On **Test cases**, press **Add script** on a case, write its actions, check that **Checks** covers every step, and press **Save script**.",
+        "Or let an assistant write the scripts for the whole Product Backlog Item, then press **More**, **Import scripts** and pick its file.",
+      ],
+    },
+    {
+      title: "Run one case while you watch",
+      steps: [
+        "Press **Run** on the case.",
+        "Pick the browser and press **Open browser**. The app signs in as the script's account.",
+        "Press **Run step 1**, watch the browser, then the next step, and so on.",
+        "Choose **Passed**, **Failed** or **Blocked**, add a note if you want, and press **Save result**.",
+      ],
+    },
+    {
+      title: "Run a selection unattended",
+      steps: [
+        "Select the cases, or filter the list and press **Select all shown**.",
+        "Press **Run N unattended**.",
+        "Choose who to sign in as and whether to watch, then press **Start**.",
+        "When the run finishes its review opens: confirm each case, or press **Accept every proposal**, then **Send to Azure DevOps**.",
+      ],
+    },
+    {
+      title: "Read past runs",
+      steps: [
+        "Open **Past runs** and filter by result if you want.",
+        "Press **Review** on an unattended run to confirm its results and send them, or **Report** to read the run in your browser.",
+      ],
+    },
+  ],
+};

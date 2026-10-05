@@ -1019,8 +1019,7 @@ export default function App() {
           (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
         }
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
-        // Environments are an Auto Run setting: named only where it shows
-        // (useAutoRunVisible is already false in a capture).
+        // Environments are an Auto Run setting: named only where it shows.
         environment={autoRunShown ? environmentName : null}
       />
       {tourOpen && signedIn && (

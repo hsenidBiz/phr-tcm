@@ -160,7 +160,7 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
 // autoRunToolsOffered() (DEV_BUILD || extras unlocked) is what
 // autoRunToolsShown() is built on, and that function's own DEV_BUILD=false
 // behaviour is covered in mcpTools.test.ts.
-test("capture mode hides every mention of the Auto Run tools, and the API templates card, on the AI Tools tab", async () => {
+test("capture mode hides every mention of the Auto Run tools, and the API templates card, on the AI Tools tab, but shows the Environment card", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -180,9 +180,9 @@ test("capture mode hides every mention of the Auto Run tools, and the API templa
   ).not.toBeInTheDocument();  // The risk-tiered writing guide is offered exactly where Auto Run is too.
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "Risk-tiered test design (trial)" })).not.toBeInTheDocument();
-  // Environments exist for Auto Run, so their card goes with it.
-  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("combobox", { name: "Environment" })).not.toBeInTheDocument();
+  // Environments exist for Auto Run, which capture mode shows (as Enable
+  // Advanced Features does), so their card shows with it.
+  expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {

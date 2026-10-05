@@ -101,15 +101,23 @@ test("in a release build Auto Run appears once unlocked and goes again when rese
   vi.resetModules();
 });
 
-/// Capture mode (the screenshot script) hides Auto Run even in the dev
-/// build that always offers it - the help site must never shoot it. Off,
-/// a dev build's ordinary behaviour (Auto Run shown) is unchanged.
-test("capture mode hides Auto Run in a dev build; off, dev behaviour is unchanged", async () => {
+/// Capture mode (the screenshot script) shows Auto Run and API Templates,
+/// as Enable Advanced Features does: the help site documents both. Off, a
+/// dev build's ordinary behaviour (both shown) is unchanged.
+test("capture mode shows Auto Run and API Templates in a dev build; off, dev behaviour is unchanged", async () => {
   vi.stubEnv("DEV", true);
   localStorage.setItem("tcm-v2-dev-capture", "on");
+  const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(shortcutOrder()).toContain("autorun");
+  expect(shortcutOrder()).toContain("apitemplates");
+  unmount();
+
+  localStorage.removeItem("tcm-v2-dev-capture");
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(shortcutOrder()).not.toContain("autorun");
+  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
+  expect(shortcutOrder()).toContain("autorun");
 
   localStorage.removeItem("tcm-v2-dev-capture");
   vi.unstubAllEnvs();

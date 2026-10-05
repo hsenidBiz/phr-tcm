@@ -123,6 +123,18 @@ test("a development build shows Auto Run whatever the switch says", () => {
   expect(autoRunVisible()).toBe(true);
 });
 
+// The help site documents Auto Run and API Templates, so the screenshot
+// script's capture mode shows them - whatever either flag says.
+test("capture mode shows Auto Run with both flags off", () => {
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  try {
+    expect(featuresOnSnapshot()).toBe(false);
+    expect(autoRunVisible()).toBe(true);
+  } finally {
+    localStorage.removeItem("tcm-v2-dev-capture");
+  }
+});
+
 test("a release build shows Auto Run only once unlocked", async () => {
   vi.stubEnv("DEV", false);
   vi.resetModules();

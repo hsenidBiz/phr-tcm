@@ -70,8 +70,9 @@ export const gettingStarted: Screen = {
       name: "Sidebar",
       does:
         "Lists the test case screens: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
+        "With **Enable Advanced Features** on in Settings, it also lists Auto Run, under Run Tests, and API Templates, at the end. " +
         "Click one to open it. The highlighted row is the screen you are on.",
-      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed."],
+      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, or [[Ctrl+1]] to [[Ctrl+9]] with the advanced features on. API Templates has no shortcut."],
     },
     {
       id: "organization",
@@ -243,7 +244,8 @@ export const gettingStarted: Screen = {
       group: "commands",
       locate: { role: "option", nameRe: "^Run Tests" },
       name: "Go to",
-      does: "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge), and Settings at the end.",
+      does:
+        "One row per screen, with its shortcut beside it ([[Ctrl+1]] for Manual Entry up to [[Ctrl+8]] for AI Bridge, or [[Ctrl+9]] with the advanced features on), and Settings at the end.",
     },
     {
       id: "toggle-work",
@@ -315,7 +317,7 @@ export const gettingStarted: Screen = {
   ],
   tips: [
     "The button at the bottom of the sidebar folds it to a strip of icons for more room; hover an icon to see its name, and the same button opens it again.",
-    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens, and [[Ctrl+Shift+M]] switches to Work Manager and back.",
+    "Keyboard: [[Ctrl+K]] opens the command palette, [[Ctrl+1]] to [[Ctrl+8]] open the test case screens ([[Ctrl+9]] with the advanced features on), and [[Ctrl+Shift+M]] switches to Work Manager and back.",
     "The organisation, project, Product Backlog Item and the screen you were on are remembered, so the app opens where you left it.",
     "If your session runs out, a window asks you to sign in again. What is already on screen stays readable in the meantime.",
     "Until a Product Backlog Item is chosen, the test case screens show a short prompt and your recent Product Backlog Items instead of their usual content.",

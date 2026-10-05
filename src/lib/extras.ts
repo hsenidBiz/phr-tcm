@@ -137,11 +137,12 @@ export async function setAdvancedFeatures(on: boolean): Promise<void> {
 
 /** Whether Auto Run is shown right now: always in a development build, and
  * in a release build while this machine's extras are unlocked or Enable
- * Advanced Features is on - except in capture mode, which hides it
- * whichever of those made it visible, since the screenshot script must
- * never shoot it. */
+ * Advanced Features is on. Capture mode (only ever a development build)
+ * shows it too: the help site documents Auto Run and API Templates as
+ * Enable Advanced Features shows them. The Extras card, which follows the
+ * hidden switch alone, stays out of capture mode on its own gate. */
 export function autoRunVisible(): boolean {
-  if (isCaptureMode()) return false;
+  if (isCaptureMode()) return true;
   return AUTO_RUN_DEV || featuresOnSnapshot();
 }
 
@@ -161,8 +162,9 @@ export function useExtrasHydrated(): boolean {
 
 export function useAutoRunVisible(): boolean {
   const on = useSyncExternalStore(subscribeExtras, featuresOnSnapshot);
-  // Capture mode hides Auto Run even in the dev build it always ships in.
-  if (isCaptureMode()) return false;
+  // Capture mode shows Auto Run, as Enable Advanced Features does: the help
+  // site documents it.
+  if (isCaptureMode()) return true;
   return AUTO_RUN_DEV || on;
 }
 

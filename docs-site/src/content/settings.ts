@@ -12,6 +12,7 @@ const MAIN = "settings-main";
 const MORE = "settings-more";
 const LOGS = "settings-logs";
 const BUG = "settings-report-bug";
+const ADVANCED = "settings-advanced";
 
 const OPEN: Step = { click: { role: "button", name: "Settings" } };
 
@@ -27,6 +28,11 @@ export const settings: Screen = {
       id: MORE,
       route: [OPEN, { scrollTo: { role: "button", name: "Show UI tour" } }],
       alt: "Settings scrolled down to the AI tools, Updates, Backup and Help cards",
+    },
+    {
+      id: ADVANCED,
+      route: [OPEN, { scrollTo: { role: "switch", name: "Enable Advanced Features" } }],
+      alt: "The end of the General card, with Enable Advanced Features turned on, and the AI tools card under it",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -44,7 +50,11 @@ export const settings: Screen = {
   ],
   groups: [
     { id: "appearance", title: "Appearance", summary: "The theme and the accent colour." },
-    { id: "general", title: "General", summary: "Running in the tray, starting with Windows, and how fast the app may call Azure DevOps." },
+    {
+      id: "general",
+      title: "General",
+      summary: "Running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the advanced features.",
+    },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
     { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
     { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
@@ -86,6 +96,17 @@ export const settings: Screen = {
       does:
         "How quickly the app sends requests: **Full speed**, **Balanced** or **Gentle**, with the chosen one explained underneath. Azure DevOps limits requests per person, and your browser uses the same allowance. " +
         "**Full speed** is the default; choose **Balanced** if Azure DevOps warns you about usage, or **Gentle** while you are working in Azure DevOps too.",
+    },
+    {
+      id: "advanced-features",
+      shot: ADVANCED,
+      group: "general",
+      locate: { role: "switch", name: "Enable Advanced Features" },
+      name: "Enable Advanced Features",
+      does:
+        "Off by default. On: the sidebar adds **Auto Run**, under Run Tests, and **API Templates**, at the end, and the AI Bridge tab adds the environments they work in and the AI tools that go with them. " +
+        "Off again: they are hidden, and your scripts, runs and templates are kept on this computer for when you turn it back on.",
+      tips: ["With the advanced features on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one."],
     },
 
     // --- Changelog, backup, updates -------------------------------------------
@@ -179,7 +200,7 @@ export const settings: Screen = {
     },
     {
       id: "allow-machine-wide",
-      shot: MORE,
+      shot: ADVANCED,
       group: "ai-tools",
       locate: { role: "switch", name: "Allow registering AI tools machine-wide" },
       name: "Allow registering AI tools machine-wide",
