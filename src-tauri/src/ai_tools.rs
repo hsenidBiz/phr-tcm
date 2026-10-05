@@ -163,6 +163,7 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "record_autorun_quirk",
     "retire_autorun_quirk",
     "mark_autorun_suspected_defect",
+    "set_autorun_order",
     "propose_accounts",
     "get_accounts",
     "list_test_files",

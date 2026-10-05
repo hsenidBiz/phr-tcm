@@ -835,3 +835,70 @@ fn browser_name(name: &str) -> String {
     }
     .to_string()
 }
+
+/// Where Auto Run's own order for each PBI lives: `orders/<pbi id>.json`.
+fn order_path(root: &Path, pbi_id: i32) -> PathBuf {
+    root.join("orders").join(format!("{pbi_id}.json"))
+}
+
+/// Auto Run's own order for a PBI, as stored.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedOrder {
+    case_ids: Vec<i32>,
+}
+
+/// Auto Run's own execution order for a PBI on this machine, or `None`
+/// when there is none. It is separate from Run Tests' order. A file that
+/// cannot be read, or holds no cases, is no order: it is logged, and the
+/// suggested order is used.
+pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
+    let path = order_path(root, pbi_id);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be read: {e}"));
+            return None;
+        }
+    };
+    match serde_json::from_str::<SavedOrder>(text.trim_start_matches('\u{feff}')) {
+        Ok(saved) if !saved.case_ids.is_empty() => Some(saved.case_ids),
+        Ok(_) => None,
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} is not readable: {e}"));
+            None
+        }
+    }
+}
+
+/// Save Auto Run's own order for a PBI, each case once where it first
+/// appears. Written by a temporary file and a rename, so a reader never
+/// sees half of it. An empty order is refused: clearing is `clear_order`.
+pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+    let mut ids: Vec<i32> = Vec::with_capacity(case_ids.len());
+    for id in case_ids {
+        if !ids.contains(id) {
+            ids.push(*id);
+        }
+    }
+    if ids.is_empty() {
+        return Err("an order needs at least one case".to_string());
+    }
+    let path = order_path(root, pbi_id);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&SavedOrder { case_ids: ids }).map_err(|e| e.to_string())?;
+    crate::ai_tools::atomic_write(&path, &json)
+}
+
+/// Remove Auto Run's own order for a PBI, so the suggested order is used
+/// again. Only that one file goes; a PBI with no order is left as it is.
+pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
+    let path = order_path(root, pbi_id);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("could not remove {}: {e}", path.display())),
+    }
+}

@@ -484,6 +484,23 @@ export const commands = {
 	 */
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
 	/**
+	 *  The plan for the cases selected on the Auto Run tab, in list order.
+	 *  Each case's marks come from its saved script; a case with no script
+	 *  has none. Scripts and orders are kept by work item id, so the
+	 *  organization and project name the selection's source and nothing more.
+	 */
+	autoRunPlan: (organization: string, project: string, pbiId: number, caseIds: number[]) => typedError<PlanView, string>(__TAURI_INVOKE("auto_run_plan", { organization, project, pbiId, caseIds })),
+	/**
+	 *  Save Auto Run's own execution order for a PBI on this machine. Run
+	 *  Tests' order is separate and is not changed.
+	 */
+	autoRunSaveOrder: (pbiId: number, caseIds: number[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_order", { pbiId, caseIds })),
+	/**
+	 *  "Use suggested order": forget the PBI's own order, so the suggested
+	 *  order is used again.
+	 */
+	autoRunClearOrder: (pbiId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_order", { pbiId })),
+	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
 	 *  button reads back.
@@ -2751,6 +2768,22 @@ export type PlanCreated = {
 	plan_name: string,
 };
 
+/**
+ *  The plan for a selection, as the screen shows it: the order, the order
+ *  split into phases at each reset point, and the reset points. `counts`
+ *  is `(this order's resets, the suggested order's resets)`, only when
+ *  Auto Run's own order for the PBI needs more resets than the suggestion.
+ *  `saved` says whether the PBI has an order of its own on this machine.
+ *  Titles are the screen's: it has the case list.
+ */
+export type PlanView = {
+	order: number[],
+	phases: number[][],
+	resets: Reset[],
+	counts: [number, number] | null,
+	saved: boolean,
+};
+
 export type PlanWithSuites = {
 	plan: TestPlan,
 	suites: SuiteRef[],
@@ -3439,6 +3472,18 @@ export type ReportPalette = {
 	warning: string,
 	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
 	dark: boolean,
+};
+
+/**
+ *  A reset point: before `before_case_id` runs, a person reverts `names`.
+ *  `names` are display spellings, in the order the case lists them;
+ *  `changed_by` gives, for each of those names, the cases that changed it
+ *  since the last reset, in run order.
+ */
+export type Reset = {
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
 };
 
 export type ResultDetail = {

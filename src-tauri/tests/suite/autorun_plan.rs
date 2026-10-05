@@ -1,0 +1,349 @@
+//! The Auto Run planner: a selection of cases and their scripts' marks in,
+//! an order and its reset points out. See the design "Auto Run reset
+//! phases" §2 and §5. Pure: no browser, no Azure DevOps, no store - except
+//! the command's own half at the end, which reads marks and the saved
+//! order from a store on disk.
+
+use std::collections::HashMap;
+use v2_lib::autorun::plan::{phases, plan_for, suggest, Marks, Plan, Reset};
+use v2_lib::autorun::{store, CaseScript, StepScript};
+use v2_lib::browser::actions::Action;
+
+fn names(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+fn m(changes: &[&str], needs: &[&str]) -> Marks {
+    Marks { changes: names(changes), needs: names(needs) }
+}
+
+fn none() -> Marks {
+    Marks::default()
+}
+
+fn map(cases: &[(i32, Marks)]) -> HashMap<i32, Marks> {
+    cases.iter().cloned().collect()
+}
+
+fn reset(before: i32, changed: &[(&str, &[i32])]) -> Reset {
+    Reset {
+        before_case_id: before,
+        names: changed.iter().map(|(n, _)| n.to_string()).collect(),
+        changed_by: changed.iter().map(|(n, ids)| (n.to_string(), ids.to_vec())).collect(),
+    }
+}
+
+// ------------------------------------------------------------ the suggested order
+
+/// No marks: list order, one phase, nothing else.
+#[test]
+fn no_marks_keeps_list_order_in_one_phase() {
+    let cases = vec![(3, none()), (1, none()), (2, none())];
+    assert_eq!(suggest(&cases), vec![3, 1, 2]);
+    let (plan, counts) = plan_for(&cases, None);
+    assert_eq!(plan, Plan { order: vec![3, 1, 2], phases: vec![vec![3, 1, 2]], resets: vec![] });
+    assert_eq!(counts, None);
+}
+
+/// One change, with a needer before the changer and one after it: the one
+/// after moves ahead of the changer, and nothing else moves.
+#[test]
+fn needers_of_a_name_run_before_its_changer() {
+    let cases = vec![
+        (1, m(&[], &["cycle published"])),
+        (2, m(&["cycle published"], &[])),
+        (3, m(&[], &["cycle published"])),
+        (4, none()),
+    ];
+    assert_eq!(suggest(&cases), vec![1, 3, 2, 4]);
+    let (plan, counts) = plan_for(&cases, None);
+    assert_eq!(plan.phases, vec![vec![1, 3, 2, 4]]);
+    assert!(plan.resets.is_empty());
+    assert_eq!(counts, None);
+}
+
+/// A case that needs X unchanged and then changes X (publishing the cycle)
+/// runs after the other needers of X and before the other changers of X.
+#[test]
+fn a_case_that_needs_and_changes_a_name_sits_between_its_needers_and_changers() {
+    let cases = vec![
+        (10, m(&["cycle published"], &["cycle published"])),
+        (11, m(&["cycle published"], &[])),
+        (12, m(&[], &["cycle published"])),
+    ];
+    assert_eq!(suggest(&cases), vec![12, 10, 11]);
+    let (plan, _) = plan_for(&cases, None);
+    assert_eq!(plan.phases, vec![vec![12, 10, 11]]);
+    assert!(plan.resets.is_empty());
+}
+
+/// Two names, each with its own needers and changers, and a case needing
+/// both: every needer runs before every changer of what it needs.
+#[test]
+fn two_names_order_every_needer_before_the_changers() {
+    let cases = vec![
+        (1, m(&["x"], &[])),
+        (2, m(&[], &["x"])),
+        (3, m(&["y"], &[])),
+        (4, m(&[], &["y"])),
+        (5, m(&[], &["x", "y"])),
+    ];
+    assert_eq!(suggest(&cases), vec![2, 4, 5, 1, 3]);
+    let (plan, counts) = plan_for(&cases, None);
+    assert_eq!(plan.phases, vec![vec![2, 4, 5, 1, 3]]);
+    assert!(plan.resets.is_empty());
+    assert_eq!(counts, None);
+}
+
+/// A changes X and needs Y unchanged, while B changes Y and needs X
+/// unchanged: no order avoids a reset. The cycle is broken by taking the
+/// earliest case in list order, so the reset falls before the second.
+#[test]
+fn a_two_case_cycle_is_broken_at_the_earliest_case_and_becomes_one_reset() {
+    let cases = vec![(10, m(&["x"], &["y"])), (20, m(&["y"], &["x"]))];
+    assert_eq!(suggest(&cases), vec![10, 20]);
+    let (plan, counts) = plan_for(&cases, None);
+    assert_eq!(plan.order, vec![10, 20]);
+    assert_eq!(plan.phases, vec![vec![10], vec![20]]);
+    assert_eq!(plan.resets, vec![reset(20, &[("x", &[10])])]);
+    assert_eq!(counts, None);
+}
+
+/// Three cases in a ring (1 needs what 3 changes, 3 needs what 2 changes,
+/// 2 needs what 1 changes). List order would need two resets; breaking the
+/// ring at case 1 and following the constraints needs one.
+#[test]
+fn a_three_case_cycle_is_broken_once() {
+    let cases = vec![
+        (1, m(&["x"], &["z"])),
+        (2, m(&["y"], &["x"])),
+        (3, m(&["z"], &["y"])),
+    ];
+    assert_eq!(suggest(&cases), vec![1, 3, 2]);
+    let (plan, _) = plan_for(&cases, None);
+    assert_eq!(plan.phases, vec![vec![1, 3], vec![2]]);
+    assert_eq!(plan.resets, vec![reset(2, &[("x", &[1])])]);
+
+    // The same three in list order, for comparison: two resets.
+    let in_list = phases(&[1, 2, 3], &map(&cases));
+    assert_eq!(in_list.resets.len(), 2);
+}
+
+/// Two cases that each need and change the same name (two publishes)
+/// cannot both run before the other: one reset between them.
+#[test]
+fn two_cases_that_both_need_and_change_a_name_need_a_reset_between_them() {
+    let cases = vec![(7, m(&["cycle published"], &["cycle published"])), (8, m(&["cycle published"], &["cycle published"]))];
+    assert_eq!(suggest(&cases), vec![7, 8]);
+    let (plan, _) = plan_for(&cases, None);
+    assert_eq!(plan.resets, vec![reset(8, &[("cycle published", &[7])])]);
+}
+
+/// A case listed twice is planned once, where it first appears.
+#[test]
+fn a_case_listed_twice_is_planned_once() {
+    let cases = vec![(1, none()), (2, none()), (1, none())];
+    assert_eq!(suggest(&cases), vec![1, 2]);
+    assert_eq!(plan_for(&cases, None).0.phases, vec![vec![1, 2]]);
+}
+
+#[test]
+fn an_empty_selection_plans_nothing() {
+    let (plan, counts) = plan_for(&[], None);
+    assert_eq!(plan, Plan { order: vec![], phases: vec![], resets: vec![] });
+    assert_eq!(counts, None);
+}
+
+// ------------------------------------------------------------ phases
+
+/// Each boundary names what to revert and, for each name, every case that
+/// changed it since the last reset.
+#[test]
+fn a_reset_names_each_name_and_every_case_that_changed_it() {
+    let marks = map(&[
+        (1, m(&["x"], &[])),
+        (2, m(&["x", "y"], &[])),
+        (3, m(&[], &["y", "x"])),
+        (4, m(&["y"], &[])),
+        (5, m(&[], &["x", "y"])),
+    ]);
+    let plan = phases(&[1, 2, 3, 4, 5], &marks);
+    assert_eq!(plan.phases, vec![vec![1, 2], vec![3, 4], vec![5]]);
+    // Before 3: its needs, in its own order. Before 5: only y was changed
+    // since the reset, by 4 alone.
+    assert_eq!(
+        plan.resets,
+        vec![reset(3, &[("y", &[2]), ("x", &[1, 2])]), reset(5, &[("y", &[4])])]
+    );
+}
+
+/// Review Focus 1: names that differ only in case or spacing are one name,
+/// shown in the first spelling seen.
+#[test]
+fn names_that_differ_in_case_or_spacing_are_one_name_shown_as_first_spelled() {
+    let cases = vec![
+        (1, m(&["Cycle Published"], &[])),
+        (2, m(&[], &[" cycle  published "])),
+    ];
+    // The needer moves ahead: the two spellings are one name.
+    assert_eq!(suggest(&cases), vec![2, 1]);
+    let plan = phases(&[1, 2], &map(&cases));
+    assert_eq!(plan.resets, vec![reset(2, &[("Cycle Published", &[1])])]);
+}
+
+/// A case with no entry in the marks has none.
+#[test]
+fn a_case_missing_from_the_marks_has_none() {
+    let plan = phases(&[1, 9, 2], &map(&[(1, m(&["x"], &[])), (2, m(&[], &["x"]))]));
+    assert_eq!(plan.phases, vec![vec![1, 9], vec![2]]);
+    assert_eq!(plan.resets, vec![reset(2, &[("x", &[1])])]);
+}
+
+/// Review Focus 3: only needers of one name and no changer - one phase, no
+/// reset.
+#[test]
+fn needers_with_no_changer_are_one_phase() {
+    let cases = vec![(1, m(&[], &["x"])), (2, m(&[], &["x"])), (3, m(&[], &["x"]))];
+    assert_eq!(suggest(&cases), vec![1, 2, 3]);
+    let (plan, counts) = plan_for(&cases, None);
+    assert_eq!(plan, Plan { order: vec![1, 2, 3], phases: vec![vec![1, 2, 3]], resets: vec![] });
+    assert_eq!(counts, None);
+}
+
+/// Review Focus 5: marks the order already satisfies change nothing - the
+/// plan is the same as with no marks.
+#[test]
+fn marks_the_order_already_satisfies_give_the_plan_of_no_marks() {
+    let marked = vec![(1, m(&[], &["x"])), (2, m(&["x"], &[])), (3, none())];
+    let bare = vec![(1, none()), (2, none()), (3, none())];
+    assert_eq!(plan_for(&marked, None), plan_for(&bare, None));
+    assert_eq!(plan_for(&marked, Some(&[1, 2, 3])), plan_for(&bare, Some(&[1, 2, 3])));
+    assert_eq!(plan_for(&marked, Some(&[1, 2, 3])).1, None);
+}
+
+// ------------------------------------------------------------ Auto Run's own order
+
+/// A saved order is used as it is, even where the suggestion differs, when
+/// it needs no more resets.
+#[test]
+fn a_saved_order_is_used_as_it_is() {
+    let cases = vec![(1, none()), (2, none()), (3, none())];
+    let (plan, counts) = plan_for(&cases, Some(&[3, 1, 2]));
+    assert_eq!(plan.order, vec![3, 1, 2]);
+    assert_eq!(plan.phases, vec![vec![3, 1, 2]]);
+    assert_eq!(counts, None);
+}
+
+/// Review Focus 2: ids no longer selected (or no longer in the PBI) are
+/// dropped, and selected cases the order misses go at the end in list
+/// order. Nothing crashes on an order that names none of them.
+#[test]
+fn a_saved_order_drops_stale_ids_and_appends_missing_cases_in_list_order() {
+    let cases = vec![(1, none()), (2, none()), (3, none()), (4, none())];
+    assert_eq!(plan_for(&cases, Some(&[99, 3, 1, 3])).0.order, vec![3, 1, 2, 4]);
+    assert_eq!(plan_for(&cases, Some(&[98, 99])).0.order, vec![1, 2, 3, 4]);
+    assert_eq!(plan_for(&cases, Some(&[])).0.order, vec![1, 2, 3, 4]);
+    assert_eq!(plan_for(&[], Some(&[1, 2])).0, Plan { order: vec![], phases: vec![], resets: vec![] });
+}
+
+/// A saved order that needs more resets than the suggestion is still used,
+/// and says how many each needs: (saved, suggested).
+#[test]
+fn a_saved_order_that_needs_more_resets_reports_both_counts() {
+    let cases = vec![
+        (1, m(&["x"], &[])),
+        (2, m(&[], &["x"])),
+        (3, m(&["y"], &[])),
+        (4, m(&[], &["y"])),
+        (5, m(&[], &["x", "y"])),
+    ];
+    let (plan, counts) = plan_for(&cases, Some(&[1, 2, 3, 4, 5]));
+    assert_eq!(plan.order, vec![1, 2, 3, 4, 5]);
+    assert_eq!(plan.phases, vec![vec![1], vec![2, 3], vec![4, 5]]);
+    assert_eq!(plan.resets, vec![reset(2, &[("x", &[1])]), reset(4, &[("y", &[3])])]);
+    assert_eq!(counts, Some((2, 0)));
+
+    // A saved order that is no worse reports nothing.
+    assert_eq!(plan_for(&cases, Some(&[4, 2, 5, 3, 1])).1, None);
+}
+
+// ------------------------------------------------------------ the command's half
+
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("tcm-autorun-plan-{nanos}-{n}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        TempDir(dir)
+    }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn script(case_id: i32, changes: &[&str], needs: &[&str]) -> CaseScript {
+    CaseScript {
+        case_id,
+        title: format!("Case {case_id}"),
+        account: None,
+        area: None,
+        steps: vec![StepScript {
+            step_number: 1,
+            actions: vec![Action::Navigate { url: "https://app.example/".into() }],
+            unchecked: None,
+        }],
+        repairs: 0,
+        last_repair: None,
+        suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
+        changes: names(changes),
+        needs_unchanged: names(needs),
+        saved_at: None,
+    }
+}
+
+/// The marks come from each case's saved script (no script, no marks), the
+/// saved order from the store, and the view carries both counts only when
+/// the saved order needs more resets.
+#[test]
+fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
+    let dir = TempDir::new();
+    store::save_script(dir.path(), &script(1, &["x"], &[])).unwrap();
+    store::save_script(dir.path(), &script(2, &[], &["x"])).unwrap();
+    // Case 3 has no script.
+
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3]);
+    assert_eq!(view.order, vec![2, 1, 3]);
+    assert_eq!(view.phases, vec![vec![2, 1, 3]]);
+    assert!(view.resets.is_empty());
+    assert_eq!(view.counts, None);
+    assert!(!view.saved);
+
+    store::save_order(dir.path(), 100, &[1, 2, 3]).unwrap();
+    let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3]);
+    assert_eq!(view.order, vec![1, 2, 3]);
+    assert_eq!(view.phases, vec![vec![1], vec![2, 3]]);
+    assert_eq!(view.resets, vec![reset(2, &[("x", &[1])])]);
+    assert_eq!(view.counts, Some((1, 0)));
+    assert!(view.saved);
+
+    // Another PBI's order is its own.
+    let other = v2_lib::commands::autorun::plan_at(dir.path(), 200, &[1, 2, 3]);
+    assert_eq!(other.order, vec![2, 1, 3]);
+    assert!(!other.saved);
+}

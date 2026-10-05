@@ -18,6 +18,7 @@ pub mod lease;
 pub mod marks;
 pub mod nav;
 pub mod patterns;
+pub mod plan;
 pub mod preconditions;
 pub mod publish;
 pub mod quirks;

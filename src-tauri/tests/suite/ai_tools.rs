@@ -601,6 +601,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "record_autorun_quirk",
             "retire_autorun_quirk",
             "mark_autorun_suspected_defect",
+            "set_autorun_order",
             "propose_accounts",
             "get_accounts",
             "list_test_files",

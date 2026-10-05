@@ -649,6 +649,9 @@ fn the_guide_teaches_marking_shared_state() {
         "changes: a name cannot be empty",
         "changes: \"<name>\" is listed twice",
         "A repair may change these lists.",
+        "When you save a script that has marks, send its marks back as they are, or the person's marks are lost.",
+        "`set_autorun_order`",
+        "does not change Run Tests' order.",
     ] {
         assert!(flat.contains(term), "the marks section never says {term:?}\n{flat}");
     }

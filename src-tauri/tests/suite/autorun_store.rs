@@ -7,7 +7,7 @@
 //! landed, never a foothold for driving Azure DevOps from here.
 
 use v2_lib::autorun::store::{
-    clear_runs, clear_scripts, downloads_dir, empty_supervised_downloads, list_runs, load_run, load_script,
+    clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
     load_shot, new_run_id, supervised_downloads_dir,
     safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
     SaveScriptsError,
@@ -976,4 +976,68 @@ fn emptying_the_supervised_downloads_leaves_the_runs_alone() {
     assert_eq!(std::fs::read_to_string(run.join("b.csv")).unwrap(), "keep");
     // Nothing there is nothing to do.
     assert_eq!(empty_supervised_downloads(&root.join("missing")).unwrap(), 0);
+}
+
+// ------------------------------------------------------------ Auto Run's own order
+
+/// Auto Run's order for a PBI is kept in `orders/<pbi id>.json` as
+/// `{ "case_ids": [...] }`, and comes back as it was saved.
+#[test]
+fn an_order_round_trips_per_pbi() {
+    let dir = TempDir::new();
+    assert_eq!(load_order(dir.path(), 100), None);
+    save_order(dir.path(), 100, &[3, 1, 2]).unwrap();
+    save_order(dir.path(), 200, &[5]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![3, 1, 2]));
+    assert_eq!(load_order(dir.path(), 200), Some(vec![5]));
+    let file = std::fs::read_to_string(dir.path().join("orders").join("100.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(v, serde_json::json!({ "case_ids": [3, 1, 2] }));
+    // Saved again: replaced, and nothing is left beside it.
+    save_order(dir.path(), 100, &[2, 3]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![2, 3]));
+    let mut left: Vec<String> = std::fs::read_dir(dir.path().join("orders"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, vec!["100.json", "200.json"]);
+}
+
+/// An id listed twice is kept once, where it first appears.
+#[test]
+fn an_order_keeps_each_case_once() {
+    let dir = TempDir::new();
+    save_order(dir.path(), 100, &[3, 1, 3, 2, 1]).unwrap();
+    assert_eq!(load_order(dir.path(), 100), Some(vec![3, 1, 2]));
+}
+
+/// Clearing removes that PBI's order file and nothing else: not another
+/// PBI's order, not a script, not a run.
+#[test]
+fn clearing_an_order_removes_only_that_file() {
+    let dir = TempDir::new();
+    save_order(dir.path(), 100, &[1, 2]).unwrap();
+    save_order(dir.path(), 200, &[3]).unwrap();
+    save_script(dir.path(), &script()).unwrap();
+    clear_order(dir.path(), 100).unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    assert_eq!(load_order(dir.path(), 200), Some(vec![3]));
+    assert!(load_script(dir.path(), script().case_id).unwrap().is_some());
+    // Clearing an order that is not there is not an error.
+    clear_order(dir.path(), 100).unwrap();
+    clear_order(dir.path(), 300).unwrap();
+}
+
+/// An order file that cannot be read, or holds no cases, is no order: the
+/// suggestion is used rather than nothing.
+#[test]
+fn an_unreadable_or_empty_order_is_no_order() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("orders")).unwrap();
+    std::fs::write(dir.path().join("orders").join("100.json"), "not json").unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    std::fs::write(dir.path().join("orders").join("100.json"), r#"{ "case_ids": [] }"#).unwrap();
+    assert_eq!(load_order(dir.path(), 100), None);
+    assert!(save_order(dir.path(), 100, &[]).is_err(), "an empty order is refused");
 }

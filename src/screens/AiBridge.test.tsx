@@ -961,6 +961,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "replay_autorun_to_step",
     "retire_autorun_quirk",
     "save_autorun_script",
+    "set_autorun_order",
     "try_autorun_action",
   ]);
 });

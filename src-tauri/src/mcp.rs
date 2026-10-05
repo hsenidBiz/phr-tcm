@@ -416,6 +416,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["case_id", "step_number", "note"]),
         },
         {
+            "name": "set_autorun_order",
+            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, so a run needs as few resets as possible; the scripts' changes and needs_unchanged marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Cases you leave out run after the listed ones, in list order. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
+            "inputSchema": schema(serde_json::json!({
+                "pbi_id": { "type": "number", "description": "The PBI whose cases these are." },
+                "case_ids": {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "description": "The PBI's test case ids, in the order Auto Run should run them, each once.",
+                },
+            }), &["pbi_id", "case_ids"]),
+        },
+        {
             "name": "propose_accounts",
             "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role?, password? }. Include each account's password from the same database lookup that found its login, because every account's password can be different - but never a hash: a value that is clearly a hash or an encrypted blob is left out, and you say so. A proposal that carries any password is refused unless the environment is marked as a test environment. The person picks which to add in the app, and can type another password over a proposed one. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
             "inputSchema": schema(serde_json::json!({
@@ -912,6 +924,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
+        "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
         "list_test_files" => call("GET", "/autorun-test-files", ""),

@@ -573,7 +573,13 @@ save refuses a list that breaks these rules, one sentence per problem:
 and the same four for `needs_unchanged`.
 
 A repair may change these lists. Marking a saved script is not a repair:
-it needs no "edits" and uses none of the repair count.
+it needs no "edits" and uses none of the repair count. When you save a
+script that has marks, send its marks back as they are, or the person's
+marks are lost.
+
+`set_autorun_order` sets the order Auto Run runs a PBI's cases in, with
+each case that needs a name unchanged before the cases that change it, and
+does not change Run Tests' order.
 
 ## Every expected result is checked
 
