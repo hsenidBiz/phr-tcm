@@ -33,6 +33,9 @@ const BROWSERS = [
   { value: "chrome", label: "Google Chrome" },
 ];
 
+/** Where the Retry transient failures once choice is remembered. */
+const RETRY_KEY = "tcm-v2-autorun-retry-transient";
+
 /** A window this tall has room to show the case after the running one as
  * well, so it opens too. Shorter, only the running case opens. */
 const TALL_WINDOW = "(min-height: 900px)";
@@ -109,6 +112,16 @@ export default function ReplayPane({
   /** Off by default: an unattended run's whole point is that nobody has to
    * sit in front of it. */
   const [watch, setWatch] = useState(() => localStorage.getItem("tcm-v2-autorun-watch") === "1");
+  /** On by default: a case that failed in a way that looks transient (a
+   * gateway error, a dropped connection, the browser going silent) runs
+   * once more, in a fresh browser, and is labelled Retried. */
+  const [retryTransient, setRetryTransient] = useState(() => {
+    try {
+      return localStorage.getItem(RETRY_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
 
   /** The tester's accounts, key and name only: the Sign in as choices. */
   const [accounts, setAccounts] = useState<{ key: string; label: string }[]>([]);
@@ -235,6 +248,7 @@ export default function ReplayPane({
         runAccount || null,
         browserName,
         watch,
+        retryTransient,
       );
       if (r.status === "error") {
         setError(r.error);
@@ -376,6 +390,25 @@ export default function ReplayPane({
           <p className="text-xs text-faint">
             Off: the browser runs in the background and you can keep working. On: a window opens
             for every case.
+          </p>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox
+              checked={retryTransient}
+              ariaLabel="Retry transient failures once"
+              onCheckedChange={(on) => {
+                setRetryTransient(on);
+                try {
+                  localStorage.setItem(RETRY_KEY, on ? "1" : "0");
+                } catch {
+                  // storage unavailable - the choice lasts this session
+                }
+              }}
+            />
+            Retry transient failures once
+          </label>
+          <p className="text-xs text-faint">
+            A case that fails on a gateway error, a dropped connection or a browser that stops
+            answering runs once more, and is labelled Retried.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={onClose}>
