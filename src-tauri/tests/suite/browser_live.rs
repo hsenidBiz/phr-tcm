@@ -1366,12 +1366,12 @@ async fn a_recorded_menu_path_is_saved_only_after_it_replays_in_a_fresh_browser(
 
     // Check in a fresh browser, then save; a wrong ending is refused.
     let mut second = open().await;
-    assert_eq!(check_path(&mut second.cdp, root.path(), &recipe, &kim(), &path, &timing()).await, Ok("/leave".to_string()));
+    assert_eq!(check_path(&mut second.cdp, root.path(), &recipe, &kim(), &path, &timing(), &mut v2_lib::autorun::lease::Held::setup()).await, Ok("/leave".to_string()));
     drop(second);
     let mut wrong = path.clone();
     wrong.arrived = "/nowhere".into();
     let mut third = open().await;
-    let err = check_path(&mut third.cdp, root.path(), &recipe, &kim(), &wrong, &Timing { nav_ms: 2000, ..timing() }).await.unwrap_err();
+    let err = check_path(&mut third.cdp, root.path(), &recipe, &kim(), &wrong, &Timing { nav_ms: 2000, ..timing() }, &mut v2_lib::autorun::lease::Held::setup()).await.unwrap_err();
     assert!(err.contains("the page ended on /leave, not /nowhere"), "{err}");
     put_path(root.path(), "acme", "Web", path).unwrap();
     assert_eq!(load_nav(root.path(), "acme", "Web").unwrap().modules.len(), 1);
@@ -1440,7 +1440,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     let recipe = draft.recipe(&fields, None).expect("the recording made no recipe");
     let before = app.logins.load(Ordering::SeqCst);
     let mut fresh = open().await;
-    check_sign_in(&mut fresh.cdp, root.path(), &recipe, &kim(), &timing()).await.expect("the recorded recipe did not sign in");
+    check_sign_in(&mut fresh.cdp, root.path(), &recipe, &kim(), &timing(), &mut v2_lib::autorun::lease::Held::setup()).await.expect("the recorded recipe did not sign in");
     assert_eq!(app.logins.load(Ordering::SeqCst), before + 1, "it signed in through the form");
     drop(fresh);
 
@@ -1448,7 +1448,7 @@ async fn a_recorded_sign_in_is_what_the_page_saw_and_signs_in_again_in_a_fresh_b
     let mut wrong = kim();
     wrong.password = "nope".into();
     let mut third_browser = open().await;
-    let err = check_sign_in(&mut third_browser.cdp, root.path(), &recipe, &wrong, &Timing { nav_ms: 3000, ..timing() })
+    let err = check_sign_in(&mut third_browser.cdp, root.path(), &recipe, &wrong, &Timing { nav_ms: 3000, ..timing() }, &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert!(err.starts_with("the recorded steps ran, but the signed-in check never appeared"), "{err}");

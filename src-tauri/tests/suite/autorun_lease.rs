@@ -37,7 +37,7 @@ fn case_of(run: &str) -> Holder {
 #[tokio::test]
 async fn a_second_acquire_waits_and_gets_the_lease_once_the_first_is_dropped() {
     let _l = crate::serial::account_leases();
-    let first = lease::try_acquire("env-aa000001", KEY, Holder::Browser).unwrap();
+    let first = lease::try_acquire("env-aa000001", KEY, case_of("run-1")).unwrap();
     let let_go = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(200)).await;
         drop(first);
@@ -59,11 +59,11 @@ async fn a_wait_that_runs_out_says_who_had_the_account() {
     let _l = crate::serial::account_leases();
     let env = "env-aa000002";
     let cases = [
-        (Holder::Browser, case_of("run-1"), "the Auto Run browser"),
         (Holder::Template, case_of("run-1"), "an API template run"),
         (case_of("run-1"), case_of("run-1"), "another case in this run"),
         (case_of("run-1"), case_of("run-2"), "an unattended run"),
         (case_of("run-1"), Holder::Template, "an unattended run"),
+        (case_of("run-1"), Holder::Setup, "an unattended run"),
     ];
     for (holder, asking, said) in cases {
         let held = lease::try_acquire(env, KEY, holder).unwrap();
@@ -72,6 +72,25 @@ async fn a_wait_that_runs_out_says_who_had_the_account() {
         assert!(began.elapsed() >= Duration::from_millis(100), "it gave up before its wait: {:?}", began.elapsed());
         assert_eq!(refused, format!("the account admin was in use by {said} - try again when it is free"));
         assert!(lease::is_held(env, KEY), "a refusal never takes the lease from its holder");
+        drop(held);
+    }
+    assert!(!lease::is_held(env, KEY));
+}
+
+/// The supervised browser and Auto Run setup hold an account until a person
+/// closes them: a waiter is refused at once, with no polling.
+#[tokio::test]
+async fn nothing_waits_on_an_account_a_person_holds() {
+    let _l = crate::serial::account_leases();
+    let env = "env-aa00000a";
+    for (holder, said) in [(Holder::Browser, "the Auto Run browser"), (Holder::Setup, "Auto Run setup")] {
+        let held = lease::try_acquire(env, KEY, holder).unwrap();
+        for asking in [case_of("run-1"), Holder::Template, Holder::Browser, Holder::Setup] {
+            let began = Instant::now();
+            let refused = lease::acquire(env, KEY, asking, Duration::from_secs(5)).await.unwrap_err();
+            assert!(began.elapsed() < Duration::from_millis(100), "it waited on {said}: {:?}", began.elapsed());
+            assert_eq!(refused, format!("the account admin was in use by {said} - try again when it is free"));
+        }
         drop(held);
     }
     assert!(!lease::is_held(env, KEY));
@@ -155,9 +174,9 @@ async fn a_supervised_sign_in_on_a_held_account_is_refused_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let env = env_of(dir.path());
     let _template = lease::try_acquire(&env, KEY, Holder::Template).unwrap();
-    let browser = Held::supervised();
+    let mut browser = Held::supervised();
     let began = Instant::now();
-    let refused = browser.ready(dir.path(), KEY).await.err().expect("a held account was not refused");
+    let refused = browser.hold(dir.path(), KEY).await.expect_err("a held account was not refused");
     assert!(began.elapsed() < Duration::from_millis(100), "the supervised browser waited: {:?}", began.elapsed());
     assert_eq!(refused, "the account admin was in use by an API template run - try again when it is free");
     assert_eq!(browser.account(), None);
@@ -190,8 +209,9 @@ async fn a_supervised_sign_in_step_on_a_held_account_signs_nobody_in() {
     assert_eq!(account.as_deref(), Some("manager"), "a refused sign-in changes nothing in the browser");
 }
 
-/// The supervised browser holds its account from a sign-in that worked
-/// until it signs in as another account (or is dropped with its session).
+/// The supervised browser holds its account from a sign-in until it signs
+/// in as another account (or is dropped with its session). A refusal
+/// leaves what it held.
 #[tokio::test]
 async fn the_supervised_browser_holds_its_account_until_it_signs_in_as_another() {
     let _l = crate::serial::account_leases();
@@ -200,26 +220,23 @@ async fn the_supervised_browser_holds_its_account_until_it_signs_in_as_another()
     let env = env_of(root);
     let mut browser = Held::supervised();
 
-    let ready = browser.ready(root, "admin").await.unwrap();
-    browser.signed_in(ready, true);
+    browser.hold(root, "admin").await.unwrap();
     assert_eq!(browser.account(), Some("admin"));
     assert!(lease::is_held(&env, "admin"));
 
     // The same account again keeps the lease it has: no refusal from itself.
-    let ready = browser.ready(root, "admin").await.unwrap();
-    browser.signed_in(ready, true);
+    browser.hold(root, "admin").await.unwrap();
     assert!(lease::is_held(&env, "admin"));
 
-    // A failed sign-in as another keeps what was held, and holds nothing new.
-    let ready = browser.ready(root, "manager").await.unwrap();
-    browser.signed_in(ready, false);
+    // Refused for an account a case holds: what was held stays held.
+    let case = lease::try_acquire(&env, "manager", case_of("run-1")).unwrap();
+    assert!(browser.hold(root, "manager").await.is_err());
     assert_eq!(browser.account(), Some("admin"));
     assert!(lease::is_held(&env, "admin"));
-    assert!(!lease::is_held(&env, "manager"));
+    drop(case);
 
-    // Another account that worked: the old one is let go.
-    let ready = browser.ready(root, "manager").await.unwrap();
-    browser.signed_in(ready, true);
+    // Another account: the old one is let go.
+    browser.hold(root, "manager").await.unwrap();
     assert_eq!(browser.account(), Some("manager"));
     assert!(!lease::is_held(&env, "admin"));
     assert!(lease::is_held(&env, "manager"));
@@ -228,12 +245,41 @@ async fn the_supervised_browser_holds_its_account_until_it_signs_in_as_another()
     assert!(!lease::is_held(&env, "manager"), "a closed browser still held its account");
 }
 
+/// A `sign_in` that fails may still have signed the account in: the
+/// browser keeps that account's lease, in place of the one before.
+#[tokio::test]
+async fn a_sign_in_step_that_fails_keeps_its_account() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    signing_in_root(root);
+    let env = env_of(root);
+    let step = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "sign_in", "account": "admin" }
+    ] }]))
+    .steps
+    .remove(0);
+    // The recipe's button is not on this page: the sign-in fails.
+    let (mut d, _) = common::stateful_app(false, Some("#go"));
+    let mut account = Some("manager".to_string());
+    let mut held = Held::supervised();
+    held.hold(root, "manager").await.unwrap();
+    let out = run_step_routed(&mut d, root, "Acme", "Web", &step, &quick(), &mut account, &mut held, None).await.unwrap();
+    assert!(!out[0].ok, "{out:?}");
+    assert_eq!(held.account(), Some("admin"));
+    assert!(lease::is_held(&env, "admin"), "a failed sign-in let its account go");
+    assert!(!lease::is_held(&env, "manager"));
+}
+
 // ---- the unattended run ----------------------------------------------
 
-/// Hands out its drivers in turn and keeps each one given back.
+/// Hands out its drivers in turn and keeps each one given back. With
+/// `watch`, it notes at each close whether that account was still held.
 struct Queue<D> {
     drivers: VecDeque<D>,
     returned: Vec<D>,
+    watch: Option<(String, String)>,
+    held_at_close: Vec<bool>,
 }
 
 impl<D: Driver> Browsers for Queue<D> {
@@ -242,12 +288,15 @@ impl<D: Driver> Browsers for Queue<D> {
         self.drivers.pop_front().ok_or_else(|| "no browser left".to_string())
     }
     async fn close(&mut self, d: D) {
+        if let Some((env, key)) = &self.watch {
+            self.held_at_close.push(lease::is_held(env, key));
+        }
         self.returned.push(d);
     }
 }
 
 fn queue<D>(drivers: Vec<D>) -> Queue<D> {
-    Queue { drivers: drivers.into(), returned: vec![] }
+    Queue { drivers: drivers.into(), returned: vec![], watch: None, held_at_close: vec![] }
 }
 
 fn script(case_id: i32, account: Option<&str>, steps: serde_json::Value) -> CaseScript {
@@ -308,9 +357,14 @@ async fn an_unattended_case_on_a_held_account_is_blocked_and_the_run_goes_on() {
     let mut browsers = queue(vec![first, second]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
-    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1), to_run(2)], None, false, &quick(), &cancel, &mut |_| {})
+    // A long wait it must not use: the browser holds the account until a
+    // person closes it.
+    let patient = Timing { lease_wait_ms: 5_000, ..quick() };
+    let began = Instant::now();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1), to_run(2)], None, false, &patient, &cancel, &mut |_| {})
         .await
         .unwrap();
+    assert!(began.elapsed() < Duration::from_secs(2), "the case waited on the Auto Run browser: {:?}", began.elapsed());
 
     let blocked = &run.cases[0];
     let sentence = "the account admin was in use by the Auto Run browser - try again when it is free";
@@ -341,6 +395,7 @@ async fn two_cases_on_one_account_in_a_run_never_block_each_other() {
     let (first, _) = common::stateful_app(false, None);
     let (second, second_state) = common::stateful_app(false, None);
     let mut browsers = queue(vec![first, second]);
+    browsers.watch = Some((env_of(root), KEY.to_string()));
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
     let began = Instant::now();
@@ -353,7 +408,39 @@ async fn two_cases_on_one_account_in_a_run_never_block_each_other() {
     assert!(signed_in_and_ran(&run.cases[0]), "{:?}", run.cases[0]);
     assert!(signed_in_and_ran(&run.cases[1]), "{:?}", run.cases[1]);
     assert!(second_state.clicks.load(std::sync::atomic::Ordering::SeqCst) > 0, "the second case never signed in");
+    // Each case let its account go only once its browser was closed.
+    assert_eq!(browsers.held_at_close, vec![true, true]);
     // The run is over: the account is free.
+    assert!(!lease::is_held(&env_of(root), KEY));
+}
+
+/// A case of another run holds the account: the case waits for it, then
+/// signs in.
+#[tokio::test]
+async fn an_unattended_case_waits_for_another_runs_case_then_signs_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    signing_in_root(root);
+    store::save_script(root, &clicking(1, Some("admin"))).unwrap();
+    let other = lease::try_acquire(&env_of(root), KEY, case_of("run-other")).unwrap();
+    let ends = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        drop(other);
+    });
+    let (d, state) = common::stateful_app(false, None);
+    let mut browsers = queue(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let patient = Timing { lease_wait_ms: 5_000, ..quick() };
+    let began = Instant::now();
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1)], None, false, &patient, &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    ends.await.unwrap();
+    assert!(began.elapsed() >= Duration::from_millis(250), "it did not wait for the other run's case: {:?}", began.elapsed());
+    assert!(signed_in_and_ran(&run.cases[0]), "{:?}", run.cases[0]);
+    assert!(state.clicks.load(std::sync::atomic::Ordering::SeqCst) > 0);
     assert!(!lease::is_held(&env_of(root), KEY));
 }
 
@@ -367,6 +454,7 @@ async fn a_case_whose_sign_in_fails_lets_its_account_go() {
     // The recipe's button is not on this page: the sign-in fails.
     let (d, _) = common::stateful_app(false, Some("#go"));
     let mut browsers = queue(vec![d]);
+    browsers.watch = Some((env_of(root), KEY.to_string()));
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
     run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1)], None, false, &quick(), &cancel, &mut |_| {})
@@ -374,6 +462,7 @@ async fn a_case_whose_sign_in_fails_lets_its_account_go() {
         .unwrap();
     assert!(!signed_in_and_ran(&run.cases[0]), "{:?}", run.cases[0]);
     assert!(run.cases[0].steps[0].outcomes.iter().any(|o| !o.ok), "{:?}", run.cases[0].steps[0]);
+    assert_eq!(browsers.held_at_close, vec![true], "a failed sign-in let its account go before its browser closed");
     assert!(!lease::is_held(&env_of(root), KEY));
 }
 
@@ -456,4 +545,92 @@ async fn a_case_that_panics_lets_its_account_go() {
     let failed = job.await.unwrap_err();
     assert!(failed.is_panic(), "{failed:?}");
     assert!(!lease::is_held(&env, KEY), "a case that panicked kept its account");
+}
+
+// ---- Auto Run setup ---------------------------------------------------
+
+fn leave_path() -> v2_lib::autorun::nav::ModulePath {
+    serde_json::from_value(serde_json::json!({
+        "module": "Leave",
+        "clicks": [ { "role": "link", "name": "Leave", "exact": true }, { "role": "link", "name": "Apply Leave", "exact": true } ],
+        "arrived": "/hr/leave/apply",
+        "recorded": "2026-09-24T10:00:00Z"
+    }))
+    .unwrap()
+}
+
+/// The module-path check (and Try), the module-path recording and the
+/// recorded sign-in's check each clear their sign-in with the account
+/// lease: a held account is refused at once, before the browser is asked
+/// anything.
+#[tokio::test]
+async fn every_setup_sign_in_is_refused_at_once_on_a_held_account() {
+    use v2_lib::autorun::nav::check_path;
+    use v2_lib::commands::autorun_record::prepare_to_record;
+    use v2_lib::commands::autorun_record_signin::check_sign_in;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let _case = lease::try_acquire(&env_of(root), KEY, case_of("run-1")).unwrap();
+    let sentence = "the account admin was in use by an unattended run - try again when it is free";
+    let patient = Timing { lease_wait_ms: 5_000, ..quick() };
+
+    let (mut d, _) = common::stateful_app(false, None);
+    let began = Instant::now();
+    let err = check_path(&mut d, root, &common::menu_recipe(), &common::account(), &leave_path(), &patient, &mut Held::setup())
+        .await
+        .unwrap_err();
+    assert_eq!(err, sentence, "the module-path check");
+    assert!(d.calls.is_empty(), "the module-path check used the browser: {:?}", d.methods());
+
+    let (mut d, _) = common::stateful_app(false, None);
+    let err = prepare_to_record(&mut d, root, &common::menu_recipe(), &common::account(), &patient, &mut Held::setup())
+        .await
+        .unwrap_err();
+    assert_eq!(err, sentence, "the module-path recording");
+    assert!(d.calls.is_empty(), "the module-path recording used the browser: {:?}", d.methods());
+
+    let (mut d, _) = common::stateful_app(false, None);
+    let err = check_sign_in(&mut d, root, &common::recipe(), &common::account(), &patient, &mut Held::setup())
+        .await
+        .unwrap_err();
+    assert_eq!(err, sentence, "the recorded sign-in's check");
+    assert!(d.calls.is_empty(), "the recorded sign-in's check used the browser: {:?}", d.methods());
+
+    assert!(began.elapsed() < Duration::from_millis(500), "a setup sign-in waited: {:?}", began.elapsed());
+}
+
+/// A setup sign-in holds its account until its own lease is dropped, which
+/// its command does once its browser is closed; anything else asking for
+/// the account meanwhile is refused at once with `Auto Run setup`.
+#[tokio::test]
+async fn a_setup_sign_in_holds_its_account_until_it_ends() {
+    use v2_lib::autorun::nav::check_path;
+    use v2_lib::commands::autorun_record_signin::check_sign_in;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let env = env_of(root);
+
+    // The recorded sign-in's check, signing in.
+    let (mut d, _) = common::stateful_app(false, None);
+    let mut setup = Held::setup();
+    check_sign_in(&mut d, root, &common::recipe(), &common::account(), &quick(), &mut setup).await.unwrap();
+    assert!(lease::is_held(&env, KEY));
+    let began = Instant::now();
+    let refused = lease::acquire(&env, KEY, Holder::Template, Duration::from_secs(5)).await.unwrap_err();
+    assert!(began.elapsed() < Duration::from_millis(100), "a template run waited on Auto Run setup");
+    assert_eq!(refused, "the account admin was in use by Auto Run setup - try again when it is free");
+    drop(setup);
+    assert!(!lease::is_held(&env, KEY));
+
+    // The module-path check, whose sign-in fails: the account stays held
+    // until the check ends all the same.
+    let (mut d, _) = common::stateful_app(false, Some("#go"));
+    let mut setup = Held::setup();
+    let err = check_path(&mut d, root, &common::recipe(), &common::account(), &leave_path(), &quick(), &mut setup).await;
+    assert!(err.is_err());
+    assert!(lease::is_held(&env, KEY), "a failed setup sign-in let its account go");
+    drop(setup);
+    assert!(!lease::is_held(&env, KEY));
 }

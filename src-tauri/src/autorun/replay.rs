@@ -185,7 +185,9 @@ pub async fn run_case<D: Driver>(
     cancel: &AtomicBool,
     on_step: &mut (dyn FnMut(i32) + Send),
 ) -> CaseRecord {
-    run_case_as(d, root, organization, project, "", script, script.account.as_deref(), None, timing, cancel, on_step).await
+    let mut lease = Held::new(Holder::Case { run: String::new() }, timing.lease_wait());
+    let account = script.account.as_deref();
+    run_case_as(d, root, organization, project, &mut lease, script, account, None, timing, cancel, on_step).await
 }
 
 /// Run one whole case: an optional sign-in as `account` (step
@@ -194,18 +196,18 @@ pub async fn run_case<D: Driver>(
 /// (but not the run) after the first step that fails or once `cancel` is
 /// set.
 ///
-/// The case signs in only once it holds its account (`lease`), waiting up
-/// to `timing`'s lease wait for whoever has it; a case that cannot get it
-/// is Blocked with the sentence that says who had it, and never signs in.
-/// It holds the account to its end - the lease is a local, so an end, a
-/// stop (this future dropped) and a panic all let it go.
+/// The case signs in only once it holds its account in `lease`, which
+/// waits for a case or a template run up to `timing`'s lease wait; a case
+/// that cannot get it is Blocked with the sentence that says who had it,
+/// and never signs in. The caller owns `lease` and lets it go once the
+/// case's browser is closed (`one_go`).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_case_as<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
     project: &str,
-    run_id: &str,
+    lease: &mut Held,
     script: &CaseScript,
     account: Option<&str>,
     route: Option<&Route>,
@@ -218,7 +220,6 @@ pub async fn run_case_as<D: Driver>(
     let mut signed_in = None;
     let mut current = None;
     let mut stopped = false;
-    let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, timing.lease_wait());
 
     // Why the rest of the case is not being run, once something decided
     // that. Checked here too, before the sign-in - a stop asked for while
@@ -252,13 +253,10 @@ pub async fn run_case_as<D: Driver>(
             // The account is this case's from before its sign-in to its
             // end, whichever way the sign-in goes: one that fails partway
             // may still have signed the account in.
-            match lease.ready(root, key).await {
-                Ok(ready) => lease.keep(ready),
-                Err(why) => {
-                    let mut record = blocked_before_start(script, account, why);
-                    record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
-                    return record;
-                }
+            if let Err(why) = lease.hold(root, key).await {
+                let mut record = blocked_before_start(script, account, why);
+                record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+                return record;
             }
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
@@ -324,7 +322,7 @@ pub async fn run_case_as<D: Driver>(
         }
         on_step(step.step_number);
         let outcomes =
-            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, &mut lease, route).await {
+            match runner::run_step_routed(d, root, organization, project, step, timing, &mut current, lease, route).await {
                 Ok(o) => o,
                 Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
             };
@@ -466,12 +464,16 @@ async fn one_go<B: Browsers>(
                 };
                 progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
             };
+            // The case's account, held until its browser is closed: a local
+            // here, so an end, a stop (this future dropped) and a panic all
+            // let it go too.
+            let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait());
             let rec = run_case_as(
                 &mut d,
                 go.root,
                 go.organization,
                 go.project,
-                run_id,
+                &mut lease,
                 go.script,
                 go.account,
                 go.route,
@@ -481,6 +483,7 @@ async fn one_go<B: Browsers>(
             )
             .await;
             browsers.close(d).await;
+            drop(lease);
             Ok(rec)
         }
     }

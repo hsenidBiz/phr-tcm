@@ -27,7 +27,7 @@ pub(crate) struct Session {
     /// unattended replay (a later phase) is what will.
     pub(crate) account: Option<String>,
     /// The account this browser holds (`autorun::lease`), from a sign-in
-    /// that worked until it signs in as another account. It goes with the
+    /// (one that failed too) until it signs in as another account. It goes with the
     /// session: closing the browser, a second Open replacing it, or the
     /// app exiting all drop it.
     pub(crate) lease: crate::autorun::lease::Held,
@@ -843,9 +843,8 @@ pub fn auto_run_remove_module_path(
 
 /// Sign the named account in, in the open browser. Used before a case's
 /// first step, and by the `sign_in` action in the middle of one. An account
-/// an unattended case or an API template run is signed in as is refused at
-/// once, with the sentence that says who has it, and the browser is left
-/// as it was.
+/// anything else holds (`autorun::lease`) is refused at once, with the
+/// sentence that says who has it, and the browser is left as it was.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_sign_in(
@@ -858,7 +857,9 @@ pub async fn auto_run_sign_in(
     let (recipe, account) = crate::autorun::signin::prepare(&root, &organization, &project, &account_key)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    let ready = session.lease.ready(&root, &account.key).await?;
+    // The account is this browser's from here, whichever way the sign-in
+    // goes: one that fails partway may still have signed it in.
+    session.lease.hold(&root, &account.key).await?;
     let out = crate::autorun::signin::sign_in(
         &mut session.cdp,
         &root,
@@ -867,7 +868,6 @@ pub async fn auto_run_sign_in(
         &crate::browser::timing::Timing::default(),
     )
     .await;
-    session.lease.signed_in(ready, out.ok);
     session.account = out.ok.then(|| account.key.clone());
     crate::applog::info(format!(
         "Auto-run sign-in as {}: {}",

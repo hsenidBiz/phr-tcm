@@ -1,10 +1,24 @@
 //! One sign-in per account at a time.
 //!
 //! PeoplesHR allows one session per user: signing an account in anywhere
-//! ends that account's session everywhere else. So whatever signs in as an
-//! Auto Run account - an unattended case, the supervised Auto Run browser,
-//! an API template run or prove - first takes a lease on (environment id,
-//! account key), process-wide, and holds it while it uses that session.
+//! ends that account's session everywhere else. So every sign-in as an Auto
+//! Run account first takes a lease on (environment id, account key),
+//! process-wide, and holds it while that session is in use. The holders:
+//!
+//! | Holder | Holds the lease | Asks for a held one |
+//! |---|---|---|
+//! | An unattended case | From before its sign-in until its browser is closed at the case's end | Waits |
+//! | The supervised Auto Run browser | From a sign-in until it is closed or signs in as another account | Refused at once |
+//! | An API template run or prove | For its whole run, its browser's close included | Waits |
+//! | Auto Run setup: the module-path check, Try and recording, and the recorded sign-in's check | Until its own browser is closed | Refused at once |
+//!
+//! A waiter waits (up to `WAIT`) only on a holder that ends on its own: a
+//! case or a template run. The supervised browser and Auto Run setup hold an
+//! account until a person closes them, so waiting on them cannot help, and a
+//! waiter is refused at once.
+//!
+//! A sign-in keeps its lease whichever way it went: one that failed partway
+//! may still have signed the account in.
 //!
 //! A lease is released when it is dropped, and only then: a case that ends,
 //! returns early with an error, is stopped (its future dropped) or panics
@@ -21,7 +35,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 /// How long an unattended case or an API template run waits for an
-/// account someone else holds. The supervised browser never waits.
+/// account a case or a template run holds. The supervised browser and Auto
+/// Run setup never wait.
 pub const WAIT: Duration = Duration::from_secs(60);
 
 /// Between looks while waiting.
@@ -36,6 +51,9 @@ pub enum Holder {
     Template,
     /// A case of the unattended run with this id.
     Case { run: String },
+    /// Auto Run setup: the module-path check, Try and recording, and the
+    /// recorded sign-in's check.
+    Setup,
 }
 
 impl Holder {
@@ -47,7 +65,14 @@ impl Holder {
             (Holder::Template, _) => "an API template run",
             (Holder::Case { run }, Holder::Case { run: mine }) if run == mine => "another case in this run",
             (Holder::Case { .. }, _) => "an unattended run",
+            (Holder::Setup, _) => "Auto Run setup",
         }
+    }
+
+    /// Whether this holder lets its account go on its own. The supervised
+    /// browser and Auto Run setup hold theirs until a person closes them.
+    fn ends_on_its_own(&self) -> bool {
+        matches!(self, Holder::Case { .. } | Holder::Template)
     }
 }
 
@@ -98,12 +123,13 @@ fn in_use(key: &str, holder: &str) -> String {
     format!("the account {key} was in use by {holder} - try again when it is free")
 }
 
-/// One look: the lease, or who has it, as `holder` reads them.
-fn take(env: &str, key: &str, holder: &Holder) -> Result<Lease, &'static str> {
+/// One look: the lease, or who has it as `holder` reads them, and whether
+/// they let it go on their own.
+fn take(env: &str, key: &str, holder: &Holder) -> Result<Lease, (&'static str, bool)> {
     let mut t = table();
     let at = (env.to_string(), key.to_string());
     if let Some(e) = t.get(&at) {
-        return Err(e.holder.seen_by(holder));
+        return Err((e.holder.seen_by(holder), e.holder.ends_on_its_own()));
     }
     let ticket = NEXT_TICKET.fetch_add(1, Ordering::SeqCst);
     t.insert(at, Entry { ticket, holder: holder.clone() });
@@ -117,26 +143,28 @@ pub fn is_held(env: &str, key: &str) -> bool {
 
 /// The lease, now, or the sentence that says who has it.
 pub fn try_acquire(env: &str, key: &str, holder: Holder) -> Result<Lease, String> {
-    take(env, key, &holder).map_err(|by| in_use(key, by))
+    take(env, key, &holder).map_err(|(by, _)| in_use(key, by))
 }
 
 /// The lease, waiting up to `wait` for whoever has it to let it go; then
-/// the sentence that says who had it. A zero wait looks once.
+/// the sentence that says who had it. A zero wait looks once, and so does
+/// a request for an account held by a holder that never lets it go on its
+/// own (`Holder::ends_on_its_own`): it is refused at once.
 pub async fn acquire(env: &str, key: &str, holder: Holder, wait: Duration) -> Result<Lease, String> {
     let deadline = Instant::now() + wait;
     let mut waiting = false;
     loop {
-        let by = match take(env, key, &holder) {
+        let (by, ends) = match take(env, key, &holder) {
             Ok(lease) => {
                 if waiting {
                     applog::info(format!("account lease: {key} is free now"));
                 }
                 return Ok(lease);
             }
-            Err(by) => by,
+            Err(held) => held,
         };
         let now = Instant::now();
-        if now >= deadline {
+        if now >= deadline || !ends {
             let sentence = in_use(key, by);
             applog::info(format!("account lease: {sentence}"));
             return Err(sentence);
@@ -152,17 +180,13 @@ pub async fn acquire(env: &str, key: &str, holder: Holder, wait: Duration) -> Re
     }
 }
 
-/// What `Held::ready` hands the sign-in it is for: the new lease, or
-/// nothing when the browser already holds that account.
-#[derive(Debug)]
-pub struct Ready(Option<Lease>);
-
 /// The lease one browser holds for the account it is signed in as.
 ///
-/// A sign-in asks `ready` first and tells `signed_in` how it went. One that
-/// worked holds its account from then on, letting go of the account before
-/// it; one that failed holds nothing new and keeps what was held. Dropping
-/// this - the case ends, the supervised browser closes - lets the account go.
+/// A sign-in asks `hold` first and goes ahead only when it is `Ok`. From
+/// then on the account is this browser's, whichever way the sign-in went,
+/// and the account held before it is let go. Dropping this - the case's
+/// browser closes, the supervised browser or a setup browser closes - lets
+/// the account go.
 #[derive(Debug)]
 pub struct Held {
     holder: Holder,
@@ -181,38 +205,27 @@ impl Held {
         Held::new(Holder::Browser, Duration::ZERO)
     }
 
+    /// Auto Run setup's (a module-path check, Try or recording, or the
+    /// recorded sign-in's check): refused at once, never waited for.
+    pub fn setup() -> Self {
+        Held::new(Holder::Setup, Duration::ZERO)
+    }
+
     /// The account this browser holds, if any.
     pub fn account(&self) -> Option<&str> {
         self.lease.as_ref().map(Lease::key)
     }
 
-    /// Before a sign-in as `key` in `root`'s active environment: the lease
-    /// for it - kept when this browser already holds it, otherwise taken,
-    /// waiting as this holder waits. `Err` is the sentence, and nothing may
-    /// sign in.
-    pub async fn ready(&self, root: &Path, key: &str) -> Result<Ready, String> {
+    /// Before a sign-in as `key` in `root`'s active environment: its lease,
+    /// kept when this browser already holds it, otherwise taken - waiting as
+    /// this holder waits - in place of the one held before. `Err` is the
+    /// sentence: nothing may sign in, and what was held stays held.
+    pub async fn hold(&mut self, root: &Path, key: &str) -> Result<(), String> {
         let env = crate::environments::active_id(root)?;
         if self.lease.as_ref().is_some_and(|l| l.env == env && l.key == key) {
-            return Ok(Ready(None));
+            return Ok(());
         }
-        acquire(&env, key, self.holder.clone(), self.wait).await.map(|l| Ready(Some(l)))
-    }
-
-    /// After the sign-in `ready` was for: one that worked holds its
-    /// account from now on (`keep`); one that failed lets `ready`'s lease go
-    /// and keeps what was held.
-    pub fn signed_in(&mut self, ready: Ready, ok: bool) {
-        if ok {
-            self.keep(ready);
-        }
-    }
-
-    /// The account `ready` was for is this holder's from now on, however
-    /// its sign-in went: an unattended case holds its account from its
-    /// sign-in to its end. The account held before it is let go.
-    pub fn keep(&mut self, ready: Ready) {
-        if let Some(lease) = ready.0 {
-            self.lease = Some(lease);
-        }
+        self.lease = Some(acquire(&env, key, self.holder.clone(), self.wait).await?);
+        Ok(())
     }
 }

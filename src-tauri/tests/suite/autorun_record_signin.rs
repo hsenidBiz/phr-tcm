@@ -565,7 +565,7 @@ async fn the_check_signs_in_through_the_recorded_steps_never_a_saved_session() {
     save_session(dir.path(), "admin", &saved).unwrap();
     // A saved session this app would accept: the check must not use it.
     let (mut d, state) = stateful_app(true, None);
-    check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick()).await.unwrap();
+    check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup()).await.unwrap();
     assert!(!state.restored.load(Ordering::SeqCst), "no saved session was put back");
     assert!(state.typed_password.load(Ordering::SeqCst), "the password was typed");
     assert!(d.calls_to("Network.setCookies").is_empty());
@@ -575,7 +575,7 @@ async fn the_check_signs_in_through_the_recorded_steps_never_a_saved_session() {
 async fn a_check_whose_step_finds_nothing_says_which_step_and_never_the_password() {
     let dir = tempfile::tempdir().unwrap();
     let (mut d, _state) = stateful_app(false, Some("#pass"));
-    let err = check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick()).await.unwrap_err();
+    let err = check_sign_in(&mut d, dir.path(), &recorded_recipe(), &account(), &quick(), &mut v2_lib::autorun::lease::Held::setup()).await.unwrap_err();
     assert!(err.starts_with("the check did not sign in - nothing was saved: sign-in stopped at step 2"), "{err}");
     assert!(!err.contains(PASSWORD) && !err.contains("://"), "{err}");
 }
@@ -982,4 +982,57 @@ async fn an_ordinary_click_is_never_named_by_a_cell_holding_a_typed_value() {
     d.events.push_back(click_report("click", 0, "something else"));
     let captured = capture(&mut d, &AtomicBool::new(true), &AtomicBool::new(false), &AtomicBool::new(false), &mut |_| {}).await;
     assert_eq!(captured.steps, vec![Step::Click(exact_role("button", "Next"))]);
+}
+
+/// Notes, when the check's browser is closed (this guard dropped), whether
+/// the account was still held.
+struct NoteOnClose {
+    env: String,
+    held: Arc<AtomicBool>,
+}
+
+impl Drop for NoteOnClose {
+    fn drop(&mut self) {
+        self.held.store(v2_lib::autorun::lease::is_held(&self.env, "admin"), Ordering::SeqCst);
+    }
+}
+
+/// The save's check takes the account lease before its browser opens:
+/// refused at once while something else holds the account, and otherwise
+/// held until its browser is closed, then let go.
+#[tokio::test]
+async fn a_saves_check_holds_the_account_until_its_browser_closes() {
+    use v2_lib::autorun::lease::{self, Holder};
+    let _claims = crate::serial::autorun();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let env = v2_lib::environments::active_id(dir.path()).unwrap();
+    let fields = [choice(FieldRole::Username, ""), choice(FieldRole::Password, "")];
+
+    // Held by the Auto Run browser: refused before any browser opens.
+    keep_draft(stateful_draft());
+    let browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let opened = AtomicBool::new(false);
+    let err = save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async {
+        opened.store(true, Ordering::SeqCst);
+        Ok::<_, String>((ScriptedDriver::new(|_, _| Ok(json!({}))), ()))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(err, "the account admin was in use by the Auto Run browser - try again when it is free");
+    assert!(!opened.load(Ordering::SeqCst), "a browser was opened for a refused check");
+    assert!(!recording_is_going(), "the refused check kept the recorder");
+    assert_eq!(current_draft(), Some(stateful_draft()), "the refused check lost the draft");
+    drop(browser);
+
+    // Free: held while the check's browser is open, let go once it closes.
+    let (d, _state) = stateful_app(false, None);
+    let held = Arc::new(AtomicBool::new(false));
+    let close = NoteOnClose { env: env.clone(), held: held.clone() };
+    save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async move { Ok::<_, String>((d, close)) })
+        .await
+        .unwrap();
+    assert!(held.load(Ordering::SeqCst), "the account was let go before the check's browser closed");
+    assert!(!lease::is_held(&env, "admin"), "the check kept the account after it ended");
 }

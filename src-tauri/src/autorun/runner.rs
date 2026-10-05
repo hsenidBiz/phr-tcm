@@ -93,7 +93,7 @@ pub async fn run_step<D: Driver>(
 }
 
 /// `run_step` with the browser's own account lease: a `sign_in` is first
-/// cleared with `lease` (`Held::ready`), and one that is refused signs
+/// cleared with `lease` (`Held::hold`), and one that is refused signs
 /// nobody in and fails the step with the sentence that says who has the
 /// account. With a `route` - an unattended run in a project with module
 /// paths - a `sign_in` lands on the home page, so the runner takes the
@@ -153,16 +153,17 @@ pub async fn run_step_routed<D: Driver>(
                     blocked = Some(AFTER_FAILED_SIGN_IN);
                     ActionOutcome::failed(why)
                 }
-                Ok((r, who)) => match lease.ready(root, &who.key).await {
+                Ok((r, who)) => match lease.hold(root, &who.key).await {
                     // Someone else is signed in as this account: nobody is
                     // signed in here, and the browser stays as it was.
                     Err(why) => {
                         blocked = Some(AFTER_FAILED_SIGN_IN);
                         ActionOutcome::failed(why)
                     }
-                    Ok(ready) => {
+                    // The account is this browser's from here, whichever
+                    // way the sign-in goes.
+                    Ok(()) => {
                         let signed = signin::sign_in(d, root, &r, &who, timing).await;
-                        lease.signed_in(ready, signed.ok);
                         *account = signed.ok.then(|| who.key.clone());
                         match route {
                             _ if !signed.ok => {

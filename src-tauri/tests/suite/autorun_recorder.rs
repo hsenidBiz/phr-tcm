@@ -323,11 +323,11 @@ async fn a_path_is_checked_by_signing_in_fresh_and_walking_it_to_where_it_ended(
     let dir = tempfile::tempdir().unwrap();
     let menu: &[(&str, &str, &str)] = &[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/apply")];
     let (mut d, _app) = common::menu_app(menu, "/hr/welcome", 0);
-    let ok = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick()).await;
+    let ok = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
     assert_eq!(ok, Ok("/hr/leave/apply".to_string()));
 
     let (mut d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/welcome", 0);
-    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick())
+    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert!(err.starts_with("click 2, link \"Apply Leave\": "), "{err}");
@@ -344,7 +344,7 @@ async fn a_sign_in_page_that_will_not_load_is_reported_without_its_address() {
             _ => json!({}),
         })
     });
-    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick())
+    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert!(!err.contains("://"), "{err}");
@@ -355,7 +355,7 @@ async fn a_sign_in_page_that_will_not_load_is_reported_without_its_address() {
 async fn a_browser_that_stops_answering_during_the_sign_in_is_told_apart() {
     let dir = tempfile::tempdir().unwrap();
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick())
+    let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert!(!err.contains("://"), "{err}");
@@ -622,7 +622,7 @@ async fn a_recording_whose_home_page_will_not_load_says_it_could_not_start() {
     let dir = tempfile::tempdir().unwrap();
     let (inner, _app) = common::menu_app(&[], "/hr/dashboard", 0);
     let mut d = HomeWillNotLoad { inner, navigations: 0 };
-    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert_eq!(err, "the recording could not start: the home page did not load");
@@ -639,12 +639,12 @@ async fn a_recording_whose_sign_in_fails_says_so_without_an_address() {
             _ => json!({}),
         })
     });
-    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert_eq!(err, SIGN_IN_FAILED);
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick())
+    let err = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
         .await
         .unwrap_err();
     assert_eq!(err, SIGN_IN_BROWSER_SILENT);
@@ -779,7 +779,7 @@ async fn right_after_signing_in_on_the_page_the_recording_began_the_path_clicks_
     let dir = tempfile::tempdir().unwrap();
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let path = leave_from(Some("/hr/home/index"));
-    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &path, &common::quick()).await;
+    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &path, &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
     assert_eq!(ok, Ok("/hr/leave".to_string()));
     assert_eq!(
         *app.log.lock().unwrap(),
@@ -793,7 +793,7 @@ async fn right_after_signing_in_on_the_page_the_recording_began_the_path_clicks_
 async fn a_path_without_a_starting_page_still_goes_home_after_signing_in() {
     let dir = tempfile::tempdir().unwrap();
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
-    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &leave_from(None), &common::quick()).await;
+    let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &leave_from(None), &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
     assert_eq!(ok, Ok("/hr/leave".to_string()));
     let log = app.log.lock().unwrap();
     assert_eq!(log.iter().filter(|l| *l == "navigate /hr/security/login").count(), 2, "{log:?}");
@@ -805,7 +805,7 @@ async fn a_path_without_a_starting_page_still_goes_home_after_signing_in() {
 async fn getting_ready_to_record_says_which_page_the_recording_begins_on() {
     let dir = tempfile::tempdir().unwrap();
     let (mut d, _app) = common::menu_app(&[], "/hr/welcome", 0);
-    let start = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick()).await;
+    let start = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
     assert_eq!(start, Ok("/hr/home/index".to_string()));
 }
 

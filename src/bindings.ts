@@ -579,9 +579,8 @@ export const commands = {
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one. An account
-	 *  an unattended case or an API template run is signed in as is refused at
-	 *  once, with the sentence that says who has it, and the browser is left
-	 *  as it was.
+	 *  anything else holds (`autorun::lease`) is refused at once, with the
+	 *  sentence that says who has it, and the browser is left as it was.
 	 */
 	autoRunSignIn: (organization: string, project: string, accountKey: string) => typedError<SignInOutcome_Serialize, string>(__TAURI_INVOKE("auto_run_sign_in", { organization, project, accountKey })),
 	/**  Throw a saved session away, so the next sign-in goes through the form. */

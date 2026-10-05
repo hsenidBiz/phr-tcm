@@ -2097,7 +2097,7 @@ async fn a_template_run_on_an_account_held_too_long_is_refused_and_opens_no_brow
     let _l = crate::serial::account_leases();
     let mut r = rig(vec![], None);
     let env = env_of(&r);
-    let _browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let _case = lease::try_acquire(&env, "admin", Holder::Case { run: "run-x".into() }).unwrap();
     let began = Instant::now();
     let report = run_waiting(&mut r, 200).await;
     assert!(began.elapsed() >= Duration::from_millis(150), "it gave up before its wait: {:?}", began.elapsed());
@@ -2105,11 +2105,33 @@ async fn a_template_run_on_an_account_held_too_long_is_refused_and_opens_no_brow
     assert_eq!(report.failed.as_deref(), Some("Sign in"));
     assert_eq!(
         report.steps.last().unwrap().detail,
-        "the account admin was in use by the Auto Run browser - try again when it is free"
+        "the account admin was in use by an unattended run - try again when it is free"
     );
     assert_eq!((r.browsers.opened, r.browsers.closed), (0, 0), "a browser was opened for a run that could not sign in");
     assert_eq!(r.sign_ins(), 0);
-    assert!(lease::is_held(&env, "admin"), "the refusal took the browser's lease");
+    assert!(lease::is_held(&env, "admin"), "the refusal took the case's lease");
+}
+
+/// The Auto Run browser holds its account until a person closes it: a
+/// template run is refused at once rather than waiting for nothing.
+#[tokio::test]
+async fn a_template_run_never_waits_on_the_auto_run_browser() {
+    use v2_lib::autorun::lease::{self, Holder};
+    let _act = crate::serial::activity_log();
+    let _l = crate::serial::account_leases();
+    let mut r = rig(vec![], None);
+    let env = env_of(&r);
+    let _browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let began = Instant::now();
+    let report = run_waiting(&mut r, 5_000).await;
+    assert!(began.elapsed() < Duration::from_millis(500), "it waited on the Auto Run browser: {:?}", began.elapsed());
+    assert!(!report.ok);
+    assert_eq!(
+        report.steps.last().unwrap().detail,
+        "the account admin was in use by the Auto Run browser - try again when it is free"
+    );
+    assert_eq!(r.browsers.opened, 0);
+    assert!(lease::is_held(&env, "admin"));
 }
 
 #[tokio::test]

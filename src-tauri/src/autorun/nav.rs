@@ -871,6 +871,10 @@ pub const SIGN_IN_FAILED: &str =
 /// in as `account` in a fresh browser, go home, click each click, and land
 /// on `arrived`. Ok carries the path reached; Err is the dialog's sentence.
 ///
+/// The sign-in is cleared with `lease` first (`Held::hold`): an account
+/// something else holds is refused at once, with the sentence that says
+/// who. The caller keeps `lease` until the check's browser is closed.
+///
 /// A failed sign-in's own words can name the application's address (a
 /// navigate that would not load says which), and the dialog names none: the
 /// person gets one of two fixed sentences, chosen by whether the browser or
@@ -882,7 +886,9 @@ pub async fn check_path<D: Driver>(
     account: &Account,
     path: &ModulePath,
     timing: &Timing,
+    lease: &mut super::lease::Held,
 ) -> Result<String, String> {
+    lease.hold(root, &account.key).await?;
     let signed = super::signin::sign_in(d, root, recipe, account, timing).await;
     if !signed.ok {
         // `sign_in` already hides the password in its detail; hiding it
