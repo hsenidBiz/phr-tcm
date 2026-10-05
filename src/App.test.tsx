@@ -360,8 +360,8 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
 
   fireEvent.keyDown(window, { key: "6", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
-  // Shipped early, and the screen says so - beside the heading, not in it.
-  expect(screen.getByText("In Development")).toBeInTheDocument();
+  // Finished: no In Development pill beside the heading.
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
@@ -377,9 +377,9 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
   expect(await screen.findByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
 });
 
-// API Templates comes after AI Bridge with no number of its own, and it
-// ships early the way Auto Run does - the pill beside the heading says so.
-test("the API Templates tab opens from the rail with the In Development pill", async () => {
+// API Templates comes after AI Bridge with no number of its own. Like Auto
+// Run, it no longer carries an In Development pill.
+test("the API Templates tab opens from the rail with no In Development pill", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   signedInMocks((cmd) => {
     if (cmd === "api_templates_overview") return { origin: null, templates: [] };
@@ -390,7 +390,7 @@ test("the API Templates tab opens from the rail with the In Development pill", a
 
   fireEvent.click(screen.getByRole("button", { name: "API Templates" }));
   expect(await screen.findByRole("heading", { name: "API Templates" })).toBeInTheDocument();
-  expect(screen.getByText("In Development")).toBeInTheDocument();
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 });
 
 // Resetting the extras while API Templates is open (a release build) is in

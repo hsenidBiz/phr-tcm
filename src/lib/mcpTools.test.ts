@@ -387,3 +387,28 @@ test("with DEV stubbed false, unlocking this machine's extras brings the Auto Ru
   vi.unstubAllEnvs();
   vi.resetModules();
 });
+
+/// Enable Advanced Features offers the Auto Run tools the same way, and
+/// fires the same subscription so App re-pushes the bridge context.
+test("with DEV stubbed false, Enable Advanced Features offers the Auto Run tools", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const mod = await import("./mcpTools");
+  const extras = await import("./extras");
+  mockIPC(() => null);
+
+  expect(mod.autoRunToolsOffered()).toBe(false);
+  const fired = vi.fn();
+  const off = mod.subscribeDisabledTools(fired);
+  await extras.setAdvancedFeatures(true);
+  expect(fired).toHaveBeenCalled();
+  expect(mod.autoRunToolsOffered()).toBe(true);
+  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
+  await extras.setAdvancedFeatures(false);
+  expect(mod.autoRunToolsOffered()).toBe(false);
+
+  off();
+  clearMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});

@@ -155,12 +155,10 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
 // screen; off, the tests above and below pin that this build's ordinary
 // behaviour is unchanged.
 //
-// The API templates card is gated by the very same function (Task 7), so
-// capture mode hiding it here also stands in for a locked release build -
-// autoRunToolsOffered() (DEV_BUILD || extras unlocked) is what
-// autoRunToolsShown() is built on, and that function's own DEV_BUILD=false
-// behaviour is covered in mcpTools.test.ts.
-test("capture mode hides every mention of the Auto Run tools, and the API templates card, on the AI Tools tab", async () => {
+// The API templates card names no tool, and the help site documents it, so
+// capture mode shows it - with the Environment card - as Enable Advanced
+// Features does. Only the tool rows and the breakdown entries stay hidden.
+test("capture mode hides every mention of the Auto Run tools on the AI Tools tab, but shows the Environment and API templates cards", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -174,15 +172,17 @@ test("capture mode hides every mention of the Auto Run tools, and the API templa
   expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
   expect(screen.queryByText("Auto Run scripts")).not.toBeInTheDocument();
   expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
-  expect(screen.queryByText("API templates")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("switch", { name: "API templates (create, edit and delete)" }),
-  ).not.toBeInTheDocument();  // The risk-tiered writing guide is offered exactly where Auto Run is too.
+  // The tool row's switch is named "API templates"; the card's is not.
+  expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
+  expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
+  // The risk-tiered writing guide is offered exactly where Auto Run is too.
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
   expect(screen.queryByRole("switch", { name: "Risk-tiered test design (trial)" })).not.toBeInTheDocument();
-  // Environments exist for Auto Run, so their card goes with it.
-  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("combobox", { name: "Environment" })).not.toBeInTheDocument();
+  // Environments exist for Auto Run, which capture mode shows (as Enable
+  // Advanced Features does), so their card shows with it.
+  expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {

@@ -186,17 +186,19 @@ pub fn dev_build() -> bool {
 
 /// Whether the Auto Run tools are offered: always in a development build,
 /// and in a release build once this machine's optional extras are
-/// unlocked. Both inputs explicit, so every combination is testable from
+/// unlocked or Enable Advanced Features is on (`extras::features_on`; the
+/// parameter keeps its old name). Both inputs explicit, so every combination is testable from
 /// this (development) test binary.
 pub fn autorun_offered_for(dev: bool, unlocked: bool) -> bool {
     dev || unlocked
 }
 
 /// `autorun_offered_for` for this process: its own build kind and the
-/// unlock as the app last loaded or set it. Only meaningful in the app
+/// extras switch or Enable Advanced Features as the app last loaded or set
+/// them. Only meaningful in the app
 /// process - the `--mcp` proxy learns the app's answer from `/tools`.
 pub fn autorun_offered() -> bool {
-    autorun_offered_for(dev_build(), crate::extras::unlocked())
+    autorun_offered_for(dev_build(), crate::extras::features_on())
 }
 
 /// The disabled set as it is actually applied: where the Auto Run tools

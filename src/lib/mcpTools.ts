@@ -4,7 +4,7 @@
 // later release is then available by default rather than silently missing
 // because it wasn't in someone's saved list.
 
-import { extrasUnlockedSnapshot, subscribeExtras } from "./extras";
+import { featuresOnSnapshot, subscribeExtras } from "./extras";
 import { isCaptureMode } from "../dev/capture";
 
 const KEY = "tcm-v2-mcp-disabled";
@@ -196,7 +196,8 @@ export const DEV_BUILD: boolean = import.meta.env.DEV;
 
 /** Whether the Auto Run tools are offered right now: always in a
  * development build, and in a release build once this machine's optional
- * extras are unlocked (lib/extras). Read live, not at module load. Mirrors
+ * extras are unlocked or Enable Advanced Features is on (lib/extras'
+ * `featuresOnSnapshot`). Read live, not at module load. Mirrors
  * `ai_tools.rs`'s `autorun_offered()`.
  *
  * Deliberately NOT capture-mode-aware: this also decides what
@@ -205,7 +206,7 @@ export const DEV_BUILD: boolean = import.meta.env.DEV;
  * to disk. Capture mode must affect display only; see `autoRunToolsShown`
  * for the screen's own gate. */
 export function autoRunToolsOffered(): boolean {
-  return DEV_BUILD || extrasUnlockedSnapshot();
+  return DEV_BUILD || featuresOnSnapshot();
 }
 
 /** Whether the AI Tools screen should show anything about the Auto Run
@@ -430,7 +431,8 @@ export function saveDisabledTools(names: string[]): void {
 
 /** Subscription so App can re-push the bridge context the moment a tool is
  * toggled, instead of the change waiting for the next org/project change.
- * Also fires when the optional extras are unlocked or relocked: that
+ * Also fires when the optional extras are unlocked or relocked, or Enable
+ * Advanced Features changes: that
  * changes which saved names count. */
 export function subscribeDisabledTools(cb: () => void): () => void {
   listeners.add(cb);

@@ -1,9 +1,10 @@
 /**
  * DEV-ONLY CAPTURE MODE - a localStorage flag the screenshot script
  * (scripts/docs-shots.mjs) flips on before reloading, so a shot never
- * carries anything a normal install does not show: the DEV BUILD panel, an
- * unlock-gated sidebar entry (Auto Run), or an unprompted tour, "what's
- * new", update banner or session-expired modal covering the screen.
+ * carries anything a normal install does not show: the DEV BUILD panel, the
+ * hidden Extras card, or an unprompted tour, "what's new", update banner or
+ * session-expired modal covering the screen. Auto Run and API Templates are
+ * shown, as Enable Advanced Features shows them (lib/extras.ts).
  *
  * Unlike dev/demo.ts, this module has no module-level side effects (no
  * dataset built at import time) - it is safe as a plain, always-present

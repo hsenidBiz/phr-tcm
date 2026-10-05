@@ -283,6 +283,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             run_order::save_run_order,
             misc::get_extras_unlocked,
             misc::set_extras_unlocked,
+            misc::get_advanced_features,
+            misc::set_advanced_features,
             misc::open_help,
             guide::guide_status,
             guide::guide_download,

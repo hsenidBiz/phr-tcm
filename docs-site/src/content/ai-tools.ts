@@ -16,6 +16,7 @@ const OTHER = "ai-bridge-other-tools";
 const SWITCHED_OFF = "ai-bridge-switched-off";
 const CREDENTIALS = "ai-bridge-credentials";
 const OPTIONS = "ai-bridge-options";
+const API = "ai-bridge-api-templates";
 
 const NAV: Step = { nav: "AI Bridge" };
 const REPO = "C:\\Projects\\customer-portal";
@@ -29,7 +30,7 @@ export const aiBridge: Screen = {
     "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
-    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and Database Read Access" },
+    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools, the environment and Database Read Access" },
     {
       id: OTHER,
       route: [NAV, { click: { text: "Other tools" } }, { waitFor: { role: "button", name: "Copy command" } }],
@@ -46,8 +47,13 @@ export const aiBridge: Screen = {
     },
     {
       id: CREDENTIALS,
-      route: [NAV, { click: { role: "button", name: "Manage credentials" } }, { waitFor: { role: "button", name: "Test connection" } }],
+      route: [NAV, { click: { role: "button", name: "Edit Dev - dev login" } }, { waitFor: { role: "button", name: "Test connection" } }],
       alt: "The credentials window of the chosen database",
+    },
+    {
+      id: API,
+      route: [NAV, { scrollTo: { role: "switch", name: "API templates (create, edit and delete)" } }],
+      alt: "The API templates card, with the switch that lets an assistant prove and run templates",
     },
     {
       id: OPTIONS,
@@ -64,6 +70,16 @@ export const aiBridge: Screen = {
     { id: "repositories", title: "Working repositories", summary: "The folders your test cases belong to, and whether the bridge is running." },
     { id: "connect", title: "Connect your AI tools", summary: "Register the bridge with the AI tools installed on this computer." },
     { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call." },
+    {
+      id: "environment",
+      title: "Environment",
+      summary: "The site and database Auto Run and API Templates work against. Shown while Enable Advanced Features is on, in Settings.",
+    },
+    {
+      id: "api-templates",
+      title: "API templates",
+      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while Enable Advanced Features is on, in Settings.",
+    },
     { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
   ],
@@ -183,6 +199,35 @@ export const aiBridge: Screen = {
         "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Database Read Access, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
     },
     {
+      id: "environment-pick",
+      shot: TAB,
+      group: "environment",
+      locate: { role: "combobox", name: "Environment" },
+      name: "Environment",
+      does:
+        "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
+        "Switching moves the **Database** below with it, and the environment's name shows in the title bar.",
+    },
+    {
+      id: "edit-environments",
+      shot: TAB,
+      group: "environment",
+      locate: { role: "button", name: "Edit environments" },
+      name: "Edit environments",
+      does: "Adds, renames or removes environments, and sets each one's site address and database.",
+    },
+    {
+      id: "api-templates-switch",
+      shot: API,
+      group: "api-templates",
+      locate: { role: "switch", name: "API templates (create, edit and delete)" },
+      name: "API templates (create, edit and delete)",
+      does:
+        "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
+        "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
+        "The card is shown while **Enable Advanced Features** is on, in Settings, under General. The templates themselves are listed on the API Templates tab.",
+    },
+    {
       id: "database",
       shot: TAB,
       group: "company-database",
@@ -200,12 +245,13 @@ export const aiBridge: Screen = {
       does: "The user the chosen database signs in as, or **No login saved**. The password is never shown.",
     },
     {
-      id: "manage-credentials",
+      id: "edit-database",
       shot: TAB,
       group: "company-database",
-      locate: { role: "button", name: "Manage credentials" },
-      name: "Manage credentials",
-      does: "Opens the login of the chosen database. Greyed out until a database is chosen.",
+      locate: { role: "button", name: "Edit Dev - dev login" },
+      name: "Edit (database)",
+      does:
+        "Every database is listed under the picker. **Edit** opens that database's login. **Add database** above the list adds one of your own, which can be removed again; the ones that come with the app cannot.",
     },
     {
       id: "writes",
@@ -238,7 +284,7 @@ export const aiBridge: Screen = {
     },
     {
       id: "breakdown",
-      shot: TAB,
+      shot: API,
       group: "tools-breakdown",
       locate: { role: "heading", name: "AI Tools Breakdown" },
       name: "AI Tools Breakdown",
@@ -374,7 +420,7 @@ export const aiBridge: Screen = {
     {
       title: "Let an assistant read the company database",
       steps: [
-        "Pick the database in **Database**. If it has no login yet, press **Manage credentials**, fill it in, **Test connection**, then **Save**.",
+        "Pick the database in **Database**. If it has no login yet, press **Edit** beside it in the list, fill it in, **Test connection**, then **Save**.",
         "Make sure **Database Read Access** is switched on in the tool list.",
       ],
     },

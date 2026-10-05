@@ -182,10 +182,7 @@ const TITLES: Record<Section, string> = {
 };
 
 /** Status pill beside the heading - features shipped before they are done. */
-const TITLE_NOTES: Partial<Record<Section, string>> = {
-  autorun: "In Development",
-  apitemplates: "In Development",
-};
+const TITLE_NOTES: Partial<Record<Section, string>> = {};
 
 export default function App() {
   const qc = useQueryClient();
@@ -1022,8 +1019,7 @@ export default function App() {
           (DEV_TOOLS && !isCaptureMode() ? " — DEV" : "")
         }
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
-        // Environments are an Auto Run setting: named only where it shows
-        // (useAutoRunVisible is already false in a capture).
+        // Environments are an Auto Run setting: named only where it shows.
         environment={autoRunShown ? environmentName : null}
       />
       {tourOpen && signedIn && (

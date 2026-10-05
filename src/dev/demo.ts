@@ -10,18 +10,29 @@
 import {
   commands,
   events,
+  type Account,
+  type AccountInput,
   type AuthStatus,
   type BoardData,
   type CaseHistory,
   type DbDatabase,
   type DetectedTool,
   type EnsuredSuite,
+  type EnvInput,
+  type EnvListView,
+  type Flow_Serialize,
+  type LocalRun_Serialize,
+  type NavView,
   type NewWorkItem,
   type PbiHit,
+  type ProposedAccount,
+  type Quirk_Serialize,
   type RunOutcome,
+  type SavedTemplate_Serialize,
   type SubmitItemResult,
   type TestCase,
   type TestCaseFull,
+  type TestFile,
   type TestPoint,
   type WorkComment,
   type WorkItemDetail,
@@ -220,6 +231,530 @@ const detailFor = (b: BoardData["items"][number]): WorkItemDetail => ({
   extra_pages_error: null,
   inline_images: [],
 });
+
+// ------------------------------------------- Auto Run and API Templates
+
+// What the Auto Run and API Templates screens read: local files on a real
+// machine (scripts, runs, accounts, environments, templates), kept here in
+// memory instead, so sample data never shows - or writes - this machine's
+// own. Every address is under example.test, every account is invented, and
+// no account carries a password: the Accounts dialog shows its fields empty.
+// Anything that would open a real browser, read a file the person picked or
+// open a page is refused with a sentence, the way execution reports are.
+
+/** A saved script, as `autoRunLoadScript` answers it. */
+type DemoScript = NonNullable<Extract<Awaited<ReturnType<typeof commands.autoRunLoadScript>>, { status: "ok" }>["data"]>;
+type DemoAction = DemoScript["steps"][number]["actions"][number];
+
+const SITE = "https://portal.example.test";
+/** Epoch milliseconds as text, the way runs and test files carry a time. */
+const at = (y: number, m: number, d: number, h: number, min = 0) => String(Date.UTC(y, m - 1, d, h, min));
+
+const role = (r: string, name: string) => ({ role: r, name });
+
+const scripts = new Map<number, DemoScript>([
+  [
+    5001,
+    {
+      case_id: 5001,
+      title: "Login - valid credentials",
+      area: "Sign-in",
+      steps: [
+        {
+          step_number: 1,
+          actions: [
+            { kind: "navigate", url: `${SITE}/login` },
+            { kind: "expect_visible", selector: role("heading", "Sign in") },
+          ],
+        },
+        {
+          step_number: 2,
+          actions: [
+            { kind: "sign_in", account: "portal.tester" },
+            { kind: "expect_visible", selector: role("heading", "Dashboard") },
+          ],
+        },
+      ],
+    },
+  ],
+  [
+    5002,
+    {
+      case_id: 5002,
+      title: "Login - wrong password shows an error",
+      steps: [
+        {
+          step_number: 1,
+          actions: [
+            { kind: "navigate", url: `${SITE}/login` },
+            { kind: "expect_visible", selector: role("heading", "Sign in") },
+          ],
+        },
+        {
+          step_number: 2,
+          actions: [
+            { kind: "fill", selector: role("textbox", "Email"), value: "tester@example.test" },
+            { kind: "fill", selector: role("textbox", "Password"), value: "not-the-password" },
+            { kind: "click", selector: role("button", "Sign in") },
+            { kind: "expect_text", selector: role("alert", ""), equals: "The email or password is incorrect." },
+          ],
+        },
+        {
+          step_number: 3,
+          actions: [
+            { kind: "sign_in", account: "portal.tester" },
+            { kind: "expect_visible", selector: role("heading", "Dashboard") },
+          ],
+        },
+      ],
+      suspected_defect: {
+        step_number: 2,
+        note: "The page reloads with an empty form and no error message after a wrong password.",
+        marked_at: at(2026, 10, 2, 14, 10),
+      },
+    },
+  ],
+  [
+    5003,
+    {
+      case_id: 5003,
+      title: "Login - locked account is refused",
+      steps: [
+        {
+          step_number: 1,
+          actions: [{ kind: "navigate", url: `${SITE}/login` }],
+          unchecked: "The account is locked by the precondition, before the run starts.",
+        },
+        {
+          step_number: 2,
+          actions: [
+            { kind: "fill", selector: role("textbox", "Email"), value: "locked.user@example.test" },
+            { kind: "click", selector: role("button", "Sign in") },
+            { kind: "expect_contains_text", selector: role("alert", ""), value: "locked" },
+          ],
+        },
+      ],
+      preconditions: [
+        {
+          flow: "accounts-locked-user",
+          stage: "lock",
+          value: 3107,
+          why: "The case signs in as a user whose account is locked.",
+        },
+      ],
+    },
+  ],
+  [
+    5004,
+    {
+      case_id: 5004,
+      title: "Session - expires after timeout",
+      account: "portal.tester",
+      no_save: true,
+      steps: [
+        {
+          step_number: 1,
+          actions: [
+            { kind: "navigate", url: `${SITE}/dashboard` },
+            { kind: "expect_visible", selector: role("heading", "Dashboard") },
+          ],
+        },
+        {
+          step_number: 2,
+          actions: [
+            { kind: "click", selector: role("link", "Profile") },
+            { kind: "check_url", contains: "/login" },
+          ],
+        },
+      ],
+    },
+  ],
+]);
+
+/** What a step's action did, in the words the run pane shows. */
+function actionLine(a: DemoAction): string {
+  const target = (s: unknown) => {
+    const t = s as { role?: string; name?: string };
+    return t.name ? `${t.role} "${t.name}"` : `${t.role ?? "element"}`;
+  };
+  switch (a.kind) {
+    case "navigate":
+      return `Opened ${a.url}`;
+    case "sign_in":
+      return `Signed in as ${a.account}`;
+    case "fill":
+      return `Filled ${target(a.selector)}`;
+    case "click":
+      return `Clicked ${target(a.selector)}`;
+    case "check_url":
+      return `The address contains ${a.contains}`;
+    case "expect_text":
+      return `${target(a.selector)} reads "${a.equals}"`;
+    case "expect_contains_text":
+      return `${target(a.selector)} contains "${a.value}"`;
+    case "expect_visible":
+      return `Found ${target(a.selector)}`;
+    default:
+      return `Done: ${a.kind}`;
+  }
+}
+
+/** A step of a recorded run: every action passed. */
+const passedStep = (script: DemoScript, n: number) => ({
+  step_number: n,
+  outcomes: (script.steps.find((s) => s.step_number === n)?.actions ?? []).map((a) => ({ ok: true, detail: actionLine(a) })),
+});
+
+const FAIL_SHOT = "case-5002-step-2.png";
+
+/** One unattended run with a case of each result, one of them retried,
+ * waiting to be reviewed. One run, so its Report button is the only one on
+ * Past runs (the help site points at it). */
+const autoRuns: LocalRun_Serialize[] = [
+  {
+    id: "run-20261002",
+    pbi_id: 1001,
+    started_at: at(2026, 10, 2, 13, 45),
+    mode: "unattended",
+    environment: "Staging",
+    cases: [
+      {
+        case_id: 5001,
+        title: "Login - valid credentials",
+        verdict: "Passed",
+        note: "",
+        proposed: "Passed",
+        reason: "Every check passed.",
+        duration_ms: 8400,
+        steps: [1, 2].map((n) => passedStep(scripts.get(5001)!, n)),
+      },
+      {
+        case_id: 5002,
+        title: "Login - wrong password shows an error",
+        verdict: "",
+        note: "",
+        proposed: "Failed",
+        reason: "Step 2: the error message did not appear within 5 seconds.",
+        duration_ms: 12100,
+        steps: [
+          passedStep(scripts.get(5002)!, 1),
+          {
+            step_number: 2,
+            screenshot: FAIL_SHOT,
+            outcomes: [
+              { ok: true, detail: 'Filled textbox "Email"' },
+              { ok: true, detail: 'Filled textbox "Password"' },
+              { ok: true, detail: 'Clicked button "Sign in"' },
+              { ok: false, detail: "No error message appeared within 5 seconds", screenshot: FAIL_SHOT },
+            ],
+          },
+        ],
+      },
+      {
+        case_id: 5003,
+        title: "Login - locked account is refused",
+        verdict: "",
+        note: "",
+        proposed: "Blocked",
+        reason: "precondition not met: Lock the account is not done for 3107 in Set up a locked account.",
+        steps: [],
+      },
+      {
+        case_id: 5004,
+        title: "Session - expires after timeout",
+        verdict: "",
+        note: "",
+        proposed: "Passed",
+        reason: "Every check passed.",
+        duration_ms: 15800,
+        account: "portal.tester",
+        retried: "The site answered 502 Bad Gateway while the dashboard was loading.",
+        steps: [
+          { step_number: 0, outcomes: [{ ok: true, detail: "Signed in as portal.tester" }] },
+          ...[1, 2].map((n) => passedStep(scripts.get(5004)!, n)),
+        ],
+      },
+    ],
+  },
+];
+
+/** The active environment's accounts. No passwords, ever: each tester
+ * types their own. */
+let autoRunAccounts: Account[] = [
+  { key: "portal.tester", label: "Portal tester", username: "tester@example.test", password: "" },
+  { key: "portal.admin", label: "Portal admin", username: "admin@example.test", password: "" },
+];
+/** One login an assistant found for the environment, with only the fact
+ * that a password exists for it. */
+let accountProposals: ProposedAccount[] = [
+  { key: "portal.reviewer", label: "Portal reviewer", username: "reviewer@example.test", role: "Reviewer", has_password: true },
+];
+
+let environments: EnvListView = {
+  active: "staging",
+  environments: [
+    {
+      id: "staging",
+      name: "Staging",
+      start_url: `${SITE}/`,
+      allowed_origins: ["https://login.example.test"],
+      db_id: "dev",
+      test_environment: true,
+      has_default_password: false,
+    },
+    {
+      id: "qa",
+      name: "QA",
+      start_url: "https://qa.portal.example.test/",
+      allowed_origins: [],
+      db_id: "qa",
+      test_environment: true,
+      has_default_password: false,
+    },
+  ],
+};
+
+let autoRunNav: NavView = {
+  direct_urls: false,
+  modules: [
+    { area: "Sign-in", module: "Login", clicks: ['link "Sign in"'], arrived: `${SITE}/login`, recorded: at(2026, 9, 24, 11) },
+    { area: "Profile", module: "Profile", clicks: ['button "Account"', 'link "Profile"'], arrived: `${SITE}/profile`, recorded: at(2026, 9, 24, 11, 5) },
+  ],
+  save_words: ["confirm"],
+  built_in_save_words: ["save", "update", "delete", "submit", "approve", "publish", "assign"],
+};
+
+let testFiles: TestFile[] = [
+  { name: "profile-photo.png", size: 48213, modified: at(2026, 9, 22, 8) },
+  { name: "proof-of-address.pdf", size: 120440, modified: at(2026, 9, 22, 8, 2) },
+];
+
+let quirks: Quirk_Serialize[] = [];
+
+/** The sample templates' flow: three stages, the last one with no template yet. */
+let apiFlows: Flow_Serialize[] = [
+  {
+    id: "accounts-locked-user",
+    title: "Set up a locked account",
+    module: "Accounts",
+    subject: { name: "user_id", type: "number" },
+    sources: ["Pages/Admin/Users/Edit.cshtml.cs"],
+    stages: [
+      { id: "create", title: "Create a user", check: "SELECT 1 FROM Users WHERE Id = @subject" },
+      { id: "lock", title: "Lock the account", requires: ["create"], check: "SELECT 1 FROM Users WHERE Id = @subject AND IsLocked = 1" },
+      {
+        id: "notify",
+        title: "Send the lockout email",
+        requires: ["lock"],
+        optional: true,
+        check: "SELECT 1 FROM Emails WHERE UserId = @subject AND Kind = 'Lockout'",
+      },
+    ],
+    saved: { at: "2026-09-29 10:05:00", sample: { user_id: 3107 } },
+  },
+];
+
+const PROVEN = (when: string, outputs: Record<string, unknown> = {}) => ({
+  at: when,
+  origin: SITE,
+  account: "portal.admin",
+  outputs,
+  environment: "Staging",
+});
+
+let apiTemplates: SavedTemplate_Serialize[] = [
+  {
+    template: {
+      id: "accounts-create-user",
+      title: "Create a user",
+      module: "Accounts",
+      effect: "create",
+      description: "Creates a portal user with a name and an email address, and returns the new user's id.",
+      sources: ["Pages/Admin/Users/New.cshtml.cs"],
+      antiforgery: { page: "/admin/users/new" },
+      params: [
+        { name: "display_name", type: "string", required: true, description: "The name shown on the profile", lookup: null },
+        { name: "email", type: "string", required: true, description: "A unique address under example.test", lookup: null },
+        { name: "roles", type: "list", required: false, description: "Role names", lookup: "SELECT Name FROM Roles", default: [] },
+      ],
+      steps: [
+        {
+          name: "create",
+          method: "POST",
+          path: "/admin/users/new",
+          query: { handler: "Create" },
+          json: { displayName: "{display_name}", email: "{email}", roles: "{roles}" },
+          form: null,
+          expect: { status: 200, json: { success: true } },
+          capture: { user_id: "$.id" },
+        },
+      ],
+      outputs: ["user_id"],
+      stage: { flow: "accounts-locked-user", id: "create" },
+      proven: PROVEN("2026-09-29 09:40:00", { user_id: 3107 }),
+    },
+    runs: [
+      { at: "2026-10-01 08:15:00", mode: "run", account: "portal.admin", ok: true, outputs: { user_id: 3122 } },
+      { at: "2026-09-29 09:40:00", mode: "prove", account: "portal.admin", ok: true, outputs: { user_id: 3107 } },
+    ],
+  },
+  {
+    template: {
+      id: "accounts-lock-user",
+      title: "Lock a user account",
+      module: "Accounts",
+      effect: "edit",
+      description: "Locks a user's account, as three wrong passwords in a row would.",
+      sources: ["Pages/Admin/Users/Edit.cshtml.cs"],
+      antiforgery: { page: "/admin/users/edit" },
+      params: [{ name: "user_id", type: "number", required: true, description: "The user to lock", lookup: "SELECT TOP 5 Id FROM Users" }],
+      steps: [
+        {
+          name: "lock",
+          method: "POST",
+          path: "/admin/users/edit",
+          query: { handler: "Lock", id: "{user_id}" },
+          json: null,
+          form: { reason: "Locked for testing" },
+          expect: { status: 200 },
+          capture: {},
+        },
+      ],
+      outputs: [],
+      stage: { flow: "accounts-locked-user", id: "lock" },
+      proven: PROVEN("2026-09-29 09:52:00"),
+    },
+    runs: [
+      { at: "2026-10-01 08:16:00", mode: "run", account: "portal.admin", ok: true },
+      { at: "2026-09-29 09:52:00", mode: "prove", account: "portal.admin", ok: true },
+    ],
+  },
+  {
+    template: {
+      id: "accounts-reset-password",
+      title: "Reset a password",
+      module: "Accounts",
+      effect: "edit",
+      description: "Sends a user a password reset link. Imported from a colleague's export.",
+      sources: ["Pages/Account/ResetPassword.cshtml.cs"],
+      antiforgery: { page: "/account/reset-password" },
+      params: [{ name: "email", type: "string", required: true, description: "The user's email address", lookup: null }],
+      steps: [
+        {
+          name: "reset",
+          method: "POST",
+          path: "/account/reset-password",
+          query: {},
+          json: null,
+          form: { email: "{email}" },
+          expect: { status: 200 },
+          capture: {},
+        },
+      ],
+      outputs: [],
+      proven: null,
+    },
+    runs: [],
+  },
+  {
+    template: {
+      id: "profile-update-name",
+      title: "Update the display name",
+      module: "Profile",
+      effect: "edit",
+      description: "Changes the display name on a user's profile.",
+      sources: ["Pages/Profile/Index.cshtml.cs"],
+      antiforgery: { page: "/profile" },
+      params: [
+        { name: "user_id", type: "number", required: true, description: "Whose profile", lookup: "SELECT TOP 5 Id FROM Users" },
+        { name: "display_name", type: "string", required: true, description: "The new name", lookup: null },
+      ],
+      steps: [
+        { name: "open", method: "GET", path: "/profile", query: { id: "{user_id}" }, json: null, form: null, expect: { status: 200 }, capture: {} },
+        {
+          name: "save",
+          method: "POST",
+          path: "/profile",
+          query: { handler: "Save" },
+          json: { displayName: "{display_name}" },
+          form: null,
+          expect: { status: 200, json: { success: true } },
+          capture: {},
+        },
+      ],
+      outputs: [],
+      proven: PROVEN("2026-09-26 15:20:00"),
+    },
+    runs: [
+      {
+        at: "2026-10-02 11:02:00",
+        mode: "run",
+        account: "portal.tester",
+        ok: false,
+        failed_step: "save",
+        detail: "The site answered 403: this account may not edit another user's profile.",
+      },
+      { at: "2026-09-26 15:20:00", mode: "prove", account: "portal.admin", ok: true },
+    ],
+  },
+  {
+    template: {
+      id: "profile-add-address",
+      title: "Add a delivery address",
+      module: "Profile",
+      effect: "create",
+      description: "Adds a delivery address to a user's profile, with a proof of address attached.",
+      sources: ["Pages/Profile/Addresses.cshtml.cs"],
+      antiforgery: { page: "/profile/addresses" },
+      params: [
+        { name: "user_id", type: "number", required: true, description: "Whose profile", lookup: "SELECT TOP 5 Id FROM Users" },
+        { name: "line1", type: "string", required: true, description: "The first line of the address", lookup: null },
+      ],
+      steps: [
+        {
+          name: "add",
+          method: "POST",
+          path: "/profile/addresses",
+          query: { handler: "Add", id: "{user_id}" },
+          json: null,
+          form: { line1: "{line1}" },
+          files: { proof: "proof-of-address.pdf" },
+          expect: { status: 200 },
+          capture: { address_id: "$.id" },
+        },
+      ],
+      outputs: ["address_id"],
+      proven: PROVEN("2026-09-30 10:45:00", { address_id: 88 }),
+    },
+    runs: [{ at: "2026-09-30 10:45:00", mode: "prove", account: "portal.admin", ok: true, outputs: { address_id: 88 } }],
+  },
+];
+
+/** A run of a selection, as an unattended run would save it: the machine
+ * proposes, the person decides in the review. */
+function replayRun(pbiId: number, cases: { case_id: number; title: string }[], account: string | null): LocalRun_Serialize {
+  return {
+    id: `run-${Date.now()}`,
+    pbi_id: pbiId,
+    started_at: String(Date.now()),
+    mode: "unattended",
+    environment: environments.environments.find((e) => e.id === environments.active)?.name ?? null,
+    cases: cases.map((c) => {
+      const script = scripts.get(c.case_id);
+      return {
+        case_id: c.case_id,
+        title: c.title,
+        verdict: "",
+        note: "",
+        proposed: script ? "Passed" : "",
+        reason: script ? "Every check passed." : "This case has no script.",
+        duration_ms: 9000,
+        account: account ?? script?.account ?? null,
+        steps: script ? script.steps.map((s) => passedStep(script, s.step_number)) : [],
+      };
+    }),
+  };
+}
 
 // ------------------------------------------------------- capture-mode names
 
@@ -979,6 +1514,197 @@ function applyPatches() {
     resetTestPoints: () => ok(null),
     autoRunPublish: () => ok({ status: "refused" as const, why: "Publishing is off in demo data." }),
 
+    // Auto Run and API Templates read and write local files on a real
+    // machine. In sample data they answer from the in-memory set above,
+    // and anything that would open a real browser or read a picked file
+    // says it is off.
+    envList: () => ok(environments),
+    envSave: (env: EnvInput) => {
+      if (!env || typeof env !== "object" || typeof env.id !== "string") return err("Demo mode: that environment is not valid");
+      const old = environments.environments.find((e) => e.id === env.id);
+      const next = { ...env, has_default_password: old?.has_default_password ?? false };
+      environments = {
+        ...environments,
+        environments: old ? environments.environments.map((e) => (e.id === env.id ? next : e)) : [...environments.environments, next],
+      };
+      return ok(environments);
+    },
+    envRemove: (id: string) => {
+      if (id === environments.active) return err("Demo mode: the active environment cannot be removed");
+      environments = { ...environments, environments: environments.environments.filter((e) => e.id !== id) };
+      return ok(environments);
+    },
+    envSetActive: (id: string) => {
+      if (!environments.environments.some((e) => e.id === id)) return err("Demo mode: no such environment");
+      environments = { ...environments, active: id };
+      return ok(environments);
+    },
+    envSetDefaultPassword: () => err("Demo mode: passwords are not kept in sample data"),
+    envClearDefaultPassword: () => ok(null),
+    envProposals: () => ok(accountProposals),
+    envDismissProposals: () => {
+      accountProposals = [];
+      return ok(null);
+    },
+    envAddProposals: (picks: AccountInput[]) => {
+      if (!Array.isArray(picks)) return err("Demo mode: nothing to add");
+      const keys = picks.map((p) => p.key);
+      // Kept without the password: sample data never holds one.
+      autoRunAccounts = [
+        ...autoRunAccounts.filter((a) => !keys.includes(a.key)),
+        ...picks.map((p) => ({ key: p.key, label: p.label, username: p.username, password: "" })),
+      ];
+      accountProposals = accountProposals.filter((p) => !keys.includes(p.key));
+      return ok([] as string[]);
+    },
+    autoRunListAccounts: () => ok(autoRunAccounts.map((a) => ({ ...a }))),
+    autoRunSaveAccounts: (accounts: Account[]) => {
+      if (!Array.isArray(accounts)) return err("Demo mode: no accounts to save");
+      autoRunAccounts = accounts.map((a) => ({ ...a, password: "" }));
+      return ok([] as string[]);
+    },
+    autoRunLoadScript: (caseId: number) => ok(scripts.get(caseId) ?? null),
+    autoRunSaveScript: (_o: string, _p: string, script: DemoScript) => {
+      if (!script || typeof script !== "object" || typeof script.case_id !== "number") return err("Demo mode: that script is not valid");
+      const kept = scripts.get(script.case_id)?.suspected_defect;
+      scripts.set(script.case_id, { ...script, ...(kept ? { suspected_defect: kept } : {}) });
+      return ok(null);
+    },
+    autoRunImportScripts: () => err("Demo mode: importing scripts is off in sample data"),
+    autoRunClearScripts: (caseIds: number[]) => {
+      if (!Array.isArray(caseIds)) return ok(0);
+      return ok(caseIds.filter((id) => scripts.delete(id)).length);
+    },
+    autoRunClearSuspectedDefect: (caseId: number) => {
+      const script = scripts.get(caseId);
+      if (script) scripts.set(caseId, { ...script, suspected_defect: null });
+      return ok(null);
+    },
+    autoRunListRuns: () => Promise.resolve(autoRuns.map((r) => ({ ...r }))),
+    autoRunLoadRun: (runId: string) => ok(autoRuns.find((r) => r.id === runId) ?? null),
+    autoRunSaveRun: (run: LocalRun_Serialize) => {
+      if (!run || typeof run !== "object" || !Array.isArray(run.cases)) return err("Demo mode: that run is not valid");
+      const i = autoRuns.findIndex((r) => r.id === run.id);
+      if (i >= 0) autoRuns[i] = run;
+      else autoRuns.unshift(run);
+      return ok(null);
+    },
+    autoRunClearRuns: () => ok(autoRuns.splice(0).length),
+    autoRunNewId: () => Promise.resolve(`run-${Date.now()}`),
+    autoRunOpenReport: () => err("Demo mode: run reports are off in sample data"),
+    autoRunShot: () => ok(captureShotData()),
+    autoRunCountEvidence: () => ok(false),
+    autoRunLoadRecipe: () => ok(null),
+    autoRunSaveRecipe: () => ok(null),
+    autoRunLoadQuirks: () => ok(quirks),
+    autoRunAddQuirk: (_o: string, _p: string, text: string) => {
+      if (typeof text !== "string" || !text.trim()) return err("Demo mode: a note needs some text");
+      quirks = [
+        ...quirks,
+        {
+          id: `q${quirks.length + 1}`,
+          text,
+          by: "person",
+          at: String(Date.now()),
+          sources: [],
+          confirmed: 0,
+          last_confirmed: null,
+          doubted: 0,
+          status: "active",
+          retired_reason: null,
+          retired_at: null,
+          retired_by: null,
+          from: "autorun",
+        },
+      ];
+      return ok(quirks);
+    },
+    autoRunEditQuirk: (_o: string, _p: string, id: string, text: string) => {
+      quirks = quirks.map((q) => (q.id === id && typeof text === "string" ? { ...q, text } : q));
+      return ok(quirks);
+    },
+    autoRunRetireQuirk: (_o: string, _p: string, id: string, reason: string | null) => {
+      quirks = quirks.map((q) =>
+        q.id === id ? { ...q, status: "retired", retired_reason: reason, retired_at: String(Date.now()), retired_by: "person" } : q,
+      );
+      return ok(quirks);
+    },
+    autoRunRestoreQuirk: (_o: string, _p: string, id: string) => {
+      quirks = quirks.map((q) => (q.id === id ? { ...q, status: "active", retired_reason: null, retired_at: null, retired_by: null } : q));
+      return ok(quirks);
+    },
+    autoRunDeleteQuirk: (_o: string, _p: string, id: string) => {
+      quirks = quirks.filter((q) => q.id !== id);
+      return ok(quirks);
+    },
+    autoRunLoadNav: () => ok(autoRunNav),
+    autoRunSetDirectUrls: (_o: string, _p: string, allowed: boolean) => {
+      autoRunNav = { ...autoRunNav, direct_urls: allowed === true };
+      return ok(autoRunNav);
+    },
+    autoRunSetSaveWords: (_o: string, _p: string, words: string[]) => {
+      if (Array.isArray(words)) autoRunNav = { ...autoRunNav, save_words: words };
+      return ok(autoRunNav);
+    },
+    autoRunRemoveModulePath: (_o: string, _p: string, area: string) => {
+      autoRunNav = { ...autoRunNav, modules: autoRunNav.modules.filter((m) => m.area !== area) };
+      return ok(autoRunNav);
+    },
+    // The Auto Run browser is real: sample data opens none. Opening "one"
+    // here lets the run pane be walked through, with every action passing.
+    autoRunOpenBrowser: () => ok(null),
+    autoRunCloseBrowser: () => ok(null),
+    autoRunSignIn: (_o: string, _p: string, accountKey: string) =>
+      ok({ ok: true, detail: `Signed in as ${accountKey}`, used_saved_session: false, steps: [] }),
+    autoRunForgetSession: () => ok(null),
+    autoRunCheckPreconditions: () => ok({ blocked: null, notice: null }),
+    autoRunStep: (_o: string, _p: string, _caseId: number, step: DemoScript["steps"][number]) => {
+      if (!step || typeof step !== "object" || !Array.isArray(step.actions)) return err("Demo mode: that step is not valid");
+      return ok(step.actions.map((a) => ({ ok: true, detail: actionLine(a) })));
+    },
+    autoRunReplay: async (
+      _o: string,
+      _p: string,
+      pbiId: number,
+      cases: { case_id: number; title: string }[],
+      account: string | null,
+    ) => {
+      if (!Array.isArray(cases)) return err("Demo mode: no cases to run");
+      await sleep(600);
+      const run = replayRun(pbiId, cases, account);
+      autoRuns.unshift(run);
+      return { status: "ok" as const, data: run };
+    },
+    autoRunReplayCancel: () => Promise.resolve(),
+    autoRunRecordStart: () => err("Demo mode: recording an area is off in sample data"),
+    autoRunRecordStop: () => err("Demo mode: recording an area is off in sample data"),
+    autoRunRecordCancel: () => ok(null),
+    autoRunRecordingIsOpen: () => Promise.resolve(false),
+    autoRunTryModulePath: () => err("Demo mode: trying an area is off in sample data"),
+    autoRunRecordSignInStart: () => err("Demo mode: recording a sign-in is off in sample data"),
+    autoRunRecordSignInPick: () => err("Demo mode: recording a sign-in is off in sample data"),
+    autoRunRecordSignInStop: () => err("Demo mode: recording a sign-in is off in sample data"),
+    autoRunRecordSignInSave: () => err("Demo mode: recording a sign-in is off in sample data"),
+    testFilesList: () => ok(testFiles),
+    testFilesAdd: () => err("Demo mode: adding test files is off in sample data"),
+    testFilesRemove: (_o: string, _p: string, name: string) => {
+      testFiles = testFiles.filter((f) => f.name !== name);
+      return ok(null);
+    },
+    testFilesOpenFolder: () => err("Demo mode: there is no test files folder in sample data"),
+    apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows }),
+    apiTemplatesRemove: (_o: string, _p: string, id: string) => {
+      apiTemplates = apiTemplates.filter((t) => t.template.id !== id);
+      return ok(null);
+    },
+    apiTemplatesRemoveFlow: (_o: string, _p: string, id: string) => {
+      apiFlows = apiFlows.filter((f) => f.id !== id);
+      return ok(null);
+    },
+    apiTemplatesOpenFlow: () => err("Demo mode: the flow page is off in sample data"),
+    apiTemplatesExport: () => err("Demo mode: exporting templates is off in sample data"),
+    apiTemplatesImport: () => err("Demo mode: importing templates is off in sample data"),
+
     buildLog: () =>
       ok(
         [
@@ -1011,6 +1737,10 @@ function applyPatches() {
   // logins - and the sample tools lack the fields the tab reads to say where
   // each one is registered.
   const captureOnly = {
+    // Enable Advanced Features, on - the help site documents what it
+    // shows - and a click on it answered here, never saved to this machine.
+    getAdvancedFeatures: () => Promise.resolve(true),
+    setAdvancedFeatures: () => ok(null),
     detectAiTools: () => Promise.resolve(CAPTURE_AI_TOOLS),
     dbDatabases: () => Promise.resolve(CAPTURE_DATABASES),
     // The open thread's reply carries a pasted screenshot.
@@ -1143,6 +1873,15 @@ export const CAPTURE_RESET = [
   "tcm-v2-this-sprint",
   "tcm-v2-pr-yours:",
   "tcm-v2-pr-status",
+  // Auto Run's and API Templates' view choices.
+  "tcm-v2-autorun-group",
+  "tcm-v2-autorun-collapsed",
+  "tcm-v2-autorun-browser",
+  "tcm-v2-autorun-watch",
+  "tcm-v2-autorun-retry-transient",
+  "tcm-v2-autorun-run-account:",
+  "tcm-v2-api-templates-view",
+  "tcm-v2-api-templates-collapsed-groups",
 ];
 
 /** The working repository the AI Bridge tab shows in capture mode. */
@@ -1243,6 +1982,8 @@ export function seedCaptureScene() {
     localStorage.setItem("tcm-v2-repositories", JSON.stringify([{ path: CAPTURE_REPO, enabled: true }]));
     localStorage.setItem("tcm-v2-current-repo", CAPTURE_REPO);
     localStorage.setItem("tcm-v2-db-selected", "dev");
+    // API templates switched on, so the API Templates tab says so.
+    localStorage.setItem("tcm-v2-api-writes", "1");
     // One repository's pull requests tracked beside your own (the sample
     // repository's id, as the capture names answer it).
     localStorage.setItem(`tcm-v2-pr-repos:${CAPTURE_ORG}/${CAPTURE_PROJECT}`, JSON.stringify([neutralName("demo-repo-1")]));

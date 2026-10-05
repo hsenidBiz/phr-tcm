@@ -25,22 +25,22 @@ const BUILT = join(HELP, "index.html");
 const THEMES = ["light", "dark"] as const;
 const positions = positionsJson as Positions;
 
-/** Never in the site: hidden features, the dev tooling, the sample data. */
+/** Never in the site: hidden features, the dev tooling, the sample data,
+ *  and any word that a finished feature is still in development. */
 const FORBIDDEN = [
-  /\bauto ?run\b/i,
-  /autorun/i,
   /konami/i,
   /\bunlock/i,
   /\bextras\b/i,
   /dev panel/i,
   /demo data/i,
   /\bgames?\b/i,
-  /api ?templates?/i,
   /api_template/i,
   /save_api_flow/i,
   /risk-tiered/i,
   /Test design rules/i,
   /get_api_flow_progress/i,
+  // Auto Run and API Templates are finished features, never "in development".
+  /in dev(elopment)?\b/i,
 ];
 
 /** What a reader sees, with where it is, for a readable failure. */

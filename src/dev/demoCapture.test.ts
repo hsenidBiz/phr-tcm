@@ -271,3 +271,73 @@ test("demo and capture modes never add, rename or remove a real database", async
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   }
 });
+
+/// Auto Run and API Templates read local files on a real machine. Sample
+/// data answers them from memory instead - realistic enough to document
+/// every tab, and never this machine's own scripts, accounts or templates:
+/// every address is under example.test and no account holds a password.
+test("Auto Run and API Templates answer from the sample data, with no password and no real host", async () => {
+  const { commands } = await boot({ demo: true, capture: true });
+  const ok = async <T,>(p: Promise<unknown>) => {
+    const r = (await p) as { status: string; data: T };
+    expect(r.status).toBe("ok");
+    return r.data;
+  };
+
+  // Enable Advanced Features reads on in a capture, and a click on it is
+  // answered without saving anything to this machine.
+  expect(await commands.getAdvancedFeatures()).toBe(true);
+  expect(await commands.setAdvancedFeatures(false)).toEqual({ status: "ok", data: null });
+
+  type Script = { no_save?: boolean; preconditions?: unknown[]; steps: unknown[] } | null;
+  const scripts = await Promise.all([5001, 5002, 5003, 5004, 5005].map((id) => ok<Script>(commands.autoRunLoadScript(id))));
+  expect(scripts.filter(Boolean)).toHaveLength(4);
+  expect(scripts.filter((s) => s?.no_save)).toHaveLength(1);
+  expect(scripts.filter((s) => (s?.preconditions?.length ?? 0) > 0)).toHaveLength(1);
+  expect(scripts[4]).toBeNull();
+
+  const runs = (await commands.autoRunListRuns()) as { cases: { proposed?: string; verdict: string; retried?: string | null }[] }[];
+  const results = runs.flatMap((r) => r.cases.map((c) => c.verdict || c.proposed));
+  expect(results).toEqual(expect.arrayContaining(["Passed", "Failed", "Blocked"]));
+  expect(runs.flatMap((r) => r.cases).filter((c) => c.retried)).toHaveLength(1);
+
+  const accounts = await ok<{ password: string }[]>(commands.autoRunListAccounts());
+  expect(accounts.length).toBeGreaterThan(0);
+  expect(accounts.every((a) => a.password === "")).toBe(true);
+  const proposals = await ok<Record<string, unknown>[]>(commands.envProposals());
+  expect(proposals.every((p) => !("password" in p) && p.has_password === true)).toBe(true);
+
+  const envs = await ok<{ active: string; environments: { id: string; start_url: string }[] }>(commands.envList(null));
+  const active = envs.environments.find((e) => e.id === envs.active);
+  expect(active?.start_url).toMatch(/^https:\/\/[a-z.]*example\.test\//);
+  const nav = await ok<{ modules: unknown[] }>(commands.autoRunLoadNav("Contoso", "Customer Portal"));
+  expect(nav.modules.length).toBeGreaterThan(0);
+  expect(await ok<unknown[]>(commands.testFilesList("Contoso", "Customer Portal"))).not.toHaveLength(0);
+
+  const overview = await ok<{ templates: { template: { module: string } }[]; flows: { stages: unknown[] }[] }>(
+    commands.apiTemplatesOverview("Contoso", "Customer Portal"),
+  );
+  expect(new Set(overview.templates.map((t) => t.template.module)).size).toBe(2);
+  expect(overview.flows.map((f) => f.stages.length)).toEqual([3]);
+
+  // Every address anything above answers is under example.test.
+  const everything = [scripts, runs, accounts, proposals, envs, nav, overview];
+  const hosts = strings(everything).flatMap((s) => [...s.matchAll(/https?:\/\/([^/\s"]+)/g)].map((m) => m[1]));
+  expect(hosts.length).toBeGreaterThan(0);
+  expect(hosts.filter((h) => !h.endsWith("example.test"))).toEqual([]);
+});
+
+/// The capture opens nothing on the machine it runs on: no browser for a
+/// recording, no file picked for an import.
+test("sample data refuses what would open a real browser or read a picked file", async () => {
+  const { commands } = await boot({ demo: true, capture: false });
+  for (const res of [
+    await commands.autoRunRecordStart("DemoOrg", "Demo Project", "Login", "Sign-in", "portal.tester", "edge"),
+    await commands.autoRunRecordSignInStart("DemoOrg", "Demo Project", "https://portal.example.test/", "edge"),
+    await commands.autoRunImportScripts("DemoOrg", "Demo Project", "C:\scripts.json"),
+    await commands.apiTemplatesImport("DemoOrg", "Demo Project", "C:\templates.json"),
+    await commands.testFilesAdd("DemoOrg", "Demo Project", "C:\photo.png", false),
+  ]) {
+    expect(res).toMatchObject({ status: "error" });
+  }
+});

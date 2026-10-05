@@ -274,6 +274,24 @@ pub fn set_extras_unlocked(unlocked: bool) -> Result<(), String> {
     })
 }
 
+/// Whether Settings' Enable Advanced Features is on (see `crate::extras`).
+#[tauri::command]
+#[specta::specta]
+pub fn get_advanced_features() -> bool {
+    crate::extras::advanced()
+}
+
+/// Turn Enable Advanced Features on or off. The raw reason goes to the
+/// log; the person gets a sentence they can act on.
+#[tauri::command]
+#[specta::specta]
+pub fn set_advanced_features(on: bool) -> Result<(), String> {
+    crate::extras::set_advanced(on).map_err(|e| {
+        crate::applog::warn(format!("could not save Enable Advanced Features: {e}"));
+        "Could not save this setting. The app log in Settings has the details.".to_string()
+    })
+}
+
 /// Open the "How To Use" guide in the default browser - Settings' "How To
 /// Use" button. Opens the downloaded guide (`help/<installed folder>/`,
 /// adopting an older install's guide first), or says to download it when
