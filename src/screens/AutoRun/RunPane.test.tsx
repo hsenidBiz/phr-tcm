@@ -8,6 +8,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { toast } from "../../lib/toast";
 import RunPane from "./RunPane";
 
 afterEach(() => {
@@ -614,4 +615,224 @@ test("a no-save case whose guard cannot start is Blocked with the sentence, as a
   fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].cases[0]).toMatchObject({ verdict: "Blocked", proposed: "Blocked", reason: NO_GUARD });
+});
+
+// ---- Replay to step N, started from Past runs or the review ----
+
+const THREE = [1, 2, 3].map((n) => ({ step_number: n, actions: [{ kind: "click", target: `Button ${n}` }] }));
+
+/** A pane opened to replay case 1. The replay command waits for `finish`
+ * with what it answers, so a test can look at the pane mid-replay. */
+function mockReplay(opts: { account?: string } = {}) {
+  const calls: { cmd: string; args: unknown }[] = [];
+  let finish: (answer: unknown) => void = () => {};
+  mockIPC(
+    (cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "auto_run_load_script") {
+        return { case_id: 1, title: "s", steps: THREE, ...(opts.account ? { account: opts.account } : {}) };
+      }
+      if (cmd === "auto_run_replay_to_step") return new Promise((resolve) => (finish = resolve));
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  return {
+    named: (cmd: string) => calls.filter((c) => c.cmd === cmd),
+    finish: (answer: unknown) =>
+      act(async () => {
+        finish(answer);
+      }),
+  };
+}
+
+function renderReplay(step: number) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane
+        org="acme"
+        project="Web"
+        pbiId={42}
+        cases={[{ id: 1, title: "Valid login" }]}
+        replayTo={step}
+        onClose={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+const READY = {
+  end: { kind: "ready", detail: { case_id: 1, step: 3, notice: null } },
+  sentence: "replayed case 1 to step 3 - the browser is on the page before step 3 runs",
+};
+
+/** The row of step `n` in the pane's step list. */
+async function stepRow(n: number) {
+  return (await screen.findByRole("button", { name: `Run step ${n}` })).closest("li")!;
+}
+
+test("a pane opened for a replay starts it at once, for that case and step, without Open browser", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+  expect(r.named("auto_run_replay_to_step")[0].args).toEqual({
+    organization: "acme",
+    project: "Web",
+    caseId: 1,
+    step: 3,
+    dbReadAccess: true,
+  });
+  // The replay opens the browser itself.
+  expect(r.named("auto_run_open_browser")).toHaveLength(0);
+});
+
+test("the replay is told Database Read Access is off", async () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_lookup", "db_query"]));
+  const r = mockReplay();
+  renderReplay(2);
+
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+  expect((r.named("auto_run_replay_to_step")[0].args as { dbReadAccess: boolean }).dbReadAccess).toBe(false);
+});
+
+test("the pane says which step the replay is on, from its progress", async () => {
+  mockReplay();
+  renderReplay(3);
+
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-replay-progress", { case_id: 1, step: 1, of: 2 });
+  });
+  expect(await screen.findByText("replaying step 1 of 2")).toBeInTheDocument();
+
+  // Another case's replay is not this pane's.
+  await act(async () => {
+    await emit("autorun-replay-progress", { case_id: 9, step: 7, of: 8 });
+  });
+  expect(screen.queryByText("replaying step 7 of 8")).not.toBeInTheDocument();
+
+  await act(async () => {
+    await emit("autorun-replay-progress", { case_id: 1, step: 2, of: 2 });
+  });
+  expect(await screen.findByText("replaying step 2 of 2")).toBeInTheDocument();
+});
+
+test("Stop replay asks the replay to stop", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Stop replay" }));
+  await waitFor(() => expect(r.named("auto_run_stop_replay")).toHaveLength(1));
+
+  // Gone once the replay has answered.
+  await r.finish({ end: { kind: "stopped", detail: { step: 2 } }, sentence: "the replay was stopped at step 2" });
+  expect(await screen.findByText("the replay was stopped at step 2")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop replay" })).not.toBeInTheDocument();
+});
+
+test.each([
+  [READY, "text-success"],
+  [
+    {
+      end: { kind: "stopped_at", detail: { step: 2, why: 'button "Save" not found', outcomes: [] } },
+      sentence: 'replay stopped at step 2: button "Save" not found',
+    },
+    "text-danger",
+  ],
+  [{ end: { kind: "stopped", detail: { step: 2 } }, sentence: "the replay was stopped at step 2" }, "text-muted"],
+  [
+    { end: { kind: "refused", detail: "case 1 has no saved script" }, sentence: "case 1 has no saved script" },
+    "text-warning",
+  ],
+])("the replay's answer is shown as its own sentence (%#)", async (answer, tone) => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish(answer);
+  expect(await screen.findByText(answer.sentence)).toHaveClass(tone);
+});
+
+test("after a replay to step 3, steps 1 and 2 are marked and step 3 is next, with no second sign-in", async () => {
+  const r = mockReplay({ account: "hr.admin" });
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish(READY);
+
+  for (const n of [1, 2]) expect(within(await stepRow(n)).getByText("replayed")).toBeInTheDocument();
+  const next = await stepRow(3);
+  expect(within(next).queryByText("replayed")).not.toBeInTheDocument();
+  expect(next).toHaveAttribute("aria-current", "step");
+  expect(within(next).getByRole("button", { name: "Run step 3" })).toBeEnabled();
+
+  // The replay signed the case in: the pane shows its browser as open and
+  // does not sign in over it.
+  expect(screen.queryByRole("button", { name: "Open browser" })).not.toBeInTheDocument();
+  await act(async () => {});
+  expect(r.named("auto_run_sign_in")).toHaveLength(0);
+  expect(r.named("auto_run_check_preconditions")).toHaveLength(0);
+});
+
+test("a replay that is ready with a notice shows the notice", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish({
+    end: {
+      kind: "ready",
+      detail: { case_id: 1, step: 3, notice: "preconditions not checked: Database Read Access is off" },
+    },
+    sentence: READY.sentence,
+  });
+  expect(await screen.findByText("preconditions not checked: Database Read Access is off")).toBeInTheDocument();
+});
+
+test("a replay stopped at step 2 marks step 1, shows step 2's outcomes as failed, and leaves step 2 to run", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish({
+    end: {
+      kind: "stopped_at",
+      detail: {
+        step: 2,
+        why: 'button "Save" not found',
+        outcomes: [
+          { ok: true, detail: "clicked Edit" },
+          { ok: false, detail: 'button "Save" not found', screenshot: "shot-1-2.png" },
+        ],
+      },
+    },
+    sentence: 'replay stopped at step 2: button "Save" not found',
+  });
+
+  expect(within(await stepRow(1)).getByText("replayed")).toBeInTheDocument();
+  const failed = await stepRow(2);
+  expect(within(failed).queryByText("replayed")).not.toBeInTheDocument();
+  expect(within(failed).getByText(/^button "Save" not found/)).toHaveClass("text-danger");
+  expect(within(failed).getByRole("button", { name: "View screenshot for action 2" })).toBeInTheDocument();
+  expect(within(failed).getByRole("button", { name: "Run step 2" })).toBeEnabled();
+  expect(within(await stepRow(3)).queryByText("replayed")).not.toBeInTheDocument();
+});
+
+test("a replay whose browser would not open says so and offers Open browser", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: THREE };
+      if (cmd === "auto_run_replay_to_step") return Promise.reject("Edge could not be started");
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  const error = vi.spyOn(toast, "error");
+  renderReplay(3);
+
+  await waitFor(() => expect(error).toHaveBeenCalledWith("Could not open the browser: Edge could not be started"));
+  expect(await screen.findByRole("button", { name: "Open browser" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Stop replay" })).not.toBeInTheDocument();
 });

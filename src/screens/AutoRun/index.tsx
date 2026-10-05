@@ -392,6 +392,16 @@ export default function AutoRun({
    * unattended run opens straight into this once it finishes - see
    * ReplayPane's `onFinished` below. */
   const [reviewing, setReviewing] = useState<string | null>(null);
+  /** Replay to step N, pressed in Past runs or the review: the supervised
+   * pane opens on the case (`running`) and replays it up to `step`. The
+   * title is the run's, for a case no longer listed under this PBI. */
+  const [replayTo, setReplayTo] = useState<{ caseId: number; title: string; step: number } | null>(null);
+  const replayCase = (caseId: number, title: string, step: number) => {
+    // The review is a dialog of its own: closing it leaves the pane in front.
+    setReviewing(null);
+    setReplayTo({ caseId, title, step });
+    setRunning([caseId]);
+  };
   /** Ticked cases, by id. A bulk run is these, in list order. */
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [grouped, setGrouped] = useState(
@@ -1112,6 +1122,7 @@ export default function AutoRun({
               <PastRuns
                 pbiId={pbi.id}
                 onReview={setReviewing}
+                onReplay={replayCase}
                 filter={runsFilter}
                 onFilterChange={setRunsFilter}
               />
@@ -1203,10 +1214,11 @@ export default function AutoRun({
 
       {running != null &&
         (() => {
-          const picked = running
-            .map((id) => rows.find((x) => x.id === id))
-            .filter((c): c is (typeof rows)[number] => Boolean(c))
-            .map((c) => ({ id: c.id, title: c.title }));
+          const picked = running.flatMap((id) => {
+            const c = rows.find((x) => x.id === id);
+            if (c) return [{ id: c.id, title: c.title }];
+            return replayTo?.caseId === id ? [{ id, title: replayTo.title }] : [];
+          });
           if (picked.length === 0) return null;
           return (
             <RunPane
@@ -1214,11 +1226,14 @@ export default function AutoRun({
               project={project}
               pbiId={pbi.id}
               cases={picked}
+              replayTo={replayTo?.step}
               onClose={() => {
                 setRunning(null);
+                setReplayTo(null);
                 // The selection has been run - leaving it ticked invites a
-                // second run of cases that were just decided.
-                setSelected(new Set());
+                // second run of cases that were just decided. A replay ran
+                // no selection.
+                if (!replayTo) setSelected(new Set());
               }}
             />
           );
@@ -1274,6 +1289,7 @@ export default function AutoRun({
           sharedSteps={Object.fromEntries(
             rows.map((c) => [c.id, c.steps.flatMap((s, i) => (s.shared != null ? [i + 1] : []))]),
           )}
+          onReplay={replayCase}
           onClose={() => {
             setReviewing(null);
             // Opened from Past runs, the card's Review button is still there

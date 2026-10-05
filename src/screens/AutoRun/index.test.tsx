@@ -1083,3 +1083,71 @@ test("the Save words row shows the built-in words and the project's own, and Edi
   expect(screen.getByRole("button", { name: "Remove save word recalc" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Remove save word save" })).not.toBeInTheDocument();
 });
+
+/** An unattended run of this PBI in which case 1 failed at step 2. */
+const FAILED_RUN = {
+  id: "run-1",
+  pbi_id: 42,
+  started_at: "1786000200000",
+  mode: "unattended",
+  published: null,
+  cases: [
+    {
+      case_id: 1,
+      title: "Alpha check",
+      verdict: "",
+      note: "",
+      proposed: "Failed",
+      reason: "step 2: button not found",
+      steps: [
+        { step_number: 1, outcomes: [{ ok: true, detail: "clicked Edit" }] },
+        { step_number: 2, outcomes: [{ ok: false, detail: "button not found" }] },
+      ],
+    },
+  ],
+};
+
+function mockReplayList() {
+  const replays: unknown[] = [];
+  mockList([caseRow(1, "Alpha check")], [1], [FAILED_RUN], (cmd, args) => {
+    if (cmd === "auto_run_load_run") return FAILED_RUN;
+    if (cmd === "auto_run_replay_to_step") {
+      replays.push(args);
+      return new Promise(() => {});
+    }
+    return null;
+  });
+  return replays;
+}
+
+test("Replay in Past runs opens the supervised pane on that case and starts the replay", async () => {
+  const replays = mockReplayList();
+  renderScreen();
+  await screen.findByText("Alpha check");
+  openTab("Past runs");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Replay case 1 to step 2" }));
+
+  expect(await screen.findByRole("button", { name: "Stop replay" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "#1 Alpha check" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(replays).toEqual([{ organization: "acme", project: "proj", caseId: 1, step: 2, dbReadAccess: true }]),
+  );
+});
+
+test("Replay in the review closes the review and shows the pane replaying", async () => {
+  const replays = mockReplayList();
+  renderScreen();
+  await screen.findByText("Alpha check");
+  openTab("Past runs");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+  const review = await screen.findByRole("listitem", { name: "Case #1 Alpha check" });
+  fireEvent.click(within(review).getByRole("button", { name: "Replay case 1 to step 2" }));
+
+  expect(await screen.findByRole("button", { name: "Stop replay" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole("listitem", { name: "Case #1 Alpha check" })).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(replays).toHaveLength(1));
+});

@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type ActionOutcome, type CaseRecord, type SignInOutcome } from "../../bindings";
+import { commands, events, type ActionOutcome, type CaseRecord, type ReplayEnd, type SignInOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
@@ -27,11 +27,20 @@ const BROWSERS = [
 /** How the app's refusal begins when a no-save case's guard cannot start. */
 const GUARD_NOT_SET_UP = "the no-save guard could not be set up: ";
 
+/** How a replay's answer is coloured, by how it ended. */
+const REPLAY_TONE: Record<ReplayEnd["kind"], string> = {
+  ready: "text-success",
+  stopped_at: "text-danger",
+  stopped: "text-muted",
+  refused: "text-warning",
+};
+
 export default function RunPane({
   org,
   project,
   pbiId,
   cases,
+  replayTo,
   onClose,
 }: {
   org: string;
@@ -40,6 +49,11 @@ export default function RunPane({
   /** The selection, run one after another in this order. One case is a
    * selection of one - there is no separate single-case path. */
   cases: { id: number; title: string }[];
+  /** Set when the pane opens for Replay to step N (Past runs, the review):
+   * the first case's saved steps before this one are replayed at once, in a
+   * browser the replay opens itself when none is open, and the person
+   * carries on from this step by hand. */
+  replayTo?: number;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -289,6 +303,84 @@ export default function RunPane({
     await signInAs(account, false);
   };
 
+  /** A replay to a step: going (with the step it is on, once the first
+   * progress arrives), or ended with the sentence the app answered, said as
+   * it is. */
+  const [replay, setReplay] = useState<
+    | { state: "going"; at: { step: number; of: number } | null }
+    | { state: "ended"; kind: ReplayEnd["kind"]; sentence: string }
+    | null
+  >(null);
+  /** The step a replay stopped before: every step below it ran in the
+   * replay. 0 while nothing was replayed. */
+  const [replayedTo, setReplayedTo] = useState(0);
+
+  useEffect(() => {
+    const un = events.autorunReplayProgress.listen((e) => {
+      const p = e.payload;
+      if (p.case_id !== caseId) return;
+      setReplay((r) => (r?.state === "going" ? { state: "going", at: { step: p.step, of: p.of } } : r));
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [caseId]);
+
+  /** Replay this case's steps before `step` in the supervised browser, and
+   * leave the pane on `step` with that browser as its own: the replay signed
+   * the case in, so the pane does not sign in over it. */
+  const startReplay = async (step: number) => {
+    const wasOpen = opened;
+    setBusy(true);
+    setReplay({ state: "going", at: null });
+    try {
+      const r = await commands.autoRunReplayToStep(org, project, caseId, step, dbReadAccessOn());
+      if (r.status === "error") {
+        setReplay(null);
+        toast.error(`Could not open the browser: ${r.error}`);
+        return;
+      }
+      const { end, sentence } = r.data;
+      setReplay({ state: "ended", kind: end.kind, sentence });
+      // A refusal may come before or after the browser opened: the pane
+      // keeps what it showed, and closes whatever is there when it goes.
+      openedRef.current = true;
+      if (end.kind === "refused") return;
+      if (!wasOpen) {
+        const launch = launchRef.current + 1;
+        signedFor.current = launch;
+        launchRef.current = launch;
+        setLaunches(launch);
+        setOpened(true);
+      }
+      if (end.kind === "ready") {
+        setReplayedTo(end.detail.step);
+        const notice = end.detail.notice;
+        if (notice) setPre((p) => ({ ...p, notice }));
+      } else if (end.kind === "stopped_at") {
+        const { step: k, outcomes } = end.detail;
+        setReplayedTo(k);
+        if (outcomes.length > 0) setResults((prev) => ({ ...prev, [k]: outcomes }));
+      } else {
+        setReplayedTo(end.detail.step);
+      }
+    } catch (e) {
+      setReplay(null);
+      toast.error(`Could not open the browser: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A pane opened for a replay starts it once, at once.
+  const replayStarted = useRef(false);
+  useEffect(() => {
+    if (replayTo === undefined || replayStarted.current) return;
+    replayStarted.current = true;
+    void startReplay(replayTo);
+    // Once per pane: startReplay is recreated every render.
+  }, [replayTo]);
+
   /** The verdict in front of the person right now, as a record. */
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
@@ -439,7 +531,29 @@ export default function RunPane({
         )}
       </h2>
 
+      {replay?.state === "going" && (
+        <div className="flex items-center justify-between gap-2 rounded border border-border/60 px-2 py-1 text-xs">
+          <span role="status" className="text-muted">
+            {replay.at ? `replaying step ${replay.at.step} of ${replay.at.of}` : "Starting the replay"}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void commands.autoRunStopReplay().catch(() => {})}
+          >
+            Stop replay
+          </Button>
+        </div>
+      )}
+      {replay?.state === "ended" && (
+        <p role="status" className={cn("rounded border border-border/60 px-2 py-1 text-xs", REPLAY_TONE[replay.kind])}>
+          {replay.sentence}
+        </p>
+      )}
+
       {!opened ? (
+        // A replay opens its own browser: nothing to pick while it goes.
+        replay?.state === "going" ? null : (
         <div className="space-y-2">
           <p className="text-xs text-muted">
             A real browser window opens with a fresh profile. Keep it beside this one and
@@ -473,6 +587,7 @@ export default function RunPane({
             </Button>
           </div>
         </div>
+        )
       ) : (
         <div className="space-y-2">
           {pre.state === "checking" && (
@@ -514,43 +629,55 @@ export default function RunPane({
             </div>
           )}
           <ul className="max-h-72 space-y-2 overflow-y-auto">
-            {(script.data?.steps ?? []).map((s) => (
-              <li key={s.step_number} className="rounded-md border border-border p-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
-                  <span className="text-[11px] text-faint">
-                    {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
-                  </span>
-                  <Button
-                    className="ml-auto"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || pre.state !== "idle"}
-                    onClick={() => runStep(s.step_number)}
-                  >
-                    Run step {s.step_number}
-                  </Button>
-                </div>
-                {(results[s.step_number] ?? []).map((o, i) => (
-                  <p
-                    key={i}
-                    className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
-                  >
-                    {o.detail}
-                    {o.screenshot && (
-                      <button
-                        type="button"
-                        aria-label={`View screenshot for action ${i + 1}`}
-                        className="ml-2 text-muted underline hover:text-accent"
-                        onClick={() => openShot(o.screenshot!)}
-                      >
-                        View screenshot
-                      </button>
-                    )}
-                  </p>
-                ))}
-              </li>
-            ))}
+            {(script.data?.steps ?? []).map((s) => {
+              // After a replay: the steps below where it stopped ran in it,
+              // and the one it stopped before is the person's to run next.
+              const replayed = s.step_number < replayedTo;
+              const next = replayedTo > 0 && s.step_number === replayedTo;
+              return (
+                <li
+                  key={s.step_number}
+                  aria-current={next ? "step" : undefined}
+                  className={cn("rounded-md border p-2", next ? "border-accent" : "border-border")}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
+                    <span className="text-[11px] text-faint">
+                      {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
+                    </span>
+                    {replayed && <span className="text-[11px] text-success">replayed</span>}
+                    {next && <span className="text-[11px] text-accent">next</span>}
+                    <Button
+                      className="ml-auto"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || pre.state !== "idle"}
+                      onClick={() => runStep(s.step_number)}
+                    >
+                      Run step {s.step_number}
+                    </Button>
+                  </div>
+                  {(results[s.step_number] ?? []).map((o, i) => (
+                    <p
+                      key={i}
+                      className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
+                    >
+                      {o.detail}
+                      {o.screenshot && (
+                        <button
+                          type="button"
+                          aria-label={`View screenshot for action ${i + 1}`}
+                          className="ml-2 text-muted underline hover:text-accent"
+                          onClick={() => openShot(o.screenshot!)}
+                        >
+                          View screenshot
+                        </button>
+                      )}
+                    </p>
+                  ))}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

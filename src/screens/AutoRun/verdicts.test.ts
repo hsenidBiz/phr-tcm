@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { countBuckets, lastResultFor, lastResults, matchesFilter, resultBucket } from "./verdicts";
+import { countBuckets, failingStep, lastResultFor, lastResults, matchesFilter, resultBucket } from "./verdicts";
 
 const FIXTURE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -107,4 +107,33 @@ test("a case in no run is Not run, and started_at is compared as a number", () =
   expect(lastResultFor(last, 77)).toBe("Not run");
   expect(lastResultFor(last, 1)).toBe("Failed");
   expect(lastResults([]).size).toBe(0);
+});
+
+test("the failing step is the first case step with an action that ran and failed", () => {
+  const ok = (detail = "ok") => ({ ok: true, detail });
+  const bad = (detail = "button not found") => ({ ok: false, detail });
+  const skipped = { ok: false, detail: "not run: an earlier step of this case failed" };
+  expect(
+    failingStep({
+      steps: [
+        { step_number: 0, outcomes: [ok("signed in")] },
+        { step_number: 1, outcomes: [ok()] },
+        { step_number: 3, outcomes: [skipped] },
+        { step_number: 2, outcomes: [ok(), bad()] },
+      ],
+    }),
+  ).toBe(2);
+  // Every step passed, or was only skipped: no failing step.
+  expect(failingStep({ steps: [{ step_number: 1, outcomes: [ok()] }, { step_number: 2, outcomes: [skipped] }] })).toBeNull();
+  // Blocked before step 1: no step ran at all.
+  expect(failingStep({ steps: [] })).toBeNull();
+  // The sign-in and the trip to the module are not the case's own steps.
+  expect(
+    failingStep({
+      steps: [
+        { step_number: 0, outcomes: [bad("could not sign in")] },
+        { step_number: -1, outcomes: [bad("module not found")] },
+      ],
+    }),
+  ).toBeNull();
 });
