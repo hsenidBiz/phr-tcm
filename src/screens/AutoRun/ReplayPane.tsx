@@ -8,7 +8,7 @@
 // reviews it, and only a reviewed run can ever reach Azure DevOps.
 
 import { useEffect, useId, useRef, useState } from "react";
-import { commands, events, type PlanView, type StepRecord } from "../../bindings";
+import { commands, events, type AutorunResetNeeded, type PlanView, type StepRecord } from "../../bindings";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -27,6 +27,7 @@ import { cn } from "../../lib/cn";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { resetLines } from "./plan";
+import ResetNeededPanel from "./ResetNeededPanel";
 
 // Same two browsers, same values, as the supervised pane's picker - and the
 // same storage key, so a person's choice there is their choice here too.
@@ -220,6 +221,23 @@ export default function ReplayPane({
    * overwrite what is on screen for the run actually in progress. */
   const runId = useRef<string | null>(null);
 
+  /** The reset point the run is paused at, while it waits for an answer. */
+  const [resetNeeded, setResetNeeded] = useState<AutorunResetNeeded | null>(null);
+  const [answering, setAnswering] = useState(false);
+
+  useEffect(() => {
+    const un = events.autorunResetNeeded.listen((e) => {
+      const r = e.payload;
+      // Only the run this pane is showing.
+      if (runId.current !== null && r.run_id !== runId.current) return;
+      setAnswering(false);
+      setResetNeeded(r);
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
   useEffect(() => {
     const un = events.replayProgress.listen((e) => {
       const p = e.payload;
@@ -228,6 +246,8 @@ export default function ReplayPane({
       setRows((prev) => ({ ...prev, [p.case_id]: statusOf(p) }));
       setPhases((prev) => ({ ...prev, [p.case_id]: p.phase }));
       setLatest({ caseId: p.case_id, phase: p.phase, step: p.step_number });
+      // A case moving again means the pause is over.
+      if (p.phase !== "done") setResetNeeded(null);
       setPosition({ index: p.index, total: p.total });
       // A case starting is locked open and a finished one folds: either way
       // the person's own choice for it is spent.
@@ -266,6 +286,8 @@ export default function ReplayPane({
     setRecords({});
     setByHand({});
     setPaused(false);
+    setResetNeeded(null);
+    setAnswering(false);
     runId.current = null;
     try {
       const r = await commands.autoRunReplay(
@@ -285,6 +307,7 @@ export default function ReplayPane({
         setPhase("failed");
         return;
       }
+      setResetNeeded(null);
       onFinished(r.data.id);
     } catch (e) {
       // Same rethrow hazard as the supervised pane's own IPC calls - the
@@ -301,6 +324,23 @@ export default function ReplayPane({
     // to tell them until it does.
     setStopping(true);
     await commands.autoRunReplayCancel().catch(() => {});
+  };
+
+  /** The person's answer at the reset point: Continue runs the next phase,
+   * Stop ends the run there. A refused answer (the run stopped meanwhile)
+   * leaves the run to end on its own. */
+  const answerReset = async (continueRun: boolean) => {
+    if (!resetNeeded) return;
+    setAnswering(true);
+    if (!continueRun) setStopping(true);
+    try {
+      const r = await commands.autoRunAnswerReset(resetNeeded.run_id, continueRun);
+      if (r.status === "error") setError(r.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setResetNeeded(null);
+    setAnswering(false);
   };
 
   /** The case running now: the newest event's, unless that said "done". */
@@ -458,6 +498,16 @@ export default function ReplayPane({
             <p className="text-xs text-muted">
               case {position.index + 1} of {position.total}
             </p>
+          )}
+          {resetNeeded && (
+            <ResetNeededPanel
+              reset={resetNeeded}
+              remaining={resetNeeded.remaining}
+              titleOf={(id) => cases.find((c) => c.id === id)?.title}
+              busy={answering}
+              onContinue={() => void answerReset(true)}
+              onStop={() => void answerReset(false)}
+            />
           )}
           {/* Only the person's own input pauses following - a bare `scroll`
               event is also what scrollIntoView itself causes. */}

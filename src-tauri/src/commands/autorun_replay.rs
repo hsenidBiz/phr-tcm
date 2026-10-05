@@ -3,7 +3,9 @@
 //!
 //! NOTHING here calls Azure DevOps.
 
+use crate::autorun::plan::Reset;
 use crate::autorun::replay::{self, Browsers, CaseToRun};
+use crate::autorun::reset_wait::{self, AppGate};
 use crate::autorun::{sessions, store, LocalRun};
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
@@ -187,12 +189,17 @@ pub async fn auto_run_replay(
         // A switch is refused while this run holds its slot, so this is the
         // environment every case of it signs in to.
         environment: crate::environments::active(&root).ok().map(|e| e.name),
+        resets: vec![],
     };
 
-    let list: Vec<CaseToRun> = cases
+    let sent: Vec<CaseToRun> = cases
         .iter()
         .map(|c| CaseToRun { case_id: c.case_id, title: c.title.clone(), module: c.module.clone() })
         .collect();
+    // The order and its reset points, worked out again here from the
+    // scripts on disk and the PBI's own order: the reset points are never
+    // taken on the webview's word.
+    let (list, resets) = planned_cases(&root, pbi_id, &sent);
     let timing = replay_timing(watch);
     let mut browsers = RealBrowsers::new(Browser::from_name(&browser_name), watch);
     // Where the cases' preconditions are asked: nowhere while Database
@@ -205,7 +212,11 @@ pub async fn auto_run_replay(
         crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
     };
 
-    let outcome = replay::run_cases_checked(
+    let notify = |n: &crate::events::AutorunResetNeeded| {
+        let _ = n.clone().emit(&app);
+    };
+    let mut gate = AppGate { waits: reset_wait::waits(), run_id: run.id.clone(), notify: &notify };
+    let outcome = replay::run_cases_planned(
         &mut browsers,
         &root,
         &organization,
@@ -217,6 +228,8 @@ pub async fn auto_run_replay(
         &timing,
         &CANCEL,
         &precondition_db,
+        &resets,
+        &mut gate,
         &mut |p: ReplayProgress| {
             let _ = p.emit(&app);
         },
@@ -245,4 +258,49 @@ pub async fn auto_run_replay(
 #[specta::specta]
 pub fn auto_run_replay_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
+}
+
+/// The selection in the order to run it, and the reset points in that
+/// order: the plan worked out from the scripts on disk and the PBI's own
+/// order (`autorun::auto_run_plan`'s `plan_at`), whatever order the cases
+/// were sent in. Where the two orders differ the plan wins, and the
+/// difference is logged (ids only).
+pub fn planned_cases(root: &std::path::Path, pbi_id: i32, sent: &[CaseToRun]) -> (Vec<CaseToRun>, Vec<Reset>) {
+    let ids: Vec<i32> = sent.iter().map(|c| c.case_id).collect();
+    let plan = super::autorun::plan_at(root, pbi_id, &ids, None);
+    if plan.order != ids {
+        crate::applog::info(format!(
+            "Auto-run unattended: the planned order {:?} replaces the order sent {:?}",
+            plan.order, ids
+        ));
+    }
+    let list = plan.order.iter().filter_map(|id| sent.iter().find(|c| c.case_id == *id).cloned()).collect();
+    (list, plan.resets)
+}
+
+/// The person's answer at the reset point run `run_id` is waiting at:
+/// Continue (`continue_run`) runs the next phase, Stop ends the run there.
+/// Refused when that run is not waiting at a reset point.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_answer_reset(run_id: String, continue_run: bool) -> Result<(), String> {
+    reset_wait::waits().answer(&run_id, continue_run)
+}
+
+/// How long the app's exit waits for a run stopped at a reset point to
+/// save itself.
+const EXIT_SAVE_WAIT: Duration = Duration::from_secs(3);
+
+/// The app is closing. A run waiting at a reset point is answered Stop, and
+/// the exit waits (bounded) for it to record the rest as not run and save
+/// itself, so its file is never left mid-run.
+pub fn stop_paused_run_on_exit() {
+    if !reset_wait::waits().stop_for_exit() {
+        return;
+    }
+    crate::applog::info("Auto-run unattended: the app closed at a reset point - the run was stopped");
+    let until = std::time::Instant::now() + EXIT_SAVE_WAIT;
+    while replay_is_running() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }

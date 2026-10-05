@@ -102,6 +102,8 @@ export {
   Play as IconRun,
   // Starting a run nobody has to sit in front of - a person picks IconRun.
   Bot as IconUnattended,
+  // Carrying on with a run that paused at a reset point.
+  StepForward as IconContinue,
   Flag as IconFinish,
   // Opening and folding a row's detail - the steps under a case in the
   // unattended run. One glyph per direction, named for the result.

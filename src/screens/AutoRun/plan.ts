@@ -43,3 +43,22 @@ export function resetLines(reset: Reset, titleOf: (id: number) => string | undef
     return who ? `Reset: revert "${name}" (changed by ${who})` : `Reset: revert "${name}"`;
   });
 }
+
+/** A reset point as a run recorded it: the names reverted and how it ended. */
+export type RecordedReset = { before_case_id: number; names?: string[]; outcome?: string };
+
+/** The lines a recorded reset point is shown with, one per name, in the
+ * report's words: `Reset: revert "<name>" - continued` (or `- stopped`). */
+export function recordedResetLines(reset: RecordedReset): string[] {
+  const ended = reset.outcome === "continued" || reset.outcome === "stopped" ? ` - ${reset.outcome}` : "";
+  return (reset.names ?? []).map((name) => `Reset: revert "${name}"${ended}`);
+}
+
+/** The recorded reset lines due before case `caseId` in a run. */
+export function resetLinesBefore(resets: readonly RecordedReset[] | undefined, caseId: number): string[] {
+  return (resets ?? []).filter((r) => r.before_case_id === caseId).flatMap(recordedResetLines);
+}
+
+/** The sentence every case left is recorded with when a run stops at a
+ * reset point - the same words as the unattended run's. */
+export const STOPPED_AT_RESET = "not run: the run stopped at a reset point";

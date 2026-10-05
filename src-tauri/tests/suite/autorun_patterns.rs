@@ -55,7 +55,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
 }
 
 fn run(cases: Vec<CaseRecord>) -> LocalRun {
-    LocalRun { id: "run-1".into(), pbi_id: 1, started_at: "1".into(), cases, mode: "unattended".into(), published: None, environment: None }
+    LocalRun { id: "run-1".into(), pbi_id: 1, started_at: "1".into(), cases, mode: "unattended".into(), published: None, environment: None, resets: vec![] }
 }
 
 /// Every sentence here is the driver's own wording, the way a run file

@@ -8,7 +8,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
-import { commands, events, type ActionOutcome, type CaseRecord, type ReplayEnd, type SignInOutcome } from "../../bindings";
+import {
+  commands,
+  events,
+  type ActionOutcome,
+  type CaseRecord,
+  type PlanView,
+  type ReplayEnd,
+  type Reset,
+  type ResetRecord_Serialize,
+  type SignInOutcome,
+} from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
@@ -18,6 +28,8 @@ import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import VerdictPicker from "./VerdictPicker";
+import ResetNeededPanel from "./ResetNeededPanel";
+import { STOPPED_AT_RESET } from "./plan";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
@@ -51,6 +63,7 @@ export default function RunPane({
   pbiId,
   cases,
   replayTo,
+  plan = null,
   onClose,
 }: {
   org: string;
@@ -64,6 +77,10 @@ export default function RunPane({
    * browser the replay opens itself when none is open, and the person
    * carries on from this step by hand. */
   replayTo?: number;
+  /** The plan for `cases`: before a case its reset points name, the pane
+   * pauses with the Reset needed panel, once the case before has ended and
+   * before the next case's browser is used. */
+  plan?: PlanView | null;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -80,6 +97,12 @@ export default function RunPane({
    * it - and flushed on close as well as on finish, so walking away
    * half-way through does not throw away the verdicts already given. */
   const [records, setRecords] = useState<CaseRecord[]>([]);
+
+  /** The reset point the pane is paused at, and since when. The case before
+   * it is banked; the next case starts on Continue. */
+  const [pausedAt, setPausedAt] = useState<{ reset: Reset; since: number } | null>(null);
+  /** Each reset point this run paused at, kept with the run. */
+  const [resets, setResets] = useState<ResetRecord_Serialize[]>([]);
 
   /** Which browser to watch in. Remembered, because a person who prefers
    * Chrome prefers it every time - but only a name the picker can show:
@@ -538,12 +561,21 @@ export default function RunPane({
       // verdict is in (or the person walks away).
       if (!isLast) {
         setRecords((r) => [...r, record]);
-        setIdx((i) => i + 1);
         setResults({});
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });
         setPre({ state: "idle", reason: "", notice: "" });
+        const nextId = cases[idx + 1]?.id;
+        const reset = plan?.resets.find((r) => r.before_case_id === nextId) ?? null;
+        if (reset) {
+          // A reset point: the case before has ended, its browser closes,
+          // and the next case's opens only once the person says Continue.
+          await commands.autoRunCloseBrowser().catch(() => {});
+          setPausedAt({ reset, since: Date.now() });
+          return;
+        }
+        setIdx((i) => i + 1);
         await freshBrowser();
         return;
       }
@@ -560,9 +592,52 @@ export default function RunPane({
     }
   };
 
+  /** The record of the pause the pane is at, ended `outcome`. */
+  const resetRecord = (at: { reset: Reset; since: number }, outcome: "continued" | "stopped"): ResetRecord_Serialize => ({
+    before_case_id: at.reset.before_case_id,
+    names: at.reset.names,
+    changed_by: at.reset.changed_by,
+    waited_ms: Math.max(0, Date.now() - at.since),
+    outcome,
+  });
+
+  /** Continue at a reset point: the next case starts in a fresh browser. */
+  const continueAfterReset = async () => {
+    if (!pausedAt || inFlight.current) return;
+    setResets((r) => [...r, resetRecord(pausedAt, "continued")]);
+    setPausedAt(null);
+    setIdx((i) => i + 1);
+    await freshBrowser();
+  };
+
+  /** Stop at a reset point: the run ends there, as Close ends it, with every
+   * case left recorded as not run and why. */
+  const stopAtReset = async () => {
+    if (!pausedAt || inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      const left: CaseRecord[] = cases.slice(idx + 1).map((c) => ({
+        case_id: c.id,
+        title: c.title,
+        verdict: "",
+        note: "",
+        steps: [],
+        reason: STOPPED_AT_RESET,
+      }));
+      if (!(await writeRun([...records, ...left], [...resets, resetRecord(pausedAt, "stopped")]))) return;
+      closedRef.current = true;
+      if (openedRef.current) await commands.autoRunCloseBrowser().catch(() => {});
+      onClose();
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+
   /** The one place a run reaches disk. Returns false when it did not, so
    * callers can leave the pane open rather than closing over a failure. */
-  const writeRun = async (all: CaseRecord[]): Promise<boolean> => {
+  const writeRun = async (all: CaseRecord[], resetsToKeep: ResetRecord_Serialize[] = resets): Promise<boolean> => {
     if (all.length === 0) return true;
     let id: string;
     try {
@@ -577,6 +652,8 @@ export default function RunPane({
         pbi_id: pbiId,
         started_at: startedAt,
         cases: all,
+        // Written only when the run paused at a reset point.
+        ...(resetsToKeep.length > 0 ? { resets: resetsToKeep } : {}),
       });
       if (r.status === "error") {
         toast.error(`Could not save the result: ${r.error}`);
@@ -651,192 +728,207 @@ export default function RunPane({
     ));
 
   return (
-    <Modal onClose={close} className="w-full max-w-2xl space-y-3 p-4">
+    // Walking away at a reset point ends the run there, as Stop does.
+    <Modal onClose={pausedAt ? stopAtReset : close} className="w-full max-w-2xl space-y-3 p-4">
       <h2 className="text-sm font-semibold text-text">
-        <span className="id-mono text-faint">#{caseId}</span> {title}
+        <span className="id-mono text-faint">#{pausedAt ? cases[idx + 1]?.id : caseId}</span>{" "}
+        {pausedAt ? cases[idx + 1]?.title : title}
         {cases.length > 1 && (
           <span className="ml-2 text-xs font-normal text-faint">
-            case {idx + 1} of {cases.length}
+            case {pausedAt ? idx + 2 : idx + 1} of {cases.length}
           </span>
         )}
       </h2>
 
-      {replay?.state === "going" && (
-        <div className="flex items-center justify-between gap-2 rounded border border-border/60 px-2 py-1 text-xs">
-          <span role="status" className="text-muted">
-            {replay.at ? `replaying step ${replay.at.step} of ${replay.at.of}` : "Starting the replay"}
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void commands.autoRunStopReplay().catch(() => {})}
-          >
-            Stop replay
-          </Button>
-        </div>
-      )}
-      {replay?.state === "ended" && (
-        <p role="status" className={cn("rounded border border-border/60 px-2 py-1 text-xs", REPLAY_TONE[replay.kind])}>
-          {replay.sentence}
-        </p>
-      )}
-      {resign && (
-        <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
-          {resign}
-        </p>
-      )}
-
-      {!opened ? (
-        // A replay opens its own browser: nothing to pick while it goes.
-        replay?.state === "going" ? null : (
-        <div className="space-y-2">
-          <p className="text-xs text-muted">
-            A real browser window opens with a fresh profile. Keep it beside this one and
-            watch each step as it runs.
-          </p>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted">
-              Browser
-              <Select
-                aria-label="Browser to run in"
-                className="ml-2 w-40"
-                value={browserName}
-                onChange={(e) => {
-                  setBrowserName(e.target.value);
-                  try {
-                    localStorage.setItem("tcm-v2-autorun-browser", e.target.value);
-                  } catch {
-                    // storage unavailable - the choice lasts this session
-                  }
-                }}
-              >
-                {BROWSERS.map((b) => (
-                  <option key={b.value} value={b.value}>
-                    {b.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <Button size="sm" disabled={busy} onClick={openBrowser}>
-              Open browser
+      {pausedAt ? (
+        <ResetNeededPanel
+          reset={pausedAt.reset}
+          remaining={cases.slice(idx + 1).map((c) => c.id)}
+          titleOf={(id) => cases.find((c) => c.id === id)?.title}
+          busy={saving}
+          onContinue={() => void continueAfterReset()}
+          onStop={() => void stopAtReset()}
+        />
+      ) : (
+        <>
+        {replay?.state === "going" && (
+          <div className="flex items-center justify-between gap-2 rounded border border-border/60 px-2 py-1 text-xs">
+            <span role="status" className="text-muted">
+              {replay.at ? `replaying step ${replay.at.step} of ${replay.at.of}` : "Starting the replay"}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void commands.autoRunStopReplay().catch(() => {})}
+            >
+              Stop replay
             </Button>
           </div>
-        </div>
-        )
-      ) : (
-        <div className="space-y-2">
-          {pre.state === "checking" && (
-            <p className="rounded border border-border/60 px-2 py-1 text-xs text-muted">Checking the preconditions</p>
-          )}
-          {pre.notice && (
-            <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
-              {pre.notice}
+        )}
+        {replay?.state === "ended" && (
+          <p role="status" className={cn("rounded border border-border/60 px-2 py-1 text-xs", REPLAY_TONE[replay.kind])}>
+            {replay.sentence}
+          </p>
+        )}
+        {resign && (
+          <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
+            {resign}
+          </p>
+        )}
+
+        {!opened ? (
+          // A replay opens its own browser: nothing to pick while it goes.
+          replay?.state === "going" ? null : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted">
+              A real browser window opens with a fresh profile. Keep it beside this one and
+              watch each step as it runs.
             </p>
-          )}
-          {pre.state === "blocked" && (
-            <p role="status" className="rounded border border-border/60 px-2 py-1 text-xs text-danger">
-              Blocked before step 1: {pre.reason}
-            </p>
-          )}
-          {signIn.state !== "idle" && (
-            <div className="rounded border border-border/60 px-2 py-1 text-xs">
-              {signIn.state === "working" ? (
-                <span className="text-muted">Signing in as {signIn.account}</span>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={signIn.out?.ok ? "text-success" : "text-danger"}>{signIn.out?.detail}</span>
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => signInAs(signIn.account, true)}>
-                      Sign in again
-                    </Button>
-                  </div>
-                  {!signIn.out?.ok && (signIn.out?.steps.length ?? 0) > 0 && (
-                    <ul className="mt-1 space-y-0.5 text-faint">
-                      {signIn.out?.steps.map((o, i) => (
-                        <li key={i} className={o.ok ? "" : "text-danger"}>
-                          {o.detail}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-          <ul className="max-h-72 space-y-2 overflow-y-auto">
-            {results[MODULE_STEP] && (
-              <li className="rounded-md border border-border p-2">
-                <span className="text-xs font-medium text-muted">Going to the area</span>
-                {outcomeLines(results[MODULE_STEP])}
-              </li>
-            )}
-            {(script.data?.steps ?? []).map((s) => {
-              // After a replay: the steps below where it stopped ran in it,
-              // and the one it stopped before is the person's to run next.
-              const replayed = s.step_number < replayedTo;
-              const next = replayedTo > 0 && s.step_number === replayedTo;
-              return (
-                <li
-                  key={s.step_number}
-                  aria-current={next ? "step" : undefined}
-                  className={cn("rounded-md border p-2", next ? "border-accent" : "border-border")}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted">
+                Browser
+                <Select
+                  aria-label="Browser to run in"
+                  className="ml-2 w-40"
+                  value={browserName}
+                  onChange={(e) => {
+                    setBrowserName(e.target.value);
+                    try {
+                      localStorage.setItem("tcm-v2-autorun-browser", e.target.value);
+                    } catch {
+                      // storage unavailable - the choice lasts this session
+                    }
+                  }}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
-                    <span className="text-[11px] text-faint">
-                      {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
-                    </span>
-                    {replayed && <span className="text-[11px] text-success">replayed</span>}
-                    {next && <span className="text-[11px] text-accent">next</span>}
-                    <Button
-                      className="ml-auto"
-                      size="sm"
-                      variant="outline"
-                      disabled={busy || pre.state !== "idle"}
-                      onClick={() => runStep(s.step_number)}
-                    >
-                      Run step {s.step_number}
-                    </Button>
-                  </div>
-                  {outcomeLines(results[s.step_number] ?? [])}
+                  {BROWSERS.map((b) => (
+                    <option key={b.value} value={b.value}>
+                      {b.label}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <Button size="sm" disabled={busy} onClick={openBrowser}>
+                Open browser
+              </Button>
+            </div>
+          </div>
+          )
+        ) : (
+          <div className="space-y-2">
+            {pre.state === "checking" && (
+              <p className="rounded border border-border/60 px-2 py-1 text-xs text-muted">Checking the preconditions</p>
+            )}
+            {pre.notice && (
+              <p role="status" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">
+                {pre.notice}
+              </p>
+            )}
+            {pre.state === "blocked" && (
+              <p role="status" className="rounded border border-border/60 px-2 py-1 text-xs text-danger">
+                Blocked before step 1: {pre.reason}
+              </p>
+            )}
+            {signIn.state !== "idle" && (
+              <div className="rounded border border-border/60 px-2 py-1 text-xs">
+                {signIn.state === "working" ? (
+                  <span className="text-muted">Signing in as {signIn.account}</span>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={signIn.out?.ok ? "text-success" : "text-danger"}>{signIn.out?.detail}</span>
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => signInAs(signIn.account, true)}>
+                        Sign in again
+                      </Button>
+                    </div>
+                    {!signIn.out?.ok && (signIn.out?.steps.length ?? 0) > 0 && (
+                      <ul className="mt-1 space-y-0.5 text-faint">
+                        {signIn.out?.steps.map((o, i) => (
+                          <li key={i} className={o.ok ? "" : "text-danger"}>
+                            {o.detail}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            <ul className="max-h-72 space-y-2 overflow-y-auto">
+              {results[MODULE_STEP] && (
+                <li className="rounded-md border border-border p-2">
+                  <span className="text-xs font-medium text-muted">Going to the area</span>
+                  {outcomeLines(results[MODULE_STEP])}
                 </li>
-              );
-            })}
-          </ul>
+              )}
+              {(script.data?.steps ?? []).map((s) => {
+                // After a replay: the steps below where it stopped ran in it,
+                // and the one it stopped before is the person's to run next.
+                const replayed = s.step_number < replayedTo;
+                const next = replayedTo > 0 && s.step_number === replayedTo;
+                return (
+                  <li
+                    key={s.step_number}
+                    aria-current={next ? "step" : undefined}
+                    className={cn("rounded-md border p-2", next ? "border-accent" : "border-border")}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
+                      <span className="text-[11px] text-faint">
+                        {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
+                      </span>
+                      {replayed && <span className="text-[11px] text-success">replayed</span>}
+                      {next && <span className="text-[11px] text-accent">next</span>}
+                      <Button
+                        className="ml-auto"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || pre.state !== "idle"}
+                        onClick={() => runStep(s.step_number)}
+                      >
+                        Run step {s.step_number}
+                      </Button>
+                    </div>
+                    {outcomeLines(results[s.step_number] ?? [])}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        <div className="space-y-2 border-t border-border pt-3">
+          <span id={verdictLabelId} className="text-xs font-medium text-muted">
+            Your verdict
+          </span>
+          <VerdictPicker value={verdict} onPick={setVerdict} labelledBy={verdictLabelId} />
+          <Textarea
+            aria-label="Result note"
+            className="h-16 w-full text-xs"
+            placeholder="What you saw (optional)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
         </div>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" disabled={saving} onClick={close}>
+            <IconCancel aria-hidden />
+            Close
+          </Button>
+          <Button
+            size="sm"
+            // Not the whole `busy` flag - Close must stay available while a
+            // sign-in runs, the mutex makes that safe. Blocked here so a
+            // verdict is never banked before its own case finished signing in.
+            disabled={!verdict || saving || signIn.state === "working"}
+            onClick={save}
+          >
+            <IconConfirm aria-hidden />
+            {isLast ? "Save result" : "Save and next case"}
+          </Button>
+        </div>
+        </>
       )}
-
-      <div className="space-y-2 border-t border-border pt-3">
-        <span id={verdictLabelId} className="text-xs font-medium text-muted">
-          Your verdict
-        </span>
-        <VerdictPicker value={verdict} onPick={setVerdict} labelledBy={verdictLabelId} />
-        <Textarea
-          aria-label="Result note"
-          className="h-16 w-full text-xs"
-          placeholder="What you saw (optional)"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" disabled={saving} onClick={close}>
-          <IconCancel aria-hidden />
-          Close
-        </Button>
-        <Button
-          size="sm"
-          // Not the whole `busy` flag - Close must stay available while a
-          // sign-in runs, the mutex makes that safe. Blocked here so a
-          // verdict is never banked before its own case finished signing in.
-          disabled={!verdict || saving || signIn.state === "working"}
-          onClick={save}
-        >
-          <IconConfirm aria-hidden />
-          {isLast ? "Save result" : "Save and next case"}
-        </Button>
-      </div>
 
       {shot && (
         // max-h-full, not a vh: the backdrop starts below the title bar, so

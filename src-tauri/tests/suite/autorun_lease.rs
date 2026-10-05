@@ -333,6 +333,7 @@ fn new_run(id: &str) -> LocalRun {
         mode: "unattended".into(),
         published: None,
         environment: None,
+        resets: vec![],
     }
 }
 

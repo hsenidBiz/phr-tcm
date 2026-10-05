@@ -3,7 +3,7 @@
 // Send; until then, nothing here has reached Azure DevOps at all.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { commands, type LocalRun_Serialize } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -16,6 +16,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import { resetLinesBefore } from "./plan";
 import {
   RESULT_BUCKETS,
   bucketTone,
@@ -222,40 +223,47 @@ export default function PastRuns({
                 {run.cases.filter((c) => matchesFilter(c, filter)).map((c) => {
                   const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
                   return (
-                    <li
-                      key={`${run.id}-${c.case_id}`}
-                      aria-label={`Run of ${c.title}`}
-                      className="rounded-md border border-border/60 bg-surface px-3 py-2 text-sm"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="id-mono text-faint">#{c.case_id}</span>
-                        <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
-                        <RetriedBadge first={c.retried} />
-                        <NoticeBadge notice={c.notice} />
-                        {c.verdict ? (
-                          <span className={cn("text-xs font-medium", rowTone[c.verdict] ?? "text-faint")}>
-                            {c.verdict}
-                          </span>
-                        ) : c.proposed ? (
-                          <span className="text-xs font-medium text-faint">proposed {c.proposed}</span>
-                        ) : (
-                          <span className="text-xs font-medium text-faint">unset</span>
-                        )}
-                        {replayTo !== null && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
-                            onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
-                          >
-                            Replay to step {replayTo}
-                          </Button>
-                        )}
-                      </div>
-                      {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
-                      {/* The files its steps saved; nothing for a case that saved none. */}
-                      <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
-                    </li>
+                    <Fragment key={`${run.id}-${c.case_id}`}>
+                      {/* Where the run paused for a reset, and how it went on. */}
+                      {resetLinesBefore(run.resets, c.case_id).map((line) => (
+                        <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
+                          {line}
+                        </li>
+                      ))}
+                      <li
+                        aria-label={`Run of ${c.title}`}
+                        className="rounded-md border border-border/60 bg-surface px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="id-mono text-faint">#{c.case_id}</span>
+                          <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+                          <RetriedBadge first={c.retried} />
+                          <NoticeBadge notice={c.notice} />
+                          {c.verdict ? (
+                            <span className={cn("text-xs font-medium", rowTone[c.verdict] ?? "text-faint")}>
+                              {c.verdict}
+                            </span>
+                          ) : c.proposed ? (
+                            <span className="text-xs font-medium text-faint">proposed {c.proposed}</span>
+                          ) : (
+                            <span className="text-xs font-medium text-faint">unset</span>
+                          )}
+                          {replayTo !== null && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                              onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
+                            >
+                              Replay to step {replayTo}
+                            </Button>
+                          )}
+                        </div>
+                        {c.note && <p className="mt-0.5 text-xs text-muted">{c.note}</p>}
+                        {/* The files its steps saved; nothing for a case that saved none. */}
+                        <RunDownloads runId={run.id} steps={c.steps} className="mt-1" />
+                      </li>
+                    </Fragment>
                   );
                 })}
               </ul>

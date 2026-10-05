@@ -1057,3 +1057,117 @@ test("a replay that signs the browser in as another account is said, and this ca
   fireEvent.click(run);
   await waitFor(() => expect(order).toEqual(["sign in", "sign in", "step", "step"]));
 });
+
+/** Three cases; the plan has a reset before case 2. */
+const RESET_PLAN = {
+  order: [1, 2, 3],
+  phases: [[1], [2, 3]],
+  resets: [{ before_case_id: 2, names: ["cycle published"], changed_by: [["cycle published", [1]]] as [string, number[]][] }],
+  counts: null,
+  saved: false,
+};
+
+const RESET_CASES = [
+  { id: 1, title: "Publish the cycle" },
+  { id: 2, title: "Edit a draft cycle" },
+  { id: 3, title: "Other" },
+];
+
+function renderPlanned(onClose = vi.fn()) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={RESET_PLAN} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  return onClose;
+}
+
+/** Open the browser, pass case 1 and move on: the pane pauses at the reset. */
+async function reachTheReset(s: ReturnType<typeof mockSession>) {
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await waitFor(() => expect(s.launched).toEqual(["edge"]));
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
+  return screen.findByRole("region", { name: "Reset needed" });
+}
+
+test("the supervised pane pauses at a reset point before the next case's browser is used", async () => {
+  const s = mockSession();
+  renderPlanned();
+  const panel = await reachTheReset(s);
+
+  // Case 1's browser closed, and no browser opened for case 2 yet.
+  expect(s.closes.length).toBeGreaterThanOrEqual(1);
+  expect(s.launched).toEqual(["edge"]);
+  expect(
+    within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
+  ).toBeInTheDocument();
+  const left = within(panel).getByRole("list", { name: "Cases still to run" });
+  expect(within(left).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "#2 Edit a draft cycle",
+    "#3 Other",
+  ]);
+  // Nothing to mark while paused.
+  expect(screen.queryByRole("button", { name: /Save and next case/ })).not.toBeInTheDocument();
+  expect(s.saved).toHaveLength(0);
+});
+
+test("Continue at a reset point opens a fresh browser for the next case and the run keeps the pause", async () => {
+  const s = mockSession();
+  const onClose = renderPlanned();
+  await reachTheReset(s);
+
+  fireEvent.click(screen.getByRole("button", { name: "Continue after reset" }));
+  expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
+  await waitFor(() => expect(s.launched).toEqual(["edge", "edge"]));
+  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+
+  // Case 2 and 3, then the one write.
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
+  expect(await screen.findByText("case 3 of 3")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+  expect(s.saved).toHaveLength(1);
+  const run = s.saved[0] as Saved & { resets?: { before_case_id: number; names: string[]; outcome: string; waited_ms: number }[] };
+  expect(run.cases.map((c) => c.case_id)).toEqual([1, 2, 3]);
+  expect(run.resets).toHaveLength(1);
+  expect(run.resets?.[0]).toMatchObject({ before_case_id: 2, names: ["cycle published"], outcome: "continued" });
+  expect(run.resets?.[0].waited_ms).toBeGreaterThanOrEqual(0);
+});
+
+test("Stop at a reset point ends the supervised run with the rest recorded as not run", async () => {
+  const s = mockSession();
+  const onClose = renderPlanned();
+  await reachTheReset(s);
+
+  fireEvent.click(screen.getByRole("button", { name: "Stop the run at this reset" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+  expect(s.launched).toEqual(["edge"]);
+  expect(s.saved).toHaveLength(1);
+  const run = s.saved[0] as unknown as {
+    cases: { case_id: number; verdict: string; reason?: string; proposed?: string }[];
+    resets?: { outcome: string }[];
+  };
+  expect(run.cases.map((c) => [c.case_id, c.verdict, c.reason ?? ""])).toEqual([
+    [1, "Passed", ""],
+    [2, "", "not run: the run stopped at a reset point"],
+    [3, "", "not run: the run stopped at a reset point"],
+  ]);
+  expect(run.resets?.map((r) => r.outcome)).toEqual(["stopped"]);
+});
+
+test("without a plan the supervised pane never pauses", async () => {
+  const s = mockSession();
+  renderPane(RESET_CASES);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await waitFor(() => expect(s.launched).toEqual(["edge"]));
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
+  expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+});

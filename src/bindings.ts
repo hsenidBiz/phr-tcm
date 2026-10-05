@@ -549,6 +549,12 @@ export const commands = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
 	 *  Writes one run's report and opens it in the default browser. `ran_at` is
@@ -695,6 +701,12 @@ export const commands = {
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
+	/**
+	 *  The person's answer at the reset point run `run_id` is waiting at:
+	 *  Continue (`continue_run`) runs the next phase, Stop ends the run there.
+	 *  Refused when that run is not waiting at a reset point.
+	 */
+	autoRunAnswerReset: (runId: string, continueRun: boolean) => typedError<null, string>(__TAURI_INVOKE("auto_run_answer_reset", { runId, continueRun })),
 	/**
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
@@ -1124,6 +1136,7 @@ export const events = {
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
+	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
 	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
@@ -1587,6 +1600,22 @@ export type AutorunReplayRequest = {
  */
 export type AutorunReplayRequestEnded = {
 	id: string,
+};
+
+/**
+ *  Emitted when an unattended run pauses at a reset point: before case
+ *  `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
+ *  name, the cases that changed it), then answers with
+ *  `auto_run_answer_reset`. `remaining` is every case still to run, the
+ *  next one first. Case ids and names only: never a host, an address or a
+ *  password. The screen supplies the titles from its own case list.
+ */
+export type AutorunResetNeeded = {
+	run_id: string,
+	before_case_id: number,
+	names: string[],
+	changed_by: ([string, number[]])[],
+	remaining: number[],
 };
 
 /**
@@ -2523,6 +2552,12 @@ export type LocalRun_Deserialize = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Deserialize[],
 };
 
 export type LocalRun_Serialize = {
@@ -2543,6 +2578,12 @@ export type LocalRun_Serialize = {
 	 *  `None` for a run saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  Each reset point the run paused at, in run order, with how it ended
+	 *  (`reset_wait`). Written only when there are any, so a run without
+	 *  reset points reads exactly as it always did.
+	 */
+	resets?: ResetRecord_Serialize[],
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -3487,6 +3528,52 @@ export type Reset = {
 	before_case_id: number,
 	names: string[],
 	changed_by: ([string, number[]])[],
+};
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord = ResetRecord_Serialize | ResetRecord_Deserialize;
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord_Deserialize = {
+	before_case_id: number,
+	names?: string[],
+	changed_by?: ([string, number[]])[],
+	/**
+	 *  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC);
+	 *  a pause past 49 days reads as `u32::MAX`.
+	 */
+	waited_ms?: number,
+	/**  "continued" or "stopped". */
+	outcome?: string,
+};
+
+/**
+ *  One reset point a run paused at: before `before_case_id` ran, a person
+ *  was asked to revert `names` (`changed_by` gives, per name, the cases
+ *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
+ *  is "continued" or "stopped".
+ */
+export type ResetRecord_Serialize = {
+	before_case_id: number,
+	names?: string[],
+	changed_by?: ([string, number[]])[],
+	/**
+	 *  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC);
+	 *  a pause past 49 days reads as `u32::MAX`.
+	 */
+	waited_ms: number,
+	/**  "continued" or "stopped". */
+	outcome: string,
 };
 
 export type ResultDetail = {

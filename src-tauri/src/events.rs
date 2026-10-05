@@ -196,6 +196,21 @@ pub struct AutorunReplayRequest {
     pub step: i32,
 }
 
+/// Emitted when an unattended run pauses at a reset point: before case
+/// `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
+/// name, the cases that changed it), then answers with
+/// `auto_run_answer_reset`. `remaining` is every case still to run, the
+/// next one first. Case ids and names only: never a host, an address or a
+/// password. The screen supplies the titles from its own case list.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunResetNeeded {
+    pub run_id: String,
+    pub before_case_id: i32,
+    pub names: Vec<String>,
+    pub changed_by: Vec<(String, Vec<i32>)>,
+    pub remaining: Vec<i32>,
+}
+
 /// Emitted when replay request `id` stops waiting: answered, timed out, or
 /// its caller gone. The Allow prompt for it closes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]

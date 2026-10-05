@@ -7,7 +7,7 @@
 // (added by a later task) survives untouched.
 
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../../lib/toast";
@@ -23,6 +23,7 @@ import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import VerdictPicker from "./VerdictPicker";
+import { resetLinesBefore } from "./plan";
 import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
@@ -359,107 +360,114 @@ export default function RunReview(props: {
           const isExpanded = expanded.has(c.case_id);
           const replayTo = onReplay && !mismatch ? replayStep(c) : null;
           return (
-            <li
-              key={c.case_id}
-              aria-label={`Case #${c.case_id} ${c.title}`}
-              className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm"
-            >
-              <div className="flex items-center gap-2">
-                <span className="id-mono text-faint">#{c.case_id}</span>
-                <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
-                <RetriedBadge first={c.retried} />
-                <NoticeBadge notice={c.notice} />
-                {replayTo !== null && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
-                    onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
-                  >
-                    Replay to step {replayTo}
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted">{proposalLine(c)}</p>
-
-              <VerdictPicker
-                value={c.verdict}
-                onPick={(v) => setVerdict(c.case_id, v)}
-                label={`Verdict for #${c.case_id}`}
-                disabled={readOnly}
-              />
-
-              <Textarea
-                aria-label={`Note for #${c.case_id}`}
-                className="h-14 w-full text-xs"
-                placeholder="What you saw (optional)"
-                disabled={readOnly}
-                value={c.note}
-                onChange={(e) => setNote(c.case_id, e.target.value)}
-              />
-
-              <button
-                type="button"
-                className="flex items-center gap-1 text-xs text-muted hover:text-accent"
-                onClick={() => toggleExpanded(c.case_id)}
+            <Fragment key={c.case_id}>
+              {/* Where the run paused for a reset, and how it went on. */}
+              {resetLinesBefore(run.resets, c.case_id).map((line) => (
+                <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
+                  {line}
+                </li>
+              ))}
+              <li
+                aria-label={`Case #${c.case_id} ${c.title}`}
+                className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm"
               >
-                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {isExpanded ? "Hide steps" : "Show steps"}
-              </button>
+                <div className="flex items-center gap-2">
+                  <span className="id-mono text-faint">#{c.case_id}</span>
+                  <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+                  <RetriedBadge first={c.retried} />
+                  <NoticeBadge notice={c.notice} />
+                  {replayTo !== null && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                      onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
+                    >
+                      Replay to step {replayTo}
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted">{proposalLine(c)}</p>
 
-              {isExpanded && (
-                <ul className="space-y-2">
-                  {c.steps.map((s) => (
-                    <li key={s.step_number} className="rounded-md border border-border/60 p-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-muted">
-                          {stepLabel(s.step_number)}
-                        </span>
-                        {s.screenshot && (
-                          <button
-                            type="button"
-                            className="text-muted underline hover:text-accent"
-                            onClick={() => openShot(s.screenshot!)}
-                          >
-                            Picture
-                          </button>
-                        )}
-                      </div>
-                      {s.outcomes.map((o, i) => (
-                        <p
-                          key={i}
-                          className={cn("mt-1 flex items-center gap-2", o.ok ? "text-muted" : "text-danger")}
-                        >
-                          {/* Its own element, separate from the Picture button below - a
-                              sibling button inside the same node would fold into this
-                              text's own content and break an exact-text lookup on it. */}
-                          <span>{o.detail}</span>
-                          {o.screenshot && (
+                <VerdictPicker
+                  value={c.verdict}
+                  onPick={(v) => setVerdict(c.case_id, v)}
+                  label={`Verdict for #${c.case_id}`}
+                  disabled={readOnly}
+                />
+
+                <Textarea
+                  aria-label={`Note for #${c.case_id}`}
+                  className="h-14 w-full text-xs"
+                  placeholder="What you saw (optional)"
+                  disabled={readOnly}
+                  value={c.note}
+                  onChange={(e) => setNote(c.case_id, e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-muted hover:text-accent"
+                  onClick={() => toggleExpanded(c.case_id)}
+                >
+                  {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  {isExpanded ? "Hide steps" : "Show steps"}
+                </button>
+
+                {isExpanded && (
+                  <ul className="space-y-2">
+                    {c.steps.map((s) => (
+                      <li key={s.step_number} className="rounded-md border border-border/60 p-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-muted">
+                            {stepLabel(s.step_number)}
+                          </span>
+                          {s.screenshot && (
                             <button
                               type="button"
                               className="text-muted underline hover:text-accent"
-                              onClick={() => openShot(o.screenshot!)}
+                              onClick={() => openShot(s.screenshot!)}
                             >
                               Picture
                             </button>
                           )}
-                        </p>
-                      ))}
-                      {(() => {
-                        const reason = unchecked(c.case_id, s.step_number);
-                        return (
-                          reason && <p className="mt-1 text-muted">not checked: {reason}</p>
-                        );
-                      })()}
-                    </li>
-                  ))}
-                </ul>
-              )}
+                        </div>
+                        {s.outcomes.map((o, i) => (
+                          <p
+                            key={i}
+                            className={cn("mt-1 flex items-center gap-2", o.ok ? "text-muted" : "text-danger")}
+                          >
+                            {/* Its own element, separate from the Picture button below - a
+                                sibling button inside the same node would fold into this
+                                text's own content and break an exact-text lookup on it. */}
+                            <span>{o.detail}</span>
+                            {o.screenshot && (
+                              <button
+                                type="button"
+                                className="text-muted underline hover:text-accent"
+                                onClick={() => openShot(o.screenshot!)}
+                              >
+                                Picture
+                              </button>
+                            )}
+                          </p>
+                        ))}
+                        {(() => {
+                          const reason = unchecked(c.case_id, s.step_number);
+                          return (
+                            reason && <p className="mt-1 text-muted">not checked: {reason}</p>
+                          );
+                        })()}
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              {/* The files the case's steps saved, shown whether or not the
-                  steps are unfolded; nothing for a case that saved none. */}
-              <RunDownloads runId={run.id} steps={c.steps} />
-            </li>
+                {/* The files the case's steps saved, shown whether or not the
+                    steps are unfolded; nothing for a case that saved none. */}
+                <RunDownloads runId={run.id} steps={c.steps} />
+              </li>
+            </Fragment>
           );
         })}
       </ul>

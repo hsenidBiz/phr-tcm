@@ -393,6 +393,8 @@ export default function AutoRun({
   const [replaying, setReplaying] = useState<number[] | null>(null);
   /** The plan the unattended run dialog shows: phases and reset points. */
   const [replayPlan, setReplayPlan] = useState<PlanView | null>(null);
+  /** The plan the supervised pane pauses by at each reset point. */
+  const [runPlan, setRunPlan] = useState<PlanView | null>(null);
   /** The Execution order dialog, with the cases it orders. */
   const [orderingOpen, setOrderingOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
@@ -555,8 +557,10 @@ export default function AutoRun({
       // The person moved to another PBI while the plan was on its way.
       if (pbiIdNow.current !== asked) return;
       const order = plan?.order ?? selectedInOrder;
-      if (kind === "supervised") setRunning(order);
-      else {
+      if (kind === "supervised") {
+        setRunPlan(plan);
+        setRunning(order);
+      } else {
         setReplayPlan(plan);
         setReplaying(order);
       }
@@ -1289,8 +1293,11 @@ export default function AutoRun({
               pbiId={pbi.id}
               cases={picked}
               replayTo={replayTo?.step}
+              // A replay to a step runs one case and never pauses.
+              plan={replayTo ? null : runPlan}
               onClose={() => {
                 setRunning(null);
+                setRunPlan(null);
                 setReplayTo(null);
                 // The selection has been run - leaving it ticked invites a
                 // second run of cases that were just decided. A replay ran
