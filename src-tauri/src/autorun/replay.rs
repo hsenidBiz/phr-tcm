@@ -97,6 +97,9 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
     }
     let action = script.steps.iter().find(|s| s.step_number == n).and_then(|s| s.actions.get(i));
     match action {
+        // Another holder had the account: the case was never signed in as
+        // it, so the run could not carry it out - Blocked, not Failed.
+        Some(Action::SignIn { .. }) if super::lease::is_in_use(&o.detail) => Some(o.detail.as_str()),
         Some(Action::SignIn { .. }) => nav::unreached_after_sign_in(&o.detail),
         // The runner's own refusal (runner.rs, the `Navigate if
         // !direct_urls` arm) is written without going through
@@ -253,11 +256,29 @@ pub async fn run_case_as<D: Driver>(
             // The account is this case's from before its sign-in to its
             // end, whichever way the sign-in goes: one that fails partway
             // may still have signed the account in.
-            if let Err(why) = lease.hold(root, key).await {
-                let mut record = blocked_before_start(script, account, why);
-                record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
-                return record;
+            // A Stop pressed while the case waits for its account ends the
+            // wait; one that lands as the account comes free still stops
+            // the case before it signs in.
+            let held = tokio::select! {
+                held = lease.hold(root, key) => Some(held),
+                () = stop_asked(cancel) => None,
+            };
+            match held {
+                Some(Ok(())) if !cancel.load(Ordering::SeqCst) => {}
+                Some(Err(why)) if !cancel.load(Ordering::SeqCst) => {
+                    let mut record = blocked_before_start(script, account, why);
+                    record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+                    return record;
+                }
+                _ => {
+                    stopped = true;
+                    skip = Some(AFTER_STOP);
+                }
             }
+        }
+    }
+    if skip.is_none() {
+        if let Some(key) = account {
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
@@ -359,6 +380,16 @@ pub async fn run_case_as<D: Driver>(
         notice: None,
     }
 }
+
+/// Returns once `cancel` is set, looking every `STOP_POLL`.
+async fn stop_asked(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::SeqCst) {
+        tokio::time::sleep(STOP_POLL).await;
+    }
+}
+
+/// How often a case waiting for its account looks for a Stop.
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecord {
     CaseRecord {

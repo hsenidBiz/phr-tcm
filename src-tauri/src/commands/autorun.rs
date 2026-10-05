@@ -205,7 +205,7 @@ pub async fn auto_run_step(
     let root = root(&app)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    guard_supervised(session, &root, &organization, &project, case_id).await?;
+    guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     crate::autorun::runner::run_step_routed(
         &mut session.cdp,
         &root,
@@ -252,8 +252,10 @@ pub(crate) async fn guard_supervised(
     organization: &str,
     project: &str,
     case_id: i32,
+    may_lift: bool,
 ) -> Result<(), String> {
-    let out = guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id).await;
+    let out =
+        guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id, may_lift).await;
     if session.cdp.is_guarding_saves() {
         answer_between_commands();
     }
@@ -263,7 +265,10 @@ pub(crate) async fn guard_supervised(
 /// Put a browser's no-save guard where this case needs it. A case whose
 /// script on this machine is marked `no_save` is guarded, with the
 /// project's save words read afresh, so an edit on the Setup tab counts
-/// from the next step; any other case has an earlier case's guard lifted.
+/// from the next step. Any other case has an earlier case's guard lifted -
+/// but only when `may_lift`: a person's own step. An assistant's try may add
+/// a guard and never take one away, so naming the wrong case (or one with
+/// no script) can never let a supervised no-save case's draft be saved.
 /// A save stopped for the case that held the guard before, and not yet
 /// reported, is that case's: it is written to the application log under
 /// that case and never carried into this one. `Err` is the step or try
@@ -275,8 +280,12 @@ pub async fn guard_for_case<D: Driver>(
     organization: &str,
     project: &str,
     case_id: i32,
+    may_lift: bool,
 ) -> Result<(), String> {
     let no_save = store::load_script(root, case_id)?.is_some_and(|s| s.no_save);
+    if !no_save && !may_lift {
+        return Ok(());
+    }
     if let Some(before) = guarded_case.filter(|c| *c != case_id) {
         if let Some(sentence) = d.take_save_blocked() {
             crate::applog::warn(format!("Auto Run, case {before}: {sentence}"));

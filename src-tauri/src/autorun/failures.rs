@@ -37,6 +37,11 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
     if case.reason.starts_with("the browser") {
         return Some("the browser stopped answering - rerun before changing anything".to_string());
     }
+    // Blocked because another holder had the account: the reason is the
+    // lease's own sentence, exactly.
+    if super::lease::is_in_use(&case.reason) {
+        return Some("the account was in use elsewhere - rerun the case once it is free, and leave the script alone".to_string());
+    }
     if nav::is_setup_problem(&case.reason) {
         return Some(
             "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script"

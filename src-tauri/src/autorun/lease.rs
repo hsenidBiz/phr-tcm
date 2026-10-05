@@ -118,9 +118,33 @@ impl Drop for Lease {
     }
 }
 
+/// How the sentence a refused or timed-out request gets begins, joins and
+/// ends (`in_use`).
+const IN_USE_START: &str = "the account ";
+const IN_USE_BY: &str = " was in use by ";
+const IN_USE_END: &str = " - try again when it is free";
+
+/// Every holder as a request can name it (`Holder::seen_by`).
+const HOLDER_WORDS: [&str; 5] =
+    ["the Auto Run browser", "an API template run", "another case in this run", "an unattended run", "Auto Run setup"];
+
 /// The sentence a refused or timed-out request gets.
 fn in_use(key: &str, holder: &str) -> String {
-    format!("the account {key} was in use by {holder} - try again when it is free")
+    format!("{IN_USE_START}{key}{IN_USE_BY}{holder}{IN_USE_END}")
+}
+
+/// Is this exactly a lease refusal's sentence: `the account <key> was in
+/// use by <holder> - try again when it is free`, with a key that has no
+/// space and a holder this module names? A case refused its account is
+/// Blocked, never Failed: the application did nothing wrong.
+pub fn is_in_use(detail: &str) -> bool {
+    let Some(rest) = detail.strip_prefix(IN_USE_START).and_then(|r| r.strip_suffix(IN_USE_END)) else {
+        return false;
+    };
+    let Some((key, holder)) = rest.split_once(IN_USE_BY) else {
+        return false;
+    };
+    !key.is_empty() && !key.contains(char::is_whitespace) && HOLDER_WORDS.contains(&holder)
 }
 
 /// One look: the lease, or who has it as `holder` reads them, and whether

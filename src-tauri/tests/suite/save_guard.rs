@@ -642,10 +642,10 @@ async fn the_guard_follows_the_case_whose_step_runs() {
     set_save_words(dir.path(), "acme", "PMS", &words(&["recalc"])).unwrap();
     let mut d = common::FakePage::default().driver();
     let mut held = None;
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7, true).await.unwrap();
     assert_eq!(held, Some(7));
     assert!(d.methods().contains(&"Fetch.enable".to_string()));
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8, true).await.unwrap();
     assert_eq!(held, None);
     assert_eq!(d.methods().last().map(String::as_str), Some("Fetch.disable"));
 }
@@ -655,7 +655,7 @@ async fn a_case_with_no_script_on_this_machine_is_not_guarded() {
     let dir = tempfile::tempdir().unwrap();
     let mut d = common::FakePage::default().driver();
     let mut held = None;
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 99).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 99, true).await.unwrap();
     assert!(!d.methods().iter().any(|m| m.starts_with("Fetch.")), "{:?}", d.methods());
 }
 
@@ -669,7 +669,7 @@ async fn a_supervised_guard_that_cannot_start_refuses_the_step() {
         _ => page.answer(method, params),
     });
     let mut held = None;
-    let why = guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap_err();
+    let why = guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7, true).await.unwrap_err();
     assert!(why.starts_with("the no-save guard could not be set up: "), "{why}");
     assert_eq!(held, None);
 }
@@ -684,16 +684,16 @@ async fn a_stopped_save_is_not_carried_into_the_next_case() {
     on_disk(dir.path(), 8, true);
     let mut d = common::FakePage::default().driver();
     let mut held = None;
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7, true).await.unwrap();
     d.save_blocked = Some(SENTENCE.to_string());
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8, true).await.unwrap();
     assert_eq!(held, Some(8));
     assert_eq!(d.save_blocked, None, "case 7's save was carried into case 8");
     let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
     assert!(lines.iter().any(|l| l == &format!("Auto Run, case 7: {SENTENCE}")), "{lines:?}");
     // The same case asked again keeps what it has not reported yet.
     d.save_blocked = Some(SENTENCE.to_string());
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 8, true).await.unwrap();
     assert_eq!(d.save_blocked.as_deref(), Some(SENTENCE));
 }
 
@@ -708,7 +708,7 @@ async fn a_try_for_a_no_save_case_is_guarded_and_fails_on_a_save() {
     d.block_after = Some(("Input.dispatchMouseEvent".into(), SENTENCE.into()));
     let mut held = None;
     let mut account = None;
-    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7).await.unwrap();
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 7, false).await.unwrap();
     let click: v2_lib::browser::actions::Action =
         serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
     let mut lease = v2_lib::autorun::lease::Held::supervised();
@@ -753,4 +753,39 @@ fn an_import_can_turn_must_not_save_on() {
     std::fs::write(&file, serde_json::to_string(&vec![no_save_script(one_click())]).unwrap()).unwrap();
     v2_lib::commands::autorun::import_scripts_from_path(dir.path(), "acme", "PMS", file.to_str().unwrap()).unwrap();
     assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().no_save);
+}
+
+/// Review fix 2: a try adds a guard and never lifts one. While the person
+/// supervises no-save case 5, a try that names unflagged case 6 - or a case
+/// with no script at all - leaves the guard on, and a save it clicks is
+/// still stopped with the sentence.
+#[tokio::test]
+async fn a_try_naming_another_case_never_lifts_the_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 5, true);
+    on_disk(dir.path(), 6, false);
+    let mut d = common::FakePage::default().driver();
+    let mut held = None;
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 5, true).await.unwrap();
+    for named in [6, 99] {
+        guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", named, false).await.unwrap();
+        assert_eq!(held, Some(5), "case {named}'s try moved the guard");
+    }
+    use v2_lib::browser::cdp::Driver;
+    assert!(d.is_guarding_saves(), "a try lifted the guard: {:?}", d.methods());
+    assert!(!d.methods().iter().any(|m| m == "Fetch.disable"));
+
+    d.block_after = Some(("Input.dispatchMouseEvent".into(), SENTENCE.into()));
+    let click: v2_lib::browser::actions::Action =
+        serde_json::from_value(json!({ "kind": "click", "selector": "#save" })).unwrap();
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "PMS", &click).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with(&format!("failed: {SENTENCE}")), "{text}");
+
+    // The person's own step of case 6 is what lifts it.
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 6, true).await.unwrap();
+    assert_eq!(held, None);
+    assert!(!d.is_guarding_saves());
 }

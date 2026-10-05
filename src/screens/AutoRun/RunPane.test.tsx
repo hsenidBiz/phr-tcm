@@ -587,3 +587,31 @@ test("with Database Read Access off the case says its preconditions were not che
   expect(s.saved[0].cases[0]).toMatchObject({ verdict: "Passed", notice: NOT_CHECKED });
   expect(s.saved[0].cases[0]).not.toHaveProperty("proposed");
 });
+
+
+const NO_GUARD = "the no-save guard could not be set up: Fetch.enable was refused";
+
+test("a no-save case whose guard cannot start is Blocked with the sentence, as an unattended run records it", async () => {
+  const saved: { cases: Record<string, unknown>[] }[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, no_save: true };
+    if (cmd === "auto_run_step") throw NO_GUARD;
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_save_run") {
+      saved.push((args as { run: { cases: Record<string, unknown>[] } }).run);
+      return null;
+    }
+    return null;
+  });
+  renderPane([{ id: 1, title: "Read a shared draft" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
+
+  expect(await screen.findByText(`Blocked before step 1: ${NO_GUARD}`)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Run step 1/ })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Blocked" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].cases[0]).toMatchObject({ verdict: "Blocked", proposed: "Blocked", reason: NO_GUARD });
+});

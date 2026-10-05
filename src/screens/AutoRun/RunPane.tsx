@@ -24,6 +24,9 @@ const BROWSERS = [
   { value: "chrome", label: "Google Chrome" },
 ];
 
+/** How the app's refusal begins when a no-save case's guard cannot start. */
+const GUARD_NOT_SET_UP = "the no-save guard could not be set up: ";
+
 export default function RunPane({
   org,
   project,
@@ -174,6 +177,13 @@ export default function RunPane({
     try {
       const r = await commands.autoRunStep(org, project, caseId, step);
       if (r.status === "error") {
+        // A no-save case whose guard could not be set up never runs
+        // unguarded: Blocked, with the sentence, as an unattended run
+        // records it - the same way a precondition blocks a case.
+        if (r.error.startsWith(GUARD_NOT_SET_UP)) {
+          setPre((p) => ({ state: "blocked", reason: r.error, notice: p.notice }));
+          return;
+        }
         toast.error(r.error);
         return;
       }

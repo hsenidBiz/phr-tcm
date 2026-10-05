@@ -634,3 +634,90 @@ async fn a_setup_sign_in_holds_its_account_until_it_ends() {
     drop(setup);
     assert!(!lease::is_held(&env, KEY));
 }
+
+
+#[test]
+fn a_lease_refusal_is_told_by_its_exact_sentence() {
+    for holder in ["the Auto Run browser", "an API template run", "another case in this run", "an unattended run", "Auto Run setup"] {
+        assert!(lease::is_in_use(&format!("the account manager was in use by {holder} - try again when it is free")), "{holder}");
+    }
+    assert!(!lease::is_in_use("the account manager was in use by somebody - try again when it is free"));
+    assert!(!lease::is_in_use("the account  was in use by an API template run - try again when it is free"));
+    assert!(!lease::is_in_use("the account a b was in use by an API template run - try again when it is free"));
+    assert!(!lease::is_in_use("step 3: the account manager was in use by an API template run - try again when it is free"));
+    assert!(!lease::is_in_use("the account manager was in use by an API template run"));
+}
+
+/// Review fix 1: a `sign_in` in the middle of a case refused its account
+/// is Blocked with the lease's sentence - never Failed, which would be
+/// published as a test the application failed.
+#[tokio::test]
+async fn a_mid_case_sign_in_refused_its_account_blocks_the_case() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    signing_in_root(root);
+    store::save_script(
+        root,
+        &script(1, Some("admin"), serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#go" } }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "css": "#go" } }] },
+            { "step_number": 3, "actions": [
+                { "kind": "sign_in", "account": "manager" },
+                { "kind": "click", "selector": { "css": "#go" } }
+            ] }
+        ])),
+    )
+    .unwrap();
+    let _template = lease::try_acquire(&env_of(root), "manager", Holder::Template).unwrap();
+    let (d, _) = common::stateful_app(false, None);
+    let mut browsers = queue(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let sentence = "the account manager was in use by an API template run - try again when it is free";
+    let case = &run.cases[0];
+    assert_eq!(case.proposed, "Blocked", "{case:?}");
+    assert_eq!(case.reason, sentence);
+    let failed = v2_lib::autorun::failures::stop_reason(case);
+    assert!(failed.is_some(), "the case is offered for repair");
+}
+
+/// Review fix 3: Stop pressed while a case waits for its account ends the
+/// wait, and the case never signs in.
+#[tokio::test]
+async fn stop_during_a_lease_wait_stops_the_case_before_its_sign_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    signing_in_root(root);
+    store::save_script(root, &clicking(1, Some("admin"))).unwrap();
+    let _template = lease::try_acquire(&env_of(root), KEY, Holder::Template).unwrap();
+    let (d, state) = common::stateful_app(false, None);
+    let mut browsers = queue(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let patient = Timing { lease_wait_ms: 5_000, ..quick() };
+    let began = Instant::now();
+    let stop = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    };
+    let cases = [to_run(1)];
+    let mut progress = |_| {};
+    let (ran, ()) = tokio::join!(
+        run_cases(&mut browsers, root, "Acme", "Web", &mut run, &cases, None, false, &patient, &cancel, &mut progress),
+        stop
+    );
+    ran.unwrap();
+    assert!(began.elapsed() < Duration::from_secs(2), "the wait outlived the Stop: {:?}", began.elapsed());
+    assert_eq!(state.clicks.load(std::sync::atomic::Ordering::SeqCst), 0, "the stopped case ran");
+    assert!(!browsers.returned[0].methods().iter().any(|m| m == "Page.navigate"), "the stopped case signed in");
+    let case = &run.cases[0];
+    assert!(case.steps.iter().all(|s| s.step_number != 0), "a sign-in was recorded: {:?}", case.steps);
+    assert!(case.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.detail == "not run: the run was stopped"), "{:?}", case.steps);
+    assert_eq!(case.proposed, "");
+    assert_eq!(case.reason, "stopped before it finished");
+}

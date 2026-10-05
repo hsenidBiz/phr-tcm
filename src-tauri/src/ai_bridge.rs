@@ -1612,7 +1612,10 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    if let Err(why) = crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, case_id).await {
+    // A try adds its case's guard and never lifts one (`guard_for_case`).
+    if let Err(why) =
+        crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, case_id, false).await
+    {
         return (409, why);
     }
     try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, &action).await
