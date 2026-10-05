@@ -483,6 +483,22 @@ struct Go<'a> {
     cancel: &'a AtomicBool,
 }
 
+/// How long a case's browser stays open, once its steps are done, for a
+/// download still on its way.
+const DOWNLOAD_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A download the last step started may still be arriving as the case
+/// ends. Its browser is kept a little while it does, so the file is kept
+/// under its own name rather than left half written under its guid. A case
+/// with nothing in progress, or one stopped, closes at once.
+async fn settle_downloads<D: Driver>(d: &mut D) {
+    use crate::browser::downloads::DownloadState;
+    let until = Instant::now() + DOWNLOAD_SETTLE;
+    while Instant::now() < until && d.downloads().iter().any(|e| e.state == DownloadState::InProgress) {
+        d.idle(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 /// One go at a case in a fresh browser: opened, the case run, and the
 /// browser given back. `Err` is why the browser did not open: the case
 /// never ran, so the caller decides what record that leaves.
@@ -497,6 +513,12 @@ async fn one_go<B: Browsers>(
     match browsers.open().await {
         Err(why) => Err(why),
         Ok(mut d) => {
+            // The case's downloads are kept with the run. A browser that
+            // will not save them still runs the case: a step that checks a
+            // download then says none came.
+            if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
+                crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
+            }
             let mut on_step = |n: i32| {
                 let phase = match n {
                     SIGN_IN_STEP => "signing_in",
@@ -523,6 +545,9 @@ async fn one_go<B: Browsers>(
                 &mut on_step,
             )
             .await;
+            if !go.cancel.load(Ordering::SeqCst) {
+                settle_downloads(&mut d).await;
+            }
             browsers.close(d).await;
             drop(lease);
             Ok(rec)

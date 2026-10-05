@@ -423,6 +423,71 @@ fn shots_dir(root: &Path) -> PathBuf {
     root.join("shots")
 }
 
+/// Where every Auto Run browser's downloads go, one folder per run.
+fn all_downloads_dir(root: &Path) -> PathBuf {
+    root.join("downloads")
+}
+
+/// The supervised browser's folder in `downloads/`.
+const SUPERVISED_DOWNLOADS: &str = "supervised";
+
+/// Where an unattended run's browsers save their downloads, beside the
+/// run's screenshots. An id that is not a safe file name (`safe_run_id`)
+/// never becomes part of a path: it gets a folder of its own inside
+/// `downloads/`, never the supervised one.
+pub fn downloads_dir(root: &Path, run_id: &str) -> PathBuf {
+    let folder = if safe_run_id(run_id) && run_id != SUPERVISED_DOWNLOADS { run_id } else { "unnamed-run" };
+    all_downloads_dir(root).join(folder)
+}
+
+/// Where the supervised browser saves its downloads. Emptied when that
+/// browser opens and when it closes (`empty_supervised_downloads`).
+pub fn supervised_downloads_dir(root: &Path) -> PathBuf {
+    all_downloads_dir(root).join(SUPERVISED_DOWNLOADS)
+}
+
+/// Remove the files the supervised browser downloaded, and return how many
+/// went. The same sweep as clearing runs: files only, never through a link.
+pub fn empty_supervised_downloads(root: &Path) -> Result<usize, String> {
+    let mut problems = Vec::new();
+    let removed = sweep_files(&supervised_downloads_dir(root), None, &mut problems);
+    if problems.is_empty() {
+        Ok(removed)
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
+/// Every run's downloads: the files in each run's folder (the folder goes
+/// too once it is empty), and any file directly in `downloads/`. A link is
+/// never followed, a folder nested in a run's is left as it is, and the
+/// supervised browser's folder is its own to empty: that browser may still
+/// be open and saving into it.
+fn sweep_downloads(root: &Path, problems: &mut Vec<String>) {
+    let dir = all_downloads_dir(root);
+    sweep_files(&dir, None, problems);
+    // A link, a missing folder or an unreadable one: `sweep_files` has
+    // already skipped it or said so.
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !is_link(&m)) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for entry in entries.flatten() {
+        if entry.file_name() == SUPERVISED_DOWNLOADS {
+            continue;
+        }
+        let path = entry.path();
+        // Never through a link: `symlink_metadata` does not follow one, and
+        // `is_link` catches a junction too.
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && !is_link(&m)) {
+            continue;
+        }
+        sweep_files(&path, None, problems);
+        // Only an empty folder goes: one holding a nested folder stays.
+        let _ = std::fs::remove_dir(&path);
+    }
+}
+
 /// Where a run's report page is written - beside the shots it links.
 pub fn reports_dir(root: &Path) -> PathBuf {
     root.join("reports")
@@ -559,8 +624,8 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     Ok(removed)
 }
 
-/// Delete every saved run, and every screenshot with it - including runs
-/// that were already sent to Azure DevOps. The record Azure DevOps holds
+/// Delete every saved run, and every screenshot and download with it -
+/// including runs that were already sent to Azure DevOps. The record Azure DevOps holds
 /// is the durable one; the confirm the screen shows before calling this
 /// says so. Returns the number of RUN files removed (not shots - a single
 /// run's evidence can be many pictures, and that count would not mean
@@ -580,6 +645,8 @@ pub fn clear_runs(root: &Path) -> Result<usize, String> {
     // The reports opened from those runs go too: they name the cases and
     // link pictures that are now gone.
     sweep_files(&reports_dir(root), None, &mut problems);
+    // And the files the runs' browsers downloaded.
+    sweep_downloads(root, &mut problems);
     if problems.is_empty() {
         Ok(removed)
     } else {

@@ -2296,3 +2296,96 @@ async fn ending_the_session_drops_the_cookie_a_real_site_set() {
     let again = run(&mut live, json!({ "kind": "expire_session" })).await;
     assert!(!again.ok, "{}", again.detail);
 }
+
+// ------------------------------------------------------------ downloads
+
+/// `open()`, downloads on into `dir`, then on to the export page.
+async fn open_downloads(dir: &Path) -> Live {
+    let mut live = open().await;
+    live.cdp.enable_downloads(dir).await.expect("downloads could not be switched on");
+    let url = fixture_url().replace("autorun-live.html", "autorun-download.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    live
+}
+
+/// Read the browser until `n` downloads have finished, or 15 s.
+async fn until_finished(live: &mut Live, n: usize) -> Vec<v2_lib::browser::downloads::DownloadEntry> {
+    use v2_lib::browser::downloads::DownloadState;
+    let until = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let all = live.cdp.downloads();
+        let done = all.iter().filter(|d| d.state != DownloadState::InProgress).count();
+        if done >= n || std::time::Instant::now() >= until {
+            return all;
+        }
+        live.cdp.pump(Duration::from_millis(100)).await;
+    }
+}
+
+/// Every file in `dir`, sorted, so a test can say exactly what is there.
+fn files_in(dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> =
+        std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_browser_keeps_its_downloads_under_their_own_names() {
+    use v2_lib::browser::downloads::DownloadState;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("downloads").join("run-1");
+    let mut live = open_downloads(&folder).await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#csv" } })).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#xlsx" } })).await);
+    let all = until_finished(&mut live, 2).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(all.iter().all(|d| d.state == DownloadState::Completed), "{all:?}");
+    assert_eq!(all[0].name, "report.csv");
+    assert_eq!(all[1].name, "Template.xlsx");
+    assert_eq!(all[0].path, folder.join("report.csv"));
+    assert_eq!(all[1].path, folder.join("Template.xlsx"));
+    assert_eq!(std::fs::read_to_string(&all[0].path).unwrap(), "Employee No,Name\r\nE001,Ada\r\n");
+    assert_eq!(all[0].bytes, 28);
+    let xlsx = std::fs::read(&all[1].path).unwrap();
+    assert!(xlsx.starts_with(b"PK"), "the workbook arrived whole");
+    assert_eq!(all[1].bytes, xlsx.len() as u64);
+    // Nothing is left under a guid.
+    assert_eq!(files_in(&folder), ["Template.xlsx", "report.csv"]);
+}
+
+/// Review Focus 1, in a real browser.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn two_downloads_of_one_name_are_both_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut live = open_downloads(dir.path()).await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#twice" } })).await);
+    let all = until_finished(&mut live, 2).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!(files_in(dir.path()), ["same (2).csv", "same.csv"]);
+    let mut texts: Vec<String> = all.iter().map(|d| std::fs::read_to_string(&d.path).unwrap()).collect();
+    texts.sort();
+    assert_eq!(texts, ["first", "second"]);
+}
+
+/// Review Focus 2, in a real browser: whatever the browser makes of a
+/// hostile name, the file lands inside the folder under a plain name.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_hostile_name_lands_inside_the_folder() {
+    use v2_lib::browser::downloads::{sanitise_name, DownloadState};
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("inner");
+    let mut live = open_downloads(&folder).await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#hostile" } })).await);
+    let all = until_finished(&mut live, 1).await;
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].state, DownloadState::Completed);
+    assert_eq!(all[0].path.parent(), Some(folder.as_path()));
+    let name = all[0].path.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(sanitise_name(&name), name, "the name on disk is already a plain one");
+    assert_eq!(std::fs::read_to_string(&all[0].path).unwrap(), "hostile");
+    assert_eq!(files_in(dir.path()), ["inner"], "nothing landed beside the folder");
+}

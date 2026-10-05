@@ -34,6 +34,10 @@ pub(crate) struct Session {
     /// The case whose no-save guard this browser holds, if any
     /// (`guard_for_case`).
     pub(crate) guarded_case: Option<i32>,
+    /// The Auto Run folder whose `downloads/supervised` this browser saves
+    /// into, emptied once it closes. `None` when downloads could not be
+    /// switched on.
+    pub(crate) downloads_root: Option<PathBuf>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -89,7 +93,7 @@ pub(crate) async fn supervised_session_is_open() -> bool {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
+pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
@@ -125,12 +129,23 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
     if let Err(e) = crate::browser::page_log::watch(&mut cdp).await {
         crate::applog::warn(format!("auto-run: the page log could not be switched on: {e}"));
     }
+    // Downloads are kept while this browser is open, in a folder emptied
+    // as it opens and as it closes: they belong to no run. Losing them is
+    // no reason not to open the browser either.
+    let downloads_root = match keep_supervised_downloads(&app, &mut cdp).await {
+        Ok(root) => Some(root),
+        Err(e) => {
+            crate::applog::warn(format!("auto-run: downloads could not be switched on: {e}"));
+            None
+        }
+    };
     *slot = Some(Session {
         browser,
         cdp,
         account: None,
         lease: crate::autorun::lease::Held::supervised(),
         guarded_case: None,
+        downloads_root,
     });
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
@@ -151,8 +166,26 @@ pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
     }
 }
 
+/// Point the supervised browser at `downloads/supervised`, emptied first
+/// of whatever an earlier session left there. Returns the Auto Run folder
+/// it lives in, for the close to empty it again.
+async fn keep_supervised_downloads(app: &tauri::AppHandle, cdp: &mut Cdp) -> Result<PathBuf, String> {
+    let root = root(app)?;
+    if let Err(e) = store::empty_supervised_downloads(&root) {
+        crate::applog::warn(format!("auto-run: an earlier browser's downloads could not all be removed: {e}"));
+    }
+    cdp.enable_downloads(&store::supervised_downloads_dir(&root)).await.map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
+/// The browser goes first: one still running holds the files it saved.
 fn close_session(s: Session) {
     close_browser(s.browser);
+    if let Some(root) = s.downloads_root {
+        if let Err(e) = store::empty_supervised_downloads(&root) {
+            crate::applog::warn(format!("auto-run: the closed browser's downloads could not all be removed: {e}"));
+        }
+    }
 }
 
 #[tauri::command]

@@ -68,6 +68,7 @@ mod backup;
 mod branchcheck;
 mod browser_actions;
 mod browser_cdp;
+mod browser_downloads;
 mod browser_expect;
 mod browser_input;
 mod browser_launch;

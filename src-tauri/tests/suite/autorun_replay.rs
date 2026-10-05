@@ -1771,3 +1771,28 @@ async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
     assert_eq!(run.cases[0].reason, "preconditions need a database chosen on the AI Bridge tab");
     assert_eq!(run.cases[1].proposed, "Passed");
 }
+
+/// Every case's browser saves its downloads in the run's own folder, beside
+/// its screenshots.
+#[tokio::test]
+async fn every_cases_browser_saves_its_downloads_in_the_runs_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(common::FakePage::default().driver()), Some(common::FakePage::default().driver())].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-77");
+    let cases = vec![(1, "case 1".to_string()), (2, "case 2".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let folder = store::downloads_dir(root, "run-77");
+    assert_eq!(browsers.returned.len(), 2);
+    for d in &browsers.returned {
+        assert_eq!(d.download_dirs, [folder.clone()]);
+    }
+}
