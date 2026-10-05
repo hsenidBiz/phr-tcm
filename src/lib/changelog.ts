@@ -16,6 +16,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.0.9-beta.14",
+    date: "2026-10-05",
+    items: [
+      "Signing in no longer leaves the browser on a connection reset or localhost refused to connect page.",
+      "On Import Test Cases, each queued case's checkbox lines up with its arrow and title.",
+    ],
+  },
+  {
     version: "2.0.9-beta.13",
     date: "2026-10-03",
     items: [
