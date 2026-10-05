@@ -120,6 +120,56 @@ pub enum Action {
         within_ms: Option<u32>,
         then: Vec<Action>,
     },
+    /// Reload the page, as a person pressing F5 would, and wait for it to
+    /// load again. Where it lands is the application's business: a page
+    /// that sends a reload elsewhere (PeoplesHR's wizard goes back to the
+    /// home page) is followed by `return_to_area`, not by an address.
+    Reload,
+    /// End the session the way a timeout would look to the site: the
+    /// browser forgets what it holds for the page's own site, so the next
+    /// request arrives with no session at all (see `expire_session`). The
+    /// server's own record is not touched - what a script then checks is
+    /// how the application treats a request whose session is gone.
+    ExpireSession,
+    /// Take the browser back to the case's area by its recorded menu path,
+    /// the trip a run makes before step 1 - the one way back for a project
+    /// that refuses `navigate`. Carried out by the runner, which alone
+    /// knows the case's area.
+    ReturnToArea,
+    /// Press one key on whatever has the focus, as a keyboard would: Tab
+    /// and Shift+Tab move the focus, Enter and Space activate, Escape
+    /// closes. One of `PRESS_KEYS`, nothing else - a script that needs a
+    /// field's text uses `fill`.
+    PressKey { key: String },
+    /// The focus is on this element, or on something inside it (a card
+    /// whose own button has it counts, as `:focus-within` would).
+    ExpectFocused {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+}
+
+/// The keys `press_key` may press, as a script names them: name, the DOM
+/// `key`, the DOM `code`, the Windows virtual key, the text a key types
+/// (for those that type one) and whether Shift is held.
+pub const PRESS_KEYS: &[(&str, &str, &str, i64, Option<&str>, bool)] = &[
+    ("Tab", "Tab", "Tab", 9, None, false),
+    ("Shift+Tab", "Tab", "Tab", 9, None, true),
+    ("Enter", "Enter", "Enter", 13, Some("\r"), false),
+    ("Space", " ", "Space", 32, Some(" "), false),
+    ("Escape", "Escape", "Escape", 27, None, false),
+    ("ArrowUp", "ArrowUp", "ArrowUp", 38, None, false),
+    ("ArrowDown", "ArrowDown", "ArrowDown", 40, None, false),
+    ("ArrowLeft", "ArrowLeft", "ArrowLeft", 37, None, false),
+    ("ArrowRight", "ArrowRight", "ArrowRight", 39, None, false),
+    ("Home", "Home", "Home", 36, None, false),
+    ("End", "End", "End", 35, None, false),
+];
+
+/// The names `press_key` accepts, for a refusal to list.
+fn key_names() -> String {
+    PRESS_KEYS.iter().map(|k| k.0).collect::<Vec<_>>().join(", ")
 }
 
 /// How long a script's `when_visible` waits when it names no `within_ms`.
@@ -150,6 +200,14 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
             return Err(
                 "when_visible \"then\" cannot hold sign_in - change who is signed in as an action of its own".to_string()
             );
+        }
+        // Both move the whole case - out of its session, or back to its
+        // area - which is never a tidy-up that may or may not happen.
+        if matches!(a, Action::ExpireSession | Action::ReturnToArea) {
+            return Err(format!(
+                "when_visible \"then\" cannot hold {} - write it as an action of its own",
+                a.kind()
+            ));
         }
         if a.is_check() {
             return Err(format!(
@@ -482,6 +540,12 @@ impl Action {
                 selector.validate()?;
                 check_guarded(then)
             }
+            Action::Reload | Action::ExpireSession | Action::ReturnToArea => Ok(()),
+            Action::PressKey { key } if !PRESS_KEYS.iter().any(|k| k.0 == key.trim()) => {
+                Err(format!("press_key \"{key}\" is not a key it presses - use one of {}", key_names()))
+            }
+            Action::PressKey { .. } => Ok(()),
+            Action::ExpectFocused { selector, .. } => selector.validate(),
         }
     }
 
@@ -514,6 +578,7 @@ impl Action {
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
+                | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
         )
@@ -797,7 +862,171 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
+        Action::Reload => reload(d, timing).await,
+        Action::ExpireSession => expire_session(d).await,
+        Action::PressKey { key } => press_key(d, key.trim(), timing).await,
+        Action::ExpectFocused { selector, timeout_ms } => {
+            expect::expect(d, selector, Check::Focused, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        // Only the runner knows the case's area and the recipe's home.
+        Action::ReturnToArea => ActionOutcome::failed("return_to_area is carried out by the runner"),
     }
+}
+
+/// What a reload that never finished loading says, after the address.
+pub const RELOAD_DID_NOT_FINISH: &str = " did not finish loading after the reload within ";
+
+/// `reload`: the main frame loaded afresh, as F5 does. Lifecycle events are
+/// matched to the MAIN frame only - a sub-frame's "load" is not the page's -
+/// and older ones are forgotten first, so the wait is for this reload's own.
+/// A "Leave site?" prompt the reload raises is answered by the driver and
+/// shown in the outcome like any other dialog.
+async fn reload<D: Driver>(d: &mut D, timing: &Timing) -> ActionOutcome {
+    let before = page::eval_value(d, "location.href").await.ok();
+    let before = before.as_ref().and_then(|v| v.as_str()).unwrap_or("the page").to_string();
+    let tree = match d.call("Page.getFrameTree", json!({})).await {
+        Ok(t) => t,
+        Err(e) => return failed_by(e),
+    };
+    let main = tree["frameTree"]["frame"]["id"].as_str().map(str::to_string);
+    d.forget_events();
+    if let Err(e) = d.call("Page.reload", json!({ "ignoreCache": false })).await {
+        return failed_by(e);
+    }
+    let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let ev = match d.wait_event("Page.lifecycleEvent", remaining).await {
+            Ok(ev) => ev,
+            Err(CdpError::Timeout { .. }) => {
+                return ActionOutcome::failed(format!("{before}{RELOAD_DID_NOT_FINISH}{}ms", timing.nav_ms))
+            }
+            Err(e) => return failed_by(e),
+        };
+        let is_main = main.as_deref().map_or(true, |m| ev.params["frameId"].as_str() == Some(m));
+        if is_main && ev.params["name"].as_str() == Some("load") {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return ActionOutcome::failed(format!("{before}{RELOAD_DID_NOT_FINISH}{}ms", timing.nav_ms));
+        }
+    }
+    // Where it landed, which may not be where it was: a page that sends a
+    // reload home says so here, and the script's next action follows on.
+    let after = page::eval_value(d, "location.href").await.ok();
+    match after.as_ref().and_then(|v| v.as_str()) {
+        Some(now) if now != before => ActionOutcome::passed(format!("reloaded {before}; the page is now {now}")),
+        _ => ActionOutcome::passed(format!("reloaded {before}")),
+    }
+}
+
+/// `this` is the document. Where the focus is, in words: the deepest
+/// focused element, followed into same-origin frames and open shadow roots,
+/// as its tag, id and accessible-ish name. Empty when nothing but the page
+/// itself has it. Only for a person to read - never matched against.
+pub const FOCUS_NOW_JS: &str = r#"function() {
+  let doc = this, a = doc.activeElement;
+  for (;;) {
+    if (a && a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
+    let inner = null;
+    if (a && (a.tagName === 'IFRAME' || a.tagName === 'FRAME')) { try { inner = a.contentDocument; } catch (e) { inner = null; } }
+    if (inner && inner.activeElement) { doc = inner; a = inner.activeElement; continue; }
+    break;
+  }
+  if (!a || a === doc.body || a === doc.documentElement) return '';
+  const words = (a.getAttribute('aria-label') || a.innerText || a.value || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return a.tagName.toLowerCase() + (a.id ? '#' + a.id : '') + (words ? ' "' + words + '"' : '');
+}"#;
+
+/// The focus, said for an outcome: `the focus is on button "Save"`.
+pub(crate) async fn focus_now<D: Driver>(d: &mut D) -> String {
+    let doc = match page::document(d).await {
+        Ok(h) => h,
+        Err(_) => return "the focus could not be read".to_string(),
+    };
+    match page::call_value(d, &doc, FOCUS_NOW_JS, &[]).await {
+        Ok(v) => match v.as_str() {
+            Some(s) if !s.is_empty() => format!("the focus is on {s}"),
+            _ => "nothing on the page has the focus".to_string(),
+        },
+        Err(_) => "the focus could not be read".to_string(),
+    }
+}
+
+/// `press_key`: the key down and up, sent to the page as a keyboard sends
+/// it, so its default does what a person's would - Tab moves the focus,
+/// Enter submits, Space presses a button. Says where the focus went after.
+async fn press_key<D: Driver>(d: &mut D, name: &str, timing: &Timing) -> ActionOutcome {
+    let Some(&(_, key, code, vk, text, shift)) = PRESS_KEYS.iter().find(|k| k.0 == name) else {
+        return ActionOutcome::failed(format!("press_key \"{name}\" is not a key it presses - use one of {}", key_names()));
+    };
+    // Shift is 8 in the protocol's modifier bits.
+    let modifiers = if shift { 8 } else { 0 };
+    let mut down = json!({
+        "type": if text.is_some() { "keyDown" } else { "rawKeyDown" },
+        "key": key, "code": code,
+        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
+        "modifiers": modifiers,
+    });
+    if let Some(t) = text {
+        down["text"] = json!(t);
+        down["unmodifiedText"] = json!(t);
+    }
+    if let Err(e) = d.call("Input.dispatchKeyEvent", down).await {
+        return failed_by(e);
+    }
+    let up = json!({
+        "type": "keyUp", "key": key, "code": code,
+        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
+        "modifiers": modifiers,
+    });
+    if let Err(e) = d.call("Input.dispatchKeyEvent", up).await {
+        return failed_by(e);
+    }
+    // A moment for the page to move the focus before saying where it is.
+    d.idle(Duration::from_millis(timing.poll_ms.min(200))).await;
+    ActionOutcome::passed(format!("pressed {name}; {}", focus_now(d).await))
+}
+
+/// What `expire_session` says when the site has no cookies to drop.
+pub const NO_SESSION_TO_END: &str =
+    "there was no session to end: the browser holds no cookies for this site - is anyone signed in?";
+
+/// `expire_session`: every cookie the browser would send to the current
+/// page's address, dropped - session and sign-in cookies included, HttpOnly
+/// ones too (the protocol sees them; the page could not). Only the count is
+/// said, never a cookie's name or value: a cookie is a credential.
+async fn expire_session<D: Driver>(d: &mut D) -> ActionOutcome {
+    let href = match page::eval_value(d, "location.href").await {
+        Ok(v) => v.as_str().unwrap_or("").to_string(),
+        Err(e) => return failed_by(e),
+    };
+    if !is_page_url(&href) || href.starts_with("file:") {
+        return ActionOutcome::failed(format!("expire_session needs a page from a website, not {href:?}"));
+    }
+    let site = crate::autorun::recipe::origin_of(&href).unwrap_or_else(|| "this site".to_string());
+    let reply = match d.call("Network.getCookies", json!({ "urls": [href] })).await {
+        Ok(r) => r,
+        Err(e) => return failed_by(e),
+    };
+    let cookies = reply["cookies"].as_array().cloned().unwrap_or_default();
+    if cookies.is_empty() {
+        return ActionOutcome::failed(NO_SESSION_TO_END);
+    }
+    for c in &cookies {
+        let params = json!({
+            "name": c["name"],
+            "domain": c["domain"],
+            "path": c["path"],
+        });
+        if let Err(e) = d.call("Network.deleteCookies", params).await {
+            return failed_by(e);
+        }
+    }
+    ActionOutcome::passed(format!(
+        "ended the session: dropped {} cookie(s) for {site} - the site sees no session from its next request",
+        cookies.len()
+    ))
 }
 
 /// The least a `when_visible` waits, whatever its `within_ms` says. One

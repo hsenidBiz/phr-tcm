@@ -2162,3 +2162,137 @@ async fn a_mid_script_sign_in_that_leaves_a_saving_draft_fails_the_case() {
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
     assert_eq!(rec.reason, format!("step 2: {DRAFT_STOPPED}"));
 }
+
+/// A one-page site for the keyboard and reload checks below: `/` counts its
+/// own loads in the tab's session storage (which a reload keeps), and a
+/// click - or Enter on the focused button - writes into `#out`.
+fn keys_site() -> u16 {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<p id="loads"></p>
+<button id="a" onclick="document.getElementById('out').textContent='pressed A'">Alpha</button>
+<button id="b">Beta</button>
+<p id="out">nothing pressed</p>
+<script>
+const n = Number(sessionStorage.getItem('n') || 0) + 1;
+sessionStorage.setItem('n', String(n));
+document.getElementById('loads').textContent = 'load ' + n;
+</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else { continue };
+            let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+            if !line.starts_with("GET / ") {
+                let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                continue;
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                PAGE.len()
+            );
+        }
+    });
+    port
+}
+
+/// Tab and Shift+Tab really move the focus, Enter really presses the focused
+/// button, and a reload really loads the page again - each read from what
+/// the page itself shows, never from what Rust sent.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_keyboard_and_a_reload_reach_a_real_page() {
+    let port = keys_site();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#loads" }, "equals": "load 1" })).await);
+
+    // A click leaves the focus on what it clicked.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#a" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_focused", "selector": { "css": "#a" } })).await);
+
+    let tab = run(&mut live, json!({ "kind": "press_key", "key": "Tab" })).await;
+    must(tab.clone());
+    assert!(tab.detail.contains("button#b"), "where the focus went: {}", tab.detail);
+    must(run(&mut live, json!({ "kind": "expect_focused", "selector": { "css": "#b" } })).await);
+    // And the check fails when it should, saying where the focus is.
+    let wrong = run_with(
+        &mut live,
+        json!({ "kind": "expect_focused", "selector": { "css": "#a" }, "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert!(!wrong.ok && wrong.detail.contains("button#b"), "{}", wrong.detail);
+
+    must(run(&mut live, json!({ "kind": "press_key", "key": "Shift+Tab" })).await);
+    must(run(&mut live, json!({ "kind": "expect_focused", "selector": { "css": "#a" } })).await);
+
+    // Enter on a focused button presses it.
+    must(run(&mut live, json!({ "kind": "press_key", "key": "Enter" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#out" }, "equals": "pressed A" })).await);
+
+    // A reload is a fresh document: the page counts a second load, and what
+    // Enter wrote is gone. (An empty element has no size, so a locator never
+    // sees one - the page starts with words instead.)
+    must(run(&mut live, json!({ "kind": "reload" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#loads" }, "equals": "load 2" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#out" }, "equals": "nothing pressed" })).await);
+}
+
+/// A real site sets an HttpOnly session cookie, which the page's own script
+/// cannot see; `expire_session` drops it, and the site's next answer says
+/// it saw no session. The network domain is never switched on first.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn ending_the_session_drops_the_cookie_a_real_site_set() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else { continue };
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let line = head.lines().next().unwrap_or("").to_string();
+            let has_session = head.lines().any(|l| l.to_ascii_lowercase().starts_with("cookie:") && l.contains("sid="));
+            let (cookie, body) = if line.starts_with("GET /whoami") {
+                ("", if has_session { "signed in" } else { "no session" }.to_string())
+            } else if line.starts_with("GET / ") {
+                ("Set-Cookie: sid=s3cret; HttpOnly; Path=/; SameSite=Lax\r\n", "<p>home</p>".to_string())
+            } else {
+                let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                continue;
+            };
+            let page = format!("<!doctype html><html><body><p id=\"who\">{body}</p></body></html>");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\n{cookie}Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+                page.len()
+            );
+        }
+    });
+
+    let mut live = open().await;
+    let site = format!("http://127.0.0.1:{port}");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("{site}/") })).await);
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("{site}/whoami") })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#who" }, "equals": "signed in" })).await);
+
+    let ended = run(&mut live, json!({ "kind": "expire_session" })).await;
+    must(ended.clone());
+    assert!(ended.detail.contains("dropped 1 cookie(s)"), "{}", ended.detail);
+    assert!(!ended.detail.contains("s3cret") && !ended.detail.contains("sid"), "a cookie was named: {}", ended.detail);
+
+    must(run(&mut live, json!({ "kind": "reload" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#who" }, "equals": "no session" })).await);
+
+    // Nothing left to end.
+    let again = run(&mut live, json!({ "kind": "expire_session" })).await;
+    assert!(!again.ok, "{}", again.detail);
+}

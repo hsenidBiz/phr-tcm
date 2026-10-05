@@ -104,6 +104,11 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
+- `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
+- `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1
+- `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
+- `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
+- `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 
 There is nothing else. An action of any other kind is rejected.
 
@@ -146,6 +151,63 @@ where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
 Never add a fixed pause. There is no action for one, on purpose.
+
+## Refreshing, sessions and the keyboard
+
+**A refresh.** `reload` reloads the page and waits for it to load; its
+outcome says where the page is afterwards. Some pages do not come back to
+where they were - a refresh can land on the home page - so follow it with
+`return_to_area` when the case goes on in its area, then click to where
+the step needs to be, then check what the case expects survived. A
+`reload` is not a check: the expected result ("the values are retained")
+is an `expect_` action after it. A "Leave site?" prompt the reload raises
+is answered for you and named in the outcome.
+
+    { "kind": "reload" },
+    { "kind": "return_to_area" },
+    { "kind": "click", "selector": { "role": "link", "name": "Proficiency Levels" } },
+    { "kind": "expect_visible", "selector": { "role": "button", "name": "Active" } }
+
+`return_to_area` takes the same menu path an unattended run takes before
+step 1, to the area the script names (or, unattended, the case's Module's
+default area). In a watched run, and when you try it, only the script's
+own `area` is known, so a script that uses `return_to_area` should name
+its area. If the area is not reached, the rest of the step is not run.
+
+**A session that has ended.** `expire_session` drops every cookie the
+browser holds for the page's site, so the next thing the page asks of its
+server arrives with no session - what a timeout looks like to the site.
+It does not wait for a real timeout and does not touch the server's own
+record. Then act (click Save, Continue...) and check what the case
+expects: a sign-in page (`check_url`, or an `expect_visible` on its
+field), a session-expired message, and - with `api_request` after a fresh
+`sign_in` - that nothing was saved. It fails when there was no session to
+end. `expire_session` cannot appear in a sign-in recipe or inside a
+`when_visible`. A case that ends the session should be the last thing
+its account does in the case: sign in again (`sign_in`) before acting as
+it once more.
+
+**The keyboard.** `press_key` presses one key on whatever has the focus -
+Tab and Shift+Tab move it, Enter and Space activate, Escape closes - and
+says where the focus went. `expect_focused` checks the focus is on an
+element (or inside it, as a card whose button has it). Together they
+check a case that tabs through controls:
+
+    { "kind": "press_key", "key": "Tab" },
+    { "kind": "expect_focused", "selector": { "role": "button", "name": "Activate" } }
+
+**What a screen reader is told.** Auto Run reads the same accessibility
+tree a screen reader does, so a case about what is "announced" is checked
+against that tree, never against speech: a state given in words (a
+locator's `name`, or `expect_attribute` on `aria-pressed`,
+`aria-selected`, `aria-current`), a message that is announced
+(`expect_visible` on `{ "role": "alert" }`, or `expect_attribute` on
+`aria-live`), and a field that says it is wrong (`expect_attribute` on
+`aria-invalid` being `"true"`, and on `aria-describedby` naming the
+message). If the page shows a state only as a colour, no locator finds it
+by name, and the check fails - which is the defect such a case is there
+to find. Say in your reply that the case was checked against the
+accessibility tree, not a real screen reader.
 
 ## Dismissing what may not show up
 

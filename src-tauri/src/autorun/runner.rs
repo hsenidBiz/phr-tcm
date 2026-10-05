@@ -27,6 +27,44 @@ const AFTER_REFUSED_ADDRESS: &str = "not run: this step opened a page by address
 /// The rest of a step after the page tried to save in a no-save script.
 pub const AFTER_SAVE_BLOCKED: &str = "not run: the page tried to save, and this script must not";
 
+/// The rest of a step after `return_to_area` could not reach the area.
+const AFTER_AREA_UNREACHED: &str = "not run: the case's area was not reached";
+
+/// Where a `return_to_area` goes: the case's route, or why there is none.
+pub enum AreaRoute<'a> {
+    To(&'a Route),
+    Unknown(&'a str),
+}
+
+/// Said when the run has no route for the case: this project records no
+/// menu paths, so there is no area to go back to.
+pub const NO_AREA_IN_RUN: &str =
+    "return_to_area has nowhere to go: this project has no areas recorded - record them on the Auto Run Setup tab";
+
+/// Said in a watched run, or a try, of a script that names no area: only an
+/// unattended run knows the case's Module, from which a default area comes.
+pub const NEEDS_SCRIPT_AREA: &str =
+    "return_to_area in a watched run needs the script's own area - set it on the script, or run the case unattended";
+
+/// Said when there is no sign-in recipe to start the trip from.
+pub const NO_HOME_FOR_AREA: &str =
+    "return_to_area needs the project's sign-in recipe or site address to start from - set one on the Auto Run Setup tab";
+
+/// The route a watched run's (or a try's) `return_to_area` takes: the area
+/// the case's saved script names, from the recipe's home - the same parts
+/// an unattended run puts together before step 1. Only the script's own
+/// area: the case's Module is not known here, so a default area is not
+/// chosen for it.
+pub fn area_route(root: &Path, organization: &str, project: &str, case_id: i32) -> Result<Route, String> {
+    let script = store::load_script(root, case_id)?
+        .ok_or_else(|| format!("return_to_area: case {case_id} has no saved script to name its area"))?;
+    let area = script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()).ok_or(NEEDS_SCRIPT_AREA)?;
+    let nav_file = nav::load_nav(root, organization, project)?;
+    let path = nav::find_area(&nav_file, area).ok_or_else(|| nav::unrecorded_area(area))?;
+    let home = recipe::load_effective_recipe_if_any(root, organization, project)?.ok_or(NO_HOME_FOR_AREA)?;
+    Ok(Route::new(&home, path.clone()))
+}
+
 /// Where an authored `navigate` may go for this project: everywhere when
 /// there is no recipe to run (no saved recipe and no site address), else
 /// only the origins of the recipe that runs - the project's own, or the
@@ -89,7 +127,8 @@ pub async fn run_step<D: Driver>(
     account: &mut Option<String>,
 ) -> Result<Vec<ActionOutcome>, String> {
     let mut lease = Held::supervised();
-    run_step_routed(d, root, organization, project, step, timing, account, &mut lease, None).await
+    run_step_routed(d, root, organization, project, step, timing, account, &mut lease, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA))
+        .await
 }
 
 /// `run_step` with the browser's own account lease: a `sign_in` is first
@@ -112,6 +151,7 @@ pub async fn run_step_routed<D: Driver>(
     account: &mut Option<String>,
     lease: &mut Held,
     route: Option<&Route>,
+    area: AreaRoute<'_>,
 ) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
     // as before the built-in existed; the sign-in itself is what refuses.
@@ -182,6 +222,24 @@ pub async fn run_step_routed<D: Driver>(
                         }
                     }
                 },
+            },
+            // The run's own trip to the case's area, from wherever the page
+            // is now (a reload that went home, a page the case moved off).
+            // Not reaching it stops the step: what follows would act on the
+            // wrong screen.
+            Action::ReturnToArea => match &area {
+                AreaRoute::To(rt) => {
+                    let who = format!("Auto Run, step {}", step.step_number);
+                    let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+                    if !went.ok {
+                        blocked = Some(AFTER_AREA_UNREACHED);
+                    }
+                    went
+                }
+                AreaRoute::Unknown(why) => {
+                    blocked = Some(AFTER_AREA_UNREACHED);
+                    ActionOutcome::failed(*why)
+                }
             },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
