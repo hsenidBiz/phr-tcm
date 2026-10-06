@@ -294,6 +294,10 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
+    // The case starts afresh: no tab an earlier case or try opened carries
+    // over, and the tabs steps 1 to N-1 open are opened again by running
+    // them.
+    d.close_other_tabs().await;
 
     // What an earlier start's setup gave is let go: a replay that ends
     // before its own setup has run leaves nothing stale for the steps.

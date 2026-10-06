@@ -33,6 +33,11 @@ pub const ACTION_KINDS: &[&str] = &[
     "api_request",
     "when_visible",
     "expect_download",
+    "expect_tab",
+    "open_tab",
+    "switch_tab",
+    "close_tab",
+    "expect_tab_closed",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -111,6 +116,11 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
+- `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")
+- `{ "kind": "open_tab", "name": "second", "url": "/hr/employee/42" }` - open a new tab in the same signed-in session, at an address `navigate` could go to, and switch to it
+- `{ "kind": "switch_tab", "name": "report" }` - make that tab the current tab: every later action acts in it
+- `{ "kind": "close_tab", "name": "report" }` - close that tab; if it was the current tab, `main` is the current tab again
+- `{ "kind": "expect_tab_closed", "name": "preview" }` - the page closes that tab itself, within `within_ms` (default 10000); if it was the current tab, `main` is the current tab again
 
 There is nothing else. An action of any other kind is rejected.
 
@@ -386,6 +396,74 @@ try it waits at most 30 seconds, whatever `within_ms` says.
 
 Watched runs list no downloads, because their download folder is emptied
 when the browser closes; only an unattended run keeps its files.
+
+## Tabs
+
+A case's browser has named tabs. The tab a case starts in is `main`, and
+every step acts in the current tab: `click`, `fill`, `wait_for`, every
+check and `api_request` included. A tab name is 1 to 30 letters, digits,
+`-` or `_`. `main` cannot be closed. A step that names a tab that does
+not exist fails with `there is no tab <name>`, and so does every action
+after the current tab closed by itself, until a `switch_tab`.
+
+Every tab belongs to the same browser and the same signed-in session: no
+tab signs in on its own, and a second user in another tab is a job for a
+second case with that account. A no-save script's guard covers every tab.
+When a case ends, every tab but `main` is closed. A tab the page opens
+that no step expects is noted in the log (`a tab opened: <address>`) and
+left open; it never fails the case on its own. A replay to step N opens
+the tabs again by running steps 1 to N-1.
+
+`expect_tab` and `expect_tab_closed` are checks; the other three are
+actions. `expect_tab` takes only a tab the page opened since the previous
+step began, never one opened earlier, and fails with
+`no new tab opened within <n> seconds`, or, with `url_contains`, with
+`the new tab's address does not contain "<text>"`. A tab is named as
+soon as it opens, which can be before it has loaded its address: follow
+`expect_tab` with `url_contains`, or with an `expect_` check that waits
+(`expect_visible` on something the new page shows), before any one-shot
+address check such as `check_url`. `open_tab` follows `navigate`'s rules:
+the same allowed origins and the same refusals. `expect_tab_closed` on the
+current tab makes `main` the current tab again, as `close_tab` does.
+
+**Follow a new tab.** A link with `target=_blank` (or `window.open`)
+opens a tab; the script follows it, checks it and comes back:
+
+    { "kind": "click", "selector": { "role": "link", "name": "View report" } },
+    { "kind": "expect_tab", "name": "report", "url_contains": "/reports/" },
+    { "kind": "switch_tab", "name": "report" },
+    { "kind": "expect_visible", "selector": { "role": "heading", "name": "Leave Report" } },
+    { "kind": "close_tab", "name": "report" }
+
+**A second tab on the same record.** The script opens the record again in
+a second tab, changes it in one, and checks what the other shows:
+
+    { "kind": "open_tab", "name": "second", "url": "/hr/employee/42" },
+    { "kind": "click", "selector": { "role": "button", "name": "Deactivate" } },
+    { "kind": "switch_tab", "name": "main" },
+    { "kind": "click", "selector": { "role": "button", "name": "Save" } },
+    { "kind": "expect_visible", "selector": { "role": "alert", "name": "This record was changed in another tab" } }
+
+**One tab ends the session, the other reacts.** There is no action of its
+own for this: use `expire_session` in one tab, then `switch_tab` and a
+check in the other.
+
+    { "kind": "open_tab", "name": "second", "url": "/hr/home" },
+    { "kind": "expire_session" },
+    { "kind": "switch_tab", "name": "main" },
+    { "kind": "click", "selector": { "role": "button", "name": "Save" } },
+    { "kind": "check_url", "contains": "/login" }
+
+A tab the page closes itself (a print preview that closes after
+printing) is checked with `expect_tab_closed`:
+
+    { "kind": "expect_tab", "name": "preview" },
+    { "kind": "switch_tab", "name": "preview" },
+    { "kind": "click", "selector": { "role": "button", "name": "Print" } },
+    { "kind": "expect_tab_closed", "name": "preview" }
+
+`open_tab`, `switch_tab` and `close_tab` cannot appear inside a
+`when_visible`, and no tab action can appear in a sign-in recipe.
 
 ## Who the case runs as
 

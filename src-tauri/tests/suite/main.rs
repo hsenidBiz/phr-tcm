@@ -88,6 +88,7 @@ mod browser_page;
 mod browser_page_log;
 mod browser_session;
 mod browser_snapshot;
+mod browser_tabs;
 mod bugreport;
 mod cache;
 mod comment_images;

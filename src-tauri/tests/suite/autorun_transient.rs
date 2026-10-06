@@ -37,13 +37,14 @@ fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
         verdict: String::new(),
         note: String::new(),
         steps: vec![
-            StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("clicked #new")], screenshot: None, downloads: vec![] },
-            StepRecord { step_number: 2, outcomes: vec![failed], screenshot: None, downloads: vec![] },
+            StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("clicked #new")], screenshot: None, downloads: vec![], tab: None },
+            StepRecord { step_number: 2, outcomes: vec![failed], screenshot: None, downloads: vec![], tab: None },
             StepRecord {
                 step_number: 3,
                 outcomes: vec![ActionOutcome::failed("not run: an earlier step of this case failed")],
                 screenshot: None,
                 downloads: vec![],
+                tab: None,
             },
         ],
         proposed: proposed.into(),
@@ -129,8 +130,8 @@ fn the_browser_stopping_is_transient_wherever_it_happened() {
     // While going to the module, too.
     let mut module = case.clone();
     module.steps = vec![
-        StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![ActionOutcome::passed("signed in")], screenshot: None, downloads: vec![] },
-        StepRecord { step_number: MODULE_STEP, outcomes: vec![silent], screenshot: None, downloads: vec![] },
+        StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![ActionOutcome::passed("signed in")], screenshot: None, downloads: vec![], tab: None },
+        StepRecord { step_number: MODULE_STEP, outcomes: vec![silent], screenshot: None, downloads: vec![], tab: None },
     ];
     assert!(is_transient(&module, Some(&script(expect_save()))).is_some());
 }
@@ -196,7 +197,7 @@ fn an_api_request_the_network_dropped_is_transient_but_its_timeout_is_not() {
 fn sign_in_failed(outcomes: Vec<ActionOutcome>) -> CaseRecord {
     let last = outcomes.last().unwrap().detail.clone();
     CaseRecord {
-        steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None, downloads: vec![] }],
+        steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None, downloads: vec![], tab: None }],
         proposed: "Blocked".into(),
         reason: format!("while signing in: {last}"),
         ..failed_at_2("Blocked", ActionOutcome::failed("x"))

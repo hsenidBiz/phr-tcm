@@ -371,6 +371,12 @@ pub fn action_target(action: &Action) -> Option<String> {
         Action::ReturnToArea => Some("the case's area".to_string()),
         Action::PressKey { key } => Some(format!("the {} key", key.trim())),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
+        // A tab by the name the script gave it.
+        Action::ExpectTab { name, .. }
+        | Action::OpenTab { name, .. }
+        | Action::SwitchTab { name }
+        | Action::CloseTab { name }
+        | Action::ExpectTabClosed { name, .. } => Some(format!("the \"{name}\" tab")),
         Action::Navigate { url } => {
             let url = url.trim();
             let end = url.find(['?', '#']).unwrap_or(url.len());

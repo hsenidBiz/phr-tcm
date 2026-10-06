@@ -643,6 +643,11 @@ fn only_checks_and_expectations_are_checks() {
             contains_text: None,
             stray: Default::default(),
         },
+        Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },
+        Action::OpenTab { name: "r".into(), url: "/x".into() },
+        Action::SwitchTab { name: "r".into() },
+        Action::CloseTab { name: "r".into() },
+        Action::ExpectTabClosed { name: "r".into(), within_ms: None },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -660,6 +665,8 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_response"
                 | "api_request"
                 | "expect_download"
+                | "expect_tab"
+                | "expect_tab_closed"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {

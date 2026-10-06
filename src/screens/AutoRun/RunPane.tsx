@@ -135,6 +135,8 @@ export default function RunPane({
   const inFlight = useRef(false);
   const [saving, setSaving] = useState(false);
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
+  /** The tab a step ran in, for a step that ran outside `main`. */
+  const [stepTabs, setStepTabs] = useState<Record<number, string>>({});
   const [verdict, setVerdict] = useState("");
   const verdictLabelId = useId();
   const [note, setNote] = useState("");
@@ -246,7 +248,12 @@ export default function RunPane({
         toast.error(r.error);
         return;
       }
-      setResults((prev) => ({ ...prev, [stepNumber]: r.data }));
+      setResults((prev) => ({ ...prev, [stepNumber]: r.data.outcomes }));
+      const ranIn = r.data.tab;
+      setStepTabs((prev) => {
+        const { [stepNumber]: _gone, ...rest } = prev;
+        return ranIn ? { ...rest, [stepNumber]: ranIn } : rest;
+      });
     } catch (e) {
       // See openBrowser above: a rethrown Error here would otherwise wedge
       // every "Run step N" button disabled for the rest of the session.
@@ -521,6 +528,7 @@ export default function RunPane({
         outcomes:
           results[s.step_number] ??
           (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
+        ...(stepTabs[s.step_number] ? { tab: stepTabs[s.step_number] } : {}),
       })),
     ],
     // A case its preconditions blocked says so the way an unattended run
@@ -566,6 +574,7 @@ export default function RunPane({
       if (!isLast) {
         setRecords((r) => [...r, record]);
         setResults({});
+        setStepTabs({});
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });
@@ -880,6 +889,9 @@ export default function RunPane({
                       <span className="text-[11px] text-faint">
                         {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
                       </span>
+                      {stepTabs[s.step_number] && (
+                        <span className="text-[11px] text-muted">in tab {stepTabs[s.step_number]}</span>
+                      )}
                       {replayed && <span className="text-[11px] text-success">replayed</span>}
                       {next && <span className="text-[11px] text-accent">next</span>}
                       <Button

@@ -610,7 +610,7 @@ fn propose_blames_the_browser_before_the_page() {
     let ordinary_fail = ActionOutcome::failed("nope");
     let mut harness_fail = ActionOutcome::failed("gone");
     harness_fail.harness = true;
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![], tab: None }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
 }
@@ -1412,7 +1412,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1428,7 +1428,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
         no_address(1)
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1440,7 +1440,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
     assert_eq!(p.reason, format!("step 1: {detail}"));
@@ -1461,6 +1461,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
         ],
         screenshot: None,
         downloads: vec![],
+        tab: None,
     }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
@@ -1485,7 +1486,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }
     ] }]));
@@ -1519,7 +1520,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
-    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![] }];
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![], tab: None }];
     let p = propose(&signs_in, &steps, Some(true), false);
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
@@ -1601,7 +1602,7 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
         "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
     }))
     .unwrap();
-    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![] });
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None });
     run.cases.push(earlier);
 
     let mut browsers = FakeBrowsers {
@@ -1857,4 +1858,251 @@ async fn a_stuck_download_costs_a_case_one_settle() {
     assert!(took >= std::time::Duration::from_secs(5), "the case did wait for the download: {took:?}");
     assert!(took < std::time::Duration::from_secs(9), "two settles: {took:?}");
     assert_eq!(browsers.closed, 1);
+}
+
+// ---- Tabs ------------------------------------------------------------------
+
+/// `checking_driver` with one tab the page opened, waiting to be named.
+fn tabbed(mut d: common::ScriptedDriver) -> common::ScriptedDriver {
+    d.tabs.unnamed = 1;
+    d
+}
+
+/// A one-step script that follows a new tab and checks `value` in it.
+fn in_a_tab(case_id: i32, value: &str) -> CaseScript {
+    script(case_id, None, serde_json::json!([
+        { "step_number": 1, "actions": [
+            { "kind": "expect_tab", "name": "report" },
+            { "kind": "switch_tab", "name": "report" },
+            { "kind": "check_text", "value": value }
+        ] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": value }] }
+    ]))
+}
+
+/// Review Focus 4: whichever way a case ends, every tab but `main` is
+/// closed before its browser is given back.
+#[tokio::test]
+async fn every_case_closes_its_tabs_whether_it_passed_or_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &in_a_tab(1, "yes")).unwrap();
+    store::save_script(root, &in_a_tab(2, "no")).unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(tabbed(checking_driver())), Some(tabbed(checking_driver()))].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-tabs");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    assert_eq!(run.cases[1].proposed, "Failed", "{:?}", run.cases[1]);
+    for d in &browsers.returned {
+        assert_eq!(d.tabs.closed_others, 1, "a case gave its browser back with its tabs open");
+        assert!(d.tabs.open.is_empty());
+    }
+}
+
+/// A case stopped before it began, and one whose guard could not be
+/// switched on, still close every tab but `main` on the way out.
+#[tokio::test]
+async fn a_stopped_case_and_a_case_that_never_started_close_their_tabs_too() {
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut d = tabbed(checking_driver());
+    d.tabs.open.push("left".into());
+    let stopped = AtomicBool::new(true);
+    let rec = run_case(&mut d, root, "Acme", "Web", &in_a_tab(1, "yes"), &quick(), &stopped, &mut |_| {}).await;
+    assert_eq!(rec.reason, "stopped before it finished");
+    assert_eq!(d.tabs.closed_others, 1);
+    assert!(d.tabs.open.is_empty());
+
+    let mut refusing = common::ScriptedDriver::new(|method, _| match method {
+        "Fetch.enable" => Err(CdpError::Protocol { method: "Fetch.enable".into(), message: "no".into() }),
+        _ => Ok(serde_json::json!({})),
+    });
+    refusing.tabs.open.push("left".into());
+    let mut no_save = in_a_tab(2, "yes");
+    no_save.no_save = true;
+    let go = AtomicBool::new(false);
+    let rec = run_case(&mut refusing, root, "Acme", "Web", &no_save, &quick(), &go, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked", "{rec:?}");
+    assert_eq!(refusing.tabs.closed_others, 1);
+}
+
+/// A case retried after a failure that looked transient: each go closes
+/// its own tabs, and the second go follows its tab afresh.
+#[tokio::test]
+async fn a_retried_case_closes_the_tabs_of_each_go() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &in_a_tab(1, "yes")).unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(tabbed(harness_driver())), Some(tabbed(checking_driver()))].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-retry-tabs");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, true, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(browsers.returned.len(), 2, "no retry");
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    for d in &browsers.returned {
+        assert_eq!(d.tabs.closed_others, 1);
+        assert!(d.tabs.open.is_empty());
+    }
+}
+
+/// A run that pauses at a reset point: the case before it has closed its
+/// tabs, and the case after starts with none.
+#[tokio::test]
+async fn a_reset_pause_comes_after_the_case_before_closed_its_tabs() {
+    use v2_lib::autorun::plan::Reset;
+    use v2_lib::autorun::replay::{run_cases_planned, ResetGate};
+    struct Carry;
+    impl ResetGate for Carry {
+        async fn wait(&mut self, _reset: &Reset, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+            true
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &in_a_tab(1, "yes")).unwrap();
+    store::save_script(root, &in_a_tab(2, "yes")).unwrap();
+    let mut browsers = FakeBrowsers {
+        queue: [Some(tabbed(checking_driver())), Some(tabbed(checking_driver()))].into(),
+        opened: 0,
+        closed: 0,
+        returned: vec![],
+    };
+    let mut run = new_run("run-reset-tabs");
+    let cancel = AtomicBool::new(false);
+    let reset = Reset { before_case_id: 2, names: vec!["x".into()], changed_by: vec![] };
+    run_cases_planned(
+        &mut browsers,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &[to_run(1, None), to_run(2, None)],
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &PreconditionDb::<v2_lib::autorun::preconditions::NoDb>::ReadingOff,
+        &[reset],
+        &mut Carry,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(run.resets.len(), 1);
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    for d in &browsers.returned {
+        assert_eq!(d.tabs.closed_others, 1);
+    }
+}
+
+/// The run file says which tab a step ran in, when it was not `main`, and
+/// says nothing for a step in `main`.
+#[tokio::test]
+async fn a_step_that_ran_in_another_tab_says_so_on_its_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut s = in_a_tab(1, "yes");
+    s.steps[1].actions.insert(0, serde_json::from_value(serde_json::json!({ "kind": "switch_tab", "name": "main" })).unwrap());
+    store::save_script(root, &s).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(tabbed(checking_driver()))].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-tab-record");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let steps = &run.cases[0].steps;
+    assert_eq!(steps[0].tab.as_deref(), Some("report"));
+    assert_eq!(steps[1].tab, None);
+    let saved = serde_json::to_value(&steps[0]).unwrap();
+    assert_eq!(saved["tab"], "report");
+    let in_main = serde_json::to_value(&steps[1]).unwrap();
+    assert!(in_main.get("tab").is_none(), "{in_main}");
+}
+
+/// Review Focus 5: a file a step saved in another tab is on that step's
+/// record.
+#[tokio::test]
+async fn a_file_saved_in_another_tab_is_on_the_step_that_ran_there() {
+    use v2_lib::browser::downloads::{DownloadEntry, DownloadState};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &in_a_tab(1, "yes")).unwrap();
+    let mut d = tabbed(checking_driver());
+    d.downloads_on_call.push((
+        "Runtime.callFunctionOn".into(),
+        DownloadEntry {
+            guid: "g".into(),
+            name: "report.csv".into(),
+            path: root.join("report.csv"),
+            started_at: std::time::Instant::now(),
+            state: DownloadState::Completed,
+            bytes: 3,
+        },
+    ));
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-tab-download");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let steps = &run.cases[0].steps;
+    assert_eq!(steps[0].tab.as_deref(), Some("report"));
+    assert_eq!(steps[0].downloads, ["report.csv"]);
+    assert!(steps[1].downloads.is_empty());
+}
+
+/// A run file and a script saved before tabs read and write back exactly
+/// as they were.
+#[test]
+fn a_run_file_and_a_script_from_before_tabs_round_trip_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let old = script(5, Some("hr.admin"), serde_json::json!([
+        { "step_number": 1, "actions": [
+            { "kind": "navigate", "url": "/hr/home" },
+            { "kind": "click", "selector": { "role": "button", "name": "Save" } },
+            { "kind": "expect_visible", "selector": { "css": "#done" }, "timeout_ms": 5000 }
+        ] }
+    ]));
+    fn find(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+        for e in std::fs::read_dir(dir).ok()?.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if let Some(f) = find(&p, name) {
+                    return Some(f);
+                }
+            } else if p.file_name().is_some_and(|n| n == name) {
+                return Some(p);
+            }
+        }
+        None
+    }
+    store::save_script(root, &old).unwrap();
+    let file = find(root, "case-5.json").expect("the script was not saved");
+    let first = std::fs::read(&file).unwrap();
+    let loaded = store::load_script(root, 5).unwrap().unwrap();
+    store::save_script(root, &loaded).unwrap();
+    let second = std::fs::read(&file).unwrap();
+    assert_eq!(first, second, "an old script changed on its way through");
+
+    let record = r#"{"step_number":1,"outcomes":[{"ok":true,"detail":"clicked"}],"screenshot":"a.jpg","downloads":["x.csv"]}"#;
+    let step: StepRecord = serde_json::from_str(record).unwrap();
+    assert_eq!(step.tab, None);
+    assert_eq!(serde_json::to_string(&step).unwrap(), record);
 }

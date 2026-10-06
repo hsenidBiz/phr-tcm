@@ -112,6 +112,13 @@ pub fn action_words(action: &Action) -> String {
         Action::PressKey { key } => format!("press {}", key.trim()),
         Action::ExpectFocused { selector, .. } => format!("expect {} to have the focus", selector.describe()),
         Action::ExpectDownload { name, .. } => format!("expect a download named \"{}\"", name.trim()),
+        Action::ExpectTab { name, .. } => format!("wait for a new tab and call it \"{name}\""),
+        Action::OpenTab { name, url } => {
+            format!("open a new tab \"{name}\" at {}", crate::browser::actions::path_only(url))
+        }
+        Action::SwitchTab { name } => format!("switch to the \"{name}\" tab"),
+        Action::CloseTab { name } => format!("close the \"{name}\" tab"),
+        Action::ExpectTabClosed { name, .. } => format!("check the \"{name}\" tab closes"),
     }
 }
 

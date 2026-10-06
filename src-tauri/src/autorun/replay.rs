@@ -144,6 +144,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         outcomes: step.actions.iter().map(|_| ActionOutcome::failed(why)).collect(),
         screenshot: None,
         downloads: Vec::new(),
+        tab: None,
     }
 }
 
@@ -170,7 +171,7 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
         // !direct_urls` arm) is written without going through
         // `execute_in`, so no page dialog is ever appended to it: it is
         // exactly this sentence, for this step.
-        Some(Action::Navigate { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
+        Some(Action::Navigate { .. } | Action::OpenTab { .. }) if o.detail == nav::no_address(n) => Some(o.detail.as_str()),
         // The same refusal, met inside a guard: said after what the guard
         // had already done.
         Some(Action::WhenVisible { .. }) if o.detail.ends_with(&nav::no_address(n)) => Some(o.detail.as_str()),
@@ -269,8 +270,31 @@ pub async fn run_case<D: Driver>(
 /// that cannot get it is Blocked with the sentence that says who had it,
 /// and never signs in. The caller owns `lease` and lets it go once the
 /// case's browser is closed (`one_go`).
+///
+/// However the case ends - passed, failed, stopped, or never started -
+/// every tab but `main` is closed before this returns: no tab carries over
+/// into the next case.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_case_as<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    lease: &mut Held,
+    script: &CaseScript,
+    account: Option<&str>,
+    route: Option<&Route>,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    on_step: &mut (dyn FnMut(i32) + Send),
+) -> CaseRecord {
+    let record = run_case_in(d, root, organization, project, lease, script, account, route, timing, cancel, on_step).await;
+    d.close_other_tabs().await;
+    record
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_case_in<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,
@@ -355,7 +379,7 @@ pub async fn run_case_as<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new() });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -380,6 +404,7 @@ pub async fn run_case_as<D: Driver>(
                 outcomes: vec![out],
                 screenshot: None,
                 downloads: Vec::new(),
+                tab: None,
             });
         }
     }
@@ -446,7 +471,7 @@ pub async fn run_case_as<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new() });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab });
     }
 
     // The case's one wait for a download still arriving (`one_go` does not
@@ -454,7 +479,8 @@ pub async fn run_case_as<D: Driver>(
     let took = began.elapsed();
     settle_downloads(d, cancel).await;
     if !step_began.is_empty() {
-        let all = d.downloads();
+        // Every tab's: a step's file is the step's whichever tab saved it.
+        let all = d.all_downloads();
         for (i, &(at, from)) in step_began.iter().enumerate() {
             let until = step_began.get(i + 1).map(|&(_, next)| next);
             steps[at].downloads = runner::saved_between(&all, from, until);
@@ -597,7 +623,7 @@ pub async fn settle_downloads<D: Driver>(d: &mut D, cancel: &AtomicBool) {
     let until = Instant::now() + DOWNLOAD_SETTLE;
     while !cancel.load(Ordering::SeqCst)
         && Instant::now() < until
-        && d.downloads().iter().any(|e| e.state == DownloadState::InProgress)
+        && d.all_downloads().iter().any(|e| e.state == DownloadState::InProgress)
     {
         d.idle(STOP_POLL).await;
     }

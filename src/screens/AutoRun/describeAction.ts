@@ -277,6 +277,18 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 
+/** An `expect_tab`'s address text: `, at an address containing "<path>"`,
+ * with any host or query cut away, or nothing when none is set. */
+function tabAddress(contains: unknown): string {
+  const text = typeof contains === "string" ? contains.trim() : "";
+  if (!text) return "";
+  // A query alone (`id=7&token=abc`) can carry a token, and names no
+  // place a person would recognise: the sentence leaves it out.
+  if (text.includes("=") && !splitAddress(text).path.includes("/")) return "";
+  const shown = looksLikeAddress(text) || text.includes("/") || text.includes("?") ? pathOnly(text) : text;
+  return `, at an address containing "${shown}"`;
+}
+
 /** `check_url`'s part of an address: a path, a handler, or neither (a
  * query only), never a host or the rest of a query string. */
 function urlPart(contains: string): Sentence {
@@ -380,6 +392,16 @@ function describeKnown(a: Action): Sentence {
       const named = str(a.name).includes("*") ? `named like "${a.name}"` : `named "${a.name}"`;
       return [words(`Check a file ${named} downloads${upTo(a.within_ms)}${downloadDetails(a)}`)];
     }
+    case "expect_tab":
+      return [words(`Wait for a new tab and call it "${str(a.name)}"${tabAddress(a.url_contains)}`)];
+    case "open_tab":
+      return [words(`Open a new tab "${str(a.name)}" at ${pathOnly(str(a.url))}`)];
+    case "switch_tab":
+      return [words(`Switch to the "${str(a.name)}" tab`)];
+    case "close_tab":
+      return [words(`Close the "${str(a.name)}" tab`)];
+    case "expect_tab_closed":
+      return [words(`Check the "${str(a.name)}" tab closes`)];
     default: {
       // A new action kind fails the type check here until it is described;
       // one the app does not know (a typo in the JSON) is unreadable.

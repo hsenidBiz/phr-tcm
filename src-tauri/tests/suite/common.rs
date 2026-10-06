@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use v2_lib::autorun::accounts::Account;
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS, RESOLVE_URL_JS};
-use v2_lib::browser::cdp::{CdpError, Driver, Event};
+use v2_lib::browser::cdp::{
+    no_new_tab, no_tab, tab_did_not_close, tab_taken, CdpError, Driver, Event, MAIN_CANNOT_CLOSE, MAIN_TAB,
+};
 use v2_lib::browser::downloads::DownloadEntry;
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
@@ -66,6 +68,51 @@ pub struct ScriptedDriver {
     /// named method is made, dated then - how a test says "the browser read
     /// this download's start while that call was answered". Fires once.
     pub downloads_on_call: Vec<(String, DownloadEntry)>,
+    /// Its tabs, as a test models them (`Tabs`): which tab each call went
+    /// to, and what the tab actions did.
+    pub tabs: Tabs,
+}
+
+/// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
+/// tabs a script named, and tabs the page opened that nobody named yet.
+#[derive(Default)]
+pub struct Tabs {
+    /// Named tabs other than `main`, in the order they were named.
+    pub open: Vec<String>,
+    /// The current tab; empty is `main`.
+    pub current: String,
+    /// The current tab's name once it closed by itself.
+    pub gone: Option<String>,
+    /// Named tabs that closed by themselves, not yet claimed.
+    pub closed_by_page: Vec<String>,
+    /// Tabs the page opened that no `expect_tab` claimed yet.
+    pub unnamed: usize,
+    /// A call to this method makes the page open a tab.
+    pub opens_on: Option<String>,
+    /// A call to this method makes the page close this tab itself.
+    pub closes_on: Option<(String, String)>,
+    /// Every call, with the tab it went to.
+    pub calls: Vec<(String, String)>,
+    /// How often `close_other_tabs` ran.
+    pub closed_others: usize,
+    /// How often `step_began` ran.
+    pub steps_begun: usize,
+}
+
+impl Tabs {
+    pub fn now(&self) -> String {
+        if let Some(g) = &self.gone {
+            return g.clone();
+        }
+        if self.current.is_empty() { MAIN_TAB.to_string() } else { self.current.clone() }
+    }
+    fn knows(&self, name: &str) -> bool {
+        name == MAIN_TAB || self.open.iter().any(|t| t == name)
+    }
+    /// The methods called in `tab`, in order.
+    pub fn called_in(&self, tab: &str) -> Vec<String> {
+        self.calls.iter().filter(|(t, _)| t == tab).map(|(_, m)| m.clone()).collect()
+    }
 }
 
 impl ScriptedDriver {
@@ -90,6 +137,7 @@ impl ScriptedDriver {
             download_dirs: vec![],
             downloads: vec![],
             downloads_on_call: vec![],
+            tabs: Tabs::default(),
         }
     }
 
@@ -120,6 +168,23 @@ impl Driver for ScriptedDriver {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CdpError> {
+        self.tabs.calls.push((self.tabs.now(), method.to_string()));
+        if let Some(name) = &self.tabs.gone {
+            return Err(CdpError::Tab(no_tab(name)));
+        }
+        if self.tabs.opens_on.as_deref() == Some(method) {
+            self.tabs.unnamed += 1;
+        }
+        if let Some((m, tab)) = self.tabs.closes_on.clone() {
+            if m == method {
+                self.tabs.closes_on = None;
+                self.tabs.open.retain(|t| *t != tab);
+                self.tabs.closed_by_page.push(tab.clone());
+                if self.tabs.current == tab {
+                    self.tabs.gone = Some(tab);
+                }
+            }
+        }
         self.calls.push((method.to_string(), params.clone()));
         if self.block_after.as_ref().is_some_and(|(m, _)| m == method) {
             self.save_blocked = self.block_after.take().map(|(_, s)| s);
@@ -212,6 +277,83 @@ impl Driver for ScriptedDriver {
     /// followed.
     fn is_guarding_saves(&self) -> bool {
         self.calls.iter().rev().find(|(m, _)| m == "Fetch.enable" || m == "Fetch.disable").is_some_and(|(m, _)| m == "Fetch.enable")
+    }
+
+    fn step_began(&mut self) {
+        self.tabs.steps_begun += 1;
+    }
+    fn tab_name(&self) -> String {
+        self.tabs.now()
+    }
+    fn missing_tab(&self) -> Option<String> {
+        self.tabs.gone.clone()
+    }
+    async fn expect_tab(&mut self, name: &str, _url_contains: Option<&str>, within: Duration) -> Result<String, CdpError> {
+        if self.tabs.knows(name) {
+            return Err(CdpError::Tab(tab_taken(name)));
+        }
+        if self.tabs.unnamed == 0 {
+            return Err(CdpError::Tab(no_new_tab(within)));
+        }
+        self.tabs.unnamed -= 1;
+        self.tabs.open.push(name.to_string());
+        Ok("https://hr.example/report".to_string())
+    }
+    async fn open_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        if self.tabs.knows(name) {
+            return Err(CdpError::Tab(tab_taken(name)));
+        }
+        self.tabs.open.push(name.to_string());
+        self.tabs.current = name.to_string();
+        self.tabs.gone = None;
+        Ok(())
+    }
+    async fn switch_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        if !self.tabs.knows(name) {
+            return Err(CdpError::Tab(no_tab(name)));
+        }
+        self.tabs.current = if name == MAIN_TAB { String::new() } else { name.to_string() };
+        self.tabs.gone = None;
+        Ok(())
+    }
+    async fn close_tab(&mut self, name: &str) -> Result<bool, CdpError> {
+        if name == MAIN_TAB {
+            return Err(CdpError::Tab(MAIN_CANNOT_CLOSE.to_string()));
+        }
+        if !self.tabs.knows(name) {
+            return Err(CdpError::Tab(no_tab(name)));
+        }
+        self.tabs.open.retain(|t| t != name);
+        let was = self.tabs.current == name;
+        if was {
+            self.tabs.current.clear();
+        }
+        Ok(was)
+    }
+    async fn expect_tab_closed(&mut self, name: &str, within: Duration) -> Result<(), CdpError> {
+        if name == MAIN_TAB {
+            return Err(CdpError::Tab(MAIN_CANNOT_CLOSE.to_string()));
+        }
+        if let Some(i) = self.tabs.closed_by_page.iter().position(|t| t == name) {
+            self.tabs.closed_by_page.remove(i);
+            if self.tabs.gone.as_deref() == Some(name) {
+                self.tabs.gone = None;
+                self.tabs.current.clear();
+            }
+            return Ok(());
+        }
+        if self.tabs.knows(name) {
+            return Err(CdpError::Tab(tab_did_not_close(name, within)));
+        }
+        Err(CdpError::Tab(no_tab(name)))
+    }
+    async fn close_other_tabs(&mut self) {
+        self.tabs.closed_others += 1;
+        self.tabs.open.clear();
+        self.tabs.closed_by_page.clear();
+        self.tabs.unnamed = 0;
+        self.tabs.current.clear();
+        self.tabs.gone = None;
     }
 }
 

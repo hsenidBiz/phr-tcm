@@ -38,6 +38,9 @@ pub(crate) struct Session {
     /// into, emptied once it closes. `None` when downloads could not be
     /// switched on.
     pub(crate) downloads_root: Option<PathBuf>,
+    /// The case this browser's tabs belong to (`runner::tabs_for_case`):
+    /// a step of another case closes every tab but `main` first.
+    pub(crate) tabs_case: Option<i32>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -179,7 +182,12 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
         lease: crate::autorun::lease::Held::supervised(),
         guarded_case: None,
         downloads_root,
+        tabs_case: None,
     });
+    // A tab the page opens waits, paused, until this connection reads that
+    // it opened and sets it up: read between commands too, or a popup a
+    // person opens by hand would sit blank until the next step.
+    answer_between_commands();
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
 }
@@ -260,6 +268,14 @@ pub async fn close_autorun_browsers() {
     }
 }
 
+/// What a supervised step answers: one outcome per action, and the tab the
+/// step ran in when that was not `main` (`runner::InRun::tab`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct StepRun {
+    pub outcomes: Vec<ActionOutcome>,
+    pub tab: Option<String>,
+}
+
 /// Run one step's actions in order and report every outcome. Actions after
 /// an ordinary failure still run: the watcher learns more from "the click
 /// worked, the check did not" than from a run that stops at the first red.
@@ -274,7 +290,7 @@ pub async fn auto_run_step(
     project: String,
     case_id: i32,
     step: StepScript,
-) -> Result<Vec<ActionOutcome>, String> {
+) -> Result<StepRun, String> {
     let root = root(&app)?;
     // The step's fixture values: shared drafts' current outputs, and what
     // the case's setup gave at its start. The step the pane holds is never
@@ -282,6 +298,8 @@ pub async fn auto_run_step(
     let step = crate::autorun::setup::resolve_step(&root, &organization, &project, case_id, &step)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    // Another case's tabs do not carry over into this one.
+    crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: `return_to_area` builds the
     // case's route from its saved script, and only when the step has one.
@@ -293,7 +311,8 @@ pub async fn auto_run_step(
         Some(Err(why)) => AreaRoute::Unknown(why),
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
-    crate::autorun::runner::run_step_routed(
+    let mut run = crate::autorun::runner::InRun::default();
+    let outcomes = crate::autorun::runner::run_step_in_run(
         &mut session.cdp,
         &root,
         &organization,
@@ -304,8 +323,10 @@ pub async fn auto_run_step(
         &mut session.lease,
         None,
         area,
+        &mut run,
     )
-    .await
+    .await?;
+    Ok(StepRun { outcomes, tab: run.tab.take() })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
@@ -373,6 +394,9 @@ pub(crate) async fn replay_supervised(
     }
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     let account_before = session.account.clone();
+    // The replay starts the case afresh, closing every tab but `main`
+    // first (`replay_to_checked`): the tabs left are this case's.
+    session.tabs_case = Some(case_id);
     // A case's setup runs in a browser of its own, the one last chosen.
     let mut setup_browsers = crate::commands::autorun_replay::RealBrowsers::new(
         crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
@@ -461,6 +485,12 @@ pub async fn auto_run_check_preconditions(
     db_read_access: bool,
 ) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
     let root = root(&app)?;
+    // A watched case starts here: the last case's tabs are closed, even
+    // when it is the same case started again.
+    if let Some(session) = SESSION.lock().await.as_mut() {
+        session.cdp.close_other_tabs().await;
+        session.tabs_case = Some(case_id);
+    }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut checked = crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
         crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
@@ -602,8 +632,9 @@ pub async fn guard_for_case<D: Driver>(
     Ok(())
 }
 
-/// How often the supervised browser is read between commands while it
-/// guards a no-save case, and for how long each time.
+/// How often the supervised browser is read between commands while
+/// something waits on it (`Cdp::wants_reading`), and for how long each
+/// time.
 const ANSWER_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
 const ANSWER_FOR: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -624,10 +655,12 @@ fn answer_between_commands() {
     tauri::async_runtime::spawn(keep_answering(&SESSION, &ANSWERING, |s: &mut Session| &mut s.cdp, ANSWER_EVERY, ANSWER_FOR));
 }
 
-/// Every `every`, read the browser in `slot` for `read_for` while it is
-/// guarded; a command holding the slot reads it itself and is never waited
-/// on. Ends, clearing `running` with the slot still locked, once the slot
-/// is empty or its browser no longer guarded.
+/// Every `every`, read the browser in `slot` for `read_for` while it wants
+/// reading (`Cdp::wants_reading`: it is guarded, or it drives the whole
+/// browser, where a tab the page opens waits to be set up); a command
+/// holding the slot reads it itself and is never waited on. Ends, clearing
+/// `running` with the slot still locked, once the slot is empty or its
+/// browser no longer wants reading.
 pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
     slot: &tokio::sync::Mutex<Option<S>>,
     running: &std::sync::atomic::AtomicBool,
@@ -639,7 +672,7 @@ pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
         tokio::time::sleep(every).await;
         let Ok(mut held) = slot.try_lock() else { continue };
         match held.as_mut().map(cdp_of) {
-            Some(cdp) if cdp.is_guarding_saves() => cdp.pump(read_for).await,
+            Some(cdp) if cdp.wants_reading() => cdp.pump(read_for).await,
             _ => {
                 running.store(false, std::sync::atomic::Ordering::SeqCst);
                 return;
