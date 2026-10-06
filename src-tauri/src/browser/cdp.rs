@@ -1974,22 +1974,28 @@ impl<T: Transport> Cdp<T> {
             return self.answer_paused(at, session, &ev.params).await;
         }
         if ev.method == "Page.javascriptDialogOpening" {
-            let Some(i) = at else {
-                return Ok(());
+            // A dialog in a tab not registered yet (one the page opened a
+            // moment ago) is still answered on its own session: left open,
+            // it would hold that page up.
+            let on = match (at, &session) {
+                (Some(i), _) => self.tabs[i].session_id.clone(),
+                (None, Some(s)) => s.clone(),
+                (None, None) => return Ok(()),
             };
             let kind = ev.params["type"].as_str().unwrap_or("dialog");
             let message = ev.params["message"].as_str().unwrap_or("");
             // The run's armed `expect_dialog` claims it, from whichever tab;
             // nobody's is accepted, as always, and noted on the tab.
             let answer = self.book.opened(kind, message);
-            let tab = &mut self.tabs[i];
-            if self.book.seen().last().is_some_and(|s| s.claimed_by.is_none()) {
-                if tab.dialogs.len() >= MAX_REMEMBERED_DIALOGS {
-                    tab.dialogs.remove(0);
+            if let Some(i) = at {
+                let tab = &mut self.tabs[i];
+                if self.book.seen().last().is_some_and(|s| s.claimed_by.is_none()) {
+                    if tab.dialogs.len() >= MAX_REMEMBERED_DIALOGS {
+                        tab.dialogs.remove(0);
+                    }
+                    tab.dialogs.push(format!("{kind}: {message}"));
                 }
-                tab.dialogs.push(format!("{kind}: {message}"));
             }
-            let on = tab.session_id.clone();
             // Sent without waiting: its reply carries an id nobody is
             // waiting on and falls through `read_reply` harmlessly.
             let id = self.next_id;

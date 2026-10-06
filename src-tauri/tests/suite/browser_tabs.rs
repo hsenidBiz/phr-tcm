@@ -284,6 +284,31 @@ async fn an_armed_expectation_claims_a_dialog_in_another_tab() {
     assert_eq!(cdp.take_dialogs(), ["beforeunload: "]);
 }
 
+/// A dialog on a session no tab is registered for yet (a popup whose
+/// attach has not been read) is still answered on that session: accepted
+/// with nothing armed, as an armed expectation asks otherwise.
+#[tokio::test]
+async fn a_dialog_from_a_tab_not_yet_registered_is_answered() {
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::browser::dialogs::DialogPlan;
+    let mut cdp = browser().await;
+    feed(&mut cdp, [on("S-new", "Page.javascriptDialogOpening", json!({ "type": "alert", "message": "hello" }))]);
+    settle(&mut cdp).await;
+    let answered = sent(&cdp).iter().rev().find(|f| f["method"] == "Page.handleJavaScriptDialog").expect("the dialog was left open").clone();
+    assert_eq!(answered["sessionId"], "S-new");
+    assert_eq!(answered["params"], json!({ "accept": true }));
+    assert!(cdp.take_dialogs().is_empty(), "a dialog from another tab reached main");
+    assert_eq!(Driver::dialog_book(&mut cdp).unwrap().seen().last().map(|s| s.message.as_str()), Some("hello"));
+
+    Driver::dialog_book(&mut cdp).unwrap().arm(vec![DialogPlan { id: 0, accept: false, prompt_text: None }]);
+    feed(&mut cdp, [on("S-new", "Page.javascriptDialogOpening", json!({ "type": "confirm", "message": "Leave?" }))]);
+    settle(&mut cdp).await;
+    let answered = sent(&cdp).iter().rev().find(|f| f["method"] == "Page.handleJavaScriptDialog").unwrap().clone();
+    assert_eq!(answered["sessionId"], "S-new");
+    assert_eq!(answered["params"], json!({ "accept": false }));
+    assert_eq!(Driver::dialog_book(&mut cdp).unwrap().claimed(0).map(|s| s.message.as_str()), Some("Leave?"));
+}
+
 #[tokio::test]
 async fn a_tab_opened_while_guarded_is_set_up_and_guarded_before_it_runs() {
     let _log = crate::serial::log_tail();

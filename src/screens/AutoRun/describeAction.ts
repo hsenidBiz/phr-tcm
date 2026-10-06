@@ -278,6 +278,23 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 
+/** How an `expect_sorted` reads its column: `, as numbers`, `, as dates`,
+ * `, as dates (dd/MM/yyyy)`, `, as text`, or nothing when left out. */
+function sortedAs(as: unknown): string {
+  if (as == null) return "";
+  if (isRecord(as)) return `, as dates (${str(as.date)})`;
+  switch (str(as)) {
+    case "number":
+      return ", as numbers";
+    case "date":
+      return ", as dates";
+    case "text":
+      return ", as text";
+    default:
+      throw new Unreadable();
+  }
+}
+
 /** One phrase or a list of them, as the `pdf` block takes them. */
 const phrases = (v: unknown): string[] => (typeof v === "string" ? [v] : strList(v));
 
@@ -450,7 +467,11 @@ function describeKnown(a: Action): Sentence {
     case "expect_sorted": {
       const order = str(a.order);
       if (order !== "ascending" && order !== "descending") throw new Unreadable();
-      return [words("Check "), ...describeTarget(a.table), words(` is sorted by ${str(a.column).trim()}, ${order}${upTo(a.timeout_ms)}`)];
+      return [
+        words("Check "),
+        ...describeTarget(a.table),
+        words(` is sorted by ${str(a.column).trim()}, ${order}${sortedAs(a.as)}${upTo(a.timeout_ms)}`),
+      ];
     }
     case "expect_row_count": {
       const given = [

@@ -846,3 +846,50 @@ fn old_and_new_download_checks_round_trip_byte_identical() {
         assert_eq!(serde_json::to_string(&a).unwrap(), text);
     }
 }
+
+// ---------------------------------------------------------------- a slow read never holds up a step
+
+#[tokio::test]
+async fn a_file_read_past_its_limit_fails_naming_the_file_only() {
+    use std::time::{Duration, Instant};
+    use v2_lib::autorun::runner::{await_file_read, FILE_READ_LIMIT};
+    assert_eq!(FILE_READ_LIMIT, Duration::from_secs(60));
+    let slow = tokio::task::spawn_blocking(|| {
+        std::thread::sleep(Duration::from_secs(5));
+        Ok("too late".to_string())
+    });
+    let began = Instant::now();
+    let out = await_file_read(slow, "Payslip.pdf", None, Duration::from_secs(1)).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "\"Payslip.pdf\" took longer than 1 seconds to read");
+    assert!(began.elapsed() < Duration::from_secs(3), "{:?}", began.elapsed());
+}
+
+#[tokio::test]
+async fn a_file_read_in_time_gives_its_own_outcome() {
+    use std::time::Duration;
+    use v2_lib::autorun::runner::await_file_read;
+    let quick = tokio::task::spawn_blocking(|| Ok("downloaded \"a.pdf\"".to_string()));
+    let out = await_file_read(quick, "a.pdf", None, Duration::from_secs(5)).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "downloaded \"a.pdf\"");
+    let failing = tokio::task::spawn_blocking(|| Err("the PDF has no page 3".to_string()));
+    let out = await_file_read(failing, "a.pdf", None, Duration::from_secs(5)).await;
+    assert_eq!((out.ok, out.detail.as_str()), (false, "the PDF has no page 3"));
+}
+
+#[tokio::test]
+async fn stop_ends_the_wait_for_a_slow_read() {
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+    use v2_lib::autorun::runner::{await_file_read, AFTER_STOP};
+    let slow = tokio::task::spawn_blocking(|| {
+        std::thread::sleep(Duration::from_secs(5));
+        Ok("too late".to_string())
+    });
+    let stop = AtomicBool::new(true);
+    let began = Instant::now();
+    let out = await_file_read(slow, "Payslip.pdf", Some(&stop), Duration::from_secs(60)).await;
+    assert_eq!((out.ok, out.detail.as_str()), (false, AFTER_STOP));
+    assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+}

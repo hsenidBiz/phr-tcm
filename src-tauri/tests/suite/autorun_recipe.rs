@@ -485,3 +485,26 @@ fn a_saved_recipe_wins_over_the_built_in() {
     assert_eq!(r.steps, saved.steps);
     assert_eq!(r.signed_in, saved.signed_in);
 }
+
+
+/// A dialog a step expects is a case's check: a sign-in recipe refuses
+/// `expect_dialog`, at the top level and inside a guard.
+#[test]
+fn a_recipe_cannot_expect_a_dialog() {
+    let want = "a sign-in recipe cannot contain expect_dialog - it belongs in a case script";
+    let top = recipe(json!({
+        "start_url": "https://hr.example.internal/login",
+        "steps": [ { "kind": "expect_dialog", "answer": "accept" } ],
+        "signed_in": { "css": "#marker" }
+    }));
+    let why = top.validate().unwrap_err();
+    assert!(why.contains(want), "{why}");
+    let guarded = recipe(json!({
+        "start_url": "https://hr.example.internal/login",
+        "steps": [ { "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 2000,
+                     "then": [ { "kind": "expect_dialog", "answer": "dismiss" } ] } ],
+        "signed_in": { "css": "#marker" }
+    }));
+    let why = guarded.validate().unwrap_err();
+    assert!(why.contains(want), "{why}");
+}

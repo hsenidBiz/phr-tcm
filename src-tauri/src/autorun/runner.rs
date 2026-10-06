@@ -781,11 +781,44 @@ async fn expect_download<D: Driver>(
         }),
     };
     let (path, shown) = (entry.path.clone(), entry.name.clone());
-    let checked = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check)).await;
-    match checked {
-        Ok(Ok(sentence)) => ActionOutcome::passed(sentence),
-        Ok(Err(sentence)) => ActionOutcome::failed(sentence),
-        Err(_) => ActionOutcome::failed(format!("\"{}\" could not be read", entry.name)),
+    let job = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check));
+    await_file_read(job, &entry.name, cancel, FILE_READ_LIMIT).await
+}
+
+/// The longest a downloaded file's content may take to read.
+pub const FILE_READ_LIMIT: Duration = Duration::from_secs(60);
+
+/// How often a file read's wait looks at the run's Stop.
+const FILE_READ_POLL: Duration = Duration::from_millis(250);
+
+/// Waits for a download's check, read on a blocking thread, as its
+/// outcome. The run's Stop (`cancel`) ends the wait as `AFTER_STOP`, and a
+/// read that takes longer than `limit` fails naming the file only. Either
+/// way the thread is left to finish on its own: a blocking read cannot be
+/// interrupted, but it no longer holds up the step.
+pub async fn await_file_read(
+    mut job: tokio::task::JoinHandle<Result<String, String>>,
+    name: &str,
+    cancel: Option<&AtomicBool>,
+    limit: Duration,
+) -> ActionOutcome {
+    let deadline = Instant::now() + limit;
+    loop {
+        match tokio::time::timeout(FILE_READ_POLL.min(limit), &mut job).await {
+            Ok(Ok(Ok(sentence))) => return ActionOutcome::passed(sentence),
+            Ok(Ok(Err(sentence))) => return ActionOutcome::failed(sentence),
+            Ok(Err(_)) => return ActionOutcome::failed(format!("\"{name}\" could not be read")),
+            Err(_) => {}
+        }
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            return ActionOutcome::failed(AFTER_STOP);
+        }
+        if Instant::now() >= deadline {
+            return ActionOutcome::failed(format!(
+                "\"{name}\" took longer than {} seconds to read",
+                limit.as_secs()
+            ));
+        }
     }
 }
 

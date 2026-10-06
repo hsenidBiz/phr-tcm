@@ -88,7 +88,19 @@ describe("a sentence for every action kind", () => {
     ],
     [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
-      'Check the "Employees" table is sorted by Joined, descending',
+      'Check the "Employees" table is sorted by Joined, descending, as dates',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Salary", order: "ascending", as: "number" },
+      'Check the "Employees" table is sorted by Salary, ascending, as numbers',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "ascending", as: { date: "dd/MM/yyyy" } },
+      'Check the "Employees" table is sorted by Joined, ascending, as dates (dd/MM/yyyy)',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Name", order: "ascending" },
+      'Check the "Employees" table is sorted by Name, ascending',
     ],
     [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, equals: 5 }, 'Check the "Employees" table has 5 rows'],
     [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, at_least: 1 }, 'Check the "Employees" table has at least 1 row'],
@@ -322,6 +334,7 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
     ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
     ["a sort order it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "up" }],
+    ["a sort reading it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "ascending", as: "money" }],
   ])("%s", (_, action) => {
     expect(odd(action)).toBe(UNREADABLE);
   });

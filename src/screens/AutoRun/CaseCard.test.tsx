@@ -153,10 +153,24 @@ test("an open card says how the script treats page errors", () => {
   expect(screen.getByText("flag")).toBeInTheDocument();
 });
 
+test("an open card shows the script's dialog and ignored page-error settings", () => {
+  renderCard({
+    open: true,
+    script: { ...BARE, fail_on_unexpected_dialog: true, ignore_page_errors: ["ResizeObserver", "/api/Poll"] } as CaseScript,
+  });
+  expect(screen.getByText("Unexpected dialogs")).toBeInTheDocument();
+  expect(screen.getByText("fail")).toBeInTheDocument();
+  expect(screen.getByText("Ignored page errors")).toBeInTheDocument();
+  expect(screen.getByText("ResizeObserver, /api/Poll")).toBeInTheDocument();
+});
+
 test("an open card leaves out every fact with no value, and Files when there is nothing to list", () => {
   renderCard({ open: true, script: BARE });
   expect(screen.getByText("1 step")).toBeInTheDocument();
-  for (const label of ["Runs as", "Area", "Must not save", "Page errors", "Preconditions", "Changes", "Needs unchanged", "Last repair"]) {
+  for (const label of [
+    "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
+    "Preconditions", "Changes", "Needs unchanged", "Last repair",
+  ]) {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   }
   expect(screen.queryByText("Files")).not.toBeInTheDocument();

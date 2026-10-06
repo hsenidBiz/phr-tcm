@@ -568,6 +568,12 @@ A case that must notice any dialog it did not expect sets
 expected is then still accepted, so the page can go on, and the step it
 appeared in fails with `an unexpected confirm dialog appeared: "..."`.
 
+A dialog that opens between steps, before the next step has started, is
+accepted and noted but never fails a step, even with
+`fail_on_unexpected_dialog`. A watched run reads `fail_on_unexpected_dialog`
+and `page_errors` from the saved script: an edit to them that has not been
+saved yet does not apply.
+
 ## Tabs
 
 A case's browser has named tabs. The tab a case starts in is `main`, and
