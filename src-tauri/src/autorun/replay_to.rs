@@ -385,14 +385,17 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
     }
 
-    // Steps 1 to N-1, in the script's order.
+    // Steps 1 to N-1, in the script's order. The other areas their
+    // `return_to_area` actions name are read once, before the first.
+    let names = runner::named_areas(script.steps.iter().filter(|s| s.step_number < n).flat_map(|s| s.actions.iter()));
+    let areas = runner::area_routes(root, organization, project, &names);
     for step in script.steps.iter().filter(|s| s.step_number < n) {
         let k = step.step_number;
         if stopped() {
             return ReplayEnd::Stopped { step: k };
         }
         progress(k, n - 1);
-        let mut in_run = InRun { cancel: Some(cancel), ..Default::default() };
+        let mut in_run = InRun { cancel: Some(cancel), areas: Some(&areas), ..Default::default() };
         let ran = runner::run_step_in_run(
             d,
             root,

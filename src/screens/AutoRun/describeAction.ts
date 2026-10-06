@@ -382,8 +382,10 @@ function describeKnown(a: Action): Sentence {
       return [words("Reload the page")];
     case "expire_session":
       return [words("End the session")];
-    case "return_to_area":
-      return [words("Return to the case's area")];
+    case "return_to_area": {
+      const area = optStr(a.area)?.trim();
+      return [words(area ? `Go to the "${area}" area` : "Return to the case's area")];
+    }
     case "press_key":
       return [words(`Press ${str(a.key)}`)];
     case "expect_focused":

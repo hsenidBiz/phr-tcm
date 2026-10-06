@@ -131,11 +131,16 @@ pub enum Action {
     /// server's own record is not touched - what a script then checks is
     /// how the application treats a request whose session is gone.
     ExpireSession,
-    /// Take the browser back to the case's area by its recorded menu path,
-    /// the trip a run makes before step 1 - the one way back for a project
-    /// that refuses `navigate`. Carried out by the runner, which alone
-    /// knows the case's area.
-    ReturnToArea,
+    /// Take the browser to an area by its recorded menu path: the case's
+    /// own area (the trip a run makes before step 1) when `area` is left
+    /// out, else the recorded area of that name - so a case can look at
+    /// another area partway through and come back. The one way about for a
+    /// project that refuses `navigate`. Carried out by the runner, which
+    /// alone knows the areas' routes.
+    ReturnToArea {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<String>,
+    },
     /// Press one key on whatever has the focus, as a keyboard would: Tab
     /// and Shift+Tab move the focus, Enter and Space activate, Escape
     /// closes. One of `PRESS_KEYS`, nothing else - a script that needs a
@@ -440,7 +445,7 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
         // area - which is never a tidy-up that may or may not happen.
         if matches!(
             a,
-            Action::ExpireSession | Action::ReturnToArea | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
+            Action::ExpireSession | Action::ReturnToArea { .. } | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
         ) {
             return Err(format!(
                 "when_visible \"then\" cannot hold {} - write it as an action of its own",
@@ -781,7 +786,7 @@ impl Action {
                 selector.validate()?;
                 check_guarded(then)
             }
-            Action::Reload | Action::ExpireSession | Action::ReturnToArea => Ok(()),
+            Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key } if !PRESS_KEYS.iter().any(|k| k.0 == key.trim()) => {
                 Err(format!("press_key \"{key}\" is not a key it presses - use one of {}", key_names()))
             }
@@ -855,6 +860,16 @@ impl Action {
         match self {
             Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter()).collect(),
             _ => vec![self],
+        }
+    }
+
+    /// The area a `return_to_area` names, trimmed; `None` for any other
+    /// action, and for one that names none or a blank one - both go to the
+    /// case's own area, as a script's blank `area` means its default one.
+    pub fn area_named(&self) -> Option<&str> {
+        match self {
+            Action::ReturnToArea { area } => area.as_deref().map(str::trim).filter(|a| !a.is_empty()),
+            _ => None,
         }
     }
 
@@ -1177,7 +1192,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             expect::expect(d, selector, Check::Focused, wait(timeout_ms, timing), timing.poll_ms).await
         }
         // Only the runner knows the case's area and the recipe's home.
-        Action::ReturnToArea => ActionOutcome::failed("return_to_area is carried out by the runner"),
+        Action::ReturnToArea { .. } => ActionOutcome::failed("return_to_area is carried out by the runner"),
         // Only the runner knows where the step began, and so which
         // download is the step's.
         Action::ExpectDownload { .. } => ActionOutcome::failed("expect_download is carried out by the runner"),

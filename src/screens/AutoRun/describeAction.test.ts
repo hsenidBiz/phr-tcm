@@ -70,6 +70,8 @@ describe("a sentence for every action kind", () => {
     [{ kind: "reload" }, "Reload the page"],
     [{ kind: "expire_session" }, "End the session"],
     [{ kind: "return_to_area" }, "Return to the case's area"],
+    [{ kind: "return_to_area", area: "Common Configurator" }, 'Go to the "Common Configurator" area'],
+    [{ kind: "return_to_area", area: "  " }, "Return to the case's area"],
     [{ kind: "press_key", key: "Tab" }, "Press Tab"],
     [
       { kind: "expect_focused", selector: { role: "textbox", name: "Name" } },

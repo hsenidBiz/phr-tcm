@@ -19,6 +19,7 @@ use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
 use crate::browser::downloads::{DownloadEntry, DownloadState};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -31,6 +32,66 @@ pub const AFTER_SAVE_BLOCKED: &str = "not run: the page tried to save, and this 
 
 /// The rest of a step after `return_to_area` could not reach the area.
 const AFTER_AREA_UNREACHED: &str = "not run: the case's area was not reached";
+
+/// The rest of a step after a `return_to_area` that names an area could
+/// not reach it.
+pub const AFTER_NAMED_AREA_UNREACHED: &str = "not run: the area the step went to was not reached";
+
+/// The routes to the areas a script's `return_to_area` actions name, keyed
+/// by `nav::module_key`: each the area's recorded path from the recipe's
+/// home, or why there is none. A name missing from it was not resolved
+/// (the area was removed since the script was saved), and blocks the rest
+/// of its step the same way.
+pub type NamedAreas = BTreeMap<String, Result<Route, String>>;
+
+/// Every area a `return_to_area` in `actions` names, a `when_visible`'s
+/// guarded actions included, trimmed and once each by `nav::module_key`.
+pub fn named_areas<'a>(actions: impl IntoIterator<Item = &'a Action>) -> Vec<&'a str> {
+    let mut seen = std::collections::BTreeSet::new();
+    actions
+        .into_iter()
+        .flat_map(Action::each)
+        .filter_map(Action::area_named)
+        .filter(|name| seen.insert(nav::module_key(name)))
+        .collect()
+}
+
+/// The route to each area in `names`, from this project's recorded areas
+/// (`nav::find_area`) and the recipe's home - the same parts the case's
+/// own route is made of. Read once, before the steps that use it.
+pub fn area_routes(root: &Path, organization: &str, project: &str, names: &[&str]) -> NamedAreas {
+    if names.is_empty() {
+        return NamedAreas::new();
+    }
+    let nav_file = nav::load_nav(root, organization, project);
+    let home = recipe::load_effective_recipe_if_any(root, organization, project);
+    names
+        .iter()
+        .map(|name| {
+            let route = match (&nav_file, &home) {
+                (Err(why), _) | (_, Err(why)) => Err(why.clone()),
+                (Ok(nav_file), Ok(home)) => match nav::find_area(nav_file, name) {
+                    None => Err(nav::unrecorded_area(name)),
+                    Some(path) => {
+                        home.as_ref().map(|h| Route::new(h, path.clone())).ok_or_else(|| NO_HOME_FOR_AREA.to_string())
+                    }
+                },
+            };
+            (nav::module_key(name), route)
+        })
+        .collect()
+}
+
+/// Where a `return_to_area` naming `name` goes, from `areas`: its route, or
+/// the sentence that fails it - an area not in `areas` at all is one not
+/// recorded when the run read them.
+fn named_route<'a>(areas: Option<&'a NamedAreas>, name: &str) -> Result<&'a Route, String> {
+    match areas.and_then(|m| m.get(&nav::module_key(name))) {
+        Some(Ok(rt)) => Ok(rt),
+        Some(Err(why)) => Err(why.clone()),
+        None => Err(nav::unrecorded_area(name)),
+    }
+}
 
 /// Where a `return_to_area` goes: the case's route, or why there is none.
 pub enum AreaRoute<'a> {
@@ -179,6 +240,10 @@ pub struct InRun<'a> {
     /// (other than a tab action) acted in. `None` for a step that stayed in
     /// `main`.
     pub tab: Option<String>,
+    /// The routes to the areas the steps' `return_to_area` actions name
+    /// (`area_routes`). `None` reads as none resolved: a named area then
+    /// fails as not recorded.
+    pub areas: Option<&'a NamedAreas>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -232,6 +297,7 @@ pub async fn run_step_in_run<D: Driver>(
     run.began = Some(began);
     run.tab = None;
     let mut ran_in: Option<String> = None;
+    let areas = run.areas;
     let here =
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
@@ -303,7 +369,26 @@ pub async fn run_step_in_run<D: Driver>(
             // is now (a reload that went home, a page the case moved off).
             // Not reaching it stops the step: what follows would act on the
             // wrong screen.
-            Action::ReturnToArea => match &area {
+            // A named area: its own route, read before the steps. Not
+            // reaching it stops the step the same way.
+            Action::ReturnToArea { .. } if action.area_named().is_some() => {
+                let name = action.area_named().unwrap_or_default();
+                match named_route(areas, name) {
+                    Ok(rt) => {
+                        let who = format!("Auto Run, step {}", step.step_number);
+                        let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+                        if !went.ok {
+                            blocked = Some(AFTER_NAMED_AREA_UNREACHED);
+                        }
+                        went
+                    }
+                    Err(why) => {
+                        blocked = Some(AFTER_NAMED_AREA_UNREACHED);
+                        ActionOutcome::failed(format!("return_to_area: {why}"))
+                    }
+                }
+            }
+            Action::ReturnToArea { .. } => match &area {
                 AreaRoute::To(rt) => {
                     let who = format!("Auto Run, step {}", step.step_number);
                     let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;

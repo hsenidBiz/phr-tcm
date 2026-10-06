@@ -111,7 +111,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
-- `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1
+- `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
 - `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
@@ -185,6 +185,26 @@ step 1, to the area the script names (or, unattended, the case's Module's
 default area). In a watched run, and when you try it, only the script's
 own `area` is known, so a script that uses `return_to_area` should name
 its area. If the area is not reached, the rest of the step is not run.
+
+**Another area, then back.** Give `return_to_area` an `area` to go to
+any recorded area by its own menu path partway through a case, and a
+bare `return_to_area` to come back to the case's own area:
+
+    { "kind": "return_to_area", "area": "Common Configurator" },
+    { "kind": "check_text", "value": "MaxGoalGroups" },
+    { "kind": "return_to_area" }
+
+The `area` is one of this project's recorded areas, matched the way the
+script's own `area` is: trimmed, case ignored. A script that names an
+area that is not recorded is refused when it is saved. If the area is
+not reached when the case runs, the rest of the step is not run.
+
+A script that changes a setting in another area must put the value back
+in its last step. It should carry a shared-state mark, such as
+`"changes": ["configurator setting changed"]`, so Auto Run runs it last
+and pauses for a reset point if it is interrupted. Such a script cannot
+be "must not save" (`"no_save": true`), because the guard would stop the
+configurator's own Save.
 
 **A session that has ended.** `expire_session` drops every cookie the
 browser holds for the page's site, so the next thing the page asks of its
