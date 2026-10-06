@@ -522,3 +522,140 @@ test("saving from the editor sends no setup: Rust keeps the stored one", async (
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).not.toHaveProperty("setup");
 });
+
+// ---- The readable script and Edit script -------------------------------
+
+const READABLE_SCRIPT = {
+  case_id: 7,
+  title: "t",
+  steps: [
+    {
+      step_number: 1,
+      actions: [
+        { kind: "navigate", url: "https://hr.example.test/hr/home/index?x=1" },
+        { kind: "fill", selector: { css: "#txtpassword" }, value: "Hunter2!" },
+        {
+          kind: "when_visible",
+          selector: { role: "dialog", name: "Another active session" },
+          then: [{ kind: "click", selector: { role: "button", name: "Continue" } }],
+        },
+      ],
+    },
+    {
+      step_number: 2,
+      actions: [{ kind: "click", selector: "#btnContinue-button" }],
+      unchecked: "the PDF cannot be read",
+    },
+  ],
+};
+const READABLE_STEPS = [
+  { action: "Sign in", expected: "" },
+  { action: "Open the report", expected: "The PDF opens" },
+];
+
+test("the window opens on the script in plain sentences, grouped by the case's steps", async () => {
+  mountWith(READABLE_SCRIPT, ACCOUNTS, [], READABLE_STEPS);
+  const view = await screen.findByRole("region", { name: "Action script" });
+  const one = await within(view).findByRole("region", { name: "Step 1" });
+  expect(within(one).getByRole("heading")).toHaveTextContent("Step 1 Sign in");
+  expect(one).toHaveTextContent("Go to /hr/home/index");
+  expect(one).toHaveTextContent("Type the account's password into the element #txtpassword");
+  expect(one).not.toHaveTextContent("Hunter2");
+  expect(one).toHaveTextContent('If the "Another active session" dialog appears within 2 s:');
+  expect(one).toHaveTextContent('Click the "Continue" button');
+  const two = within(view).getByRole("region", { name: "Step 2" });
+  expect(within(two).getByRole("heading")).toHaveTextContent("Step 2 Open the report");
+  expect(within(two).getByText("#btnContinue-button")).toHaveAttribute("title", "#btnContinue-button");
+  expect(within(two).getByText("Not checked: the PDF cannot be read")).toHaveClass("text-muted");
+  expect(screen.queryByRole("textbox", { name: "Action script JSON" })).not.toBeInTheDocument();
+});
+
+test("the settings stay editable in the readable view", async () => {
+  const saved: unknown[] = [];
+  mountWith({ ...READABLE_SCRIPT, changes: [] }, ACCOUNTS, saved, READABLE_STEPS);
+  await screen.findByRole("region", { name: "Step 1" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Must not save" }));
+  const change = screen.getByRole("textbox", { name: "Add to Changes" });
+  fireEvent.change(change, { target: { value: "cycle published" } });
+  fireEvent.keyDown(change, { key: "Enter" });
+  fireEvent.click(screen.getByRole("combobox", { name: "Runs as" }));
+  fireEvent.click(await screen.findByRole("option", { name: "HR Admin (hr.admin)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(
+    expect.objectContaining({
+      steps: READABLE_SCRIPT.steps,
+      account: "hr.admin",
+      no_save: true,
+      changes: ["cycle published"],
+    }),
+  );
+});
+
+test("Edit script shows the JSON, and Back to readable view returns with the edit in sentences", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  await screen.findByText('Check the page shows "ok"');
+  fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+  const box = screen.getByRole("textbox", { name: "Action script JSON" }) as HTMLTextAreaElement;
+  expect(JSON.parse(box.value)).toEqual(ONE_STEP);
+  expect(screen.queryByRole("region", { name: "Action script" })).not.toBeInTheDocument();
+  fireEvent.change(box, {
+    target: { value: JSON.stringify([{ step_number: 1, actions: [{ kind: "reload" }] }]) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  expect(await screen.findByText("Reload the page")).toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Action script JSON" })).not.toBeInTheDocument();
+});
+
+test("Back to readable view is refused while the JSON does not parse", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const box = screen.getByRole("textbox", { name: "Action script JSON" });
+  fireEvent.change(box, { target: { value: "{ not json" } });
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  expect(await screen.findByText(/That is not valid JSON/)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Action script JSON" })).toHaveValue("{ not json");
+  // An object is valid JSON but not a script.
+  fireEvent.change(box, { target: { value: "{}" } });
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  expect(
+    await screen.findByText("That is not valid JSON: the script must be an array of steps."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Action script JSON" })).toBeInTheDocument();
+});
+
+test("Save from the JSON editor saves the JSON as it stands", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const edited = [{ step_number: 1, actions: [{ kind: "press_key", key: "Tab" }] }];
+  fireEvent.change(screen.getByRole("textbox", { name: "Action script JSON" }), {
+    target: { value: JSON.stringify(edited) },
+  });
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { steps: unknown }).steps).toEqual(edited);
+});
+
+test("Save from the readable view saves the JSON edited before going back", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const edited = [{ step_number: 1, actions: [{ kind: "expire_session" }] }];
+  fireEvent.change(screen.getByRole("textbox", { name: "Action script JSON" }), {
+    target: { value: JSON.stringify(edited) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  await screen.findByText("End the session");
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { steps: unknown }).steps).toEqual(edited);
+});
+
+test("a case with no script yet opens readable, saying there are no actions", async () => {
+  mountWith(null, ACCOUNTS, []);
+  expect(await screen.findByText("No actions yet. Press Edit script to write them.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Edit script" })).toBeInTheDocument();
+});

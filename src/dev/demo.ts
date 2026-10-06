@@ -40,6 +40,7 @@ import {
   type WorkComment,
   type WorkItemDetail,
 } from "../bindings";
+import { describeAction, sentenceText } from "../screens/AutoRun/describeAction";
 import { isCaptureMode } from "./capture";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
@@ -376,32 +377,10 @@ const scripts = new Map<number, DemoScript>([
   ],
 ]);
 
-/** What a step's action did, in the words the run pane shows. */
+/** What a step's action did, in the words the Script window's readable
+ * view uses for it. */
 function actionLine(a: DemoAction): string {
-  const target = (s: unknown) => {
-    const t = s as { role?: string; name?: string };
-    return t.name ? `${t.role} "${t.name}"` : `${t.role ?? "element"}`;
-  };
-  switch (a.kind) {
-    case "navigate":
-      return `Opened ${a.url}`;
-    case "sign_in":
-      return `Signed in as ${a.account}`;
-    case "fill":
-      return `Filled ${target(a.selector)}`;
-    case "click":
-      return `Clicked ${target(a.selector)}`;
-    case "check_url":
-      return `The address contains ${a.contains}`;
-    case "expect_text":
-      return `${target(a.selector)} reads "${a.equals}"`;
-    case "expect_contains_text":
-      return `${target(a.selector)} contains "${a.value}"`;
-    case "expect_visible":
-      return `Found ${target(a.selector)}`;
-    default:
-      return `Done: ${a.kind}`;
-  }
+  return sentenceText(describeAction(a));
 }
 
 /** A step of a recorded run: every action passed. */
