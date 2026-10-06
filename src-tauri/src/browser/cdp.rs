@@ -265,6 +265,9 @@ pub struct Tab {
     /// Opened while guarded and still paused: it runs only once its
     /// `Fetch.enable` was accepted (`on_setup_reply`).
     held: bool,
+    /// Its `Fetch.enable` was answered, either way (`on_setup_reply`):
+    /// `open_tab` sends a guarded tab nowhere before then.
+    guard_answered: bool,
     /// Its service-worker bypass was refused, so it is never let run.
     unguardable: bool,
     /// Every document this tab has loaded (`Page.frameNavigated`), by
@@ -490,6 +493,7 @@ impl Tab {
             net_record: Default::default(),
             guard: None,
             held: false,
+            guard_answered: false,
             unguardable: false,
             loaders: VecDeque::new(),
             main_loader: None,
@@ -1439,6 +1443,9 @@ impl<T: Transport> Cdp<T> {
         let refused = answer.is_err();
         let unarmed = self.armed.is_none();
         let tab = &mut self.tabs[i];
+        if step == SetupStep::Fetch {
+            tab.guard_answered = true;
+        }
         if let Err(message) = &answer {
             let (what, method) = match step {
                 SetupStep::Bypass => ("guard", "Network.setBypassServiceWorker"),
@@ -1661,7 +1668,9 @@ impl<T: Transport> Cdp<T> {
     /// make it current. It is attached and set up like any tab the page
     /// opens (`on_attached`) - guarded first while the run is guarded - and
     /// only then is it handed back, so the caller's navigation is its first
-    /// real request.
+    /// real request. While guarded, that is once the browser has ANSWERED
+    /// its `Fetch.enable`: a tab whose guard was refused is closed again,
+    /// and the step fails with `TAB_HELD_UNGUARDED`.
     pub async fn open_tab(&mut self, name: &str) -> Result<(), CdpError> {
         if name == MAIN_TAB || self.tab_named(name).is_some() {
             return Err(CdpError::Tab(tab_taken(name)));
@@ -1687,10 +1696,24 @@ impl<T: Transport> Cdp<T> {
         let until = Instant::now() + limit;
         loop {
             if let Some(t) = self.tabs.iter_mut().find(|t| !target.is_empty() && t.target_id == target) {
-                // Held while its guard is asked for; one whose guard was
-                // refused stays held, and the case fails with that.
-                let refused = t.guard.as_ref().is_some_and(|g| g.blocked.is_some());
-                if !t.held || refused {
+                let guarded = t.guard.is_some();
+                if guarded && t.guard_answered && (t.unguardable || t.guard.as_ref().is_some_and(|g| g.blocked.is_some())) {
+                    // Never sent anywhere: closed again, its stop dropped
+                    // (the step's own failure says it).
+                    let session = t.session_id.clone();
+                    if let Some(g) = t.guard.as_mut() {
+                        g.blocked = None;
+                    }
+                    let limit = self.limit_now();
+                    let closed =
+                        self.call_on(None, "Target.closeTarget", serde_json::json!({ "targetId": target }), limit).await;
+                    self.forget_tab(&session);
+                    if let Err(e) = closed {
+                        crate::applog::warn(format!("Auto Run could not close a tab it could not guard: {e}"));
+                    }
+                    return Err(CdpError::Tab(TAB_HELD_UNGUARDED.to_string()));
+                }
+                if (!guarded || t.guard_answered) && !t.held {
                     t.name = Some(name.to_string());
                     let session = t.session_id.clone();
                     self.make_current(session);
@@ -1722,21 +1745,27 @@ impl<T: Transport> Cdp<T> {
             } else {
                 Ok(serde_json::Value::Null)
             };
-            self.forget_tab(&session);
             match answer {
-                Ok(_) | Err(CdpError::Protocol { .. }) => {}
-                Err(e) => {
+                // Asked: gone, whatever the answer was, or whether it came.
+                Ok(_) | Err(CdpError::Protocol { .. }) | Err(CdpError::Timeout { .. }) | Err(CdpError::Tab(_)) => {
+                    if let Err(e) = &answer {
+                        crate::applog::warn(format!("Auto Run asked to close a tab at the end of the case: {e}"));
+                    }
+                    self.forget_tab(&session);
+                }
+                // The browser itself is gone: nothing more can be asked.
+                Err(CdpError::Closed) => {
+                    self.forget_tab(&session);
+                    break;
+                }
+                // Never sent: kept, and nothing more is asked.
+                Err(e @ CdpError::Transport(_)) => {
                     crate::applog::warn(format!("Auto Run could not close a tab at the end of the case: {e}"));
                     break;
                 }
             }
         }
-        // Whatever was not asked is let go too: none of it carries over.
         let main = self.main.clone();
-        let others: Vec<String> = self.tabs.iter().filter(|t| t.session_id != main).map(|t| t.session_id.clone()).collect();
-        for s in others {
-            self.forget_tab(&s);
-        }
         self.make_current(main);
         self.closed_by_page.clear();
         self.step_marks = (None, None);

@@ -776,3 +776,27 @@ async fn a_supervised_step_of_another_case_closes_the_last_cases_tabs() {
     assert!(d.tabs.open.is_empty());
     assert_eq!(case, Some(8));
 }
+
+/// An assistant's try for another case than the one the supervised browser
+/// last ran starts in `main`: the other case's tabs are closed first, even
+/// one it left current.
+#[tokio::test]
+async fn a_try_for_another_case_runs_in_main_and_closes_the_last_cases_tabs() {
+    use v2_lib::ai_bridge::try_for_case;
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = yes_page();
+    d.tabs.open.push("report".into());
+    d.tabs.current = "report".into();
+    let mut tabs_case = Some(1);
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let check: Action = serde_json::from_value(json!({ "kind": "check_text", "value": "yes" })).unwrap();
+    let (status, text) =
+        try_for_case(&mut d, &mut tabs_case, &mut account, &mut lease, dir.path(), "Acme", "Web", 2, &check).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(d.tabs.closed_others, 1);
+    assert!(d.tabs.open.is_empty(), "the last case's tab is still open");
+    assert!(d.tabs.called_in("main").iter().any(|m| m == "Runtime.callFunctionOn"), "{:?}", d.tabs.calls);
+    assert!(d.tabs.called_in("report").is_empty(), "{:?}", d.tabs.calls);
+    assert_eq!(tabs_case, Some(2));
+}

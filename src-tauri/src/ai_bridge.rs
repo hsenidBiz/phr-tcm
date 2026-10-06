@@ -1803,14 +1803,48 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
+    // Another case's tabs go first, before its unreported stop is read by
+    // the guard below (`try_for_case` does this too).
+    crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
     // A try adds its case's guard and never lifts one (`guard_for_case`).
     if let Err(why) =
         crate::commands::autorun::guard_supervised(session, &root, &ctx.org, &ctx.project, case_id, false).await
     {
         return (409, why);
     }
-    try_in(&mut session.cdp, &mut session.account, &mut session.lease, &root, &ctx.org, &ctx.project, case_id, &action)
-        .await
+    try_for_case(
+        &mut session.cdp,
+        &mut session.tabs_case,
+        &mut session.account,
+        &mut session.lease,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        case_id,
+        &action,
+    )
+    .await
+}
+
+/// `try_in` for a case in the supervised browser, whose tabs belong to the
+/// case it last ran (`tabs_case`). A try for another case starts as that
+/// case's first step would: every tab but `main` is closed and `main` is
+/// current (`runner::tabs_for_case`), so it never acts in a tab another
+/// case left current.
+#[allow(clippy::too_many_arguments)]
+pub async fn try_for_case<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    tabs_case: &mut Option<i32>,
+    account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    action: &crate::browser::actions::Action,
+) -> (u16, String) {
+    crate::autorun::runner::tabs_for_case(d, tabs_case, case_id).await;
+    try_in(d, account, lease, root, organization, project, case_id, action).await
 }
 
 /// A future the replay host hands back: boxed, so the host can be a trait

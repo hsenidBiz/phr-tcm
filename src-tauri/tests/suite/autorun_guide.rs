@@ -710,6 +710,8 @@ fn the_guide_teaches_tabs_with_one_example_per_scenario() {
         "**A second tab on the same record.**",
         "**One tab ends the session, the other reacts.**",
         "`expire_session`",
+        "follow\n`expect_tab` with `url_contains`, or with an `expect_` check that waits",
+        "`expect_tab_closed` on the\ncurrent tab makes `main` the current tab again, as `close_tab` does",
     ] {
         assert!(tabs.contains(words), "the Tabs section does not say {words:?}");
     }

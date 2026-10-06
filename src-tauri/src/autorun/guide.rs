@@ -418,8 +418,13 @@ the tabs again by running steps 1 to N-1.
 actions. `expect_tab` takes only a tab the page opened since the previous
 step began, never one opened earlier, and fails with
 `no new tab opened within <n> seconds`, or, with `url_contains`, with
-`the new tab's address does not contain "<text>"`. `open_tab` follows
-`navigate`'s rules: the same allowed origins and the same refusals.
+`the new tab's address does not contain "<text>"`. A tab is named as
+soon as it opens, which can be before it has loaded its address: follow
+`expect_tab` with `url_contains`, or with an `expect_` check that waits
+(`expect_visible` on something the new page shows), before any one-shot
+address check such as `check_url`. `open_tab` follows `navigate`'s rules:
+the same allowed origins and the same refusals. `expect_tab_closed` on the
+current tab makes `main` the current tab again, as `close_tab` does.
 
 **Follow a new tab.** A link with `target=_blank` (or `window.open`)
 opens a tab; the script follows it, checks it and comes back:

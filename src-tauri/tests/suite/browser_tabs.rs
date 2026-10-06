@@ -22,6 +22,7 @@ const MAIN: &str = "S-main";
 ///   later;
 /// - `before_reply`: these frames arrive just ahead of its answer, once.
 /// - `after_reply`: these frames arrive just after its answer, once.
+/// - `withhold_first`: like `withhold`, for the first such command only.
 ///
 /// `Target.createTarget` answers with the target `T-new`, and
 /// `Target.getTargetInfo` says main is in the browser context `C-1`.
@@ -33,6 +34,7 @@ struct FakeBrowser {
     withheld: Vec<String>,
     before_reply: Vec<(String, Value)>,
     after_reply: Vec<(String, Value)>,
+    withhold_first: Vec<String>,
 }
 
 impl FakeBrowser {
@@ -45,6 +47,7 @@ impl FakeBrowser {
             withheld: vec![],
             before_reply: vec![],
             after_reply: vec![],
+            withhold_first: vec![],
         }
     }
 }
@@ -79,7 +82,11 @@ impl Transport for FakeBrowser {
             reply["sessionId"] = s.clone();
         }
         self.sent.push(v);
-        if self.withhold.iter().any(|n| names(n, &method, &session)) {
+        let once = self.withhold_first.iter().position(|n| names(n, &method, &session));
+        if let Some(i) = once {
+            self.withhold_first.remove(i);
+        }
+        if once.is_some() || self.withhold.iter().any(|n| names(n, &method, &session)) {
             self.withheld.push(reply.to_string());
         } else {
             self.incoming.push_back(reply.to_string());
@@ -1211,4 +1218,72 @@ fn a_tab_action_is_said_without_a_host_or_a_query() {
         v2_lib::autorun::patterns::action_target(&tab_action(json!({ "kind": "switch_tab", "name": "r" }))).as_deref(),
         Some("the \"r\" tab")
     );
+}
+
+// ---------------------------------------------------------------------------
+// Fix round 1.
+// ---------------------------------------------------------------------------
+
+/// A tab `open_tab` made whose guard was refused is never sent anywhere: it
+/// is closed again and the step fails with the sentence, at once.
+#[tokio::test]
+async fn open_tab_closes_a_tab_it_could_not_guard_and_fails_with_the_sentence() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().refuse.push("Fetch.enable@S-new".to_string());
+    let new_tab = attached("S-new", "T-new", "page", "about:blank", true);
+    cdp.transport_mut().after_reply.push(("Target.createTarget".to_string(), new_tab));
+    let out = tokio::time::timeout(
+        Duration::from_secs(5),
+        execute(&mut cdp, &Action::OpenTab { name: "second".into(), url: "https://hr.example/hr/home".into() }),
+    )
+    .await
+    .expect("open_tab waited on a tab it could not guard");
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert_eq!(out.detail, TAB_HELD_UNGUARDED);
+    assert!(!sent(&cdp).iter().any(|f| f["method"] == "Page.navigate"), "the unguarded tab was sent somewhere");
+    assert!(!sent_on(&cdp, "S-new").iter().any(|m| m == "Runtime.runIfWaitingForDebugger"), "it was let run");
+    let closed = sent(&cdp).iter().find(|f| f["method"] == "Target.closeTarget").expect("it was left open");
+    assert_eq!(closed["params"]["targetId"], "T-new");
+    assert_eq!(cdp.tabs().len(), 1);
+    assert_eq!(cdp.tab_name(), "main");
+}
+
+/// An accepted guard: `open_tab` hands the tab back only once its
+/// `Fetch.enable` was answered, even for a tab the browser did not pause.
+#[tokio::test]
+async fn open_tab_waits_for_the_guards_answer_before_the_tab_goes_anywhere() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().withhold.push("Fetch.enable@S-new".to_string());
+    let new_tab = attached("S-new", "T-new", "page", "about:blank", false);
+    cdp.transport_mut().after_reply.push(("Target.createTarget".to_string(), new_tab));
+    let early = tokio::time::timeout(Duration::from_millis(500), cdp.open_tab("second")).await;
+    assert!(early.is_err(), "open_tab came back before the guard was answered: {early:?}");
+
+    // Answered: the next open goes through, guard first, then the address.
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    let new_tab = attached("S-new", "T-new", "page", "about:blank", false);
+    cdp.transport_mut().after_reply.push(("Target.createTarget".to_string(), new_tab));
+    let out = execute(&mut cdp, &Action::OpenTab { name: "second".into(), url: "https://hr.example/hr/home".into() }).await;
+    assert!(out.ok, "{out:?}");
+    let on_new = sent_on(&cdp, "S-new");
+    let at = |m: &str| on_new.iter().position(|s| s == m).unwrap_or_else(|| panic!("{m} was never sent: {on_new:?}"));
+    assert!(at("Fetch.enable") < at("Page.navigate"), "{on_new:?}");
+}
+
+/// A tab whose close is not answered in time is still let go, and the
+/// tabs after it are still closed.
+#[tokio::test]
+async fn a_close_that_times_out_does_not_stop_the_other_tabs_closing() {
+    let mut cdp = with_named("report").await;
+    popup(&mut cdp, "S-other", "T-other", "https://hr.example/other").await;
+    cdp.transport_mut().withhold_first.push("Target.closeTarget".to_string());
+    cdp.close_other_tabs().await;
+    let closed: Vec<&Value> = sent(&cdp).iter().filter(|f| f["method"] == "Target.closeTarget").collect();
+    assert_eq!(closed.len(), 2, "{closed:?}");
+    assert_eq!(closed[1]["params"]["targetId"], "T-other");
+    assert_eq!(cdp.tabs().len(), 1);
+    assert_eq!(cdp.tab_name(), "main");
 }
