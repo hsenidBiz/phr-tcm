@@ -964,13 +964,15 @@ test("a collapsed card has no Script, Run or Add script button; opening it shows
   expect(screen.queryByRole("button", { name: "Run #1" })).not.toBeInTheDocument();
 });
 
+// One sticky control, bottom left like the other screens' own: Collapse all
+// while any card is open, Expand all when none is.
 test("Expand all opens every card shown, and Collapse all shuts them", async () => {
   mockFilterList();
   renderScreen();
   await screen.findByText("Login - alpha");
   const expand = await screen.findByRole("button", { name: "Expand all" });
-  const collapse = screen.getByRole("button", { name: "Collapse all" });
-  expect(collapse).toBeDisabled();
+  // Nothing is open, so there is nothing to collapse.
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
 
   // Only what the filter shows is opened.
   await press("Failed (2)");
@@ -979,13 +981,28 @@ test("Expand all opens every card shown, and Collapse all shuts them", async () 
     "Hide details for #1",
     "Hide details for #3",
   ]);
-  expect(expand).toBeDisabled();
+  // Cards are open, so the control now collapses, and cannot expand.
+  expect(screen.queryByRole("button", { name: "Expand all" })).not.toBeInTheDocument();
   await press("Failed (2)");
   expect(screen.getByRole("button", { name: "Show details for #2" })).toBeInTheDocument();
 
-  fireEvent.click(collapse);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
   expect(screen.queryByRole("button", { name: /^Hide details for #/ })).not.toBeInTheDocument();
-  expect(collapse).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand all" })).toBeInTheDocument();
+});
+
+test("the sticky Collapse all is pinned to the window, outside the screen", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  openCard(1);
+  const collapse = await screen.findByRole("button", { name: "Collapse all" });
+  const dock = collapse.parentElement as HTMLElement;
+  expect(dock.parentElement).toBe(document.body);
+  expect(dock).toHaveClass("fixed", "bottom-6");
+  // Gone from the row above the list: the dock is the only one.
+  expect(screen.getAllByRole("button", { name: "Collapse all" })).toHaveLength(1);
 });
 
 test("Collapse all still shuts cards a search or a filter hides", async () => {
@@ -1001,7 +1018,8 @@ test("Collapse all still shuts cards a search or a filter hides", async () => {
   fireEvent.click(collapse);
   typeSearch("");
   expect(screen.getByRole("button", { name: "Show details for #1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Collapse all" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Collapse all" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand all" })).toBeInTheDocument();
 });
 
 test("the open cards are remembered for each PBI while the screen is mounted", async () => {
@@ -1218,10 +1236,11 @@ test("the Setup card and the readiness strip read a project that is set up", asy
   renderScreen();
   await screen.findByText("Alpha check");
 
-  // The strip on Test cases: the host the runs go to, and the counts.
+  // The strip on Test cases: the host the runs go to.
   expect(await screen.findByText("hr.example.internal")).toBeInTheDocument();
-  expect(await screen.findByText("2 accounts")).toBeInTheDocument();
-  expect(await screen.findByText("1 area")).toBeInTheDocument();
+  // The counts are the Setup panel's, not the strip's.
+  expect(screen.queryByText("2 accounts")).not.toBeInTheDocument();
+  expect(screen.queryByText("1 area")).not.toBeInTheDocument();
   // The old header line's project name is gone.
   expect(screen.queryByText("proj")).not.toBeInTheDocument();
 
@@ -1372,9 +1391,28 @@ test("the case list with its Setup panel, and Past runs, are one tab panel each,
 
   openTab("Past runs");
   expect(within(only("Past runs")).getByRole("heading", { name: "Past runs" })).toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Setup" })).not.toBeInTheDocument();
+  expect(within(only("Past runs")).getByRole("region", { name: "Setup" })).toBeInTheDocument();
 
   expect(document.querySelector('[class*="xl:grid-cols-"]')).toBeNull();
+});
+
+test("Past runs has the Setup panel beside it, with a working toggle, and its open state carries across tabs", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1]);
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+
+  openTab("Past runs");
+  const panel = within(screen.getByRole("tabpanel")).getByRole("region", { name: "Setup" });
+  expect(within(panel).getByRole("button", { name: "Hide setup details" })).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(within(panel).getByRole("button", { name: "Hide setup details" }));
+  expect(within(panel).getByRole("button", { name: "Show setup details" })).toHaveAttribute("aria-expanded", "false");
+
+  // Shut on one tab, shut on the other.
+  openTab("Test cases");
+  expect(screen.getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show setup details" }));
+  openTab("Past runs");
+  expect(screen.getByRole("button", { name: "Hide setup details" })).toBeInTheDocument();
 });
 
 // A store answering (a script, the runs) redraws the screen. The check that

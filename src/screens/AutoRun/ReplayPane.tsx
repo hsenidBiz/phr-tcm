@@ -13,6 +13,7 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { Select } from "../../components/ui/select";
 import {
   IconCancel,
@@ -388,7 +389,7 @@ export default function ReplayPane({
   };
 
   return (
-    <Modal onClose={closeIfIdle} className="w-full max-w-2xl space-y-3 p-4">
+    <Modal onClose={closeIfIdle} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
       <h2 className="text-sm font-semibold text-text">Unattended run</h2>
 
       {phase !== "running" ? (
@@ -513,7 +514,7 @@ export default function ReplayPane({
               event is also what scrollIntoView itself causes. */}
           <ul
             aria-label="Cases in this run"
-            className="max-h-[min(55vh,32rem)] space-y-1 overflow-y-auto"
+            className="max-h-[55vh] space-y-1 overflow-y-auto"
             onWheel={() => setPaused(true)}
             onTouchMove={() => setPaused(true)}
             onKeyDown={(e) => {

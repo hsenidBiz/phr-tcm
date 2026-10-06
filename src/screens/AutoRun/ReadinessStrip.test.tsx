@@ -1,6 +1,5 @@
-// The one line the Test cases tab opens with: where runs go, and whether
-// the setup a run needs is in place. Every tick or warning says what it is
-// about in words, so none rests on a colour or an icon alone.
+// The one line the Test cases tab opens with: where runs go, and anything
+// the setup is missing. What is in place is the Setup panel's to show.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
@@ -13,8 +12,6 @@ const READY: Props = {
   siteHost: "qa.example.com",
   signIn: "saved",
   accountCount: 2,
-  areaCount: 3,
-  testFileCount: 1,
   missingTestFiles: [],
   unreadable: [],
   onOpenSetup: () => {},
@@ -55,38 +52,36 @@ test("a read that failed is said in words, as a warning, beside what is known", 
   expect(within(s).getByText("QA - qa.example.com")).toBeInTheDocument();
 });
 
-test("sign-in says Saved, or Built-in when the built-in recipe is in effect, or warns when there is none", () => {
+test("a sign-in that is in place is not repeated here, and none warns", () => {
   const { unmount } = render(<ReadinessStrip {...READY} signIn="builtin" />);
-  expect(screen.getByText("Built-in")).toBeInTheDocument();
+  expect(screen.queryByText("Built-in")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Sign-in/)).not.toBeInTheDocument();
   unmount();
   const s = strip({ signIn: "none" });
   expect(within(s).getByText("No sign-in")).toHaveClass("text-warning");
 });
 
-test("counts accounts and areas, warning when there are no accounts", () => {
-  const { unmount } = render(<ReadinessStrip {...READY} accountCount={1} areaCount={1} />);
-  expect(screen.getByText("1 account")).toBeInTheDocument();
-  expect(screen.getByText("1 area")).toBeInTheDocument();
+test("accounts are not counted here, but none at all warns", () => {
+  const { unmount } = render(<ReadinessStrip {...READY} accountCount={1} />);
+  expect(screen.queryByText(/account/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/area/)).not.toBeInTheDocument();
   unmount();
-  const s = strip({ accountCount: 0, areaCount: 0 });
+  const s = strip({ accountCount: 0 });
   expect(within(s).getByText("No accounts")).toHaveClass("text-warning");
-  // Areas are not needed to run, so none is said quietly.
-  expect(within(s).getByText("No areas")).not.toHaveClass("text-warning");
 });
 
 test("a count still being read is left out rather than guessed", () => {
-  const s = strip({ signIn: null, accountCount: null, areaCount: null, testFileCount: null });
+  const s = strip({ signIn: null, accountCount: null });
   expect(within(s).queryByText(/account/)).not.toBeInTheDocument();
-  expect(within(s).queryByText(/area/)).not.toBeInTheDocument();
-  expect(within(s).queryByText(/test file/)).not.toBeInTheDocument();
   expect(within(s).queryByText(/sign-in/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open setup" })).not.toBeInTheDocument();
 });
 
-test("test files tick when all are there, and warn with how many are missing", () => {
-  const { unmount } = render(<ReadinessStrip {...READY} testFileCount={2} />);
-  expect(screen.getByText("2 test files")).toBeInTheDocument();
+test("test files warn with how many are missing, and are not counted when all are there", () => {
+  const { unmount } = render(<ReadinessStrip {...READY} />);
+  expect(screen.queryByText(/test file/)).not.toBeInTheDocument();
   unmount();
-  const s = strip({ testFileCount: 1, missingTestFiles: ["cv.txt"] });
+  const s = strip({ missingTestFiles: ["cv.txt"] });
   const warn = within(s).getByText("1 test file missing");
   expect(warn).toHaveClass("text-warning");
   // Which one, for a person who hovers.
@@ -98,9 +93,16 @@ test("several missing test files are counted in the plural", () => {
   expect(within(s).getByText("2 test files missing")).toBeInTheDocument();
 });
 
-test("Open setup asks for the Setup panel", () => {
+test("with nothing missing the strip is the environment alone, with no Open setup", () => {
+  const s = strip();
+  expect(s).toHaveTextContent("Environment QA - qa.example.com");
+  expect(screen.queryByRole("button", { name: "Open setup" })).not.toBeInTheDocument();
+  expect(s.querySelector("svg")).toBeNull();
+});
+
+test("Open setup, while something is missing, asks for the Setup panel", () => {
   const onOpenSetup = vi.fn();
-  strip({ onOpenSetup });
+  strip({ onOpenSetup, accountCount: 0 });
   fireEvent.click(screen.getByRole("button", { name: "Open setup" }));
   expect(onOpenSetup).toHaveBeenCalledTimes(1);
 });

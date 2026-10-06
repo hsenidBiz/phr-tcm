@@ -13,6 +13,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
 import { Input, Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
 import { IconAdd, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
@@ -174,15 +175,15 @@ export default function ScriptEditor({
   };
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
+    <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 overflow-y-auto p-4`}>
       <h2 className="text-sm font-semibold text-text">
         <span className="id-mono text-faint">#{caseId}</span> {title}
       </h2>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="space-y-1">
+      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
+        <div className="space-y-1 lg:min-h-0 lg:overflow-y-auto">
           <span className="text-xs font-medium text-muted">The case's steps</span>
-          <ol className="max-h-64 space-y-1 overflow-y-auto text-xs text-muted">
+          <ol className="space-y-1 text-xs text-muted">
             {steps.map((s, i) => (
               <li key={i} className="rounded border border-border/60 px-2 py-1">
                 <span className="text-text">
@@ -197,7 +198,7 @@ export default function ScriptEditor({
           </ol>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 lg:min-h-0 lg:overflow-y-auto">
           <label className="block text-xs text-muted">
             Runs as
             <Select
@@ -256,7 +257,7 @@ export default function ScriptEditor({
             Action script JSON
             <Textarea
               aria-label="Action script JSON"
-              className="mt-1 h-64 w-full font-mono text-xs"
+              className="mt-1 h-80 w-full font-mono text-xs"
               placeholder={PLACEHOLDER}
               value={value}
               onChange={(e) => setText(e.target.value)}

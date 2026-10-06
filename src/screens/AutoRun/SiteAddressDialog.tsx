@@ -96,7 +96,7 @@ export default function SiteAddressDialog({
   const builtIn = recipe.isSuccess && recipe.data == null;
 
   return (
-    <Modal onClose={onClose} className="flex w-full max-w-lg flex-col gap-3 p-5">
+    <Modal onClose={onClose} className="flex w-full max-w-2xl flex-col gap-3 p-5">
       <h2 className="text-sm font-semibold text-text">Site address</h2>
       {envs.isError && <p className="text-xs text-danger">{envs.error.message}</p>}
       {env && (

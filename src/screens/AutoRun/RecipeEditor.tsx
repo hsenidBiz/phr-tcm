@@ -9,6 +9,7 @@ import { commands, type SignInRecipe_Deserialize } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import QuirksList from "./QuirksList";
@@ -92,7 +93,7 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
   };
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-4 overflow-y-auto p-5">
+    <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-4 overflow-y-auto p-5`}>
       <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
 
       <section className="space-y-2">

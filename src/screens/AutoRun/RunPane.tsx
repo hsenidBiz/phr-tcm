@@ -21,6 +21,7 @@ import {
 } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
@@ -732,7 +733,7 @@ export default function RunPane({
 
   return (
     // Walking away at a reset point ends the run there, as Stop does.
-    <Modal onClose={pausedAt ? stopAtReset : close} className="w-full max-w-2xl space-y-3 p-4">
+    <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
       <h2 className="text-sm font-semibold text-text">
         <span className="id-mono text-faint">#{pausedAt ? cases[idx + 1]?.id : caseId}</span>{" "}
         {pausedAt ? cases[idx + 1]?.title : title}
@@ -856,7 +857,7 @@ export default function RunPane({
                 )}
               </div>
             )}
-            <ul className="max-h-72 space-y-2 overflow-y-auto">
+            <ul className="max-h-[55vh] space-y-2 overflow-y-auto">
               {results[MODULE_STEP] && (
                 <li className="rounded-md border border-border p-2">
                   <span className="text-xs font-medium text-muted">Going to the area</span>

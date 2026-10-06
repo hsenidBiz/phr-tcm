@@ -14,6 +14,7 @@ import { toast } from "../../lib/toast";
 import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
@@ -346,7 +347,7 @@ export default function RunReview(props: {
   const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
+    <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-4`}>
       <h2 className="text-sm font-semibold text-text">
         {when(run.started_at)} - {run.cases.length} case{run.cases.length === 1 ? "" : "s"}
       </h2>
@@ -355,7 +356,7 @@ export default function RunReview(props: {
 
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
-      <ul className="max-h-[60vh] space-y-3 overflow-y-auto">
+      <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto">
         {shown.map((c) => {
           const isExpanded = expanded.has(c.case_id);
           const replayTo = onReplay && !mismatch ? replayStep(c) : null;

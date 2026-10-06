@@ -22,6 +22,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { Select } from "../../components/ui/select";
 import {
   IconCancel,
@@ -334,7 +335,7 @@ export default function RecordSignInDialog({
   );
 
   return (
-    <Modal onClose={closeIfIdle} className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 p-5">
+    <Modal onClose={closeIfIdle} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <div>
         <h2 className="text-sm font-semibold text-text">Record sign-in</h2>
         <p className="mt-1 text-xs text-muted">

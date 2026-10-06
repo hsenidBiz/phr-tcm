@@ -219,6 +219,13 @@ const SPOKEN: Record<Status, string> = {
   quiet: "",
 };
 
+/** A web address as text with a break opportunity after each `/`, `.`, `?`,
+ * `&` and `=`, so a long one wraps at its own punctuation instead of in the
+ * middle of a word. */
+export function breakableUrl(url: string): ReactNode[] {
+  return url.split(/(?<=[/.?&=])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
+}
+
 /** The collapsed panel's lines: one per item, from the reads above, in
  * the full rows' own words. Not the readiness strip's, which sits beside
  * it: two places saying "2 accounts" read as two different things. */
@@ -373,11 +380,16 @@ export default function SetupPanel({
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
             {summaryLines(s).map(({ label, status, value }) => (
-              <li key={label} className="flex items-center gap-2 text-sm">
-                <span aria-hidden className={cn("size-2 shrink-0 rounded-full", DOT[status])} />
+              <li key={label} className="flex items-baseline gap-2 text-sm">
+                <span aria-hidden className={cn("size-2 shrink-0 translate-y-px self-center rounded-full", DOT[status])} />
                 <span className="w-24 shrink-0 text-muted">{label}</span>
-                <span className="min-w-0 flex-1 truncate text-text" title={value}>
-                  {value}
+                {/* Never cut short: the site address in particular is only
+                    useful whole. It breaks inside the URL; the rest wrap at
+                    words. */}
+                <span
+                  className="min-w-0 flex-1 break-words text-text"
+                >
+                  {label === "Site address" ? breakableUrl(value) : value}
                 </span>
                 {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
               </li>
