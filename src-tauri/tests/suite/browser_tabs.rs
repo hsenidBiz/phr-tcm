@@ -548,6 +548,9 @@ async fn main_detaching_closes_the_connection() {
 #[tokio::test]
 async fn a_save_paused_before_the_hold_is_refused_even_when_read_after_it() {
     let mut cdp = browser().await;
+    // The sign-in page is the page on screen when the hold is asked for.
+    feed(&mut cdp, [navigated(MAIN, "L-signin", "https://hr.example/login")]);
+    settle(&mut cdp).await;
     cdp.guard_saves(&[]).await.unwrap();
     cdp.hold_saves(true);
     // Read with no command since the hold: still guarded.
@@ -590,7 +593,7 @@ fn sent_by(session: &str, network_id: &str, loader: &str, url: &str) -> Value {
 
 fn paused_from(session: &str, id: &str, url: &str, kind: &str, network_id: &str) -> Value {
     on(session, "Fetch.requestPaused", json!({
-        "requestId": id, "resourceType": kind, "networkId": network_id,
+        "requestId": id, "resourceType": kind, "networkId": network_id, "frameId": "T-main",
         "request": { "method": "POST", "url": url, "headers": {} }
     }))
 }
@@ -668,7 +671,7 @@ async fn a_sign_in_form_post_goes_through_even_unplaced() {
     let mut cdp = signing_in().await;
     let unplaced = |id: &str, kind: &str| {
         on(MAIN, "Fetch.requestPaused", json!({
-            "requestId": id, "resourceType": kind,
+            "requestId": id, "resourceType": kind, "frameId": "T-main",
             "request": { "method": "POST", "url": "https://hr.example/Account/login", "headers": {} }
         }))
     };

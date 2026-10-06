@@ -155,11 +155,20 @@ struct FakeTransport {
     /// The first frame sent for this method never finishes writing - a
     /// write a deadline then cuts short.
     stall_once: Option<&'static str>,
+    /// Once a frame for this method is sent, this frame arrives - how a
+    /// test says "the page answers the command only once the save it waits
+    /// on was answered".
+    release_on: Option<(&'static str, String)>,
 }
 
 impl FakeTransport {
     fn new(frames: &[&str]) -> Self {
-        FakeTransport { incoming: frames.iter().map(|f| f.to_string()).collect(), sent: vec![], stall_once: None }
+        FakeTransport {
+            incoming: frames.iter().map(|f| f.to_string()).collect(),
+            sent: vec![],
+            stall_once: None,
+            release_on: None,
+        }
     }
 }
 
@@ -168,6 +177,11 @@ impl Transport for FakeTransport {
         if self.stall_once.is_some_and(|m| text.contains(m)) {
             self.stall_once = None;
             std::future::pending::<()>().await;
+        }
+        if self.release_on.as_ref().is_some_and(|(m, _)| text.contains(m)) {
+            if let Some((_, frame)) = self.release_on.take() {
+                self.incoming.push_back(frame);
+            }
         }
         self.sent.push(text);
         Ok(())
@@ -310,6 +324,9 @@ async fn an_unguarded_client_continues_a_paused_request_rather_than_leave_it() {
 #[tokio::test]
 async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
     let mut cdp = guarded(&[]).await;
+    // The sign-in page is the page on screen when the hold is asked for.
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
     cdp.hold_saves(true);
     // The hold takes effect once the browser has answered a command sent
     // after it was asked for (`a_save_paused_before_the_hold_*` below).
@@ -815,7 +832,7 @@ fn sent_by(network_id: &str, loader: &str, url: &str) -> String {
 
 fn paused_from(id: &str, url: &str, kind: &str, network_id: &str) -> String {
     json!({ "method": "Fetch.requestPaused", "params": {
-        "requestId": id, "resourceType": kind, "networkId": network_id,
+        "requestId": id, "resourceType": kind, "networkId": network_id, "frameId": "F-main",
         "request": { "method": "POST", "url": url, "headers": {} }
     } })
     .to_string()
@@ -832,6 +849,9 @@ async fn read_waiting(cdp: &mut Cdp<FakeTransport>) {
 #[tokio::test]
 async fn a_save_paused_before_the_hold_is_refused_even_when_read_after_it() {
     let mut cdp = guarded(&[]).await;
+    // The sign-in page is the page on screen when the hold is asked for.
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
     cdp.hold_saves(true);
     // Read with no command since the hold: still guarded. Its answer is id 3.
     cdp.transport_mut().incoming.push_back(paused("r0", "POST", "https://hr.example/api/SaveDraft"));
@@ -927,7 +947,7 @@ async fn a_sign_in_form_post_goes_through_even_unplaced() {
     let mut cdp = signing_in().await;
     let unplaced = |id: &str, kind: &str| {
         json!({ "method": "Fetch.requestPaused", "params": {
-            "requestId": id, "resourceType": kind,
+            "requestId": id, "resourceType": kind, "frameId": "F-main",
             "request": { "method": "POST", "url": "https://hr.example/Account/login", "headers": {} }
         } })
         .to_string()
@@ -936,4 +956,109 @@ async fn a_sign_in_form_post_goes_through_even_unplaced() {
     read_waiting(&mut cdp).await;
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
+}
+
+// ------------------------------- during a hold, only the sign-in's documents
+
+/// A save from a document never seen at all is not the sign-in's: refused.
+#[tokio::test]
+async fn a_save_from_a_document_never_seen_is_refused() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.extend([
+        sent_by("n1", "L-unknown", "https://hr.example/api/Save"),
+        paused_from("r1", "https://hr.example/api/Save", "XHR", "n1"),
+    ]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// The sign-in page announced a little late - after the hold was asked
+/// for - is first seen after it, so its login goes through; the draft's
+/// save does not.
+#[tokio::test]
+async fn a_sign_in_page_announced_late_still_logs_in() {
+    for after_effect in [false, true] {
+        let mut cdp = guarded(&["login"]).await;
+        cdp.transport_mut().incoming.push_back(navigated("L-draft", "https://hr.example/draft"));
+        read_waiting(&mut cdp).await;
+        cdp.hold_saves(true);
+        if !after_effect {
+            cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+        }
+        cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+        cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+        if after_effect {
+            cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+        }
+        cdp.transport_mut().incoming.extend([
+            sent_by("n1", "L-signin", "https://hr.example/api/login"),
+            paused_from("r1", "https://hr.example/api/login", "XHR", "n1"),
+            sent_by("n2", "L-draft", "https://hr.example/api/SaveDraft"),
+            paused_from("r2", "https://hr.example/api/SaveDraft", "XHR", "n2"),
+        ]);
+        read_waiting(&mut cdp).await;
+        assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest", "after effect: {after_effect}");
+        assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest", "after effect: {after_effect}");
+    }
+}
+
+/// Only a TOP-LEVEL navigation counts as a new document: a frame's
+/// navigation from a document older than the hold is refused.
+#[tokio::test]
+async fn a_frames_navigation_from_before_the_hold_is_refused() {
+    let mut cdp = signing_in().await;
+    let mut frame_nav: serde_json::Value =
+        serde_json::from_str(&paused_from("r1", "https://hr.example/api/SaveDraft", "Document", "n1")).unwrap();
+    frame_nav["params"]["frameId"] = json!("F-child");
+    cdp.transport_mut().incoming.extend([sent_by("n1", "L-draft", "https://hr.example/api/SaveDraft"), frame_nav.to_string()]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// A same-document navigation (only the fragment changes) is no new
+/// document: the sign-in page stays the one allowed, the draft stays not.
+#[tokio::test]
+async fn a_same_document_navigation_keeps_the_allowed_document() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.extend([
+        json!({ "method": "Page.navigatedWithinDocument", "params": { "frameId": "F-main", "url": "https://hr.example/login#step2" } })
+            .to_string(),
+        sent_by("n1", "L-signin", "https://hr.example/api/login"),
+        paused_from("r1", "https://hr.example/api/login", "XHR", "n1"),
+        sent_by("n2", "L-draft", "https://hr.example/api/SaveDraft"),
+        paused_from("r2", "https://hr.example/api/SaveDraft", "XHR", "n2"),
+    ]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// A save whose document never becomes known is refused at `PARK_LIMIT`.
+#[tokio::test]
+async fn a_parked_save_is_refused_at_its_limit() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.push_back(paused_from("r1", "https://hr.example/api/Save", "XHR", "n9"));
+    read_waiting(&mut cdp).await;
+    assert!(answer_to(&cdp, "r1").is_none());
+    cdp.pump(Duration::from_millis(2500)).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// A command whose answer waits on a parked save (the page will not answer
+/// until its request is) returns at the save's limit, with the save
+/// refused - never at the call's own timeout. The browser never says the
+/// save's document (no Network events).
+#[tokio::test]
+async fn a_command_waiting_on_a_parked_save_returns_at_its_limit() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.push_back(paused_from("r1", "https://hr.example/api/Save", "XHR", "n9"));
+    read_waiting(&mut cdp).await;
+    // The call is id 4; its answer comes once the save has been answered.
+    cdp.transport_mut().release_on = Some(("Fetch.failRequest", r#"{"id":4,"result":{"done":true}}"#.to_string()));
+    let started = std::time::Instant::now();
+    let got = cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    let took = started.elapsed();
+    assert_eq!(got["done"], true);
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert!(took < Duration::from_secs(4), "the command waited {took:?}");
 }

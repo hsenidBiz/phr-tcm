@@ -214,9 +214,19 @@ pub struct Tab {
     loaders: VecDeque<String>,
     /// The loader of its top-level document now.
     main_loader: Option<String>,
-    /// While a hold is on: the documents that were left before it was
-    /// asked for. A save one of them sends is still stopped (`late_save`).
-    held_out: HashSet<String>,
+    /// Its top-level frame's id, once a navigation said it.
+    main_frame: Option<String>,
+    /// While a hold is asked for or on: the documents known when it was
+    /// asked for. Only a document NOT among them may count as new.
+    known_at_hold: Option<HashSet<String>>,
+    /// While a hold is on: the top-level document when it took effect (the
+    /// page the sign-in arrived on). Dropped once another top-level
+    /// document is announced.
+    allowed_main: Option<String>,
+    /// While a hold is asked for or on: the documents first announced since
+    /// it was asked for. With `allowed_main`, the only documents a save may
+    /// come from during the hold (`late_save`).
+    allowed_new: HashSet<String>,
     /// Which document sent each request (`Network.requestWillBeSent`), by
     /// the network's request id; bounded, oldest first.
     request_loaders: HashMap<String, String>,
@@ -253,14 +263,22 @@ impl Tab {
                 let Some(loader) = frame["loaderId"].as_str().filter(|l| !l.is_empty()) else {
                     return;
                 };
-                if !self.loaders.iter().any(|l| l == loader) {
-                    if self.loaders.len() >= MAX_LOADERS {
-                        self.loaders.pop_front();
-                    }
-                    self.loaders.push_back(loader.to_string());
+                let top = frame.get("parentId").is_none();
+                if top {
+                    self.main_frame = frame["id"].as_str().map(str::to_string);
                 }
-                if frame.get("parentId").is_none() {
-                    self.main_loader = Some(loader.to_string());
+                self.announce(loader, top);
+            }
+            // A navigation's own lifecycle carries its document too, and is
+            // what a navigation waits for: the page a sign-in arrived on is
+            // known even when its `frameNavigated` is read later.
+            "Page.lifecycleEvent" => {
+                let Some(loader) = ev.params["loaderId"].as_str().filter(|l| !l.is_empty()) else {
+                    return;
+                };
+                let frame = ev.params["frameId"].as_str();
+                if frame.is_some() && frame == self.main_frame_id() {
+                    self.announce(loader, true);
                 }
             }
             "Network.requestWillBeSent" => {
@@ -280,32 +298,83 @@ impl Tab {
         }
     }
 
-    /// The documents a hold asked for now must still not save from: every
-    /// one seen except the top-level document on screen, which is the page
-    /// the sign-in arrived on.
-    fn hold_out_left_documents(&mut self) {
-        self.held_out = self.loaders.iter().filter(|l| Some(*l) != self.main_loader.as_ref()).cloned().collect();
+    /// A document announced: remembered, made the top-level one if it is,
+    /// and during a hold counted as new if it was not known when the hold
+    /// was asked for. A new top-level document ends the allowance of the
+    /// one the hold took effect on.
+    fn announce(&mut self, loader: &str, top: bool) {
+        if !self.loaders.iter().any(|l| l == loader) {
+            if self.loaders.len() >= MAX_LOADERS {
+                self.loaders.pop_front();
+            }
+            self.loaders.push_back(loader.to_string());
+        }
+        if let Some(known) = &self.known_at_hold {
+            if !known.contains(loader) && self.allowed_new.insert(loader.to_string()) && top {
+                self.allowed_main = None;
+            }
+        }
+        if top {
+            self.main_loader = Some(loader.to_string());
+        }
+    }
+
+    /// The top-level frame's id: said by a navigation, or the tab's own
+    /// target id.
+    fn main_frame_id(&self) -> Option<&str> {
+        self.main_frame.as_deref().or(Some(self.target_id.as_str()).filter(|t| !t.is_empty()))
+    }
+
+    /// A hold was asked for: from now on, a document not known yet counts
+    /// as new.
+    fn start_hold(&mut self) {
+        self.known_at_hold = Some(self.loaders.iter().cloned().collect());
+        self.allowed_new.clear();
+        self.allowed_main = None;
+    }
+
+    /// The hold took effect: the top-level document now is the page the
+    /// sign-in arrived on.
+    fn hold_took_effect(&mut self) {
+        self.allowed_main = self.main_loader.clone();
+    }
+
+    fn end_hold(&mut self) {
+        self.known_at_hold = None;
+        self.allowed_new.clear();
+        self.allowed_main = None;
+    }
+
+    /// During a hold, may a save from this document go through? Only the
+    /// page the sign-in arrived on and documents first announced since the
+    /// hold was asked for: an older one, one forgotten (`MAX_LOADERS`) and
+    /// one never seen are all stopped.
+    fn may_save_from(&self, loader: &str) -> bool {
+        self.allowed_main.as_deref() == Some(loader) || self.allowed_new.contains(loader)
     }
 
     /// During a hold, is this save still stopped? A ping (a beacon) always
-    /// is: only a page being left sends one at that moment. Otherwise it is
-    /// stopped when it came from a document left before the hold. `None`:
-    /// its document is not known yet.
+    /// is: only a page being left sends one at that moment. A top-level
+    /// navigation starts a new document and goes through (a form the
+    /// sign-in page posts). Anything else goes through only from a document
+    /// the sign-in owns (`may_save_from`). `None`: its document is not
+    /// known yet.
     fn late_save(&self, params: &serde_json::Value) -> Option<bool> {
         if params["resourceType"].as_str() == Some("Ping") {
             return Some(true);
         }
-        // A navigation starts a new document: never the page being left,
-        // which is gone (a form the sign-in page posts is one).
         if params["resourceType"].as_str() == Some("Document") {
-            return Some(false);
+            let frame = params["frameId"].as_str();
+            if frame.is_some() && frame == self.main_frame_id() {
+                return Some(false);
+            }
         }
         // Without the Network domain there is no telling which document
         // sent it: stopped (fail closed).
         let Some(network_id) = params["networkId"].as_str() else {
             return Some(true);
         };
-        self.request_loaders.get(network_id).map(|l| self.held_out.contains(l))
+        self.request_loaders.get(network_id).map(|l| !self.may_save_from(l))
     }
 
     fn new(session_id: String, target_id: String, name: Option<String>, url: &str) -> Tab {
@@ -323,7 +392,10 @@ impl Tab {
             unguardable: false,
             loaders: VecDeque::new(),
             main_loader: None,
-            held_out: HashSet::new(),
+            main_frame: None,
+            known_at_hold: None,
+            allowed_main: None,
+            allowed_new: HashSet::new(),
             request_loaders: HashMap::new(),
             request_order: VecDeque::new(),
             parked: Vec::new(),
@@ -653,6 +725,9 @@ impl<T: Transport> Cdp<T> {
         self.hold = false;
         self.hold_pending = false;
         self.hold_marker = None;
+        for t in &mut self.tabs {
+            t.end_hold();
+        }
         let mut asked: Vec<String> = Vec::new();
         // First every tab open now, so each takes the new words; then any
         // tab that came without a guard while those were asked.
@@ -762,16 +837,17 @@ impl<T: Transport> Cdp<T> {
     ///
     /// A request the browser pauses after the hold took effect can still be
     /// the page being left (its keepalive beacon reaching the network
-    /// late): a ping, or a save from a document left before the hold was
-    /// asked for, is still stopped (`Tab::late_save`). Only the page the
-    /// sign-in arrived on, and what it loads after, may save.
+    /// late): only the page the sign-in arrived on, and documents first
+    /// announced after the hold was asked for, may save; a ping never may
+    /// (`Tab::late_save`). A save whose document is not known yet waits,
+    /// paused, at most `PARK_LIMIT`, even in the middle of a command.
     pub fn hold_saves(&mut self, hold: bool) {
         if hold {
             if !self.hold && !self.hold_pending {
                 self.hold_pending = true;
                 self.hold_marker = None;
                 for t in &mut self.tabs {
-                    t.hold_out_left_documents();
+                    t.start_hold();
                 }
             }
             return;
@@ -780,7 +856,7 @@ impl<T: Transport> Cdp<T> {
         self.hold_marker = None;
         self.set_hold(false);
         for t in &mut self.tabs {
-            t.held_out.clear();
+            t.end_hold();
         }
     }
 
@@ -799,6 +875,9 @@ impl<T: Transport> Cdp<T> {
             self.hold_pending = false;
             self.hold_marker = None;
             self.set_hold(true);
+            for t in &mut self.tabs {
+                t.hold_took_effect();
+            }
         }
     }
 
@@ -962,7 +1041,12 @@ impl<T: Transport> Cdp<T> {
             if left.is_zero() {
                 return;
             }
-            match tokio::time::timeout(left, self.next_frame()).await {
+            // A parked save running out of time cuts the wait for a frame
+            // short, so it is answered on time.
+            let due = self.park_deadline().map(|d| d.saturating_duration_since(Instant::now()));
+            let wait = due.map_or(left, |d| d.min(left));
+            match tokio::time::timeout(wait, self.next_frame()).await {
+                Err(_) if wait < left => continue,
                 Err(_) => return,
                 // The socket is gone: nothing more will come, so the rest
                 // of the wait is a plain one.
@@ -1058,6 +1142,24 @@ impl<T: Transport> Cdp<T> {
         self.queue(session, what, params, None);
     }
 
+    /// When the oldest parked save runs out of time, if any is parked.
+    fn park_deadline(&self) -> Option<Instant> {
+        self.tabs.iter().flat_map(|t| t.parked.iter()).map(|p| p.since + PARK_LIMIT).min()
+    }
+
+    /// The next frame, or `None` when a parked save ran out of time first:
+    /// a command waiting on a page that waits on that save is never held
+    /// up past `PARK_LIMIT`.
+    async fn next_frame_or_park(&mut self) -> Result<Option<String>, CdpError> {
+        match self.park_deadline() {
+            None => self.next_frame().await.map(Some),
+            Some(due) => match tokio::time::timeout(due.saturating_duration_since(Instant::now()), self.next_frame()).await {
+                Ok(frame) => frame.map(Some),
+                Err(_) => Ok(None),
+            },
+        }
+    }
+
     /// Answer every parked save whose fate is known now: its document is
     /// known, the hold or the guard ended, or it waited `PARK_LIMIT`
     /// (stopped, fail closed).
@@ -1073,7 +1175,7 @@ impl<T: Transport> Cdp<T> {
                     None => Some(false),
                     Some(g) if !g.hold => Some(true),
                     Some(_) => match t.request_loaders.get(&p.network_id) {
-                        Some(loader) => Some(t.held_out.contains(loader)),
+                        Some(loader) => Some(!t.may_save_from(loader)),
                         None if p.since.elapsed() >= PARK_LIMIT => Some(true),
                         None => None,
                     },
@@ -1153,6 +1255,11 @@ impl<T: Transport> Cdp<T> {
         }
         let mut tab = Tab::new(session.clone(), target, None, info["url"].as_str().unwrap_or(""));
         crate::applog::info(format!("a tab opened: {}", tab.url_without_query));
+        // Opened during a sign-in's hold: every document it loads is first
+        // seen after the hold, so the sign-in's own.
+        if self.hold || self.hold_pending {
+            tab.start_hold();
+        }
         let armed = self.armed.clone();
         if let Some(words) = &armed {
             tab.guard = Some(SaveGuard { patterns: words.clone(), hold: self.hold, blocked: None });
@@ -1341,7 +1448,10 @@ impl<T: Transport> Cdp<T> {
         session: Option<String>,
     ) -> Result<serde_json::Value, CdpError> {
         loop {
-            let raw = self.next_frame().await?;
+            let Some(raw) = self.next_frame_or_park().await? else {
+                self.resolve_parked().await?;
+                continue;
+            };
             match classify(&raw) {
                 Incoming::Reply { id: got, answer } if got == id => {
                     self.note_reply(got);
@@ -1353,6 +1463,7 @@ impl<T: Transport> Cdp<T> {
                 Incoming::Event { session, ev } => self.route_event(session, ev).await?,
                 Incoming::Other => {}
             }
+            self.resolve_parked().await?;
             if let Some(s) = &session {
                 if !self.has_tab(s) {
                     return Err(CdpError::Closed);
@@ -1483,7 +1594,10 @@ impl<T: Transport> Cdp<T> {
 
     async fn read_event(&mut self, method: &str) -> Result<Event, CdpError> {
         loop {
-            let raw = self.next_frame().await?;
+            let Some(raw) = self.next_frame_or_park().await? else {
+                self.resolve_parked().await?;
+                continue;
+            };
             match classify(&raw) {
                 Incoming::Event { session, ev } => {
                     let at = self.tab_index(session.as_deref());
@@ -1505,6 +1619,7 @@ impl<T: Transport> Cdp<T> {
                 Incoming::Reply { id, answer } => self.on_setup_reply(id, answer).await?,
                 Incoming::Other => {}
             }
+            self.resolve_parked().await?;
             if self.current_index().is_none() {
                 return Err(CdpError::Closed);
             }
