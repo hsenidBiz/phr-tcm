@@ -25,7 +25,7 @@
 //! both layers are tested without starting a browser.
 
 use futures::{SinkExt, StreamExt};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -194,7 +194,122 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// Where downloads go and what came of each (`enable_downloads`):
     /// `None` while the browser's downloads are not followed.
     downloads: Option<DownloadFolder>,
+    /// A hold asked for (`hold_saves(true)`) that has not taken effect yet.
+    hold_pending: bool,
+    /// The first command sent since the hold was asked for. The hold takes
+    /// effect only once its answer (or a later one) is read: the browser
+    /// writes every event it sent before that command arrived ahead of the
+    /// answer, so a request it paused before then is still judged by the
+    /// guard, however late it is read.
+    hold_marker: Option<u64>,
+    /// What the page has loaded and which document sent which request, for
+    /// a hold to tell the page being left from the sign-in's own page
+    /// (`late_save`).
+    documents: Documents,
+    /// Saves paused during a hold whose document is not known yet: answered
+    /// once it is (`resolve_parked`).
+    parked: Vec<Parked>,
 }
+
+/// Which documents the page has loaded, and which document sent each
+/// request.
+#[derive(Default)]
+struct Documents {
+    /// Every document loaded (`Page.frameNavigated`), by loader id, oldest
+    /// first; bounded.
+    loaders: VecDeque<String>,
+    /// The loader of the top-level document now.
+    main_loader: Option<String>,
+    /// While a hold is on: the documents that were left before it was
+    /// asked for. A save one of them sends is still stopped.
+    held_out: HashSet<String>,
+    /// Which document sent each request (`Network.requestWillBeSent`), by
+    /// the network's request id; bounded, oldest first.
+    request_loaders: HashMap<String, String>,
+    request_order: VecDeque<String>,
+}
+
+impl Documents {
+    /// Note a document loaded, or a request sent by one.
+    fn observe(&mut self, ev: &Event) {
+        match ev.method.as_str() {
+            "Page.frameNavigated" => {
+                let frame = &ev.params["frame"];
+                let Some(loader) = frame["loaderId"].as_str().filter(|l| !l.is_empty()) else {
+                    return;
+                };
+                if !self.loaders.iter().any(|l| l == loader) {
+                    if self.loaders.len() >= MAX_LOADERS {
+                        self.loaders.pop_front();
+                    }
+                    self.loaders.push_back(loader.to_string());
+                }
+                if frame.get("parentId").is_none() {
+                    self.main_loader = Some(loader.to_string());
+                }
+            }
+            "Network.requestWillBeSent" => {
+                let (Some(id), Some(loader)) = (ev.params["requestId"].as_str(), ev.params["loaderId"].as_str()) else {
+                    return;
+                };
+                if self.request_loaders.insert(id.to_string(), loader.to_string()).is_none() {
+                    self.request_order.push_back(id.to_string());
+                    if self.request_order.len() > MAX_REQUEST_LOADERS {
+                        if let Some(old) = self.request_order.pop_front() {
+                            self.request_loaders.remove(&old);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The documents a hold asked for now must still not save from: every
+    /// one seen except the top-level document on screen, which is the page
+    /// the sign-in arrived on.
+    fn hold_out_left_documents(&mut self) {
+        self.held_out = self.loaders.iter().filter(|l| Some(*l) != self.main_loader.as_ref()).cloned().collect();
+    }
+
+    /// During a hold, is this save still stopped? A ping (a beacon) always
+    /// is: only a page being left sends one at that moment. Otherwise it is
+    /// stopped when it came from a document left before the hold. `None`:
+    /// its document is not known yet.
+    fn late_save(&self, params: &serde_json::Value) -> Option<bool> {
+        if params["resourceType"].as_str() == Some("Ping") {
+            return Some(true);
+        }
+        // A navigation starts a new document: never the page being left,
+        // which is gone (a form the sign-in page posts is one).
+        if params["resourceType"].as_str() == Some("Document") {
+            return Some(false);
+        }
+        // Without the Network domain there is no telling which document
+        // sent it: stopped (fail closed).
+        let Some(network_id) = params["networkId"].as_str() else {
+            return Some(true);
+        };
+        self.request_loaders.get(network_id).map(|l| self.held_out.contains(l))
+    }
+}
+
+/// A save paused during a hold, waiting to learn which document sent it.
+struct Parked {
+    request_id: String,
+    network_id: String,
+    method: String,
+    url: String,
+    since: Instant,
+}
+
+/// How long a parked save waits to learn its document before it is
+/// stopped anyway (fail closed).
+const PARK_LIMIT: Duration = Duration::from_secs(2);
+
+/// How many documents and requests are remembered by loader.
+const MAX_LOADERS: usize = 64;
+const MAX_REQUEST_LOADERS: usize = 512;
 
 /// A browser's downloads: the folder they land in, and every download in
 /// start order.
@@ -275,6 +390,10 @@ impl<T: Transport> Cdp<T> {
             guard: None,
             unsent_answers: VecDeque::new(),
             downloads: None,
+            hold_pending: false,
+            hold_marker: None,
+            documents: Documents::default(),
+            parked: Vec::new(),
         }
     }
 
@@ -308,6 +427,8 @@ impl<T: Transport> Cdp<T> {
         self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await?;
         let blocked = self.guard.as_mut().and_then(|g| g.blocked.take());
         self.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
+        self.hold_pending = false;
+        self.hold_marker = None;
         Ok(())
     }
 
@@ -327,9 +448,56 @@ impl<T: Transport> Cdp<T> {
     /// Let every request through for a while, saves included, without
     /// switching interception off: a sign-in is the runner's own, and what
     /// it sends is not the script's draft.
+    ///
+    /// A request is judged as it was when the browser paused it, not when
+    /// its pause is read: a save the page sent as it was left (a beacon on
+    /// pagehide) can be read after the sign-in has arrived and asked for
+    /// the hold, and it must still be stopped. So the hold takes effect
+    /// only once the browser has answered a command sent after it was asked
+    /// for (`hold_marker`); every request paused before that is read first,
+    /// and is refused. Ending the hold takes effect at once.
+    ///
+    /// A request the browser pauses after the hold took effect can still be
+    /// the page being left (its keepalive beacon reaching the network
+    /// late): a ping, or a save from a document left before the hold was
+    /// asked for, is still stopped (`Documents::late_save`). Only the page
+    /// the sign-in arrived on, and what it loads after, may save.
     pub fn hold_saves(&mut self, hold: bool) {
+        if hold {
+            let held = self.guard.as_ref().is_some_and(|g| g.hold);
+            if self.guard.is_some() && !held && !self.hold_pending {
+                self.hold_pending = true;
+                self.hold_marker = None;
+                self.documents.hold_out_left_documents();
+            }
+            return;
+        }
+        self.hold_pending = false;
+        self.hold_marker = None;
+        self.documents.held_out.clear();
         if let Some(g) = self.guard.as_mut() {
-            g.hold = hold;
+            g.hold = false;
+        }
+    }
+
+    /// A command's answer was read: a hold waiting on it takes effect.
+    fn note_reply(&mut self, id: u64) {
+        if self.hold_marker.is_some_and(|m| id >= m) {
+            self.hold_pending = false;
+            self.hold_marker = None;
+            if let Some(g) = self.guard.as_mut() {
+                g.hold = true;
+            }
+        }
+    }
+
+    /// A frame that answers a command: a hold waiting on it may take effect.
+    fn note_any_reply(&mut self, raw: &str) {
+        if self.hold_marker.is_none() || !raw.contains("\"id\"") {
+            return;
+        }
+        if let Some(id) = serde_json::from_str::<serde_json::Value>(raw).ok().and_then(|v| v.get("id")?.as_u64()) {
+            self.note_reply(id);
         }
     }
 
@@ -461,6 +629,10 @@ impl<T: Transport> Cdp<T> {
             return;
         }
         loop {
+            if self.resolve_parked().await.is_err() {
+                tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
+                return;
+            }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return;
@@ -474,6 +646,7 @@ impl<T: Transport> Cdp<T> {
                     return;
                 }
                 Ok(Ok(raw)) => {
+                    self.note_any_reply(&raw);
                     if let Some(ev) = event_of(&raw) {
                         if self.on_event(ev).await.is_err() {
                             tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
@@ -493,15 +666,35 @@ impl<T: Transport> Cdp<T> {
         let request_id = params["requestId"].as_str().unwrap_or("").to_string();
         let method = params["request"]["method"].as_str().unwrap_or("GET");
         let url = params["request"]["url"].as_str().unwrap_or("");
-        let stop = match self.guard.as_mut() {
-            Some(g) if !g.hold && super::save_guard::is_save(method, url, &g.patterns) => {
-                if g.blocked.is_none() {
-                    g.blocked = Some(super::save_guard::blocked(method, url));
-                }
-                true
+        let verdict = match self.guard.as_ref() {
+            Some(g) if super::save_guard::is_save(method, url, &g.patterns) => {
+                if g.hold { self.documents.late_save(params) } else { Some(true) }
             }
-            _ => false,
+            _ => Some(false),
         };
+        let Some(stop) = verdict else {
+            // Which document sent it is not known yet: it waits, paused,
+            // until it is (`resolve_parked`).
+            self.parked.push(Parked {
+                request_id,
+                network_id: params["networkId"].as_str().unwrap_or("").to_string(),
+                method: method.to_string(),
+                url: url.to_string(),
+                since: Instant::now(),
+            });
+            return Ok(());
+        };
+        if stop {
+            if let Some(g) = self.guard.as_mut() {
+                g.blocked.get_or_insert_with(|| super::save_guard::blocked(method, url));
+            }
+        }
+        self.queue_answer(&request_id, method, url, stop);
+        self.send_unsent_answers().await
+    }
+
+    /// Queue the answer to one paused request: stopped or continued.
+    fn queue_answer(&mut self, request_id: &str, method: &str, url: &str, stop: bool) {
         let (what, params) = if stop {
             crate::applog::warn(format!(
                 "Auto Run stopped a save the page tried to send: {} {}",
@@ -516,6 +709,41 @@ impl<T: Transport> Cdp<T> {
         self.next_id += 1;
         // Kept until it is known to be written: see `unsent_answers`.
         self.unsent_answers.push_back(frame(id, what, params));
+    }
+
+    /// Answer every parked save whose fate is known now: its document is
+    /// known, the hold or the guard ended, or it waited `PARK_LIMIT`
+    /// (stopped, fail closed).
+    async fn resolve_parked(&mut self) -> Result<(), CdpError> {
+        if self.parked.is_empty() {
+            return Ok(());
+        }
+        let mut answers = Vec::new();
+        for p in std::mem::take(&mut self.parked) {
+            let verdict = match self.guard.as_ref() {
+                None => Some(false),
+                Some(g) if !g.hold => Some(true),
+                Some(_) => match self.documents.request_loaders.get(&p.network_id) {
+                    Some(loader) => Some(self.documents.held_out.contains(loader)),
+                    None if p.since.elapsed() >= PARK_LIMIT => Some(true),
+                    None => None,
+                },
+            };
+            match verdict {
+                None => self.parked.push(p),
+                Some(stop) => {
+                    if stop {
+                        if let Some(g) = self.guard.as_mut() {
+                            g.blocked.get_or_insert_with(|| super::save_guard::blocked(&p.method, &p.url));
+                        }
+                    }
+                    answers.push((p, stop));
+                }
+            }
+        }
+        for (p, stop) in answers {
+            self.queue_answer(&p.request_id, &p.method, &p.url, stop);
+        }
         self.send_unsent_answers().await
     }
 
@@ -563,9 +791,13 @@ impl<T: Transport> Cdp<T> {
         params: serde_json::Value,
         limit: Duration,
     ) -> Result<serde_json::Value, CdpError> {
+        self.resolve_parked().await?;
         self.send_unsent_answers().await?;
         let id = self.next_id;
         self.next_id += 1;
+        if self.hold_pending && self.hold_marker.is_none() {
+            self.hold_marker = Some(id);
+        }
         self.transport
             .send(frame(id, method, params))
             .await
@@ -579,6 +811,7 @@ impl<T: Transport> Cdp<T> {
     async fn read_reply(&mut self, id: u64, method: &str) -> Result<serde_json::Value, CdpError> {
         loop {
             let raw = self.next_frame().await?;
+            self.note_any_reply(&raw);
             if let Some(answer) = reply_for(id, &raw) {
                 return answer.map_err(|message| CdpError::Protocol {
                     method: method.to_string(),
@@ -630,6 +863,8 @@ impl<T: Transport> Cdp<T> {
         if self.follow_download(&ev) {
             return Ok(());
         }
+        self.documents.observe(&ev);
+        let parked = ev.method == "Network.requestWillBeSent" && !self.parked.is_empty();
         // The record sees every event first and never claims one, so the
         // page log below is fed exactly as before.
         self.net_record.observe(&ev);
@@ -637,6 +872,9 @@ impl<T: Transport> Cdp<T> {
         // buffer: a page volunteers thousands, and they would push out the
         // load event a navigation is about to wait for.
         if self.page_log.observe(&ev) {
+            if parked {
+                self.resolve_parked().await?;
+            }
             return Ok(());
         }
         if self.events.len() >= MAX_BUFFERED_EVENTS {
@@ -663,10 +901,13 @@ impl<T: Transport> Cdp<T> {
     async fn read_event(&mut self, method: &str) -> Result<Event, CdpError> {
         loop {
             let raw = self.next_frame().await?;
+            self.note_any_reply(&raw);
             if let Some(ev) = event_of(&raw) {
                 if ev.method == method {
                     // Handed straight to the caller, so it skips `on_event`:
-                    // the record and the downloads must still hear of it.
+                    // the record, the documents and the downloads must
+                    // still hear of it.
+                    self.documents.observe(&ev);
                     self.net_record.observe(&ev);
                     self.follow_download(&ev);
                     return Ok(ev);
