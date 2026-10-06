@@ -658,3 +658,22 @@ async fn the_sign_in_pages_own_login_goes_through() {
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(cdp.take_save_blocked(), None);
 }
+
+/// A sign-in page's form post is a navigation, a new document by
+/// definition, so it goes through even when the browser does not say which
+/// document sent it (no Network domain). Any other save it cannot place is
+/// stopped.
+#[tokio::test]
+async fn a_sign_in_form_post_goes_through_even_unplaced() {
+    let mut cdp = signing_in().await;
+    let unplaced = |id: &str, kind: &str| {
+        on(MAIN, "Fetch.requestPaused", json!({
+            "requestId": id, "resourceType": kind,
+            "request": { "method": "POST", "url": "https://hr.example/Account/login", "headers": {} }
+        }))
+    };
+    feed(&mut cdp, [unplaced("r1", "Document"), unplaced("r2", "XHR")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
+}

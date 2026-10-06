@@ -295,6 +295,11 @@ impl Tab {
         if params["resourceType"].as_str() == Some("Ping") {
             return Some(true);
         }
+        // A navigation starts a new document: never the page being left,
+        // which is gone (a form the sign-in page posts is one).
+        if params["resourceType"].as_str() == Some("Document") {
+            return Some(false);
+        }
         // Without the Network domain there is no telling which document
         // sent it: stopped (fail closed).
         let Some(network_id) = params["networkId"].as_str() else {
