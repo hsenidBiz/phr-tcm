@@ -180,6 +180,10 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
         guarded_case: None,
         downloads_root,
     });
+    // A tab the page opens waits, paused, until this connection reads that
+    // it opened and sets it up: read between commands too, or a popup a
+    // person opens by hand would sit blank until the next step.
+    answer_between_commands();
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
 }
@@ -602,8 +606,9 @@ pub async fn guard_for_case<D: Driver>(
     Ok(())
 }
 
-/// How often the supervised browser is read between commands while it
-/// guards a no-save case, and for how long each time.
+/// How often the supervised browser is read between commands while
+/// something waits on it (`Cdp::wants_reading`), and for how long each
+/// time.
 const ANSWER_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
 const ANSWER_FOR: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -624,10 +629,12 @@ fn answer_between_commands() {
     tauri::async_runtime::spawn(keep_answering(&SESSION, &ANSWERING, |s: &mut Session| &mut s.cdp, ANSWER_EVERY, ANSWER_FOR));
 }
 
-/// Every `every`, read the browser in `slot` for `read_for` while it is
-/// guarded; a command holding the slot reads it itself and is never waited
-/// on. Ends, clearing `running` with the slot still locked, once the slot
-/// is empty or its browser no longer guarded.
+/// Every `every`, read the browser in `slot` for `read_for` while it wants
+/// reading (`Cdp::wants_reading`: it is guarded, or it drives the whole
+/// browser, where a tab the page opens waits to be set up); a command
+/// holding the slot reads it itself and is never waited on. Ends, clearing
+/// `running` with the slot still locked, once the slot is empty or its
+/// browser no longer wants reading.
 pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
     slot: &tokio::sync::Mutex<Option<S>>,
     running: &std::sync::atomic::AtomicBool,
@@ -639,7 +646,7 @@ pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
         tokio::time::sleep(every).await;
         let Ok(mut held) = slot.try_lock() else { continue };
         match held.as_mut().map(cdp_of) {
-            Some(cdp) if cdp.is_guarding_saves() => cdp.pump(read_for).await,
+            Some(cdp) if cdp.wants_reading() => cdp.pump(read_for).await,
             _ => {
                 running.store(false, std::sync::atomic::Ordering::SeqCst);
                 return;

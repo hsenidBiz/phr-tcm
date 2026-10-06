@@ -2110,6 +2110,32 @@ async fn a_guarded_browser_answers_requests_made_between_calls() {
     assert_eq!(out.as_str(), Some("searched"));
 }
 
+/// A tab the page opens (a `target=_blank` link) is attached and guarded
+/// before it runs: the form it posts the moment it opens is stopped, the
+/// case hears of it, and the script still acts in the first tab.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_tab_the_page_opens_is_attached_and_its_save_is_stopped() {
+    let server = SaveServer::start();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("") })).await);
+    live.cdp.guard_saves(&[]).await.expect("the guard did not start");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#popup" } })).await);
+    for _ in 0..50 {
+        if live.cdp.tabs().len() > 1 {
+            break;
+        }
+        live.cdp.idle(Duration::from_millis(100)).await;
+    }
+    assert_eq!(live.cdp.tabs().len(), 2, "the new tab was never attached");
+    live.cdp.idle(Duration::from_millis(1500)).await;
+    assert!(server.got("GET /save-page?formsave=1"), "the new tab never ran: {:?}", server.seen.lock().unwrap());
+    assert!(!server.got("POST /api/Save"), "the new tab's form post reached the server");
+    assert_eq!(live.cdp.take_save_blocked().as_deref(), Some(SAVE_STOPPED));
+    let search = page::eval_value(&mut live.cdp, "location.search").await.unwrap();
+    assert_eq!(search.as_str(), Some(""), "the script no longer acts in the first tab");
+}
+
 const DRAFT_STOPPED: &str =
     "this script must not save, but the page tried to send POST /api/SaveDraft - it was stopped before it reached the server";
 
