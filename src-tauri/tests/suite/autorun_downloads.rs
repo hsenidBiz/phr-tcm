@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 use v2_lib::autorun::downloads::{
-    check_file, name_matches, normalise, parse_a1, pdf_pages, pdf_size_gate, CellCheck, DownloadCheck, HeaderCheck,
-    OnPage, PageCount, PdfCheck, MAX_CHECK_BYTES, PDF_UNREADABLE,
+    check_file, name_matches, normalise, parse_a1, pdf_pages, pdf_size_gate, sheet_size_gate, CellCheck, DownloadCheck,
+    HeaderCheck, OnPage, PageCount, PdfCheck, MAX_CHECK_BYTES, PDF_UNREADABLE, SHEET_TOO_LARGE,
 };
 use v2_lib::browser::actions::Action;
 use v2_lib::test_files::human_size;
@@ -892,4 +892,91 @@ async fn stop_ends_the_wait_for_a_slow_read() {
     let out = await_file_read(slow, "Payslip.pdf", Some(&stop), Duration::from_secs(60)).await;
     assert_eq!((out.ok, out.detail.as_str()), (false, AFTER_STOP));
     assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+}
+
+// ------------------------------------------------- very large sheets
+
+/// The cell cap is rows times columns, both ends included, and a range at
+/// the edge of what Excel allows never overflows the sum.
+#[test]
+fn the_sheet_size_gate_counts_rows_times_columns() {
+    assert_eq!(sheet_size_gate((0, 0), (0, 0)), Ok(()));
+    assert_eq!(sheet_size_gate((0, 0), (999, 999)), Ok(()), "exactly 1,000,000 cells");
+    assert_eq!(sheet_size_gate((5, 3), (1004, 1002)), Ok(()), "measured from where it starts");
+    assert_eq!(sheet_size_gate((0, 0), (1000, 999)), Err(SHEET_TOO_LARGE.to_string()));
+    assert_eq!(sheet_size_gate((0, 0), (1_048_575, 16_383)), Err(SHEET_TOO_LARGE.to_string()));
+    assert_eq!(sheet_size_gate((0, 0), (u32::MAX, u32::MAX)), Err(SHEET_TOO_LARGE.to_string()));
+    assert_eq!(SHEET_TOO_LARGE, "the spreadsheet is too large to check (over 1,000,000 cells)");
+}
+
+/// A minimal xlsx whose one sheet declares `dimension` and holds `cells`
+/// (an A1 reference and its text each).
+fn small_xlsx(path: &Path, dimension: &str, cells: &[(&str, &str)]) {
+    use std::io::Write;
+    let mut rows: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+    for (r, text) in cells {
+        let (row, _) = parse_a1(r).unwrap();
+        rows.entry(row + 1)
+            .or_default()
+            .push_str(&format!(r#"<c r="{r}" t="inlineStr"><is><t>{text}</t></is></c>"#));
+    }
+    let rows: String = rows.iter().map(|(n, cs)| format!(r#"<row r="{n}">{cs}</row>"#)).collect();
+    let files = [
+        (
+            "[Content_Types].xml",
+            r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#.to_string(),
+        ),
+        (
+            "_rels/.rels",
+            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_string(),
+        ),
+        (
+            "xl/workbook.xml",
+            r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#.to_string(),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#.to_string(),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="{dimension}"/><sheetData>{rows}</sheetData></worksheet>"#
+            ),
+        ),
+    ];
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    for (name, body) in files {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+fn sheet_check(name: &str) -> DownloadCheck {
+    DownloadCheck { headers: exact(&["Name", "Code"]), cells: vec![cell("A2", "Ann", false)], ..named(name) }
+}
+
+/// A sheet that declares the whole of Excel but holds a few cells is
+/// measured by the cells it holds: its headers and cells are checked.
+#[test]
+fn a_small_sheet_declaring_a_huge_dimension_is_still_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big-claim.xlsx");
+    small_xlsx(&path, "A1:XFD1048576", &[("A1", "Name"), ("B1", "Code"), ("A2", "Ann"), ("B2", "7")]);
+    let got = check_file(&path, "big-claim.xlsx", &sheet_check("big-claim.xlsx")).unwrap();
+    assert!(got.ends_with(", headers match, A2 is \"Ann\""), "{got}");
+}
+
+/// Cells far apart make the used part over a million cells: the file is
+/// refused with the sentence, and quickly, never laid out.
+#[test]
+fn a_sheet_whose_used_part_is_over_a_million_cells_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huge.xlsx");
+    small_xlsx(&path, "A1:B2", &[("A1", "Name"), ("B1", "Code"), ("XFD1048576", "far")]);
+    let started = std::time::Instant::now();
+    let got = check_file(&path, "huge.xlsx", &sheet_check("huge.xlsx"));
+    assert_eq!(got, Err(SHEET_TOO_LARGE.to_string()));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
 }
