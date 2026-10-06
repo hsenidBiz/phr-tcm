@@ -101,11 +101,12 @@ impl TableRead {
         Some(TableRead { headers, rows })
     }
 
-    /// The column called `name` (trimmed, case ignored), or the sentence
+    /// The column called `name` (trimmed, case ignored, every run of
+    /// whitespace one space, a Unicode space included), or the sentence
     /// that says it has none.
     pub fn column(&self, name: &str) -> Result<usize, String> {
-        let want = name.trim().to_lowercase();
-        self.headers.iter().position(|h| h.trim().to_lowercase() == want).ok_or_else(|| {
+        let want = collapse(name).to_lowercase();
+        self.headers.iter().position(|h| collapse(h).to_lowercase() == want).ok_or_else(|| {
             let list = if self.headers.is_empty() {
                 "none - it has no header row".to_string()
             } else {
@@ -182,6 +183,8 @@ pub fn find_row(read: &TableRead, cells: &[(String, String)], exact: bool) -> Re
     }))
 }
 
+/// Every run of whitespace one space, none at either end. A non-breaking
+/// or other Unicode space is whitespace (`char::is_whitespace`).
 fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }

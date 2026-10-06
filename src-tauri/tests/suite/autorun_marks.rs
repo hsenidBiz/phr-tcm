@@ -197,3 +197,18 @@ fn an_old_script_loads_unchanged_and_saves_byte_identical() {
     store::save_script(dir.path(), &with).unwrap();
     assert_eq!(store::load_script(dir.path(), 2).unwrap().unwrap(), with);
 }
+
+/// A non-breaking space, a figure space, a narrow non-breaking space and a
+/// tab: what a page or a pasted name may hold where a space is meant.
+const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
+
+/// A mark name with any Unicode space is the same name as with a space.
+#[test]
+fn a_mark_name_treats_a_unicode_space_as_a_space() {
+    for sp in ODD_SPACES {
+        assert_eq!(normalise(&format!("{sp}Cycle{sp}{sp}Published{sp}")), "cycle published", "{sp:?}");
+        let twice = vec!["cycle published".to_string(), format!("Cycle{sp}Published")];
+        let why = check_marks(&twice, &[]).unwrap_err();
+        assert!(why.iter().any(|w| w.contains("is listed twice")), "{sp:?}: {why:?}");
+    }
+}

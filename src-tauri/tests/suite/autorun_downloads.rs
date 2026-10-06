@@ -980,3 +980,18 @@ fn a_sheet_whose_used_part_is_over_a_million_cells_is_refused() {
     assert_eq!(got, Err(SHEET_TOO_LARGE.to_string()));
     assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
 }
+
+/// A non-breaking space, a figure space, a narrow non-breaking space and a
+/// tab: what a page or a pasted name may hold where a space is meant.
+const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
+
+/// A PDF's `contains` treats any Unicode space in the phrase as a space.
+#[test]
+fn a_pdf_contains_treats_a_unicode_space_as_a_space() {
+    for sp in ODD_SPACES {
+        let want = format!("Payslip{sp}for{sp}{sp}October");
+        let check = PdfCheck { contains: vec![want.clone()], ..Default::default() };
+        assert!(run_pdf(check).is_ok(), "{sp:?}");
+        assert_eq!(normalise(&format!("Employee:{sp}Ada{sp}Lovelace")), "employee: ada lovelace");
+    }
+}

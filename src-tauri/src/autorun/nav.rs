@@ -162,7 +162,10 @@ pub fn unrecorded_area(area: &str) -> String {
 
 /// How two module (or area) names are compared: trimmed, case ignored.
 pub fn module_key(module: &str) -> String {
-    module.trim().to_lowercase()
+    // Every run of whitespace is one space - a non-breaking or other
+    // Unicode space a page or a paste brought in included
+    // (`char::is_whitespace`).
+    module.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 pub fn nav_path(root: &Path, org: &str, project: &str) -> PathBuf {
