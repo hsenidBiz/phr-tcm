@@ -8,9 +8,9 @@
 // RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
 // SiteAddressDialog.tsx, AccountsDialog.tsx, ReadinessStrip.tsx and
 // SuspectedDefectMark.tsx. The sample data (src/dev/demo.ts) gives the
-// first Product Backlog Item's cases scripts: #5002 carries a suspected
-// defect, #5003 a precondition, #5004 is marked Must not save, and #5005 has
-// no script. One unattended run holds a case of each result, one of them
+// first Product Backlog Item's cases scripts: #5001 has a setup that changed
+// since it was approved, #5002 carries a suspected defect, #5003 a
+// precondition, #5004 is marked Must not save, and #5005 has no script. One unattended run holds a case of each result, one of them
 // retried. No route sends anything: every shot stops before Save, Start or
 // Send.
 
@@ -19,6 +19,7 @@ import type { Screen, Step } from "../types";
 const CASES = "auto-run-cases";
 const SELECTED = "auto-run-selected";
 const SCRIPT = "auto-run-script";
+const SCRIPT_SETUP = "auto-run-script-setup";
 const WATCH = "auto-run-watch";
 const UNATTENDED = "auto-run-unattended";
 const RUNS = "auto-run-past-runs";
@@ -28,6 +29,10 @@ const SITE = "auto-run-site-address";
 const ACCOUNTS = "auto-run-accounts";
 
 const NAV: Step = { nav: "Auto Run" };
+
+/** Said under both ways of running: a setup that cannot start blocks the case. */
+const BLOCKED_BY_SETUP =
+  "A case whose script has a setup is **Blocked** before it signs in when the setup is not approved, or when the fixture it needs has never been built. Approve it in the script editor, or build the fixture on the API Templates tab, under **Fixtures**.";
 const READY: Step = { waitFor: { role: "checkbox", name: "Select #5001" } };
 /** Opens a case's card, where its Script and Run buttons are. */
 const OPEN_CARD = (id: number): Step[] => [
@@ -65,6 +70,17 @@ export const autoRun: Screen = {
       id: SCRIPT,
       route: [NAV, READY, ...OPEN_CARD(5003), { click: { role: "button", name: "Edit script for #5003" } }, { waitFor: { role: "textbox", name: "Action script JSON" } }],
       alt: "The script of a case with a precondition, beside the case's own steps",
+    },
+    {
+      id: SCRIPT_SETUP,
+      route: [
+        NAV,
+        READY,
+        ...OPEN_CARD(5001),
+        { click: { role: "button", name: "Edit script for #5001" } },
+        { waitFor: { role: "button", name: "Approve setup" } },
+      ],
+      alt: "The script of a case with a setup: the fixture it builds its data from, changed since it was approved",
     },
     {
       id: WATCH,
@@ -246,7 +262,7 @@ export const autoRun: Screen = {
       name: "Show details",
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
-        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
+        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup and whether it is approved, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Run.",
     },
     {
@@ -298,6 +314,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Run #5002" },
       name: "Run",
       does: "Runs this one case while you watch. Only a case with a script has it.",
+      tips: [BLOCKED_BY_SETUP],
     },
 
     // --- A selection -------------------------------------------------------------
@@ -318,6 +335,7 @@ export const autoRun: Screen = {
       locate: { role: "button", nameRe: "^Run \\d+ unattended$" },
       name: "Run N unattended",
       does: "Opens the Unattended run window for the selected cases.",
+      tips: [BLOCKED_BY_SETUP],
     },
     {
       id: "clear-selection",
@@ -401,6 +419,34 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Remove precondition 1" },
       name: "Remove",
       does: "Takes the precondition off the script when you press **Save script**. Preconditions are added by an assistant, not here.",
+    },
+    {
+      id: "script-setup",
+      shot: SCRIPT_SETUP,
+      group: "scripts",
+      locate: { role: "list", name: "Setup steps" },
+      name: "Setup",
+      does:
+        "The fixture the case builds its data from before it signs in: its name, the account it runs as, its steps and what it creates. " +
+        "Your assistant writes the setup into the script; you read it here and approve it. Saving the script keeps the setup as the assistant wrote it.",
+    },
+    {
+      id: "setup-changed",
+      shot: SCRIPT_SETUP,
+      group: "scripts",
+      locate: { text: "Changed since you approved it" },
+      name: "Changed since you approved it",
+      does: "The setup was approved once and has changed since, so it needs approving again before the case can run.",
+    },
+    {
+      id: "approve-setup",
+      shot: SCRIPT_SETUP,
+      group: "scripts",
+      locate: { role: "button", name: "Approve setup" },
+      name: "Approve setup",
+      does:
+        "Approves exactly the setup on screen; if it changed while you were looking, it asks you to review it again. Once approved, the line reads **Approved** and the date, " +
+        "with **Withdraw approval** beside it to take the approval back. Only you can approve a setup: your assistant cannot.",
     },
     {
       id: "save-script",
@@ -808,6 +854,7 @@ export const autoRun: Screen = {
       steps: [
         "On **Test cases**, open a case and press **Add script**, write its actions, check that **Checks** covers every step, and press **Save script**.",
         "Or let an assistant write the scripts for the whole Product Backlog Item, then press **More**, **Import scripts** and pick its file.",
+        "A script whose case needs a draft of its own has a setup. Open the script, read its **Setup** and press **Approve setup**.",
       ],
     },
     {

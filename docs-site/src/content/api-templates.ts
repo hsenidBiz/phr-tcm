@@ -4,20 +4,31 @@
 // put them in order. Read and remove only: assistants build, prove and run
 // them, never this screen.
 //
-// Locates come from screens/ApiTemplates/index.tsx, TemplateRow.tsx and
-// FlowMap.tsx. The sample data (src/dev/demo.ts) has five templates in two
-// modules (one imported and not proven yet) and one flow of three stages,
-// the last of them with no template yet. The View flow page is written for
-// the browser and is described, not captured.
+// Locates come from screens/ApiTemplates/index.tsx, TemplateRow.tsx,
+// FlowMap.tsx, FixturesTab.tsx and CleanupDialog.tsx. The sample data
+// (src/dev/demo.ts) has five templates in two modules (one imported and not
+// proven yet), one flow of three stages, the last of them with no template
+// yet, three fixtures (two built, one never run) and three test-made drafts
+// in the active environment, one of a kind no delete template covers. The
+// View flow page is written for the browser and is described, not
+// captured. No route runs, rebuilds or deletes anything.
 
 import type { Screen, Step } from "../types";
 
 const LIST = "api-templates-list";
 const DETAILS = "api-templates-details";
 const FLOWS = "api-templates-flows";
+const FIXTURES = "api-templates-fixtures";
+const CLEANUP = "api-templates-clean-up";
 
 const NAV: Step = { nav: "API Templates" };
 const READY: Step = { waitFor: { role: "tab", nameRe: "^Templates" } };
+const TO_FIXTURES: Step[] = [
+  NAV,
+  READY,
+  { click: { role: "tab", nameRe: "^Fixtures" } },
+  { waitFor: { role: "listitem", name: "Locked user" } },
+];
 
 export const apiTemplates: Screen = {
   id: "api-templates",
@@ -49,11 +60,30 @@ export const apiTemplates: Screen = {
       route: [NAV, READY, { click: { role: "tab", nameRe: "^Flows" } }, { waitFor: { role: "heading", name: "Set up a locked account" } }],
       alt: "The Flows tab: a flow of three stages drawn as a map, with the templates that perform each stage",
     },
+    {
+      id: FIXTURES,
+      route: TO_FIXTURES,
+      alt: "The Fixtures tab: three fixtures, each with its steps, what it last made and when it last ran",
+    },
+    {
+      id: CLEANUP,
+      route: [
+        ...TO_FIXTURES,
+        { click: { role: "button", name: "Clean up test-made drafts" } },
+        { waitFor: { role: "list", name: "Drafts to clean up" } },
+      ],
+      alt: "Clean up test-made drafts: the environment, the name prefix and the age, and the drafts that match, two of them ticked",
+    },
   ],
   groups: [
     { id: "templates", title: "The templates", summary: "Every template of the project, by module, and what each one does." },
     { id: "details", title: "Inside a template", summary: "Its parameters, its requests, its proof, and every time it ran." },
     { id: "flows", title: "Flows", summary: "The stages a record goes through, in the order the application allows, and the templates that perform them." },
+    {
+      id: "fixtures",
+      title: "Fixtures and cleaning up",
+      summary: "The drafts a script's setup builds its data from, and deleting the drafts the tests made once you are done with them.",
+    },
   ],
   controls: [
     // --- The list ------------------------------------------------------------
@@ -107,6 +137,10 @@ export const apiTemplates: Screen = {
       locate: { role: "tab", nameRe: "^Templates" },
       name: "Templates",
       does: "The templates, grouped by the module of the application they belong to, with how many there are.",
+      tips: [
+        "A delete template marked **needs a kind** was saved before Clean up existed. Clean up cannot use it until your assistant proves it again and names the kind of thing it deletes.",
+        "A delete template is only ever run by **Clean up test-made drafts**, on a draft the tests made. Nothing else runs it.",
+      ],
     },
     {
       id: "tab-flows",
@@ -115,6 +149,16 @@ export const apiTemplates: Screen = {
       locate: { role: "tab", nameRe: "^Flows" },
       name: "Flows",
       does: "The flows, each drawn as a map of its stages.",
+    },
+    {
+      id: "tab-fixtures",
+      shot: LIST,
+      group: "fixtures",
+      locate: { role: "tab", nameRe: "^Fixtures" },
+      name: "Fixtures",
+      does:
+        "The fixtures, with how many there are. A fixture is a draft your assistant has taught the app to build for a script: the templates to run, in order, and what they make. " +
+        "A script's setup names the fixture it needs, and the case reads that draft's values when it runs.",
     },
     {
       id: "search",
@@ -269,6 +313,110 @@ export const apiTemplates: Screen = {
       name: "Remove flow",
       does: "Removes the flow from this computer, after asking. Its templates stay, but cannot run until a flow with their stage is saved again.",
     },
+
+    // --- Fixtures --------------------------------------------------------------
+    {
+      id: "clean-up",
+      shot: FIXTURES,
+      group: "fixtures",
+      locate: { role: "button", name: "Clean up test-made drafts" },
+      name: "Clean up test-made drafts",
+      does:
+        "Opens the Clean up window, to delete the drafts fixtures and setups made once you no longer need them. " +
+        "Only drafts the tests recorded making are ever listed: nothing you or anyone else made by hand can appear there.",
+    },
+    {
+      id: "fixture",
+      shot: FIXTURES,
+      group: "fixtures",
+      locate: { role: "listitem", name: "Locked user" },
+      name: "Fixture",
+      does:
+        "One fixture: its name, the account it runs as, and when it last ran, with a green or red dot for how it went. " +
+        "Below, its **Steps**, the templates it runs in order, and its **Outputs**, the values its newest successful run made. Those are what scripts using it read now.",
+    },
+    {
+      id: "rebuild",
+      shot: FIXTURES,
+      group: "fixtures",
+      locate: { role: "button", name: "Rebuild Locked user" },
+      name: "Rebuild",
+      does:
+        "Makes a fresh draft by running the fixture's steps again. Scripts that use it follow the new draft from then on. " +
+        "Use it when a test has left the draft in a state the next run cannot use; the old draft is left where it is, for **Clean up** to delete.",
+    },
+    {
+      id: "run-fixture",
+      shot: FIXTURES,
+      group: "fixtures",
+      locate: { role: "button", name: "Run User whose session expires" },
+      name: "Run",
+      does:
+        "Builds a fixture that has never been built. Once it has, the button reads **Rebuild**. One fixture or template runs at a time, and a run that fails says why and leaves the previous outputs in place.",
+    },
+    {
+      id: "remove-fixture",
+      shot: FIXTURES,
+      group: "fixtures",
+      locate: { role: "button", name: "Remove Locked user" },
+      name: "Remove",
+      does:
+        "Removes the fixture and its run history from this computer, after asking. What it already made stays on your site and in the record of test-made drafts, so Clean up can still find it. A script that uses it cannot run until it is saved again.",
+    },
+
+    // --- Clean up ----------------------------------------------------------------
+    {
+      id: "clean-up-environment",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { role: "combobox", name: "Environment" },
+      name: "Environment",
+      does:
+        "The environment whose drafts are listed. Any environment can be looked at, but only the active one deletes: pick another, and the window asks you to switch to it on the AI Bridge tab first.",
+    },
+    {
+      id: "clean-up-prefix",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { role: "textbox", name: "Name starts with" },
+      name: "Name starts with",
+      does: "Lists only drafts whose name starts with this. It begins as the environment's test name prefix, set in **Edit environments** on the AI Bridge tab.",
+    },
+    {
+      id: "clean-up-older-than",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { role: "spinbutton", name: "Older than (days)" },
+      name: "Older than (days)",
+      does: "Lists only drafts made at least this many days ago, so the drafts of a run still going are left alone.",
+    },
+    {
+      id: "clean-up-drafts",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { role: "list", name: "Drafts to clean up" },
+      name: "Drafts",
+      does:
+        "Every draft that matches: its kind, its name and id, how old it is, and the fixture that made it. Every line starts ticked; untick the ones to keep.",
+    },
+    {
+      id: "clean-up-no-template",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { text: "no proven delete template for address" },
+      name: "No proven delete template",
+      does:
+        "A draft of a kind no proven delete template covers. It cannot be ticked, so it stays. Ask your assistant to build and prove a delete template for that kind.",
+    },
+    {
+      id: "clean-up-delete",
+      shot: CLEANUP,
+      group: "fixtures",
+      locate: { role: "button", nameRe: "^Delete \\d+ drafts$" },
+      name: "Delete N drafts",
+      does:
+        "Asks first, naming how many and where, such as **Delete 2 drafts from Staging? This cannot be undone.** Once you confirm, each draft is deleted by the proven delete template for its kind, one at a time, and each result shows as it comes in. **Stop** ends the cleanup after the draft it is on.",
+    },
     {
       id: "stage-box",
       shot: FLOWS,
@@ -325,6 +473,15 @@ export const apiTemplates: Screen = {
         "Follow the arrows from left to right: each stage needs the stages that point to it.",
         "Each stage lists the templates that perform it; **No template yet** marks a gap.",
         "Press **View flow** to see the flow on a page of its own, with the check each stage runs.",
+      ],
+    },
+    {
+      title: "Clean up the drafts the tests made",
+      steps: [
+        "Open the **Fixtures** tab and press **Clean up test-made drafts**.",
+        "Check the environment, the name prefix and how many days old a draft must be.",
+        "Untick any draft you want to keep, then press **Delete N drafts** and confirm.",
+        "Watch each result come in. Press **Stop** to end it early.",
       ],
     },
   ],
