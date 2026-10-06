@@ -33,5 +33,6 @@ pub mod input;
 pub mod expect;
 pub mod keys;
 pub mod drag;
+pub mod dialogs;
 pub mod actions;
 pub mod snapshot;

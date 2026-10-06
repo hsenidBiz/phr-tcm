@@ -11,9 +11,11 @@ use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
-use super::{store, StepScript};
+use super::{store, StepDialog, StepScript};
+use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN, WHEN_VISIBLE_MS,
+    execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
+    WHEN_VISIBLE_MS,
 };
 use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
@@ -244,6 +246,11 @@ pub struct InRun<'a> {
     /// (`area_routes`). `None` reads as none resolved: a named area then
     /// fails as not recorded.
     pub areas: Option<&'a NamedAreas>,
+    /// The case's `fail_on_unexpected_dialog`: a dialog no `expect_dialog`
+    /// claimed fails the step it appeared in.
+    pub fail_on_unexpected_dialog: bool,
+    /// Learned back: the dialog the step met, for its record.
+    pub dialog: Option<StepDialog>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -292,10 +299,28 @@ pub async fn run_step_in_run<D: Driver>(
     // A tab opened from now on, or during the step before, is one this
     // step's `expect_tab` may claim.
     d.step_began();
+    // A dialog from before the step began is not the step's. Every
+    // `expect_dialog` the step holds is armed now, in order, so one that an
+    // earlier action of the step opens is claimed and answered as asked.
+    let plans: Vec<dialogs::DialogPlan> = step
+        .actions
+        .iter()
+        .filter_map(expectation)
+        .enumerate()
+        .map(|(i, want)| dialogs::plan_of(i as u32, want.answer, &want.prompt_text.map(str::to_string)))
+        .collect();
+    if let Some(book) = d.dialog_book() {
+        book.take_seen();
+        book.arm(plans);
+    }
+    let mut dialogs_read = 0usize;
+    let fail_on_unexpected = run.fail_on_unexpected_dialog;
+    let mut deferred: Vec<(usize, u32)> = Vec::new();
     let mark = d.net_mark();
     let began = Instant::now();
     run.began = Some(began);
     run.tab = None;
+    run.dialog = None;
     let mut ran_in: Option<String> = None;
     let areas = run.areas;
     let here =
@@ -314,6 +339,13 @@ pub async fn run_step_in_run<D: Driver>(
             stopped.screenshot = picture(d, root).await;
             out.push(stopped);
             blocked = Some(AFTER_SAVE_BLOCKED);
+            continue;
+        }
+        // An `expect_dialog` judges once the step's other actions are done:
+        // its place is kept, and filled then.
+        if matches!(action, Action::ExpectDialog { .. }) {
+            deferred.push((out.len(), deferred.len() as u32));
+            out.push(ActionOutcome::failed("not run yet"));
             continue;
         }
         // The tab an action acted in. A tab action acts on the tabs, not in
@@ -434,15 +466,70 @@ pub async fn run_step_in_run<D: Driver>(
             outcome = ActionOutcome::failed(sentence);
             blocked = Some(AFTER_SAVE_BLOCKED);
         }
+        unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
     }
+    // Each `expect_dialog`, in order, now the rest of the step has run.
+    for (slot, id) in deferred {
+        let mut outcome = match (blocked, step.actions.get(slot).and_then(expectation)) {
+            (Some(why), _) => ActionOutcome::failed(why),
+            (None, None) => ActionOutcome::failed("expect_dialog could not be read"),
+            (None, Some(want)) => dialogs::judge(d, id, &want, timing).await,
+        };
+        unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        if !outcome.ok && !outcome.harness && blocked.is_none() {
+            outcome.screenshot = picture(d, root).await;
+        }
+        out[slot] = outcome;
+    }
+    // What no dialog claimed goes no further than this step.
+    let seen = match d.dialog_book() {
+        Some(book) => {
+            book.disarm();
+            book.take_seen()
+        }
+        None => Vec::new(),
+    };
+    // One that opened after the step's last look: still this step's.
+    if let Some(last) = out.last_mut() {
+        if last.ok {
+            if let Some(s) = seen.iter().skip(dialogs_read).find(|s| s.claimed_by.is_none()) {
+                if fail_on_unexpected {
+                    *last = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+                }
+            }
+        }
+    }
+    run.dialog = seen
+        .iter()
+        .find(|s| s.claimed_by.is_some())
+        .or_else(|| seen.first())
+        .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
     let ended_in = d.tab_name();
     run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
     Ok(out)
+}
+
+/// A dialog nobody expected, seen since the last look (`read` counts how
+/// many of the book's dialogs have been looked at): with
+/// `fail_on_unexpected_dialog` it fails `outcome`, when nothing else did,
+/// with its sentence. Without, the action already said it was accepted.
+fn unexpected_dialog<D: Driver>(d: &mut D, read: &mut usize, fail: bool, outcome: &mut ActionOutcome) {
+    let Some(book) = d.dialog_book() else {
+        return;
+    };
+    let seen = book.seen();
+    let first = seen.iter().skip(*read).find(|s| s.claimed_by.is_none()).cloned();
+    *read = seen.len();
+    if let Some(s) = first {
+        if fail && outcome.ok {
+            *outcome = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+        }
+    }
 }
 
 /// The supervised browser keeps one set of tabs across the cases a person

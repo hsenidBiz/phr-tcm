@@ -395,7 +395,12 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
             return ReplayEnd::Stopped { step: k };
         }
         progress(k, n - 1);
-        let mut in_run = InRun { cancel: Some(cancel), areas: Some(&areas), ..Default::default() };
+        let mut in_run = InRun {
+            cancel: Some(cancel),
+            areas: Some(&areas),
+            fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
+            ..Default::default()
+        };
         let ran = runner::run_step_in_run(
             d,
             root,

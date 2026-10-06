@@ -18,7 +18,7 @@
 
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
-use crate::browser::actions::{Action, ActionOutcome};
+use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 
 /// The result buckets, in the order the report (and the Auto Run screen's
 /// filter row) lists them.
@@ -116,6 +116,19 @@ pub fn action_words(action: &Action) -> String {
             Some(n) if *n > 1 => format!("press {} {n} times", key.trim()),
             _ => format!("press {}", key.trim()),
         },
+        Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
+            let said = match (text, contains) {
+                (Some(t), _) => format!(" saying \"{t}\""),
+                (None, Some(c)) => format!(" containing \"{c}\""),
+                (None, None) => String::new(),
+            };
+            let then = match (answer, prompt_text) {
+                (DialogAnswer::Accept, Some(p)) => format!(", type \"{p}\" and press OK"),
+                (DialogAnswer::Accept, None) => " and press OK".to_string(),
+                (DialogAnswer::Dismiss, _) => " and press Cancel".to_string(),
+            };
+            format!("expect a dialog{said}{then}")
+        }
         Action::Drag { from, to, position, .. } => format!(
             "drag {} {} {}",
             from.describe(),

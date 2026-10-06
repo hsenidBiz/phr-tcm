@@ -7,7 +7,7 @@ use crate::common;
 
 use common::{ready_probe, FakePage, ScriptedDriver};
 use serde_json::json;
-use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
+use v2_lib::browser::actions::{execute_in, execute_with, Action, DialogAnswer, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
@@ -333,7 +333,7 @@ async fn a_dialog_the_page_showed_is_mentioned() {
     d.dialogs.push("alert: Saved!".into());
     let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
     assert!(out.ok);
-    assert!(out.detail.contains("alert: Saved!") && out.detail.contains("accepted"), "{}", out.detail);
+    assert!(out.detail.ends_with(" (an alert dialog was accepted: \"Saved!\")"), "{}", out.detail);
 }
 
 /// A navigation landing between the readiness wait and the highlight
@@ -649,6 +649,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
         Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
+        Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -668,6 +669,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_download"
                 | "expect_tab"
                 | "expect_tab_closed"
+                | "expect_dialog"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {

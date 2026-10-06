@@ -8,7 +8,7 @@
 use v2_lib::autorun::guide::{autorun_guide, ACTION_KINDS};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::store::{configured_root, set_root};
-use v2_lib::browser::actions::Action;
+use v2_lib::browser::actions::{Action, DialogAnswer};
 
 /// Drift gate. An action the executor understands but the guide never
 /// mentions is one the assistant will never write; an action the guide
@@ -56,6 +56,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
         Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
+        Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
     ];
     let emitted: Vec<String> = samples
         .iter()

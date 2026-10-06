@@ -74,6 +74,13 @@ describe("a sentence for every action kind", () => {
     [{ kind: "return_to_area", area: "  " }, "Return to the case's area"],
     [{ kind: "press_key", key: "Tab" }, "Press Tab"],
     [{ kind: "press_key", key: "Ctrl+ArrowUp" }, "Press Ctrl+ArrowUp"],
+    [{ kind: "expect_dialog", text: "Delete this cycle?", answer: "dismiss" }, 'Expect a dialog saying "Delete this cycle?" and press Cancel'],
+    [{ kind: "expect_dialog", contains: "saved", answer: "accept" }, 'Expect a dialog containing "saved" and press OK'],
+    [{ kind: "expect_dialog", answer: "accept" }, "Expect a dialog and press OK"],
+    [
+      { kind: "expect_dialog", text: "Your name?", answer: "accept", prompt_text: "Kim", within_ms: 5000 },
+      'Expect a dialog saying "Your name?", type "Kim" and press OK (up to 5 s)',
+    ],
     [{ kind: "press_key", key: "Ctrl+ArrowUp", times: 1 }, "Press Ctrl+ArrowUp"],
     [{ kind: "press_key", key: "Ctrl+ArrowUp", times: 3 }, "Press Ctrl+ArrowUp 3 times"],
     [
@@ -139,7 +146,7 @@ describe("a sentence for every action kind", () => {
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
-        "expect_tab_closed", "drag",
+        "expect_tab_closed", "drag", "expect_dialog",
       ].sort(),
     );
   });
@@ -269,6 +276,8 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a press_key times that is not a number", { kind: "press_key", key: "Tab", times: "twice" }],
     ["a drag position it does not know", { kind: "drag", from: "#a", to: "#b", position: "beside" }],
     ["a drag with no to", { kind: "drag", from: "#a" }],
+    ["a dialog answer it does not know", { kind: "expect_dialog", answer: "maybe" }],
+    ["a dialog with no answer", { kind: "expect_dialog", text: "x" }],
   ])("%s", (_, action) => {
     expect(odd(action)).toBe(UNREADABLE);
   });

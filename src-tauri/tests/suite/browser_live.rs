@@ -320,7 +320,7 @@ async fn an_alert_does_not_freeze_the_run() {
     let next = run(&mut live, json!({ "kind": "expect_text", "selector": "#count", "equals": "clicked 1" })).await;
     assert!(next.ok, "{}", next.detail);
     assert!(
-        out.detail.contains("alert: Saved!") || next.detail.contains("alert: Saved!"),
+        [&out.detail, &next.detail].iter().any(|d| d.contains("(an alert dialog was accepted: \"Saved!\")")),
         "nobody was told about the alert: {:?} / {:?}",
         out.detail,
         next.detail
@@ -2262,6 +2262,50 @@ document.getElementById('loads').textContent = 'load ' + n;
         }
     });
     port
+}
+
+/// A `confirm` the page opens is dismissed by the step's `expect_dialog`,
+/// which then checks its words; the page writes what its `confirm` was
+/// answered. A dialog nobody expected is accepted, and said on the step.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_dialog_answers_a_real_confirm() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-dialog.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let dir = tempfile::tempdir().unwrap();
+    let mut account = None;
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 1, "actions": [
+        { "kind": "click", "selector": { "css": "#delete" } },
+        { "kind": "expect_dialog", "text": "Delete this cycle?", "answer": "dismiss" },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "kept" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[1].detail, "a confirm dialog said \"Delete this cycle?\"; pressed Cancel");
+
+    // The wrong words: still answered as asked (OK here), then failed.
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 2, "actions": [
+        { "kind": "click", "selector": { "css": "#delete" } },
+        { "kind": "expect_dialog", "contains": "archive", "answer": "accept" },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "deleted" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert_eq!(out[1].detail, "the dialog said \"Delete this cycle?\", which does not contain \"archive\"");
+    assert!(out[2].ok, "the page went on: {out:?}");
+
+    // Nobody expected this alert: accepted, said, and the page went on.
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 3, "actions": [
+        { "kind": "click", "selector": { "css": "#greet" } },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "greeted" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    let said = out.iter().any(|o| o.detail.contains("(an alert dialog was accepted: \"Hello\")"));
+    assert!(said, "{out:?}");
 }
 
 /// `drag` reorders a list sorted by pointer events (the SortableJS kind)

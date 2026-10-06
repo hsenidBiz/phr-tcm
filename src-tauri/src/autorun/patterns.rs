@@ -153,6 +153,13 @@ fn tail<'a>(detail: &'a str, target: Option<&str>) -> &'a str {
         Some(i) => &detail[..i],
         None => detail,
     };
+    // A dialog nobody expected, said after the sentence it was read during
+    // (` (a confirm dialog was accepted: "...")`): the page's words, which
+    // could read as anything.
+    let detail = match detail.find(crate::browser::dialogs::WAS_ACCEPTED).and_then(|w| detail[..w].rfind(" (a")) {
+        Some(i) => &detail[..i],
+        None => detail,
+    };
     let Some(rest) = detail.strip_prefix("waited ") else {
         return detail;
     };
@@ -206,6 +213,14 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
         || whole.starts_with("navigate needs ")
     {
         return ErrorClass::Navigation;
+    }
+    // An `expect_dialog`'s own sentences: no dialog is nothing found; the
+    // wrong words are text that did not match.
+    if whole.starts_with(crate::browser::dialogs::NO_DIALOG) {
+        return ErrorClass::NotFound;
+    }
+    if whole.starts_with("the dialog said \"") {
+        return ErrorClass::TextMismatch;
     }
     if whole.starts_with(crate::browser::drag::DID_NOT_FINISH) {
         return ErrorClass::TimedOut;
@@ -376,6 +391,7 @@ pub fn action_target(action: &Action) -> Option<String> {
             None => "the case's area".to_string(),
         }),
         Action::PressKey { key, .. } => Some(format!("the {} key", key.trim())),
+        Action::ExpectDialog { .. } => Some("a dialog".to_string()),
         // What is picked up: a drag that cannot start is about it.
         Action::Drag { from, .. } => Some(from.describe()),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),

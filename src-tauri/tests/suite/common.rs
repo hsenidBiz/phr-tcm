@@ -14,6 +14,7 @@ use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{
     no_new_tab, no_tab, tab_did_not_close, tab_taken, CdpError, Driver, Event, MAIN_CANNOT_CLOSE, MAIN_TAB,
 };
+use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::downloads::DownloadEntry;
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
@@ -71,6 +72,14 @@ pub struct ScriptedDriver {
     /// Its tabs, as a test models them (`Tabs`): which tab each call went
     /// to, and what the tab actions did.
     pub tabs: Tabs,
+    /// The run's dialog book, as a real browser's (`Cdp`) keeps it.
+    pub book: DialogBook,
+    /// A dialog the page opens once a call to the named method is made:
+    /// (method, kind, message). Answered at once, as `Cdp` answers one - the
+    /// answer is recorded as a `Page.handleJavaScriptDialog` call in the tab
+    /// the dialog opened in - and, when nobody expected it, noted for
+    /// `take_dialogs`. Fires once.
+    pub dialogs_on_call: Vec<(String, String, String)>,
 }
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
@@ -138,6 +147,8 @@ impl ScriptedDriver {
             downloads: vec![],
             downloads_on_call: vec![],
             tabs: Tabs::default(),
+            book: DialogBook::default(),
+            dialogs_on_call: vec![],
         }
     }
 
@@ -225,7 +236,25 @@ impl Driver for ScriptedDriver {
             e.started_at = Instant::now();
             self.downloads.push(e);
         }
-        (self.handler)(method, &params)
+        let reply = (self.handler)(method, &params);
+        let mut opened = vec![];
+        self.dialogs_on_call.retain(|(m, kind, message)| {
+            if m == method {
+                opened.push((kind.clone(), message.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (kind, message) in opened {
+            let answer = self.book.opened(&kind, &message);
+            self.tabs.calls.push((self.tabs.now(), "Page.handleJavaScriptDialog".to_string()));
+            self.calls.push(("Page.handleJavaScriptDialog".to_string(), answer));
+            if self.book.seen().last().is_some_and(|s| s.claimed_by.is_none()) {
+                self.dialogs.push(format!("{kind}: {message}"));
+            }
+        }
+        reply
     }
 
     async fn wait_event(&mut self, method: &str, _limit: Duration) -> Result<Event, CdpError> {
@@ -242,6 +271,10 @@ impl Driver for ScriptedDriver {
 
     fn take_dialogs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.dialogs)
+    }
+
+    fn dialog_book(&mut self) -> Option<&mut DialogBook> {
+        Some(&mut self.book)
     }
 
     fn page_log(&self) -> Vec<String> {

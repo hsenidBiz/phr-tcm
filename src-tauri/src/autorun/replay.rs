@@ -145,6 +145,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         screenshot: None,
         downloads: Vec::new(),
         tab: None,
+        dialog: None,
     }
 }
 
@@ -379,7 +380,7 @@ async fn run_case_in<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -405,6 +406,7 @@ async fn run_case_in<D: Driver>(
                 screenshot: None,
                 downloads: Vec::new(),
                 tab: None,
+                dialog: None,
             });
         }
     }
@@ -434,7 +436,12 @@ async fn run_case_in<D: Driver>(
             Some(r) => runner::AreaRoute::To(r),
             None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
         };
-        let mut in_run = runner::InRun { cancel: Some(cancel), areas: Some(&areas), ..Default::default() };
+        let mut in_run = runner::InRun {
+            cancel: Some(cancel),
+            areas: Some(&areas),
+            fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
+            ..Default::default()
+        };
         let outcomes = match runner::run_step_in_run(
             d,
             root,
@@ -476,7 +483,7 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog });
     }
 
     // The case's one wait for a download still arriving (`one_go` does not

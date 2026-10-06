@@ -136,6 +136,11 @@ pub struct CaseScript {
     /// time stands in for it then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_at: Option<String>,
+    /// A browser dialog no `expect_dialog` claimed fails the step it
+    /// appeared in (`an unexpected <kind> dialog appeared: ...`). Off, it
+    /// is accepted and said on the step, as always. Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fail_on_unexpected_dialog: bool,
 }
 
 /// One record a case relies on: `stage` of `flow` must be done for `value`,
@@ -202,6 +207,20 @@ pub struct StepRecord {
     /// from before tabs reads the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab: Option<String>,
+    /// The browser dialog the step met, when it met one: the first it
+    /// claimed with an `expect_dialog`, else the first nobody expected.
+    /// Left out when there was none, so older run files read the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<StepDialog>,
+}
+
+/// A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,
+/// `beforeunload`) and its message, cut to 200 characters. Page text,
+/// never a secret.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct StepDialog {
+    pub kind: String,
+    pub message: String,
 }
 
 /// One file in a run's download folder, as Past runs and the review list

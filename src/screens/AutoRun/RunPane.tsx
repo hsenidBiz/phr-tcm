@@ -18,6 +18,7 @@ import {
   type Reset,
   type ResetRecord_Serialize,
   type SignInOutcome,
+  type StepDialog,
 } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -137,6 +138,8 @@ export default function RunPane({
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
   /** The tab a step ran in, for a step that ran outside `main`. */
   const [stepTabs, setStepTabs] = useState<Record<number, string>>({});
+  // The browser dialog each step met, kept on its record as a run keeps it.
+  const [stepDialogs, setStepDialogs] = useState<Record<number, StepDialog>>({});
   const [verdict, setVerdict] = useState("");
   const verdictLabelId = useId();
   const [note, setNote] = useState("");
@@ -253,6 +256,11 @@ export default function RunPane({
       setStepTabs((prev) => {
         const { [stepNumber]: _gone, ...rest } = prev;
         return ranIn ? { ...rest, [stepNumber]: ranIn } : rest;
+      });
+      const met = r.data.dialog;
+      setStepDialogs((prev) => {
+        const { [stepNumber]: _gone, ...rest } = prev;
+        return met ? { ...rest, [stepNumber]: met } : rest;
       });
     } catch (e) {
       // See openBrowser above: a rethrown Error here would otherwise wedge
@@ -529,6 +537,7 @@ export default function RunPane({
           results[s.step_number] ??
           (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
         ...(stepTabs[s.step_number] ? { tab: stepTabs[s.step_number] } : {}),
+        ...(stepDialogs[s.step_number] ? { dialog: stepDialogs[s.step_number] } : {}),
       })),
     ],
     // A case its preconditions blocked says so the way an unattended run
@@ -575,6 +584,7 @@ export default function RunPane({
         setRecords((r) => [...r, record]);
         setResults({});
         setStepTabs({});
+        setStepDialogs({});
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });

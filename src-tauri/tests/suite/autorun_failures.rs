@@ -86,6 +86,7 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
             screenshot: None,
             downloads: vec![],
             tab: None,
+            dialog: None,
         }],
         verdict: "Blocked".to_string(),
         ..empty_case()
@@ -180,6 +181,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         screenshot: None,
                         downloads: vec![],
                         tab: None,
+                        dialog: None,
                     },
                     StepRecord {
                         step_number: 3,
@@ -187,6 +189,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         screenshot: None,
                         downloads: vec![],
                         tab: None,
+                        dialog: None,
                     },
                 ],
                 proposed: "Failed".to_string(),
@@ -212,6 +215,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                     screenshot: None,
                     downloads: vec![],
                     tab: None,
+                    dialog: None,
                 }],
                 proposed: "Failed".to_string(),
                 reason: "step 1: the page refused: no such element".to_string(),
@@ -262,6 +266,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }];
 
     let expected = [
@@ -314,6 +319,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             ..empty_case()
         }],
@@ -342,6 +348,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             ..empty_case()
         }],
@@ -369,6 +376,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }];
 
     let out = describe_failures(&run, &scripts);
@@ -418,6 +426,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             ..empty_case()
         }],
@@ -449,6 +458,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             ..empty_case()
         }],
@@ -472,6 +482,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }];
     let out = describe_failures(&run, &scripts);
     assert!(out
@@ -516,7 +527,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let case = CaseRecord {
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
-        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None }],
+        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None }],
         ..empty_case()
     };
     let expected = Some(
@@ -566,6 +577,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
             screenshot: None,
             downloads: vec![],
             tab: None,
+            dialog: None,
         }],
         ..empty_case()
     };
@@ -594,6 +606,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     };
     let text = describe_failures(&run, std::slice::from_ref(&script));
     let lines: Vec<&str> = text.lines().collect();
@@ -621,6 +634,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     screenshot: None,
                     downloads: vec!["Template.xlsx".to_string()],
                     tab: None,
+                    dialog: None,
                 },
                 StepRecord {
                     step_number: 2,
@@ -628,6 +642,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     screenshot: None,
                     downloads: vec!["errors.csv".to_string(), "errors (2).csv".to_string()],
                     tab: None,
+                    dialog: None,
                 },
                 StepRecord {
                     step_number: 3,
@@ -635,6 +650,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     screenshot: None,
                     downloads: vec![],
                     tab: None,
+                    dialog: None,
                 },
             ],
             ..empty_case()

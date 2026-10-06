@@ -39,6 +39,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "close_tab",
     "expect_tab_closed",
     "drag",
+    "expect_dialog",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -115,6 +116,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
 - `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End, with any of Ctrl, Shift, Alt and Meta held for it (`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`); `times` (1 to 50, default 1) presses it that many times
+- `{ "kind": "expect_dialog", "contains": "delete", "answer": "dismiss" }` - the next browser dialog (alert, confirm, prompt or the leave-page prompt) in any tab: pressed OK (`accept`) or Cancel (`dismiss`), then its message checked against `text` (equal) or `contains` (ignoring case); `prompt_text` and `within_ms` (default 10000) are optional (see "Browser dialogs")
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
@@ -456,6 +458,40 @@ try it waits at most 30 seconds, whatever `within_ms` says.
 
 Watched runs list no downloads, because their download folder is emptied
 when the browser closes; only an unattended run keeps its files.
+
+## Browser dialogs
+
+A page's own `alert`, `confirm` and `prompt`, and the browser's "Leave
+site?" prompt, are answered the moment they open, so the page never
+waits. Without an `expect_dialog`, every one is accepted (OK) and the step
+says so: `a confirm dialog was accepted: "..."`.
+
+To check one and choose the answer, put an `expect_dialog` in the step
+whose action opens it - anywhere in the step: every `expect_dialog` is
+armed when its step starts, claims the next dialog in any tab, and judges
+it once the step's other actions are done:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Delete" } },
+    { "kind": "expect_dialog", "text": "Delete this cycle?", "answer": "dismiss" }
+
+- `answer` is `accept` (OK) or `dismiss` (Cancel), and is required.
+- `text` must equal the message (trimmed); `contains` must appear in it,
+  ignoring case. Give one or neither, never both.
+- `prompt_text` is typed into a `prompt` before OK; it needs `"answer":
+  "accept"`.
+- `within_ms` (default 10000, at most 60000) is how long it waits for its
+  dialog once the step's other actions are done.
+
+A dialog with the wrong words has still been answered as asked, so the
+page carries on; the step fails with `the dialog said "...", not "..."`
+or `the dialog said "...", which does not contain "..."`. No dialog fails
+it with `no dialog appeared within N seconds`. Two dialogs in one step
+need two `expect_dialog`s, in the order the dialogs open.
+
+A case that must notice any dialog it did not expect sets
+`"fail_on_unexpected_dialog": true` beside `case_id`. A dialog nobody
+expected is then still accepted, so the page can go on, and the step it
+appeared in fails with `an unexpected confirm dialog appeared: "..."`.
 
 ## Tabs
 

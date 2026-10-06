@@ -5,6 +5,7 @@
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
+use super::dialogs;
 use super::drag;
 use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
@@ -227,6 +228,34 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
     },
+    /// The next browser dialog (`alert`, `confirm`, `prompt`,
+    /// `beforeunload`) in any tab: answered as `answer` says, with
+    /// `prompt_text` typed into a prompt first, then its message checked -
+    /// equal to `text`, or holding `contains` (ignoring case), or anything
+    /// when neither is given. Armed when its step starts, so a dialog an
+    /// earlier action of the step opens is caught; it waits up to
+    /// `within_ms` (`dialogs::DIALOG_WAIT_MS` when left out) once the
+    /// step's other actions are done. Carried out by the runner, which arms
+    /// a step's expectations; run on its own, it arms itself first.
+    ExpectDialog {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<String>,
+        answer: DialogAnswer,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
+}
+
+/// How an `expect_dialog` answers: OK, or Cancel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogAnswer {
+    Accept,
+    Dismiss,
 }
 
 /// Where on `to` a `drag` drops: its upper part, its lower part, or its
@@ -624,7 +653,9 @@ pub const PAGE_LACKS: &str = "page does NOT contain ";
 pub const URL_IS: &str = "url is ";
 /// What an upload's click opened instead of a file chooser.
 pub const FILE_CHOOSER: &str = "file chooser";
-/// Appended when a page raised dialogs during the action.
+/// Appended, in run files from before `dialogs`, when a page raised
+/// dialogs during the action. Now ` (a <kind> dialog was accepted: ...)`
+/// (`dialogs::accepted`); both are read back by `autorun::patterns`.
 pub const DIALOG_NOTE: &str = " (the page showed ";
 
 /// A harness failure, said plainly: the app under test did nothing wrong,
@@ -826,6 +857,27 @@ impl Action {
             }
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
+            Action::ExpectDialog { text, contains, answer, prompt_text, within_ms } => {
+                if text.is_some() && contains.is_some() {
+                    return Err(dialogs::TEXT_OR_CONTAINS.to_string());
+                }
+                if contains.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                    return Err(
+                        "expect_dialog has an empty contains - every message contains nothing; leave it out to take any message"
+                            .to_string(),
+                    );
+                }
+                if prompt_text.is_some() && *answer == DialogAnswer::Dismiss {
+                    return Err(dialogs::PROMPT_NEEDS_ACCEPT.to_string());
+                }
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    Some(ms) if *ms > dialogs::DIALOG_WAIT_MAX_MS => {
+                        Err(format!("expect_dialog waits at most {} ms, not {ms}", dialogs::DIALOG_WAIT_MAX_MS))
+                    }
+                    _ => Ok(()),
+                }
+            }
             Action::Drag { from, to, within_ms, .. } => {
                 from.validate().map_err(|e| format!("drag from: {e}"))?;
                 to.validate().map_err(|e| format!("drag to: {e}"))?;
@@ -937,6 +989,7 @@ impl Action {
                 | Action::ExpectDownload { .. }
                 | Action::ExpectTab { .. }
                 | Action::ExpectTabClosed { .. }
+                | Action::ExpectDialog { .. }
         )
     }
 }
@@ -1234,6 +1287,23 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
         Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,
+        // Run on its own (a try, a recipe), it arms itself: it can only
+        // catch a dialog that opens from now on.
+        Action::ExpectDialog { .. } => {
+            let Some(want) = expectation(action) else {
+                return ActionOutcome::failed("expect_dialog could not be read");
+            };
+            let plan = dialogs::plan_of(STANDALONE_DIALOG, want.answer, &want.prompt_text.map(str::to_string));
+            if let Some(book) = d.dialog_book() {
+                book.take_seen();
+                book.arm(vec![plan]);
+            }
+            let out = dialogs::judge(d, STANDALONE_DIALOG, &want, timing).await;
+            if let Some(book) = d.dialog_book() {
+                book.disarm();
+            }
+            out
+        }
         Action::Drag { from, to, position, within_ms } => {
             let within = within_ms.unwrap_or(drag::DRAG_WAIT_MS);
             drag::drag(d, from, to, position.unwrap_or_default(), within, timing).await
@@ -1647,13 +1717,40 @@ async fn keep_finding<D: Driver>(
     }
 }
 
-/// A dialog raised BETWEEN two actions is reported with the NEXT one: the
-/// client only reads frames off the socket while a call is in flight, so
-/// nothing is noticed until something asks again.
+/// The id an `expect_dialog` run on its own arms itself under.
+const STANDALONE_DIALOG: u32 = u32::MAX;
+
+/// What an `expect_dialog` checks, or `None` for any other action.
+pub fn expectation(action: &Action) -> Option<dialogs::Expectation<'_>> {
+    match action {
+        Action::ExpectDialog { text, contains, answer, prompt_text, within_ms } => Some(dialogs::Expectation {
+            text: text.as_deref(),
+            contains: contains.as_deref(),
+            answer: *answer,
+            prompt_text: prompt_text.as_deref(),
+            within_ms: within_ms.unwrap_or(dialogs::DIALOG_WAIT_MS),
+        }),
+        _ => None,
+    }
+}
+
+/// A dialog nobody expected, accepted while this action ran, is said on
+/// it: ` (a confirm dialog was accepted: "Leave?")`. One raised BETWEEN two
+/// actions is reported with the NEXT one: the client only reads frames off
+/// the socket while a call is in flight, so nothing is noticed until
+/// something asks again. (Run files from before said
+/// ` (the page showed confirm: Leave? and it was accepted)` - `DIALOG_NOTE`.)
 fn append_dialogs<D: Driver>(d: &mut D, out: &mut ActionOutcome) {
     let dialogs = d.take_dialogs();
     if !dialogs.is_empty() {
-        out.detail.push_str(&format!("{DIALOG_NOTE}{} and it was accepted)", dialogs.join("; ")));
+        let said: Vec<String> = dialogs
+            .iter()
+            .map(|s| match s.split_once(": ") {
+                Some((kind, message)) => dialogs::accepted(kind, message),
+                None => dialogs::accepted("dialog", s),
+            })
+            .collect();
+        out.detail.push_str(&format!(" ({})", said.join("; ")));
     }
 }
 

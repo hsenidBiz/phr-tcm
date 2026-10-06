@@ -397,7 +397,7 @@ fn save_button() -> Action {
 }
 
 fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
-    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None }
+    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None }
 }
 
 fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
@@ -435,6 +435,7 @@ fn script_for(case_id: i32) -> CaseScript {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }
 }
 

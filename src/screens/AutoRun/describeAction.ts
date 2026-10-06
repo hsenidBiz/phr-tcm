@@ -390,6 +390,18 @@ function describeKnown(a: Action): Sentence {
       const times = optNum(a.times);
       return [words(`Press ${str(a.key).trim()}${times !== undefined && times > 1 ? ` ${times} times` : ""}`)];
     }
+    case "expect_dialog": {
+      const text = optStr(a.text);
+      const contains = optStr(a.contains);
+      const said = text !== undefined ? ` saying "${text}"` : contains !== undefined ? ` containing "${contains}"` : "";
+      const answer = str(a.answer);
+      const promptText = optStr(a.prompt_text);
+      let then: string;
+      if (answer === "dismiss") then = " and press Cancel";
+      else if (answer !== "accept") throw new Unreadable();
+      else then = promptText !== undefined ? `, type "${promptText}" and press OK` : " and press OK";
+      return [words(`Expect a dialog${said}${then}${upTo(a.within_ms)}`)];
+    }
     case "drag": {
       const position = optStr(a.position) ?? "onto";
       if (!["before", "after", "onto"].includes(position)) throw new Unreadable();

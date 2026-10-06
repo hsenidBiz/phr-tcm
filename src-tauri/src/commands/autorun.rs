@@ -268,12 +268,14 @@ pub async fn close_autorun_browsers() {
     }
 }
 
-/// What a supervised step answers: one outcome per action, and the tab the
-/// step ran in when that was not `main` (`runner::InRun::tab`).
+/// What a supervised step answers: one outcome per action, the tab the
+/// step ran in when that was not `main` (`runner::InRun::tab`), and the
+/// browser dialog it met, if any (`runner::InRun::dialog`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct StepRun {
     pub outcomes: Vec<ActionOutcome>,
     pub tab: Option<String>,
+    pub dialog: Option<crate::autorun::StepDialog>,
 }
 
 /// Run one step's actions in order and report every outcome. Actions after
@@ -315,7 +317,12 @@ pub async fn auto_run_step(
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
     let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
-    let mut run = crate::autorun::runner::InRun { areas: Some(&areas), ..Default::default() };
+    // The saved script's own choice about dialogs nobody expected.
+    let fail_on_unexpected_dialog = crate::autorun::store::load_script(&root, case_id)
+        .ok()
+        .flatten()
+        .is_some_and(|s| s.fail_on_unexpected_dialog);
+    let mut run = crate::autorun::runner::InRun { areas: Some(&areas), fail_on_unexpected_dialog, ..Default::default() };
     let outcomes = crate::autorun::runner::run_step_in_run(
         &mut session.cdp,
         &root,
@@ -330,7 +337,7 @@ pub async fn auto_run_step(
         &mut run,
     )
     .await?;
-    Ok(StepRun { outcomes, tab: run.tab.take() })
+    Ok(StepRun { outcomes, tab: run.tab.take(), dialog: run.dialog.take() })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised

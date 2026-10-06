@@ -66,6 +66,7 @@ fn script() -> CaseScript {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }
 }
 
@@ -118,6 +119,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -207,6 +209,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }
 }
 
@@ -253,7 +256,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], setup: None, changes: vec![], needs_unchanged: vec![], saved_at: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], setup: None, changes: vec![], needs_unchanged: vec![], saved_at: None, fail_on_unexpected_dialog: false }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -283,6 +286,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -314,6 +318,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
@@ -433,7 +438,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()), downloads: vec![], tab: None }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()), downloads: vec![], tab: None, dialog: None }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,
@@ -655,7 +660,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()), downloads: vec![], tab: None }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()), downloads: vec![], tab: None, dialog: None }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,

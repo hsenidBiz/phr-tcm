@@ -46,6 +46,7 @@ mod autorun_cleanup;
 mod autorun_bridge;
 mod autorun_commands;
 mod autorun_defects;
+mod autorun_dialogs;
 mod autorun_download_files;
 mod autorun_downloads;
 mod autorun_edits;
