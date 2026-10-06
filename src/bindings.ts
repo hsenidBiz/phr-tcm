@@ -530,6 +530,18 @@ export const commands = {
 	 *  is accepted and said on the step, as always. Written only when true.
 	 */
 	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -2100,6 +2112,11 @@ export type CaseRecord_Deserialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  How many page errors a script with `"page_errors": "flag"` met in
+	 *  this case (`page_errors`). Written only when there were any.
+	 */
+	page_errors_seen?: number,
 };
 
 /**
@@ -2138,6 +2155,11 @@ export type CaseRecord_Serialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  How many page errors a script with `"page_errors": "flag"` met in
+	 *  this case (`page_errors`). Written only when there were any.
+	 */
+	page_errors_seen?: number,
 };
 
 /**
@@ -2242,6 +2264,18 @@ export type CaseScript_Deserialize = {
 	 *  is accepted and said on the step, as always. Written only when true.
 	 */
 	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 };
 
 /**
@@ -2340,6 +2374,18 @@ export type CaseScript_Serialize = {
 	 *  is accepted and said on the step, as always. Written only when true.
 	 */
 	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 };
 
 export type CellMatch = "exact" | "contains";
@@ -3198,6 +3244,13 @@ export type Org = {
 	name: string,
 	url: string,
 };
+
+/**  What a script does with the page's own errors. */
+export type PageErrors = 
+/**  The step fails. */
+"fail" | 
+/**  The step is judged as usual; the case counts them. */
+"flag";
 
 /**  Both schemes a page can wear, and which one it opens in. */
 export type PagePalette = {
@@ -4527,6 +4580,11 @@ export type StepRun_Deserialize = {
 	outcomes: ActionOutcome_Deserialize[],
 	tab: string | null,
 	dialog: StepDialog | null,
+	/**
+	 *  How many page errors a `"page_errors": "flag"` script counted in the
+	 *  step (`runner::InRun::page_errors_seen`).
+	 */
+	page_errors_seen: number,
 };
 
 /**
@@ -4538,6 +4596,11 @@ export type StepRun_Serialize = {
 	outcomes: ActionOutcome_Serialize[],
 	tab: string | null,
 	dialog: StepDialog | null,
+	/**
+	 *  How many page errors a `"page_errors": "flag"` script counted in the
+	 *  step (`runner::InRun::page_errors_seen`).
+	 */
+	page_errors_seen: number,
 };
 
 /**  The actions that carry out one numbered step of a test case. */

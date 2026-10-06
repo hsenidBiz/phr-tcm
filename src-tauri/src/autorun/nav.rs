@@ -822,6 +822,7 @@ pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[Cas
     check_no_addresses(&nav, scripts)?;
     check_areas(&nav, scripts)?;
     super::marks::check_saved(scripts)?;
+    super::page_errors::check_saved(scripts)?;
     super::preconditions::check_saved(root, org, project, scripts)?;
     super::setup::check_saved_all(root, org, project, scripts)
 }

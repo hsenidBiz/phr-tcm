@@ -276,6 +276,9 @@ pub struct StepRun {
     pub outcomes: Vec<ActionOutcome>,
     pub tab: Option<String>,
     pub dialog: Option<crate::autorun::StepDialog>,
+    /// How many page errors a `"page_errors": "flag"` script counted in the
+    /// step (`runner::InRun::page_errors_seen`).
+    pub page_errors_seen: u32,
 }
 
 /// Run one step's actions in order and report every outcome. Actions after
@@ -317,12 +320,16 @@ pub async fn auto_run_step(
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
     let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
-    // The saved script's own choice about dialogs nobody expected.
-    let fail_on_unexpected_dialog = crate::autorun::store::load_script(&root, case_id)
-        .ok()
-        .flatten()
-        .is_some_and(|s| s.fail_on_unexpected_dialog);
-    let mut run = crate::autorun::runner::InRun { areas: Some(&areas), fail_on_unexpected_dialog, ..Default::default() };
+    // The saved script's own choices about dialogs nobody expected and the
+    // page's own errors.
+    let saved = crate::autorun::store::load_script(&root, case_id).ok().flatten();
+    let mut run = crate::autorun::runner::InRun {
+        areas: Some(&areas),
+        fail_on_unexpected_dialog: saved.as_ref().is_some_and(|s| s.fail_on_unexpected_dialog),
+        page_errors: saved.as_ref().and_then(|s| s.page_errors),
+        ignore_page_errors: saved.map(|s| s.ignore_page_errors).unwrap_or_default(),
+        ..Default::default()
+    };
     let outcomes = crate::autorun::runner::run_step_in_run(
         &mut session.cdp,
         &root,
@@ -337,7 +344,7 @@ pub async fn auto_run_step(
         &mut run,
     )
     .await?;
-    Ok(StepRun { outcomes, tab: run.tab.take(), dialog: run.dialog.take() })
+    Ok(StepRun { outcomes, tab: run.tab.take(), dialog: run.dialog.take(), page_errors_seen: run.page_errors_seen })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised

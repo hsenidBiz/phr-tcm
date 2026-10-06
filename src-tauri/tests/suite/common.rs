@@ -15,6 +15,7 @@ use v2_lib::browser::cdp::{
     no_new_tab, no_tab, tab_did_not_close, tab_taken, CdpError, Driver, Event, MAIN_CANNOT_CLOSE, MAIN_TAB,
 };
 use v2_lib::browser::dialogs::DialogBook;
+use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
@@ -80,6 +81,9 @@ pub struct ScriptedDriver {
     /// the dialog opened in - and, when nobody expected it, noted for
     /// `take_dialogs`. Fires once.
     pub dialogs_on_call: Vec<(String, String, String)>,
+    /// The run's page errors, fed every event this driver emits after a
+    /// call, as `Cdp` feeds its own.
+    pub page_errors: PageErrorBook,
 }
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
@@ -149,6 +153,7 @@ impl ScriptedDriver {
             tabs: Tabs::default(),
             book: DialogBook::default(),
             dialogs_on_call: vec![],
+            page_errors: PageErrorBook::default(),
         }
     }
 
@@ -215,6 +220,7 @@ impl Driver for ScriptedDriver {
             }
         }
         for ev in fired {
+            self.page_errors.observe(&ev);
             if let Some(net) = self.net.as_mut() {
                 net.observe(&ev);
                 if ev.method.starts_with("Network.") {
@@ -275,6 +281,10 @@ impl Driver for ScriptedDriver {
 
     fn dialog_book(&mut self) -> Option<&mut DialogBook> {
         Some(&mut self.book)
+    }
+
+    fn page_error_book(&mut self) -> Option<&mut PageErrorBook> {
+        Some(&mut self.page_errors)
     }
 
     fn page_log(&self) -> Vec<String> {

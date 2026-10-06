@@ -153,6 +153,11 @@ fn tail<'a>(detail: &'a str, target: Option<&str>) -> &'a str {
         Some(i) => &detail[..i],
         None => detail,
     };
+    // The page's own errors, said after the step's last words.
+    let detail = match detail.find(crate::browser::page_errors::NOTE) {
+        Some(i) => &detail[..i],
+        None => detail,
+    };
     // A dialog nobody expected, said after the sentence it was read during
     // (` (a confirm dialog was accepted: "...")`): the page's words, which
     // could read as anything.

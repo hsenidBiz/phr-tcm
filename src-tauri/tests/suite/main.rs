@@ -56,6 +56,7 @@ mod autorun_guide;
 mod autorun_lease;
 mod autorun_marks;
 mod autorun_nav;
+mod autorun_page_errors;
 mod autorun_patterns;
 mod autorun_plan;
 mod autorun_preconditions;

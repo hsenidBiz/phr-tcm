@@ -19,6 +19,7 @@ pub mod guide;
 pub mod lease;
 pub mod marks;
 pub mod nav;
+pub mod page_errors;
 pub mod patterns;
 pub mod plan;
 pub mod preconditions;
@@ -141,6 +142,26 @@ pub struct CaseScript {
     /// is accepted and said on the step, as always. Written only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fail_on_unexpected_dialog: bool,
+    /// Whether the page's own errors - uncaught script errors and 5xx
+    /// answers - fail the step they appear in (`fail`) or are counted on
+    /// the case (`flag`). Absent: they are not looked at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_errors: Option<PageErrors>,
+    /// Phrases whose page errors are not counted: found, ignoring case, in
+    /// a script error's message or a request's path. At most 10. Written
+    /// only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore_page_errors: Vec<String>,
+}
+
+/// What a script does with the page's own errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum PageErrors {
+    /// The step fails.
+    Fail,
+    /// The step is judged as usual; the case counts them.
+    Flag,
 }
 
 /// One record a case relies on: `stage` of `flow` must be done for `value`,
@@ -269,6 +290,10 @@ pub struct CaseRecord {
     /// (`preconditions::NOT_CHECKED`). Never a reason to block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    /// How many page errors a script with `"page_errors": "flag"` met in
+    /// this case (`page_errors`). Written only when there were any.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub page_errors_seen: u32,
 }
 
 /// Recorded once a run has been sent to Azure DevOps, so a stale review

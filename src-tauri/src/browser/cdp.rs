@@ -655,6 +655,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`dialogs`). One for the whole run, never per tab: an
     /// `expect_dialog` claims the next dialog wherever it opens.
     book: super::dialogs::DialogBook,
+    /// The page errors every tab met since the runner last took them
+    /// (`page_errors`). One for the whole run, like `book`.
+    page_errors: super::page_errors::PageErrorBook,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -755,6 +758,7 @@ impl<T: Transport> Cdp<T> {
             seeds: vec![],
             setup: HashMap::new(),
             book: super::dialogs::DialogBook::default(),
+            page_errors: super::page_errors::PageErrorBook::default(),
         }
     }
 
@@ -2005,6 +2009,9 @@ impl<T: Transport> Cdp<T> {
         let Some(i) = at else {
             return Ok(());
         };
+        // Any tab's script errors and 5xx answers, for a script that checks
+        // page errors - read before the page log takes the event.
+        self.page_errors.observe(&ev);
         let tab = &mut self.tabs[i];
         tab.observe_documents(&ev);
         let parked = ev.method == "Network.requestWillBeSent" && !tab.parked.is_empty();
@@ -2271,6 +2278,11 @@ pub trait Driver {
     fn dialog_book(&mut self) -> Option<&mut super::dialogs::DialogBook> {
         None
     }
+    /// The run's page errors (`page_errors`). A driver that reads no page
+    /// events (a test's bare fake) has none.
+    fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
+        None
+    }
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2360,6 +2372,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn dialog_book(&mut self) -> Option<&mut super::dialogs::DialogBook> {
         Some(&mut self.book)
+    }
+    fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
+        Some(&mut self.page_errors)
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)

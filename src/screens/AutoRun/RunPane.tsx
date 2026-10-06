@@ -140,6 +140,9 @@ export default function RunPane({
   const [stepTabs, setStepTabs] = useState<Record<number, string>>({});
   // The browser dialog each step met, kept on its record as a run keeps it.
   const [stepDialogs, setStepDialogs] = useState<Record<number, StepDialog>>({});
+  // The page errors each step counted under `"page_errors": "flag"`; the
+  // case's record carries their sum.
+  const [stepPageErrors, setStepPageErrors] = useState<Record<number, number>>({});
   const [verdict, setVerdict] = useState("");
   const verdictLabelId = useId();
   const [note, setNote] = useState("");
@@ -257,6 +260,8 @@ export default function RunPane({
         const { [stepNumber]: _gone, ...rest } = prev;
         return ranIn ? { ...rest, [stepNumber]: ranIn } : rest;
       });
+      const counted = r.data.page_errors_seen;
+      setStepPageErrors((prev) => ({ ...prev, [stepNumber]: counted }));
       const met = r.data.dialog;
       setStepDialogs((prev) => {
         const { [stepNumber]: _gone, ...rest } = prev;
@@ -518,6 +523,7 @@ export default function RunPane({
   }, []);
 
   /** The verdict in front of the person right now, as a record. */
+  const pageErrorsSeen = Object.values(stepPageErrors).reduce((sum, n) => sum + n, 0);
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
     title,
@@ -546,6 +552,8 @@ export default function RunPane({
     // Checks skipped while Database Read Access was off: said on the record
     // too, as an unattended run says it.
     ...(pre.notice ? { notice: pre.notice } : {}),
+    // Page errors a flagging script met, as an unattended run counts them.
+    ...(pageErrorsSeen ? { page_errors_seen: pageErrorsSeen } : {}),
   });
 
   /** Every case starts from a clean browser. Keeping one profile across
@@ -585,6 +593,7 @@ export default function RunPane({
         setResults({});
         setStepTabs({});
         setStepDialogs({});
+        setStepPageErrors({});
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });

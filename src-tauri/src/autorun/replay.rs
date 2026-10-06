@@ -419,6 +419,10 @@ async fn run_case_in<D: Driver>(
     // before step 1, as the case's own route was.
     let names = runner::named_areas(script.steps.iter().flat_map(|s| s.actions.iter()));
     let areas = runner::area_routes(root, organization, project, &names);
+    // What the page met before step 1 - the sign-in, the trip to the
+    // module - is no step's error.
+    super::page_errors::drop_all(d);
+    let mut page_errors_seen = 0u32;
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
@@ -440,6 +444,8 @@ async fn run_case_in<D: Driver>(
             cancel: Some(cancel),
             areas: Some(&areas),
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
+            page_errors: script.page_errors,
+            ignore_page_errors: script.ignore_page_errors.clone(),
             ..Default::default()
         };
         let outcomes = match runner::run_step_in_run(
@@ -484,6 +490,7 @@ async fn run_case_in<D: Driver>(
             skip = Some(AFTER_FAILED_STEP);
         }
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog });
+        page_errors_seen += in_run.page_errors_seen;
     }
 
     // The case's one wait for a download still arriving (`one_go` does not
@@ -512,6 +519,7 @@ async fn run_case_in<D: Driver>(
         account: account.map(str::to_string),
         retried: None,
         notice: None,
+        page_errors_seen,
     }
 }
 
@@ -538,6 +546,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         account: None,
         retried: None,
         notice: None,
+        page_errors_seen: 0,
     }
 }
 
@@ -568,6 +577,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         account: account.map(str::to_string),
         retried: None,
         notice: None,
+        page_errors_seen: 0,
     }
 }
 

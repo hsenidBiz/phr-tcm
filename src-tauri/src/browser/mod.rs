@@ -35,5 +35,6 @@ pub mod keys;
 pub mod drag;
 pub mod dialogs;
 pub mod table;
+pub mod page_errors;
 pub mod actions;
 pub mod snapshot;

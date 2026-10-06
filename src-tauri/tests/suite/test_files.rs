@@ -523,6 +523,7 @@ fn script_with(action: Value) -> CaseScript {
         needs_unchanged: vec![],
         saved_at: None,
         fail_on_unexpected_dialog: false,
+        page_errors: None, ignore_page_errors: vec![],
     }
 }
 

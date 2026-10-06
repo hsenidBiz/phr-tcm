@@ -1492,6 +1492,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             account: None,
             retried: None,
             notice: None,
+            page_errors_seen: 0,
         }],
         mode: String::new(),
         published: None,
@@ -2315,6 +2316,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_unchanged: vec![],
         saved_at: None,
         fail_on_unexpected_dialog: false,
+        page_errors: None, ignore_page_errors: vec![],
     }
 }
 

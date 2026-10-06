@@ -2229,6 +2229,96 @@ async fn a_mid_script_sign_in_that_leaves_a_saving_draft_fails_the_case() {
 /// A one-page site for the keyboard and reload checks below: `/` counts its
 /// own loads in the tab's session storage (which a reload keeps), and a
 /// click - or Enter on the focused button - writes into `#out`.
+/// A page that throws when #boom is pressed and whose #save posts to a path
+/// the server answers 500; `/api/Own` answers 500 too, for the run's own
+/// `api_request`.
+fn errors_site() -> u16 {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<button id="boom">Boom</button>
+<button id="save">Save</button>
+<p id="out">nothing yet</p>
+<script>
+document.getElementById('boom').addEventListener('click', () => {
+  document.getElementById('out').textContent = 'boomed';
+  throw new Error('boom from the page');
+});
+document.getElementById('save').addEventListener('click', async () => {
+  await fetch('/api/Broken?token=hunter2', { method: 'POST' });
+  document.getElementById('out').textContent = 'tried';
+});
+</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else { continue };
+            let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+            if line.starts_with("GET / ") {
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                    PAGE.len()
+                );
+            } else if line.contains(" /api/") {
+                let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno");
+            } else {
+                let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            }
+        }
+    });
+    port
+}
+
+/// A real page's thrown error fails a `fail` step; a real 5xx is counted
+/// by a `flag` step, and the run's own `api_request` 500 is not.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_errors_fail_or_flag_a_real_page() {
+    use v2_lib::autorun::lease::Held;
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    use v2_lib::autorun::PageErrors;
+    let port = errors_site();
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.unwrap();
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    v2_lib::autorun::page_errors::drop_all(&mut live.cdp);
+    let dir = tempfile::tempdir().unwrap();
+    let mut account = None;
+    let mut held = Held::supervised();
+
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 1, "actions": [
+        { "kind": "click", "selector": { "css": "#boom" } },
+        { "kind": "expect_text", "selector": { "css": "#out" }, "equals": "boomed" }
+    ] }))
+    .unwrap();
+    let mut r = InRun { page_errors: Some(PageErrors::Fail), ..Default::default() };
+    let out = run_step_in_run(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut r)
+        .await
+        .unwrap();
+    assert!(out[0].ok, "{out:?}");
+    assert_eq!(out[1].detail, "the page had an error: Error: boom from the page");
+
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 2, "actions": [
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "expect_text", "selector": { "css": "#out" }, "equals": "tried" },
+        { "kind": "api_request", "path": "/api/Own", "expect": { "status": 500 } }
+    ] }))
+    .unwrap();
+    let mut r = InRun { page_errors: Some(PageErrors::Flag), ..Default::default() };
+    let out = run_step_in_run(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut r)
+        .await
+        .unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(r.page_errors_seen, 1, "{out:?}");
+    let last = &out[2].detail;
+    assert!(last.ends_with(" (page errors: a request was answered 500: POST /api/Broken)"), "{last}");
+    assert!(!last.contains("hunter2") && !last.contains("127.0.0.1"), "{last}");
+}
+
 fn keys_site() -> u16 {
     const PAGE: &str = r#"<!doctype html><html><body>
 <p id="loads"></p>

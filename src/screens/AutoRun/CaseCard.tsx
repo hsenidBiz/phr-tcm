@@ -55,6 +55,7 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
     { label: "Runs as", value: script.account?.trim() },
     { label: "Area", value: script.area?.trim() },
     { label: "Must not save", value: script.no_save ? "Yes, saves are stopped while it runs" : null },
+    { label: "Page errors", value: script.page_errors },
     {
       label: "Preconditions",
       value: (script.preconditions ?? []).map((p) => `${p.flow}: ${p.stage}`).join(", "),

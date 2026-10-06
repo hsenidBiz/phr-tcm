@@ -174,7 +174,13 @@ async fn sign_in_with<D: Driver>(
     timing: &Timing,
     try_saved_session: bool,
 ) -> SignInOutcome {
+    // What the page met while the run signed in is the run's doing, not a
+    // step's: let go of it once the sign-in is over.
+    let errors_before = d.page_error_book().map(|b| b.len());
     let out = sign_in_held(d, root, recipe, account, timing, try_saved_session).await;
+    if let (Some(n), Some(book)) = (errors_before, d.page_error_book()) {
+        book.drop_after(n);
+    }
     d.hold_saves(false);
     out
 }

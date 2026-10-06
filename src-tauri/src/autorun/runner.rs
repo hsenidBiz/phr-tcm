@@ -11,7 +11,7 @@ use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
-use super::{store, StepDialog, StepScript};
+use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
     execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
@@ -251,6 +251,13 @@ pub struct InRun<'a> {
     pub fail_on_unexpected_dialog: bool,
     /// Learned back: the dialog the step met, for its record.
     pub dialog: Option<StepDialog>,
+    /// The case's `page_errors`: what the step does with the page's own
+    /// errors (`page_errors`). `None` looks at none.
+    pub page_errors: Option<PageErrors>,
+    /// The case's `ignore_page_errors`.
+    pub ignore_page_errors: Vec<String>,
+    /// Learned back: how many page errors a `flag` counted in the step.
+    pub page_errors_seen: u32,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -436,7 +443,22 @@ pub async fn run_step_in_run<D: Driver>(
             },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
-            Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
+            Action::ApiRequest { path, .. } => {
+                // Its fetch is the run's own request: a 5xx it gets back is
+                // never the page's error.
+                let before = d.net_mark();
+                let outcome = api_checks::api_request(d, action, timing).await;
+                let own: Vec<String> = d
+                    .net_since(before)
+                    .into_iter()
+                    .filter(|e| e.method == "GET" && e.path_query.split(['?', '#']).next() == Some(path.as_str()))
+                    .map(|e| e.id)
+                    .collect();
+                if let Some(book) = d.page_error_book() {
+                    book.exclude(own);
+                }
+                outcome
+            }
             Action::ExpectDownload { .. } => {
                 // No Stop to hear: the wait is capped instead.
                 let cap = match run.cancel {
@@ -509,6 +531,8 @@ pub async fn run_step_in_run<D: Driver>(
         .find(|s| s.claimed_by.is_some())
         .or_else(|| seen.first())
         .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
+    // The page's own errors since the previous step was judged.
+    run.page_errors_seen = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
     let ended_in = d.tab_name();
     run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
     Ok(out)

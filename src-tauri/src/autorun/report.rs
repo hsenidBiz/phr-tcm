@@ -403,8 +403,13 @@ fn case_section(
     h.push_str(&format!("<details class=\"case\"{open}>"));
     // Run a second time after a transient failure (`transient`).
     let retried = if case.retried.is_some() { " <span class=\"retried\">Retried</span>" } else { "" };
+    // Page errors a flagging script counted (`page_errors`).
+    let flagged = match case.page_errors_seen {
+        0 => String::new(),
+        n => format!(" <span class=\"retried\">page errors seen: {n}</span>"),
+    };
     h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}</summary>",
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}{flagged}</summary>",
         case.case_id,
         esc(&case.title),
         css_key(b)

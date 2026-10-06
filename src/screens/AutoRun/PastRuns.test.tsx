@@ -234,6 +234,27 @@ test("a case run a second time after a transient failure is labelled Retried", a
   expect(within(plain).queryByText("Retried")).not.toBeInTheDocument();
 });
 
+test("a case whose script flagged page errors carries the count", async () => {
+  renderPastRuns(
+    [
+      runOf({
+        cases: [
+          { case_id: 201, title: "Valid login", verdict: "", note: "", proposed: "Passed", page_errors_seen: 3 },
+          { case_id: 202, title: "Locked account", verdict: "", note: "", proposed: "Passed" },
+        ],
+      }),
+    ],
+    7,
+  );
+
+  const flagged = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const label = within(flagged).getByText("page errors seen: 3");
+  expect(label).toHaveClass("text-warning");
+  expect(label).toHaveAttribute("title", expect.stringContaining("5xx"));
+  const plain = screen.getByRole("listitem", { name: "Run of Locked account" });
+  expect(within(plain).queryByText(/page errors seen/)).not.toBeInTheDocument();
+});
+
 test("a case whose preconditions were not checked is labelled Not checked, with the sentence", async () => {
   const notice = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
   renderPastRuns(

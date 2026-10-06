@@ -147,10 +147,16 @@ test("an open card shows the Script, Steps and Files sections, then Script and R
   expect(onRun).toHaveBeenCalledTimes(1);
 });
 
+test("an open card says how the script treats page errors", () => {
+  renderCard({ open: true, script: { ...BARE, page_errors: "flag" } as CaseScript });
+  expect(screen.getByText("Page errors")).toBeInTheDocument();
+  expect(screen.getByText("flag")).toBeInTheDocument();
+});
+
 test("an open card leaves out every fact with no value, and Files when there is nothing to list", () => {
   renderCard({ open: true, script: BARE });
   expect(screen.getByText("1 step")).toBeInTheDocument();
-  for (const label of ["Runs as", "Area", "Must not save", "Preconditions", "Changes", "Needs unchanged", "Last repair"]) {
+  for (const label of ["Runs as", "Area", "Must not save", "Page errors", "Preconditions", "Changes", "Needs unchanged", "Last repair"]) {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   }
   expect(screen.queryByText("Files")).not.toBeInTheDocument();

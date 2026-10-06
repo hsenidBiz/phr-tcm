@@ -710,6 +710,33 @@ A repair can turn `no_save` on, never off - leaving it out of a repair is
 turning it off, and that is refused. Only a person, saving the script in
 the app, can turn it off.
 
+## Page errors
+
+A case can also judge the page's own errors - an uncaught script error,
+or a request answered 500 to 599 - in any tab, beside `case_id`:
+
+    { "case_id": 501, "title": "...", "page_errors": "fail", "ignore_page_errors": ["ResizeObserver"], "steps": [ ... ] }
+
+- `"page_errors": "fail"` fails the step they appear in, with `the page
+  had an error: <message>` or `a request was answered <status>: <method>
+  <path>` for the first, and `(and <n> more)` for the rest. A step that
+  already failed keeps its own failure, with the errors said after it.
+- `"page_errors": "flag"` judges the step as usual, lists each error in
+  the step's log, and counts them on the case: `page errors seen: <n>`,
+  shown in the review, in Past runs and in the report.
+- Left out, page errors are not looked at.
+
+Choose `fail` when an error means the case did not work, which is most
+cases. Choose `flag` for a page that is known to be noisy but still
+works, so the noise is seen without failing every run.
+
+Errors between two steps count against the next step; errors before step
+1 (signing in, going to the module) and the run's own `api_request`
+answers are never counted. `ignore_page_errors` holds up to 10 phrases
+(each 1 to 120 characters): an error whose message, or whose request
+path, contains one of them, ignoring case, is not counted. Use it for
+noise the team already knows about, never for an error the case is about.
+
 ## Preconditions
 
 Some cases rely on a record built beforehand: a performance cycle set up

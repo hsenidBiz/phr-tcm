@@ -489,6 +489,7 @@ fn a_blocked_save_proposes_failed_and_is_never_retried() {
         account: None,
         retried: None,
         notice: None,
+        page_errors_seen: 0,
     };
     assert_eq!(is_transient(&record, Some(&script)), None);
 }
