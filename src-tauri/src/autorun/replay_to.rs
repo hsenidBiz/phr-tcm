@@ -118,18 +118,36 @@ pub fn guarding_other_case(other: i32) -> String {
     format!("the Auto Run browser is guarding case {other}'s draft, and the page tried to save")
 }
 
+/// A step the replay ran outside `main`: the tab it ran in, as a live
+/// step's `tab` says it (`InRun::tab`). A step that stayed in `main` has
+/// none.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct ReplayedTab {
+    pub step: i32,
+    pub tab: String,
+}
+
 /// A replay's end with the sentence that says it, as the person's command
-/// answers: the pane shows `sentence` as it is.
+/// answers: the pane shows `sentence` as it is, and `tabs` beside the
+/// steps the replay ran outside `main`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct ReplayAnswer {
     pub end: ReplayEnd,
     pub sentence: String,
+    pub tabs: Vec<ReplayedTab>,
+}
+
+impl ReplayAnswer {
+    /// The answer for `end`, with the tabs its steps ran in.
+    pub fn with_tabs(end: ReplayEnd, tabs: Vec<ReplayedTab>) -> Self {
+        let sentence = end.sentence();
+        ReplayAnswer { end, sentence, tabs }
+    }
 }
 
 impl From<ReplayEnd> for ReplayAnswer {
     fn from(end: ReplayEnd) -> Self {
-        let sentence = end.sentence();
-        ReplayAnswer { end, sentence }
+        ReplayAnswer::with_tabs(end, Vec::new())
     }
 }
 
@@ -283,7 +301,50 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     timing: &Timing,
     cancel: &AtomicBool,
     db: impl FnOnce() -> PreconditionDb<P>,
+    progress: impl FnMut(i32, i32),
+) -> ReplayEnd {
+    let mut tabs = Vec::new();
+    replay_to_traced(
+        d,
+        setup_browsers,
+        root,
+        organization,
+        project,
+        req,
+        account,
+        lease,
+        guarded_case,
+        may_lift,
+        timing,
+        cancel,
+        db,
+        progress,
+        &mut tabs,
+    )
+    .await
+}
+
+/// `replay_to_checked`, also learning back the tab each step it ran was
+/// in when that was not `main` (`tabs`, in step order) - the failing step's
+/// too - so the pane says `in tab <name>` beside them as it does for a
+/// step the person ran.
+#[allow(clippy::too_many_arguments)]
+pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
+    d: &mut D,
+    setup_browsers: &mut B,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    req: &ReplayRequest,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    guarded_case: &mut Option<i32>,
+    may_lift: bool,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    db: impl FnOnce() -> PreconditionDb<P>,
     mut progress: impl FnMut(i32, i32),
+    tabs: &mut Vec<ReplayedTab>,
 ) -> ReplayEnd {
     let Checked { script, route } = match check(root, organization, project, req) {
         Ok(c) => c,
@@ -419,6 +480,9 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
             &mut in_run,
         )
         .await;
+        if let Some(tab) = in_run.tab.take() {
+            tabs.push(ReplayedTab { step: k, tab });
+        }
         let mut outcomes = match ran {
             Ok(o) => o,
             Err(why) => return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes: Vec::new() },

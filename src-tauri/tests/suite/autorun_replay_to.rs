@@ -206,6 +206,53 @@ async fn the_last_step_plus_1_replays_every_step() {
     assert_eq!(heard, vec![(1, 3), (2, 3), (3, 3)]);
 }
 
+/// A replayed step that ran in a second tab carries that tab, as a live
+/// step's record does, and a step back in `main` carries none.
+#[tokio::test]
+async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
+    use v2_lib::autorun::replay_to::{replay_to_traced, ReplayedTab};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1"), { "kind": "expect_tab", "name": "report" }] },
+        { "step_number": 2, "actions": [{ "kind": "switch_tab", "name": "report" }, click("#s2")] },
+        { "step_number": 3, "actions": [{ "kind": "switch_tab", "name": "main" }, click("#s3")] },
+        { "step_number": 4, "actions": [click("#s4")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (mut d, app) = app();
+    // A click opens a tab, as the case's link does.
+    d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let mut held = Held::supervised();
+    let mut tabs = Vec::new();
+    let end = replay_to_traced(
+        &mut d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
+        dir.path(),
+        "acme",
+        "Web",
+        &req(4),
+        &mut account,
+        &mut held,
+        &mut guarded,
+        true,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+        &mut tabs,
+    )
+    .await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None }, "{:?}", log(&app));
+    // Step 1 opened the tab from main, step 2 ran in it, step 3 went back.
+    assert_eq!(tabs, vec![ReplayedTab { step: 2, tab: "report".into() }]);
+    // The person's command answers with them beside the end.
+    let answer = ReplayAnswer::with_tabs(end, tabs);
+    let json = serde_json::to_value(&answer).unwrap();
+    assert_eq!(json["tabs"], json!([{ "step": 2, "tab": "report" }]));
+}
+
 #[tokio::test]
 async fn a_failing_step_stops_the_replay_there_with_its_outcomes() {
     let _l = crate::serial::account_leases();
@@ -524,7 +571,10 @@ fn the_answer_carries_the_finished_sentence() {
     let answer: ReplayAnswer = ReplayEnd::Refused(ALREADY_RUNNING.into()).into();
     assert_eq!(answer.sentence, ALREADY_RUNNING);
     let json = serde_json::to_value(&answer).unwrap();
-    assert_eq!(json, json!({ "end": { "kind": "refused", "detail": ALREADY_RUNNING }, "sentence": ALREADY_RUNNING }));
+    assert_eq!(
+        json,
+        json!({ "end": { "kind": "refused", "detail": ALREADY_RUNNING }, "sentence": ALREADY_RUNNING, "tabs": [] })
+    );
 }
 
 // ---- where a failure happened --------------------------------------------

@@ -114,7 +114,9 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
         req: crate::autorun::replay_to::ReplayRequest,
     ) -> crate::ai_bridge::HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>> {
         Box::pin(async move {
-            crate::commands::autorun::replay_supervised(&self.0, &organization, &project, req, false).await
+            crate::commands::autorun::replay_supervised(&self.0, &organization, &project, req, false)
+                .await
+                .map(|(end, _tabs)| end)
         })
     }
 

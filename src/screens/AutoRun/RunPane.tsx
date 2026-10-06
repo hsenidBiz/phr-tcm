@@ -428,6 +428,9 @@ export default function RunPane({
       // A refusal never touched the browser this pane would close: whatever
       // is open belongs to someone else, and the pane leaves it alone.
       if (end.kind === "refused") return;
+      // The replay started the case afresh: the tabs its steps ran in,
+      // outside main, are the ones the rows say, as a live step's are.
+      setStepTabs(Object.fromEntries(r.data.tabs.map((t) => [t.step, t.tab])));
       openedRef.current = true;
       if (!wasOpen) {
         const launch = launchRef.current + 1;

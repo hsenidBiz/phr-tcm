@@ -666,9 +666,10 @@ function mockReplay(opts: { account?: string } = {}) {
   );
   return {
     named: (cmd: string) => calls.filter((c) => c.cmd === cmd),
-    finish: (answer: unknown) =>
+    /** The answer, with no step outside main unless it names `tabs`. */
+    finish: (answer: object) =>
       act(async () => {
-        finish(answer);
+        finish({ tabs: [], ...answer });
       }),
   };
 }
@@ -810,6 +811,20 @@ test("after a replay to step 3, steps 1 and 2 are marked and step 3 is next, wit
   await act(async () => {});
   expect(r.named("auto_run_sign_in")).toHaveLength(0);
   expect(r.named("auto_run_check_preconditions")).toHaveLength(0);
+});
+
+test("a replayed step that ran in another tab says which tab, as a live step does", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+
+  await r.finish({ ...READY, tabs: [{ step: 2, tab: "report" }] });
+
+  const second = await stepRow(2);
+  expect(within(second).getByText("replayed")).toBeInTheDocument();
+  expect(within(second).getByText("in tab report")).toBeInTheDocument();
+  expect(within(await stepRow(1)).queryByText(/^in tab /)).not.toBeInTheDocument();
+  expect(screen.getAllByText(/^in tab /)).toHaveLength(1);
 });
 
 test("a replay that is ready with a notice shows the notice", async () => {
