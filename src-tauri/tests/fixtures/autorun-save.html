@@ -9,6 +9,9 @@
 <button id="search" onclick="send('/api/Search')">Search</button>
 <!-- Opens this page again in a new tab, which posts a form the moment it opens. -->
 <a id="popup" href="/save-page?formsave=1" target="_blank">Open in a new tab</a>
+<!-- Opens this page in a new tab that stays quiet until its form button is pressed. -->
+<a id="report" href="/save-page?report=1" target="_blank">Open the report</a>
+<button id="formsave" onclick="postForm()">Save by form</button>
 <p id="out"></p>
 <script>
   function send(path) {
@@ -21,13 +24,14 @@
   // A page that saves the moment it opens.
   if (location.search.indexOf('autosave') >= 0) send('/api/Save');
   // A page that posts a form the moment it opens: a real form post, not a fetch.
-  if (location.search.indexOf('formsave') >= 0) {
+  function postForm() {
     var form = document.createElement('form');
     form.method = 'post';
     form.action = '/api/Save';
     document.body.appendChild(form);
     form.submit();
   }
+  if (location.search.indexOf('formsave') >= 0) postForm();
   // A page that saves its draft as it is left, the way pages do: a beacon
   // on pagehide, which outlives the page that sent it.
   if (location.search.indexOf('unloadsave') >= 0) {

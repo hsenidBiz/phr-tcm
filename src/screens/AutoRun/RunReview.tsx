@@ -423,6 +423,7 @@ export default function RunReview(props: {
                           <span className="font-medium text-muted">
                             {stepLabel(s.step_number)}
                           </span>
+                          {s.tab && <span className="text-[11px] text-muted">in tab {s.tab}</span>}
                           {s.screenshot && (
                             <button
                               type="button"

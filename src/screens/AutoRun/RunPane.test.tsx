@@ -234,10 +234,10 @@ test("a failed action offers the screenshot taken when it failed", async () => {
     if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
     if (cmd === "auto_run_new_id") return "run-1";
     if (cmd === "auto_run_step")
-      return [
+      return { outcomes: [
         { ok: true, detail: "loaded https://app.example/" },
         { ok: false, detail: 'waited 15000ms: button "Save" not found', screenshot: "shot-1-000001.jpg" },
-      ];
+      ], tab: null };
     if (cmd === "auto_run_shot") {
       expect((args as { name: string }).name).toBe("shot-1-000001.jpg");
       return "data:image/jpeg;base64,AAAA";
@@ -263,6 +263,33 @@ test("a failed action offers the screenshot taken when it failed", async () => {
   fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByRole("img", { name: "Screenshot of the failed action" })).not.toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
+});
+
+test("a step that ran in another tab says which, and one in main says nothing", async () => {
+  const steps = [
+    { step_number: 1, actions: [{ kind: "check_text", value: "ok" }] },
+    { step_number: 2, actions: [{ kind: "check_text", value: "ok" }] },
+  ];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps };
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_step") {
+      const n = (args as { step: { step_number: number } }).step.step_number;
+      return { outcomes: [{ ok: true, detail: "ok" }], tab: n === 1 ? "report" : null };
+    }
+    return null;
+  });
+  renderPane([{ id: 1, title: "Valid login" }]);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  const one = await screen.findByRole("button", { name: "Run step 1" });
+  await waitFor(() => expect(one).toBeEnabled());
+  fireEvent.click(one);
+  expect(await screen.findByText("in tab report")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Run step 2" }));
+  await waitFor(() => expect(screen.getAllByText("ok")).toHaveLength(2));
+  expect(screen.getAllByText(/^in tab /)).toHaveLength(1);
 });
 
 test("a second Save while the first is still writing does not write twice", async () => {
@@ -301,7 +328,7 @@ function mockSignIn(scripts: Record<number, unknown>, outcome: (key: string, nth
     }
     if (cmd === "auto_run_step") {
       stepped.push(args);
-      return [{ ok: true, detail: "ok" }];
+      return { outcomes: [{ ok: true, detail: "ok" }], tab: null };
     }
     if (cmd === "auto_run_new_id") return "run-1";
     return null;
@@ -1023,7 +1050,7 @@ test("a replay that signs the browser in as another account is said, and this ca
       }
       if (cmd === "auto_run_step") {
         order.push("step");
-        return [{ ok: true, detail: "ok" }];
+        return { outcomes: [{ ok: true, detail: "ok" }], tab: null };
       }
       return null;
     },

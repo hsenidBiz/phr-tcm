@@ -268,6 +268,14 @@ pub async fn close_autorun_browsers() {
     }
 }
 
+/// What a supervised step answers: one outcome per action, and the tab the
+/// step ran in when that was not `main` (`runner::InRun::tab`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct StepRun {
+    pub outcomes: Vec<ActionOutcome>,
+    pub tab: Option<String>,
+}
+
 /// Run one step's actions in order and report every outcome. Actions after
 /// an ordinary failure still run: the watcher learns more from "the click
 /// worked, the check did not" than from a run that stops at the first red.
@@ -282,7 +290,7 @@ pub async fn auto_run_step(
     project: String,
     case_id: i32,
     step: StepScript,
-) -> Result<Vec<ActionOutcome>, String> {
+) -> Result<StepRun, String> {
     let root = root(&app)?;
     // The step's fixture values: shared drafts' current outputs, and what
     // the case's setup gave at its start. The step the pane holds is never
@@ -303,7 +311,8 @@ pub async fn auto_run_step(
         Some(Err(why)) => AreaRoute::Unknown(why),
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
-    crate::autorun::runner::run_step_routed(
+    let mut run = crate::autorun::runner::InRun::default();
+    let outcomes = crate::autorun::runner::run_step_in_run(
         &mut session.cdp,
         &root,
         &organization,
@@ -314,8 +323,10 @@ pub async fn auto_run_step(
         &mut session.lease,
         None,
         area,
+        &mut run,
     )
-    .await
+    .await?;
+    Ok(StepRun { outcomes, tab: run.tab.take() })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised

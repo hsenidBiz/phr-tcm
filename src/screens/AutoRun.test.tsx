@@ -431,7 +431,7 @@ function mockRunnable(extra?: (cmd: string, args: unknown) => unknown) {
 test("running a step shows each action's outcome and picks no verdict", async () => {
   mockRunnable((cmd) => {
     if (cmd === "auto_run_step")
-      return [{ ok: true, detail: "page contains Dashboard" }];
+      return { outcomes: [{ ok: true, detail: "page contains Dashboard" }], tab: null };
   });
   renderAutoRun();
   await expandCards();
@@ -456,7 +456,7 @@ test("running a step shows each action's outcome and picks no verdict", async ()
 /// verdict - the person may know the failure is the harness's fault.
 test("a failed action is shown but the human still chooses", async () => {
   mockRunnable((cmd) => {
-    if (cmd === "auto_run_step") return [{ ok: false, detail: "not found: #nope" }];
+    if (cmd === "auto_run_step") return { outcomes: [{ ok: false, detail: "not found: #nope" }], tab: null };
   });
   renderAutoRun();
   await expandCards();
@@ -556,7 +556,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     }
     if (cmd === "auto_run_new_id") return "run-1786000000000";
     if (cmd === "auto_run_open_browser") return null;
-    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_step") return { outcomes: [{ ok: true, detail: "page contains Dashboard" }], tab: null };
     if (cmd === "auto_run_save_run") {
       saved = args as Record<string, unknown>;
       return null;
@@ -965,7 +965,7 @@ test("a saved run appears in past runs without leaving the screen", async () => 
     if (cmd === "auto_run_list_runs") return runsNow;
     if (cmd === "auto_run_new_id") return "run-1786000000000";
     if (cmd === "auto_run_open_browser") return null;
-    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_step") return { outcomes: [{ ok: true, detail: "page contains Dashboard" }], tab: null };
     if (cmd === "auto_run_save_run") {
       runsNow = [
         {
@@ -1169,7 +1169,7 @@ test("a saved supervised run refreshes the rows, so a mark it cleared stops show
     }
     if (cmd === "auto_run_new_id") return "run-1786000000000";
     if (cmd === "auto_run_open_browser") return null;
-    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_step") return { outcomes: [{ ok: true, detail: "page contains Dashboard" }], tab: null };
     if (cmd === "auto_run_save_run") return null;
     if (cmd === "auto_run_count_evidence") {
       counted = true;

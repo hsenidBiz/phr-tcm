@@ -387,7 +387,7 @@ export const commands = {
 	 *  which does the actual work; this command is just the IPC-facing shell
 	 *  around it.
 	 */
-	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
+	autoRunStep: (organization: string, project: string, caseId: number, step: StepScript_Deserialize) => typedError<StepRun_Serialize, string>(__TAURI_INVOKE("auto_run_step", { organization, project, caseId, step })),
 	/**
 	 *  A supervised case's preconditions, checked where the case starts and
 	 *  before its sign-in. `blocked`: the case is Blocked, with the sentence
@@ -4363,6 +4363,30 @@ export type StepReport = {
 	status: number | null,
 	ok: boolean,
 	detail: string,
+};
+
+/**
+ *  What a supervised step answers: one outcome per action, and the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`).
+ */
+export type StepRun = StepRun_Serialize | StepRun_Deserialize;
+
+/**
+ *  What a supervised step answers: one outcome per action, and the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`).
+ */
+export type StepRun_Deserialize = {
+	outcomes: ActionOutcome_Deserialize[],
+	tab: string | null,
+};
+
+/**
+ *  What a supervised step answers: one outcome per action, and the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`).
+ */
+export type StepRun_Serialize = {
+	outcomes: ActionOutcome_Serialize[],
+	tab: string | null,
 };
 
 /**  The actions that carry out one numbered step of a test case. */

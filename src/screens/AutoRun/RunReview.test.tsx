@@ -239,6 +239,27 @@ test("the steps unfold, the sign-in is named, and a picture can be opened", asyn
   expect(img).toHaveAttribute("src", "data:image/png;base64,shot-201-2.png");
 });
 
+test("a step that ran outside the main tab says which tab", async () => {
+  const run = {
+    ...RUN,
+    cases: [
+      {
+        ...RUN.cases[1],
+        steps: [
+          { step_number: 1, outcomes: [{ ok: true, detail: "page contains Locked out" }] },
+          { step_number: 2, outcomes: [{ ok: true, detail: "page contains Report" }], tab: "report" },
+        ],
+      },
+    ],
+  };
+  renderReview(run);
+  await screen.findByText(/proposed: passed/i);
+  fireEvent.click(within(caseCard(202)).getByRole("button", { name: "Show steps" }));
+  const labels = within(caseCard(202)).getAllByText(/^in tab /);
+  expect(labels).toHaveLength(1);
+  expect(labels[0]).toHaveTextContent("in tab report");
+});
+
 test("a step the script never checked says why, read from the script itself", async () => {
   renderReview(RUN, {
     extra: (cmd, args) => {

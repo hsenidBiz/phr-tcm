@@ -406,7 +406,12 @@ export const autoRun: Screen = {
         "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
         "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
         "Most scripts are written by an assistant from the case's steps and imported with **More**, **Import scripts**.",
-      tips: ["An element the script finds only by its code shows that code in a smaller type. Point at it to see all of it."],
+      tips: [
+        "An element the script finds only by its code shows that code in a smaller type. Point at it to see all of it.",
+        "Tabs: a script can wait for a link to open a new tab, open one itself, switch between tabs and close one. " +
+          "The sentences read, for example, **Wait for a new tab and call it \"report\"** and **Close the \"report\" tab**. " +
+          "A step that ran outside the first tab says **in tab** and its name, here and in a saved run.",
+      ],
     },
     {
       id: "show-json",

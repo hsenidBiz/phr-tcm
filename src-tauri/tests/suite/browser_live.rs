@@ -2136,6 +2136,42 @@ async fn a_tab_the_page_opens_is_attached_and_its_save_is_stopped() {
     assert_eq!(search.as_str(), Some(""), "the script no longer acts in the first tab");
 }
 
+/// The tab actions end to end: follow a `target=_blank` link, claim the new
+/// tab by its address, read it, close it (`main` is current again), open a
+/// second tab at the page and go back to `main`. The guard is on all the
+/// way: the new tab posts a form the moment it opens, and the server must
+/// never receive it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_script_follows_a_link_into_a_tab_reads_it_closes_it_and_opens_another() {
+    let server = SaveServer::start();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("") })).await);
+    live.cdp.guard_saves(&[]).await.expect("the guard did not start");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#report" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_tab", "name": "report", "url_contains": "report=1" })).await);
+    must(run(&mut live, json!({ "kind": "switch_tab", "name": "report" })).await);
+    must(run(&mut live, json!({ "kind": "check_url", "contains": "report=1" })).await);
+    must(run(&mut live, json!({ "kind": "check_text", "value": "Save by form" })).await);
+    // The form post from the new tab is stopped before it reaches the server.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#formsave" } })).await);
+    live.cdp.idle(Duration::from_millis(800)).await;
+    must(run(&mut live, json!({ "kind": "close_tab", "name": "report" })).await);
+    // `main` is current again: its own address has no query.
+    must(run(&mut live, json!({ "kind": "check_text", "value": "Open the report" })).await);
+    let search = page::eval_value(&mut live.cdp, "location.search").await.unwrap();
+    assert_eq!(search.as_str(), Some(""), "main is not the current tab after the close");
+    must(run(&mut live, json!({ "kind": "open_tab", "name": "second", "url": server.page("?second=1") })).await);
+    must(run(&mut live, json!({ "kind": "check_url", "contains": "second=1" })).await);
+    must(run(&mut live, json!({ "kind": "switch_tab", "name": "main" })).await);
+    let url = page::eval_value(&mut live.cdp, "location.search").await.unwrap();
+    assert_eq!(url.as_str(), Some(""), "main did not become current again");
+    assert!(server.got("GET /save-page?report=1"), "the new tab never ran: {:?}", server.seen.lock().unwrap());
+    assert!(server.got("GET /save-page?second=1"), "the second tab never ran");
+    assert!(!server.got("POST /api/Save"), "the new tab's form post reached the server: {:?}", server.seen.lock().unwrap());
+    assert_eq!(live.cdp.take_save_blocked().as_deref(), Some(SAVE_STOPPED));
+}
+
 const DRAFT_STOPPED: &str =
     "this script must not save, but the page tried to send POST /api/SaveDraft - it was stopped before it reached the server";
 

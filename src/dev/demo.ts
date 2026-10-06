@@ -1739,7 +1739,7 @@ function applyPatches() {
     autoRunCheckPreconditions: () => ok({ blocked: null, notice: null }),
     autoRunStep: (_o: string, _p: string, _caseId: number, step: DemoScript["steps"][number]) => {
       if (!step || typeof step !== "object" || !Array.isArray(step.actions)) return err("Demo mode: that step is not valid");
-      return ok(step.actions.map((a) => ({ ok: true, detail: actionLine(a) })));
+      return ok({ outcomes: step.actions.map((a) => ({ ok: true, detail: actionLine(a) })), tab: null });
     },
     autoRunReplay: async (
       _o: string,

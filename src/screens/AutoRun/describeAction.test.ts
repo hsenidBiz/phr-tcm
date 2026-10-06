@@ -91,6 +91,14 @@ describe("a sentence for every action kind", () => {
     ],
     [{ kind: "expect_tab", name: "report" }, 'Wait for a new tab and call it "report"'],
     [
+      { kind: "expect_tab", name: "report", url_contains: "https://hr.example.com/hr/report?id=7#top" },
+      'Wait for a new tab and call it "report", at an address containing "/hr/report"',
+    ],
+    [
+      { kind: "expect_tab", name: "report", url_contains: "/hr/report" },
+      'Wait for a new tab and call it "report", at an address containing "/hr/report"',
+    ],
+    [
       { kind: "open_tab", name: "second", url: "https://hr.example.com/hr/employee/42?token=abc#top" },
       'Open a new tab "second" at /hr/employee/42',
     ],

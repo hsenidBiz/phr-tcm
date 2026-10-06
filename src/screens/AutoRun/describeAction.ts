@@ -277,6 +277,15 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 
+/** An `expect_tab`'s address text: `, at an address containing "<path>"`,
+ * with any host or query cut away, or nothing when none is set. */
+function tabAddress(contains: unknown): string {
+  const text = typeof contains === "string" ? contains.trim() : "";
+  if (!text) return "";
+  const shown = looksLikeAddress(text) || text.includes("/") || text.includes("?") ? pathOnly(text) : text;
+  return `, at an address containing "${shown}"`;
+}
+
 /** `check_url`'s part of an address: a path, a handler, or neither (a
  * query only), never a host or the rest of a query string. */
 function urlPart(contains: string): Sentence {
@@ -381,7 +390,7 @@ function describeKnown(a: Action): Sentence {
       return [words(`Check a file ${named} downloads${upTo(a.within_ms)}${downloadDetails(a)}`)];
     }
     case "expect_tab":
-      return [words(`Wait for a new tab and call it "${str(a.name)}"`)];
+      return [words(`Wait for a new tab and call it "${str(a.name)}"${tabAddress(a.url_contains)}`)];
     case "open_tab":
       return [words(`Open a new tab "${str(a.name)}" at ${pathOnly(str(a.url))}`)];
     case "switch_tab":
