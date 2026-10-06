@@ -1,4 +1,4 @@
-# Auto Run: browser dialogs, table checks, page errors and PDF downloads
+# Auto Run: browser dialogs, table checks, page errors, PDF downloads, drag and key combinations
 
 Design agreed with the owner on 2026-10-06. It covers backlog items 14 to 17.
 
@@ -134,22 +134,79 @@ A script can set `page_errors: "fail" | "flag"`. It is absent by default, which 
 - **Using the block.** A `pdf` block is allowed only when the download's name pattern ends in `.pdf`, otherwise `pdf checks need a name ending in .pdf`. It joins the existing headers, cell and text checks, which are for spreadsheets, CSV and text files.
 - **Limits.** Files over 50 MB are refused with `the PDF is larger than 50 MB`, so memory stays bounded.
 
-## 5. Everywhere
+## 5. Drag to reorder, and key combinations
+
+Added by the owner on 2026-10-06. Auto Run has no drag action today. `press_key` sends only a single key, so a script cannot use the keyboard alternative to dragging either, such as Ctrl+Arrow.
+
+### Key combinations
+
+`press_key` accepts modifiers joined with `+`:
+- **The modifiers** are `Ctrl`, `Shift`, `Alt` and `Meta`, ignoring case.
+- **The key** is any key name it accepts today, for example `Ctrl+ArrowUp`, `Shift+Tab`, `Ctrl+Shift+End` or `Alt+ArrowDown`.
+
+The modifiers are held down for the key press, in the order Ctrl, Alt, Shift, Meta, and released in reverse. They use the CDP modifier bitmask on every key event.
+
+`press_key` also gains `times` (1 to 50, default 1), which presses the same combination that many times.
+
+**Refusals at save:**
+- an unknown modifier: `press_key: "<part>" is not a modifier - use Ctrl, Shift, Alt or Meta`;
+- a combination with no key: `press_key: "<value>" has no key after its modifiers`;
+- a modifier given twice: `press_key: "<modifier>" is given twice`.
+
+**Old scripts** with a single key are unchanged.
+
+### Drag
+
+`drag { from, to, position?: "before" | "after" | "onto", within_ms? }`
+
+- **What it does.** `from` is the element to pick up, and `to` the element to drop it on. Both are ordinary locators, frame chains included. `position` says where on `to` to drop, and defaults to `onto`:
+  - `before` drops on the upper part of `to`;
+  - `after` drops on the lower part;
+  - `onto` drops in the middle.
+- **Making both visible.** Both elements are scrolled into view first.
+- **The mouse path.** This serves pages that drag with mouse or pointer events, such as most sortable lists and grid row reordering:
+  1. press on `from`'s centre;
+  2. move 10 px to start the drag;
+  3. move in 10 steps to the drop point, waiting one animation frame between moves;
+  4. release.
+- **The HTML drag-and-drop path.** This serves pages that use the browser's own `draggable` drag and drop.
+  - The driver turns on drag interception (`Input.setInterceptDrags`) for the move.
+  - When the browser hands over a drag (`Input.dragIntercepted`), the driver completes it with `Input.dispatchDragEvent` at the drop point: `dragEnter`, then `dragOver`, then `drop`.
+  - Interception is turned off again afterwards on every path.
+- **Failure sentences:**
+  - `there was nothing to drag at <from>`, when `from` is not found or not visible;
+  - `there was nowhere to drop at <to>`;
+  - `the drag did not finish within <n> seconds`.
+
+  An action does not check its own effect, so a drag that the page ignored passes the action. The guide tells the script to follow a drag with a check of the new order, for example `expect_row` or `expect_text`.
+- **The must-not-save guard is unchanged.** A drag is an action, so a page that saves on drop is stopped under "must not save" like any other save.
+- **The readable sentence:** `Drag <from> before|after|onto <to>`.
+- **The guide** explains drag and the keyboard alternative. It names Ctrl+Arrow and Alt+Arrow as common reorder keys, and says to use the one the screen documents.
+
+## 6. Everywhere
 
 - **Assistant's guide.** `autorun/guide.rs` explains each new action and option, with one example each. It also says when to use `flag` rather than `fail`.
 - **Readable script and reports.** `describeAction.ts`, `report::action_words`, `patterns.rs` and `ai_bridge::describe_try` get words for every new action.
 - **How To Use guide.** It gets one short tip per feature in the scripts section, with no new screenshots.
 
-## 6. Out of scope
+## 7. Out of scope
 
 - Comparing whole tables, and tables spread across pages.
 - OCR of scanned PDFs.
 - Changing what an unexpected dialog does beyond accept-or-fail.
 - Page errors from the app's own background polling when it runs between cases.
 
-## 7. Testing
+## 8. Testing
 
 ### Rust
+
+- **Drag and keys:**
+  - each modifier and combination, with the bitmask on every event, and `times`;
+  - each refusal sentence;
+  - the drag mouse path (event order and positions for before, after and onto);
+  - the HTML drag path (interception on, `dispatchDragEvent` order, interception off on every path, including failure);
+  - each drag failure sentence;
+  - a drag in a second tab and in a frame.
 
 Tests live in `tests/suite` only, with fake pages:
 
@@ -187,7 +244,8 @@ A fixture page that:
 - opens a `confirm`, checked and dismissed;
 - has a sortable HTML table and an ARIA grid;
 - throws a script error;
-- downloads a small PDF.
+- downloads a small PDF;
+- has a SortableJS-style mouse-sorted list and a native `draggable` list, each reordered by `drag` and by Ctrl+Arrow keys.
 
 ### vitest
 
