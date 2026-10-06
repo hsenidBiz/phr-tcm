@@ -195,6 +195,9 @@ pub enum Action {
         cells: Option<Vec<CellSpec>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         contains_text: Option<Vec<String>>,
+        /// What a PDF's text must hold - for a name ending in .pdf only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pdf: Option<PdfSpec>,
         /// Any other key the script carried - see `Stray`.
         #[serde(flatten)]
         #[specta(skip)]
@@ -392,6 +395,58 @@ pub struct CellSpec {
     pub how: CellMatch,
 }
 
+/// One phrase, or a list of them: `"Total"` or `["Total", "Net pay"]`.
+/// Kept as the script wrote it, so a file round-trips unchanged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(untagged)]
+pub enum Phrases {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Phrases {
+    pub fn list(&self) -> Vec<String> {
+        match self {
+            Phrases::One(s) => vec![s.clone()],
+            Phrases::Many(v) => v.clone(),
+        }
+    }
+}
+
+/// An `expect_download`'s `pdf` block: phrases the PDF contains, its page
+/// count, and phrases on given pages.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contains: Option<Phrases>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<PdfPages>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_page: Option<Vec<PdfOnPage>>,
+    /// Any other key the block carried - see `Stray`.
+    #[serde(flatten)]
+    #[specta(skip)]
+    pub stray: Stray,
+}
+
+/// The PDF's page count: exactly one of the three.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfPages {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_least: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_most: Option<u32>,
+}
+
+/// Phrases one page holds. `page` counts from 1, and `-1` is the last.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfOnPage {
+    pub page: i32,
+    pub contains: Phrases,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CellMatch {
@@ -432,12 +487,13 @@ fn check_download(
     headers: &Option<HeadersSpec>,
     cells: &Option<Vec<CellSpec>>,
     contains_text: &Option<Vec<String>>,
+    pdf: &Option<PdfSpec>,
     stray: &Stray,
 ) -> Result<(), String> {
     if let Some(key) = stray.keys().next() {
         let shown: String = key.chars().take(40).collect();
         return Err(format!(
-            "expect_download has no \"{shown}\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+            "expect_download has no \"{shown}\" - it takes name, within_ms, sheet, headers, cells, contains_text and pdf"
         ));
     }
     if name.trim().is_empty() {
@@ -449,6 +505,15 @@ fn check_download(
             return Err(format!("within_ms is at most {DOWNLOAD_WAIT_MAX_MS} (got {ms})"))
         }
         _ => {}
+    }
+    if let Some(pdf) = pdf {
+        if sheet.is_some() || headers.is_some() || cells.is_some() {
+            return Err("a download check is either a PDF check or a spreadsheet check".to_string());
+        }
+        if !name.trim().to_lowercase().ends_with(".pdf") {
+            return Err("pdf checks need a name ending in .pdf".to_string());
+        }
+        check_pdf_spec(pdf)?;
     }
     if sheet.is_some() {
         needs_type("sheet", name, SHEET_TYPES)?;
@@ -506,6 +571,53 @@ fn check_download(
         if let Some(i) = texts.iter().position(|t| t.trim().is_empty()) {
             return Err(format!("expect_download contains_text {} is empty - every file contains nothing", i + 1));
         }
+    }
+    Ok(())
+}
+
+/// What `validate` says about an `expect_download`'s `pdf` block.
+fn check_pdf_spec(pdf: &PdfSpec) -> Result<(), String> {
+    if let Some(key) = pdf.stray.keys().next() {
+        let shown: String = key.chars().take(40).collect();
+        return Err(format!("pdf has no \"{shown}\" - it takes contains, pages and on_page"));
+    }
+    if pdf.contains.is_none() && pdf.pages.is_none() && pdf.on_page.is_none() {
+        return Err("pdf is empty - give contains, pages or on_page, or leave pdf out".to_string());
+    }
+    if let Some(c) = &pdf.contains {
+        phrases_given("pdf contains", c)?;
+    }
+    if let Some(p) = &pdf.pages {
+        let given = [p.equals, p.at_least, p.at_most].iter().filter(|n| n.is_some()).count();
+        if given != 1 {
+            return Err("pdf pages takes exactly one of equals, at_least or at_most".to_string());
+        }
+        if p.equals == Some(0) || p.at_least == Some(0) || p.at_most == Some(0) {
+            return Err("pdf pages counts from 1".to_string());
+        }
+    }
+    if let Some(on) = &pdf.on_page {
+        if on.is_empty() {
+            return Err("pdf on_page is an empty list - give at least one page, or leave on_page out".to_string());
+        }
+        for o in on {
+            if o.page == 0 || o.page < -1 {
+                return Err("on_page: page counts from 1, or -1 for the last page".to_string());
+            }
+            phrases_given("pdf on_page contains", &o.contains)?;
+        }
+    }
+    Ok(())
+}
+
+/// A list of phrases holds at least one, and none is empty.
+fn phrases_given(key: &str, phrases: &Phrases) -> Result<(), String> {
+    let list = phrases.list();
+    if list.is_empty() {
+        return Err(format!("{key} is an empty list - give at least one text"));
+    }
+    if list.iter().any(|t| t.trim().is_empty()) {
+        return Err(format!("{key} has an empty text - every PDF contains nothing"));
     }
     Ok(())
 }
@@ -971,8 +1083,8 @@ impl Action {
                 }
             }
             Action::ExpectFocused { selector, .. } => selector.validate(),
-            Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, stray } => {
-                check_download(name, within_ms, sheet, headers, cells, contains_text, stray)
+            Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, pdf, stray } => {
+                check_download(name, within_ms, sheet, headers, cells, contains_text, pdf, stray)
             }
             Action::ExpectTab { name, url_contains, within_ms } => {
                 check_tab_name("expect_tab", name)?;

@@ -48,6 +48,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
             headers: None,
             cells: None,
             contains_text: None,
+            pdf: None,
             stray: Default::default(),
         },
         Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },

@@ -274,7 +274,39 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
     const texts = strList(a.contains_text);
     if (texts.length) parts.push(`containing ${quoted(texts)}`);
   }
+  if (a.pdf != null) parts.push(...pdfDetails(a.pdf));
   return parts.length ? `, ${parts.join(", ")}` : "";
+}
+
+/** One phrase or a list of them, as the `pdf` block takes them. */
+const phrases = (v: unknown): string[] => (typeof v === "string" ? [v] : strList(v));
+
+/** An `expect_download`'s `pdf` block, as a clause per check:
+ * `with the text "Total"`, `3 pages`, `"Total" on the last page`. */
+function pdfDetails(pdf: unknown): string[] {
+  if (!isRecord(pdf)) throw new Unreadable();
+  const parts: string[] = [];
+  if (pdf.contains != null) parts.push(`with the text ${quoted(phrases(pdf.contains))}`);
+  if (pdf.pages != null) {
+    if (!isRecord(pdf.pages)) throw new Unreadable();
+    const given = [
+      ["", optNum(pdf.pages.equals)],
+      ["at least ", optNum(pdf.pages.at_least)],
+      ["at most ", optNum(pdf.pages.at_most)],
+    ].filter(([, n]) => n !== undefined) as [string, number][];
+    if (given.length !== 1) throw new Unreadable();
+    const [how, n] = given[0];
+    parts.push(`${how}${n} ${n === 1 ? "page" : "pages"}`);
+  }
+  if (pdf.on_page != null) {
+    if (!Array.isArray(pdf.on_page)) throw new Unreadable();
+    for (const o of pdf.on_page as unknown[]) {
+      if (!isRecord(o)) throw new Unreadable();
+      const page = num(o.page);
+      parts.push(`${quoted(phrases(o.contains))} on ${page === -1 ? "the last page" : `page ${page}`}`);
+    }
+  }
+  return parts;
 }
 
 /** An `expect_tab`'s address text: `, at an address containing "<path>"`,

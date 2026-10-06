@@ -94,6 +94,9 @@ encoding_rs = "0.8.42"
 # api_templates/fixture_run.rs). Already in the build through serde_with;
 # named here for its local clock.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Auto Run's expect_download reads a downloaded PDF's text page by page
+# (MIT, over lopdf) - see autorun/downloads.rs. Read only.
+pdf-extract = "0.12.1"
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

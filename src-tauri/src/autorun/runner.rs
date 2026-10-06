@@ -708,12 +708,12 @@ async fn expect_download<D: Driver>(
     cancel: Option<&AtomicBool>,
     cap: Option<u32>,
 ) -> ActionOutcome {
-    use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck};
+    use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck, OnPage, PageCount, PdfCheck};
     use crate::browser::actions::{CellMatch, HeadersSpec, DOWNLOAD_WAIT_MS};
     if let Err(why) = action.validate() {
         return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
     }
-    let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, .. } = action else {
+    let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, pdf, .. } = action else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_download"));
     };
     let asked = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
@@ -763,6 +763,22 @@ async fn expect_download<D: Driver>(
             .map(|c| CellCheck { r#ref: c.at.clone(), text: c.text.clone(), contains: c.how == CellMatch::Contains })
             .collect(),
         contains_text: contains_text.clone().unwrap_or_default(),
+        pdf: pdf.as_ref().map(|p| PdfCheck {
+            contains: p.contains.as_ref().map(|c| c.list()).unwrap_or_default(),
+            // `validate` above has made sure exactly one is given.
+            pages: p.pages.as_ref().and_then(|n| {
+                n.equals
+                    .map(PageCount::Equals)
+                    .or(n.at_least.map(PageCount::AtLeast))
+                    .or(n.at_most.map(PageCount::AtMost))
+            }),
+            on_page: p
+                .on_page
+                .iter()
+                .flatten()
+                .map(|o| OnPage { page: o.page, contains: o.contains.list() })
+                .collect(),
+        }),
     };
     let (path, shown) = (entry.path.clone(), entry.name.clone());
     let checked = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check)).await;

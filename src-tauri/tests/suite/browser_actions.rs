@@ -641,6 +641,7 @@ fn only_checks_and_expectations_are_checks() {
             headers: None,
             cells: None,
             contains_text: None,
+            pdf: None,
             stray: Default::default(),
         },
         Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },
@@ -941,7 +942,7 @@ fn expect_download_refuses_what_could_never_be_checked() {
     // A misspelt key is refused rather than dropped without a word.
     assert_eq!(
         download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "header": { "exact": ["A"] } })),
-        "expect_download has no \"header\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+        "expect_download has no \"header\" - it takes name, within_ms, sheet, headers, cells, contains_text and pdf"
     );
 }
 

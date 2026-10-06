@@ -2725,6 +2725,42 @@ async fn expect_download_checks_the_file_a_step_downloaded() {
     assert_eq!(out[0].detail, "no download started within 1.5 s");
 }
 
+/// A PDF a real browser downloaded, read page by page: its text anywhere,
+/// its page count and its last page pass; a phrase on the wrong page fails
+/// with the spec's sentence.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_download_reads_a_downloaded_pdf() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut live = open_downloads(&dir.path().join("downloads")).await;
+
+    let out = download_step(&mut live, dir.path(), 1, vec![
+        json!({ "kind": "click", "selector": { "css": "#pdf" } }),
+        json!({ "kind": "expect_download", "name": "payslip*.pdf",
+                "pdf": { "contains": ["Ada Lovelace"], "pages": { "equals": 2 },
+                         "on_page": [ { "page": 1, "contains": "Payslip for October" }, { "page": -1, "contains": "Total 12,500.00" } ] } }),
+    ])
+    .await;
+    must(out[0].clone());
+    assert!(out[1].ok, "{}", out[1].detail);
+    assert!(out[1].detail.starts_with("downloaded \"Payslip.pdf\" ("), "{}", out[1].detail);
+    assert!(
+        out[1].detail.ends_with(
+            ", the PDF contains \"Ada Lovelace\", the PDF has 2 pages, page 1 of the PDF contains \"Payslip for October\", page 2 of the PDF contains \"Total 12,500.00\""
+        ),
+        "{}",
+        out[1].detail
+    );
+
+    let out = download_step(&mut live, dir.path(), 2, vec![
+        json!({ "kind": "click", "selector": { "css": "#pdf" } }),
+        json!({ "kind": "expect_download", "name": "Payslip*.pdf", "pdf": { "on_page": [ { "page": 1, "contains": "Total" } ] } }),
+    ])
+    .await;
+    assert!(!out[1].ok);
+    assert_eq!(out[1].detail, "page 1 of the PDF does not contain \"Total\"");
+}
+
 /// A replay to a step against a real page: a three-step case replayed to
 /// step 3 signs in, takes the recorded trip to its area, runs steps 1 and
 /// 2, and leaves the page where step 2 left it - step 3's Save never ran.

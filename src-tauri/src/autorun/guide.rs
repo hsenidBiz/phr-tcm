@@ -429,6 +429,12 @@ Or a workbook, checked with `cells`:
     { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
     { "kind": "expect_download", "name": "*Error*.xlsx", "sheet": "Errors", "cells": [ { "ref": "B2", "text": "Department is required", "match": "contains" } ] }
 
+A payslip or report printed to PDF, checked with `pdf`: the employee's
+name anywhere, two pages, and the total on the last page:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Download Payslip" } },
+    { "kind": "expect_download", "name": "Payslip*.pdf", "pdf": { "contains": ["Ada Lovelace"], "pages": { "equals": 2 }, "on_page": [ { "page": -1, "contains": "Total" } ] } }
+
 The names, buttons and words above are examples: use the file name the
 application really gives, with `*` for the part that changes (a date, a
 number), and the words the case's expected result names.
@@ -452,6 +458,18 @@ number), and the words the case's expected result names.
     0.5, so check header and text cells, not dates or percentages.
 - `contains_text` is only for a name ending in .csv or .txt: each text
   must appear somewhere in the file.
+- `pdf` is only for a name ending in .pdf, and never beside `sheet`,
+  `headers` or `cells`. Its text is compared ignoring case, with every run
+  of spaces and line breaks as one space. It takes any of:
+  - `contains`: a text, or a list of texts, each somewhere in the PDF;
+  - `pages`: exactly one of `{ "equals": n }`, `{ "at_least": n }` or
+    `{ "at_most": n }`;
+  - `on_page`: a list of `{ "page": p, "contains": ... }`, where `page`
+    counts from 1 and -1 is the last page.
+
+  A PDF that needs a password to open, a scanned PDF with no text in it,
+  and a damaged one all fail with `the PDF's text could not be read`; the
+  app log says which. A scanned PDF is never read as an image.
 - Saving refuses a key the file type cannot carry, a `within_ms` out of
   range, a `ref` that is not a cell like B2, and an empty list.
 

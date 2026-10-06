@@ -132,6 +132,26 @@ describe("a sentence for every action kind", () => {
       { kind: "expect_download", name: "errors*.csv", within_ms: 30000, contains_text: ["Row 3"] },
       'Check a file named like "errors*.csv" downloads (up to 30 s), containing "Row 3"',
     ],
+    [
+      {
+        kind: "expect_download",
+        name: "Payslip*.pdf",
+        pdf: { contains: "Ada", pages: { equals: 3 }, on_page: [{ page: -1, contains: "Total" }] },
+      },
+      'Check a file named like "Payslip*.pdf" downloads, with the text "Ada", 3 pages, "Total" on the last page',
+    ],
+    [
+      {
+        kind: "expect_download",
+        name: "report.pdf",
+        pdf: { contains: ["Net pay", "Grade"], pages: { at_least: 1 }, on_page: [{ page: 2, contains: ["A", "B"] }] },
+      },
+      'Check a file named "report.pdf" downloads, with the text "Net pay", "Grade", at least 1 page, "A", "B" on page 2',
+    ],
+    [
+      { kind: "expect_download", name: "report.pdf", pdf: { pages: { at_most: 4 } } },
+      'Check a file named "report.pdf" downloads, at most 4 pages',
+    ],
     [{ kind: "expect_tab", name: "report" }, 'Wait for a new tab and call it "report"'],
     [
       { kind: "expect_tab", name: "report", url_contains: "https://hr.example.com/hr/report?id=7#top" },
@@ -291,6 +311,8 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a locator with nothing to find by", { kind: "click", selector: { nth: 1 } }],
     ["a role that is not text", { kind: "click", selector: { role: 7 } }],
     ["download headers that are not a list", { kind: "expect_download", name: "a.xlsx", headers: { exact: "A" } }],
+    ["a pdf page count with two counts", { kind: "expect_download", name: "a.pdf", pdf: { pages: { equals: 1, at_most: 2 } } }],
+    ["a pdf page that is not a number", { kind: "expect_download", name: "a.pdf", pdf: { on_page: [{ page: "last", contains: "x" }] } }],
     ["a when_visible wait that is not a number", { kind: "when_visible", selector: "#a", within_ms: "soon", then: [] }],
     ["a press_key times that is not a number", { kind: "press_key", key: "Tab", times: "twice" }],
     ["a drag position it does not know", { kind: "drag", from: "#a", to: "#b", position: "beside" }],

@@ -1,12 +1,14 @@
-//! Checking a downloaded file: its name, and for a spreadsheet, CSV or text
-//! file what is in it. All of it is pure - it reads the committed fixtures
-//! under `tests/fixtures/downloads/` and a few files written to a temporary
-//! folder, and never starts a browser.
+//! Checking a downloaded file: its name, and for a spreadsheet, CSV, text
+//! or PDF file what is in it. All of it is pure - it reads the committed
+//! fixtures under `tests/fixtures/downloads/` and a few files written to a
+//! temporary folder, and never starts a browser.
 
 use std::path::{Path, PathBuf};
 use v2_lib::autorun::downloads::{
-    check_file, name_matches, parse_a1, CellCheck, DownloadCheck, HeaderCheck, MAX_CHECK_BYTES,
+    check_file, name_matches, normalise, parse_a1, pdf_pages, pdf_size_gate, CellCheck, DownloadCheck, HeaderCheck,
+    OnPage, PageCount, PdfCheck, MAX_CHECK_BYTES, PDF_UNREADABLE,
 };
+use v2_lib::browser::actions::Action;
 use v2_lib::test_files::human_size;
 
 fn fixture(name: &str) -> PathBuf {
@@ -24,6 +26,7 @@ fn named(name: &str) -> DownloadCheck {
         headers: None,
         cells: Vec::new(),
         contains_text: Vec::new(),
+        pdf: None,
     }
 }
 
@@ -581,4 +584,265 @@ fn a_windows_1252_euro_sign_reads_as_euro() {
 #[test]
 fn a_twelve_letter_column_is_refused() {
     assert_eq!(parse_a1("ABCDEFGHIJKL1"), None);
+}
+
+// ---------------------------------------------------------------- PDFs
+
+/// `two-pages.pdf`: page 1 "Payslip for October" and "Employee: Ada
+/// Lovelace" (three spaces in the PDF), page 2 "Summary", "Total
+/// 12,500.00" and "End of report".
+fn pdf(check: PdfCheck) -> DownloadCheck {
+    let mut c = named("two-pages.pdf");
+    c.pdf = Some(check);
+    c
+}
+
+fn on(page: i32, items: &[&str]) -> OnPage {
+    OnPage { page, contains: strings(items) }
+}
+
+fn run_pdf(check: PdfCheck) -> Result<String, String> {
+    check_file(&fixture("two-pages.pdf"), "two-pages.pdf", &pdf(check))
+}
+
+#[test]
+fn the_two_page_fixture_reads_page_by_page() {
+    let pages = pdf_pages(&std::fs::read(fixture("two-pages.pdf")).unwrap()).unwrap();
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    assert!(pages[0].contains("payslip for october"), "{pages:?}");
+    assert!(pages[0].contains("employee: ada lovelace"), "{pages:?}");
+    assert!(pages[1].contains("total 12,500.00"), "{pages:?}");
+}
+
+#[test]
+fn normalising_ignores_case_and_collapses_whitespace() {
+    assert_eq!(normalise("  Net\tPay \r\n\n  TOTAL  "), "net pay total");
+}
+
+#[test]
+fn contains_passes_ignoring_case_and_whitespace_and_fails_naming_the_text() {
+    let check = PdfCheck { contains: strings(&["PAYSLIP for   october", "end of\nreport"]), ..Default::default() };
+    assert_eq!(
+        run_pdf(check),
+        Ok(passed(
+            "two-pages.pdf",
+            &["the PDF contains \"PAYSLIP for   october\"", "the PDF contains \"end of\nreport\""]
+        ))
+    );
+    let check = PdfCheck { contains: strings(&["Payslip", "Net pay"]), ..Default::default() };
+    assert_eq!(run_pdf(check), Err("the PDF does not contain \"Net pay\"".to_string()));
+}
+
+#[test]
+fn each_page_count_form_passes_and_fails() {
+    let count = |p| PdfCheck { pages: Some(p), ..Default::default() };
+    assert_eq!(run_pdf(count(PageCount::Equals(2))), Ok(passed("two-pages.pdf", &["the PDF has 2 pages"])));
+    assert_eq!(run_pdf(count(PageCount::Equals(3))), Err("the PDF has 2 pages, not 3".to_string()));
+    assert!(run_pdf(count(PageCount::AtLeast(2))).is_ok());
+    assert_eq!(run_pdf(count(PageCount::AtLeast(3))), Err("the PDF has 2 pages, not at least 3".to_string()));
+    assert!(run_pdf(count(PageCount::AtMost(2))).is_ok());
+    assert_eq!(run_pdf(count(PageCount::AtMost(1))), Err("the PDF has 2 pages, not at most 1".to_string()));
+}
+
+#[test]
+fn on_page_reads_the_first_and_the_last_page() {
+    let check = PdfCheck { on_page: vec![on(1, &["Payslip"]), on(-1, &["total 12,500.00"])], ..Default::default() };
+    assert_eq!(
+        run_pdf(check),
+        Ok(passed(
+            "two-pages.pdf",
+            &["page 1 of the PDF contains \"Payslip\"", "page 2 of the PDF contains \"total 12,500.00\""]
+        ))
+    );
+    // "Total" is on page 2, not page 1.
+    let check = PdfCheck { on_page: vec![on(1, &["Total"])], ..Default::default() };
+    assert_eq!(run_pdf(check), Err("page 1 of the PDF does not contain \"Total\"".to_string()));
+    let check = PdfCheck { on_page: vec![on(-1, &["Payslip"])], ..Default::default() };
+    assert_eq!(run_pdf(check), Err("page 2 of the PDF does not contain \"Payslip\"".to_string()));
+}
+
+#[test]
+fn a_page_past_the_end_says_there_is_no_such_page() {
+    let check = PdfCheck { on_page: vec![on(3, &["Total"])], ..Default::default() };
+    assert_eq!(run_pdf(check), Err("the PDF has no page 3".to_string()));
+}
+
+#[test]
+fn every_check_together_passes_in_order() {
+    let check = PdfCheck {
+        contains: strings(&["Ada Lovelace"]),
+        pages: Some(PageCount::Equals(2)),
+        on_page: vec![on(-1, &["Total"])],
+    };
+    assert_eq!(
+        run_pdf(check),
+        Ok(passed(
+            "two-pages.pdf",
+            &["the PDF contains \"Ada Lovelace\"", "the PDF has 2 pages", "page 2 of the PDF contains \"Total\""]
+        ))
+    );
+}
+
+/// A file that cannot be read: encrypted with a password to open, scanned
+/// (no text at all), or not a PDF. Each gives the one sentence, with the
+/// detail in the log, and never a panic (Review Focus 5).
+fn unreadable(path: &Path, shown: &str, why: &str) {
+    let _log = crate::serial::log_tail();
+    let mut check = named(shown);
+    check.pdf = Some(PdfCheck { contains: strings(&["salary"]), ..Default::default() });
+    assert_eq!(check_file(path, shown, &check), Err(PDF_UNREADABLE.to_string()), "{shown}");
+    let logged = v2_lib::applog::recent(50);
+    let line = logged
+        .iter()
+        .rev()
+        .find(|l| l.message.contains(&format!("the text of \"{shown}\" could not be read")))
+        .unwrap_or_else(|| panic!("no log line for {shown}"));
+    assert_eq!(line.level, "warn");
+    assert!(line.message.contains(why), "{}", line.message);
+    assert!(!line.message.contains(&path.parent().unwrap().to_string_lossy().to_string()), "{}", line.message);
+}
+
+#[test]
+fn an_encrypted_pdf_cannot_be_read() {
+    unreadable(&fixture("encrypted.pdf"), "encrypted.pdf", "encrypted");
+}
+
+#[test]
+fn an_image_only_pdf_cannot_be_read() {
+    unreadable(&fixture("image-only.pdf"), "image-only.pdf", "no text on any of its 1 pages");
+}
+
+#[test]
+fn garbage_and_a_truncated_pdf_cannot_be_read_and_never_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let noise = dir.path().join("noise.pdf");
+    let mut x: u32 = 0x1234_5678;
+    let mut bytes = b"%PDF-1.4\n".to_vec();
+    bytes.extend((0..4096).map(|_| {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        (x >> 24) as u8
+    }));
+    std::fs::write(&noise, &bytes).unwrap();
+    unreadable(&noise, "noise.pdf", "");
+    let whole = std::fs::read(fixture("two-pages.pdf")).unwrap();
+    let half = dir.path().join("half.pdf");
+    std::fs::write(&half, &whole[..whole.len() / 2]).unwrap();
+    unreadable(&half, "half.pdf", "");
+    let empty = dir.path().join("empty.pdf");
+    std::fs::write(&empty, b"").unwrap();
+    unreadable(&empty, "empty.pdf", "");
+}
+
+#[test]
+fn a_pdf_over_fifty_megabytes_is_refused_before_it_is_read() {
+    assert_eq!(pdf_size_gate(MAX_CHECK_BYTES), Ok(()));
+    assert_eq!(pdf_size_gate(MAX_CHECK_BYTES + 1), Err("the PDF is larger than 50 MB".to_string()));
+    // A sparse file: its size is past the cap, and nothing is written.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.pdf");
+    let f = std::fs::File::create(&path).unwrap();
+    f.set_len(MAX_CHECK_BYTES + 1).unwrap();
+    drop(f);
+    let mut check = named("big.pdf");
+    check.pdf = Some(PdfCheck { pages: Some(PageCount::AtLeast(1)), ..Default::default() });
+    assert_eq!(check_file(&path, "big.pdf", &check), Err("the PDF is larger than 50 MB".to_string()));
+}
+
+// ---------------------------------------------------------------- the pdf block when a script is saved
+
+fn action(v: serde_json::Value) -> Action {
+    serde_json::from_value(v).expect("the action parses")
+}
+
+fn refused(v: serde_json::Value) -> String {
+    action(v).validate().expect_err("the action is refused")
+}
+
+#[test]
+fn a_pdf_block_takes_contains_as_one_phrase_or_a_list() {
+    use serde_json::json;
+    let one = action(json!({ "kind": "expect_download", "name": "Payslip*.pdf", "pdf": { "contains": "Total" } }));
+    assert_eq!(one.validate(), Ok(()));
+    let many = action(json!({ "kind": "expect_download", "name": "Payslip*.PDF",
+        "pdf": { "contains": ["Total", "Net pay"], "pages": { "at_least": 1 },
+                 "on_page": [ { "page": -1, "contains": "Total" }, { "page": 1, "contains": ["Payslip"] } ] } }));
+    assert_eq!(many.validate(), Ok(()));
+}
+
+#[test]
+fn each_refusal_of_a_pdf_block() {
+    use serde_json::json;
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.xlsx", "pdf": { "contains": "Total" } })),
+        "pdf checks need a name ending in .pdf"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report*", "pdf": { "contains": "Total" } })),
+        "pdf checks need a name ending in .pdf"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "headers": { "exact": ["A"] },
+                        "pdf": { "contains": "Total" } })),
+        "a download check is either a PDF check or a spreadsheet check"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "cells": [ { "ref": "A1", "text": "x" } ],
+                        "pdf": { "contains": "Total" } })),
+        "a download check is either a PDF check or a spreadsheet check"
+    );
+    for page in [0, -2] {
+        assert_eq!(
+            refused(json!({ "kind": "expect_download", "name": "report.pdf",
+                            "pdf": { "on_page": [ { "page": page, "contains": "Total" } ] } })),
+            "on_page: page counts from 1, or -1 for the last page"
+        );
+    }
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "pages": { "equals": 2, "at_most": 3 } } })),
+        "pdf pages takes exactly one of equals, at_least or at_most"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "pages": {} } })),
+        "pdf pages takes exactly one of equals, at_least or at_most"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "pages": { "at_least": 0 } } })),
+        "pdf pages counts from 1"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": {} })),
+        "pdf is empty - give contains, pages or on_page, or leave pdf out"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "contains": [] } })),
+        "pdf contains is an empty list - give at least one text"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "contains": ["Total", " "] } })),
+        "pdf contains has an empty text - every PDF contains nothing"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "on_page": [] } })),
+        "pdf on_page is an empty list - give at least one page, or leave on_page out"
+    );
+    assert_eq!(
+        refused(json!({ "kind": "expect_download", "name": "report.pdf", "pdf": { "page_count": 2 } })),
+        "pdf has no \"page_count\" - it takes contains, pages and on_page"
+    );
+}
+
+#[test]
+fn old_and_new_download_checks_round_trip_byte_identical() {
+    for text in [
+        r#"{"kind":"expect_download","name":"Template*.xlsx","headers":{"exact":["Employee No","Name"]}}"#,
+        r#"{"kind":"expect_download","name":"*Error*.csv","within_ms":30000,"contains_text":["Row 4"]}"#,
+        r#"{"kind":"expect_download","name":"report.pdf"}"#,
+        r#"{"kind":"expect_download","name":"Payslip*.pdf","pdf":{"contains":"Total"}}"#,
+        r#"{"kind":"expect_download","name":"Payslip*.pdf","pdf":{"contains":["Total","Net pay"],"pages":{"equals":3},"on_page":[{"page":-1,"contains":"Total"}]}}"#,
+    ] {
+        let a: Action = serde_json::from_str(text).unwrap();
+        assert_eq!(serde_json::to_string(&a).unwrap(), text);
+    }
 }

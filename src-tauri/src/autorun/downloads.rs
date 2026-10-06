@@ -1,8 +1,9 @@
 //! What `expect_download` checks in a file the browser downloaded: its
-//! name, and for a spreadsheet, CSV or text file what is in it.
+//! name, and for a spreadsheet, CSV, text or PDF file what is in it.
 //!
-//! Pure: it reads a file that is already on disk and says, in one plain
-//! sentence, what it found. Finding the download (which one, whether it
+//! It reads a file that is already on disk and says, in one plain
+//! sentence, what it found; the only other thing it does is write why a
+//! PDF could not be read to the app log. Finding the download (which one, whether it
 //! finished) is the runner's; keeping it under a safe name is
 //! `browser::downloads`. Nothing here sends a file anywhere.
 //!
@@ -10,6 +11,8 @@
 //! - csv is read with `csv`, the delimiter taken from its first line, the
 //!   text UTF-8 (with or without a byte-order mark) or else Windows-1252.
 //! - txt is UTF-8, or else Windows-1252.
+//! - pdf is read with `pdf-extract`, page by page, compared ignoring case
+//!   with every run of whitespace as one space.
 //!
 //! A sentence never quotes more than `MAX_QUOTED_CHARS` characters of what
 //! the file holds, and never the path the file was kept at.
@@ -44,7 +47,36 @@ pub struct DownloadCheck {
     pub cells: Vec<CellCheck>,
     /// Text each of which must appear in a csv or txt file.
     pub contains_text: Vec<String>,
+    /// What a PDF's text must hold.
+    pub pdf: Option<PdfCheck>,
 }
+
+/// A PDF's checks, in the order they are made.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PdfCheck {
+    /// Phrases each of which must appear somewhere in the PDF.
+    pub contains: Vec<String>,
+    pub pages: Option<PageCount>,
+    pub on_page: Vec<OnPage>,
+}
+
+/// How many pages the PDF has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageCount {
+    Equals(u32),
+    AtLeast(u32),
+    AtMost(u32),
+}
+
+/// Phrases one page must hold. `page` counts from 1; `-1` is the last.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OnPage {
+    pub page: i32,
+    pub contains: Vec<String>,
+}
+
+/// Every failure to get a PDF's text says this; why is in the app log.
+pub const PDF_UNREADABLE: &str = "the PDF's text could not be read";
 
 /// The first row, compared trimmed.
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +161,17 @@ pub fn check_file(path: &Path, shown_name: &str, check: &DownloadCheck) -> Resul
 
     let wants_sheet = check.headers.is_some() || !check.cells.is_empty();
     let wants_text = !check.contains_text.is_empty();
+    if !wants_sheet && !wants_text && check.pdf.is_none() {
+        return Ok(sentence);
+    }
+    if let Some(pdf) = &check.pdf {
+        pdf_size_gate(size)?;
+        let pages = pdf_pages(&read_bytes(path, shown_name)?).map_err(|detail| {
+            crate::applog::warn(format!("expect_download: the text of \"{shown_name}\" could not be read: {detail}"));
+            PDF_UNREADABLE.to_string()
+        })?;
+        sentence.push_str(&check_pdf(&pages, pdf)?);
+    }
     if !wants_sheet && !wants_text {
         return Ok(sentence);
     }
@@ -402,5 +445,115 @@ fn clip(s: &str) -> String {
     match s.char_indices().nth(MAX_QUOTED_CHARS) {
         Some((at, _)) => format!("{}...", &s[..at]),
         None => s.to_string(),
+    }
+}
+
+/// A PDF over the 50 MB that can be read is refused before it is read.
+pub fn pdf_size_gate(size: u64) -> Result<(), String> {
+    if size > MAX_CHECK_BYTES {
+        return Err("the PDF is larger than 50 MB".to_string());
+    }
+    Ok(())
+}
+
+/// Text as the PDF checks compare it: lowercase, with every run of
+/// whitespace one space, and none at either end.
+pub fn normalise(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// A PDF's text, page by page, normalised. `Err` says why it could not be
+/// read, for the log only: a damaged file, one that needs a password, or
+/// one with no text on any page (a scanned image). Whatever the reader
+/// does with a hostile file, a panic included, comes back as an `Err`.
+pub fn pdf_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_pages(bytes)));
+    let pages = match read {
+        Ok(r) => r?,
+        Err(panic) => {
+            let why = panic
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "the reader stopped".to_string());
+            return Err(format!("the PDF reader failed: {}", clip(&why)));
+        }
+    };
+    if pages.iter().all(String::is_empty) {
+        return Err(format!("no text on any of its {} pages", pages.len()));
+    }
+    Ok(pages)
+}
+
+fn extract_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
+    use pdf_extract::{output_doc_page, Document, PlainTextOutput};
+    let mut doc = Document::load_mem(bytes).map_err(|e| clip(&e.to_string()))?;
+    if doc.is_encrypted() {
+        // A file locked only against changes opens with no password, as in
+        // any viewer; one that needs a password to open cannot be read.
+        doc.decrypt("").map_err(|e| format!("it is encrypted: {}", clip(&e.to_string())))?;
+    }
+    let numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+    let mut pages = Vec::with_capacity(numbers.len());
+    for n in numbers {
+        let mut text = String::new();
+        {
+            let mut out = PlainTextOutput::new(&mut text);
+            output_doc_page(&doc, &mut out, n).map_err(|e| format!("page {n}: {}", clip(&e.to_string())))?;
+        }
+        pages.push(normalise(&text));
+    }
+    Ok(pages)
+}
+
+/// The passed clauses for a PDF's checks, or the first failure.
+fn check_pdf(pages: &[String], check: &PdfCheck) -> Result<String, String> {
+    let mut clauses = String::new();
+    let whole = pages.join(" ");
+    for want in &check.contains {
+        let want = want.trim();
+        if !whole.contains(&normalise(want)) {
+            return Err(format!("the PDF does not contain \"{want}\""));
+        }
+        clauses.push_str(&format!(", the PDF contains \"{want}\""));
+    }
+    if let Some(count) = check.pages {
+        let n = pages.len() as u64;
+        let (ok, expected) = match count {
+            PageCount::Equals(e) => (n == u64::from(e), e.to_string()),
+            PageCount::AtLeast(e) => (n >= u64::from(e), format!("at least {e}")),
+            PageCount::AtMost(e) => (n <= u64::from(e), format!("at most {e}")),
+        };
+        if !ok {
+            return Err(format!("the PDF has {}, not {expected}", page_word(n)));
+        }
+        clauses.push_str(&format!(", the PDF has {}", page_word(n)));
+    }
+    for on in &check.on_page {
+        let at = match on.page {
+            -1 => pages.len(),
+            p if p >= 1 => usize::try_from(p).unwrap_or(usize::MAX),
+            p => return Err(format!("the PDF has no page {p}")),
+        };
+        let Some(text) = at.checked_sub(1).and_then(|i| pages.get(i)) else {
+            return Err(format!("the PDF has no page {}", on.page));
+        };
+        for want in &on.contains {
+            let want = want.trim();
+            if !text.contains(&normalise(want)) {
+                return Err(format!("page {at} of the PDF does not contain \"{want}\""));
+            }
+            clauses.push_str(&format!(", page {at} of the PDF contains \"{want}\""));
+        }
+    }
+    Ok(clauses)
+}
+
+/// `1 page`, `3 pages`.
+fn page_word(n: u64) -> String {
+    if n == 1 {
+        "1 page".to_string()
+    } else {
+        format!("{n} pages")
     }
 }
