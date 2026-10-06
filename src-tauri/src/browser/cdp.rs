@@ -34,7 +34,7 @@
 //! both layers are tested without starting a browser.
 
 use futures::{SinkExt, StreamExt};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -209,9 +209,100 @@ pub struct Tab {
     held: bool,
     /// Its service-worker bypass was refused, so it is never let run.
     unguardable: bool,
+    /// Every document this tab has loaded (`Page.frameNavigated`), by
+    /// loader id, oldest first; bounded.
+    loaders: VecDeque<String>,
+    /// The loader of its top-level document now.
+    main_loader: Option<String>,
+    /// While a hold is on: the documents that were left before it was
+    /// asked for. A save one of them sends is still stopped (`late_save`).
+    held_out: HashSet<String>,
+    /// Which document sent each request (`Network.requestWillBeSent`), by
+    /// the network's request id; bounded, oldest first.
+    request_loaders: HashMap<String, String>,
+    request_order: VecDeque<String>,
+    /// Saves paused during a hold whose document is not known yet: answered
+    /// once it is (`resolve_parked`).
+    parked: Vec<Parked>,
 }
 
+/// A save paused during a hold, waiting to learn which document sent it.
+struct Parked {
+    request_id: String,
+    network_id: String,
+    method: String,
+    url: String,
+    since: Instant,
+}
+
+/// How long a parked save waits to learn its document before it is
+/// stopped anyway (fail closed).
+const PARK_LIMIT: Duration = Duration::from_secs(2);
+
+/// How many documents and requests a tab remembers the loader of.
+const MAX_LOADERS: usize = 64;
+const MAX_REQUEST_LOADERS: usize = 512;
+
 impl Tab {
+    /// Note which document is which: a document loaded, or a request sent
+    /// by one.
+    fn observe_documents(&mut self, ev: &Event) {
+        match ev.method.as_str() {
+            "Page.frameNavigated" => {
+                let frame = &ev.params["frame"];
+                let Some(loader) = frame["loaderId"].as_str().filter(|l| !l.is_empty()) else {
+                    return;
+                };
+                if !self.loaders.iter().any(|l| l == loader) {
+                    if self.loaders.len() >= MAX_LOADERS {
+                        self.loaders.pop_front();
+                    }
+                    self.loaders.push_back(loader.to_string());
+                }
+                if frame.get("parentId").is_none() {
+                    self.main_loader = Some(loader.to_string());
+                }
+            }
+            "Network.requestWillBeSent" => {
+                let (Some(id), Some(loader)) = (ev.params["requestId"].as_str(), ev.params["loaderId"].as_str()) else {
+                    return;
+                };
+                if self.request_loaders.insert(id.to_string(), loader.to_string()).is_none() {
+                    self.request_order.push_back(id.to_string());
+                    if self.request_order.len() > MAX_REQUEST_LOADERS {
+                        if let Some(old) = self.request_order.pop_front() {
+                            self.request_loaders.remove(&old);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The documents a hold asked for now must still not save from: every
+    /// one seen except the top-level document on screen, which is the page
+    /// the sign-in arrived on.
+    fn hold_out_left_documents(&mut self) {
+        self.held_out = self.loaders.iter().filter(|l| Some(*l) != self.main_loader.as_ref()).cloned().collect();
+    }
+
+    /// During a hold, is this save still stopped? A ping (a beacon) always
+    /// is: only a page being left sends one at that moment. Otherwise it is
+    /// stopped when it came from a document left before the hold. `None`:
+    /// its document is not known yet.
+    fn late_save(&self, params: &serde_json::Value) -> Option<bool> {
+        if params["resourceType"].as_str() == Some("Ping") {
+            return Some(true);
+        }
+        // Without the Network domain there is no telling which document
+        // sent it: stopped (fail closed).
+        let Some(network_id) = params["networkId"].as_str() else {
+            return Some(true);
+        };
+        self.request_loaders.get(network_id).map(|l| self.held_out.contains(l))
+    }
+
     fn new(session_id: String, target_id: String, name: Option<String>, url: &str) -> Tab {
         Tab {
             session_id,
@@ -225,6 +316,12 @@ impl Tab {
             guard: None,
             held: false,
             unguardable: false,
+            loaders: VecDeque::new(),
+            main_loader: None,
+            held_out: HashSet::new(),
+            request_loaders: HashMap::new(),
+            request_order: VecDeque::new(),
+            parked: Vec::new(),
         }
     }
 }
@@ -657,17 +754,29 @@ impl<T: Transport> Cdp<T> {
     /// only once the browser has answered a command sent after it was asked
     /// for (`hold_marker`); every request paused before that is read first,
     /// and is refused. Ending the hold takes effect at once.
+    ///
+    /// A request the browser pauses after the hold took effect can still be
+    /// the page being left (its keepalive beacon reaching the network
+    /// late): a ping, or a save from a document left before the hold was
+    /// asked for, is still stopped (`Tab::late_save`). Only the page the
+    /// sign-in arrived on, and what it loads after, may save.
     pub fn hold_saves(&mut self, hold: bool) {
         if hold {
             if !self.hold && !self.hold_pending {
                 self.hold_pending = true;
                 self.hold_marker = None;
+                for t in &mut self.tabs {
+                    t.hold_out_left_documents();
+                }
             }
             return;
         }
         self.hold_pending = false;
         self.hold_marker = None;
         self.set_hold(false);
+        for t in &mut self.tabs {
+            t.held_out.clear();
+        }
     }
 
     fn set_hold(&mut self, hold: bool) {
@@ -840,6 +949,10 @@ impl<T: Transport> Cdp<T> {
             return;
         }
         loop {
+            if self.resolve_parked().await.is_err() {
+                tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
+                return;
+            }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return;
@@ -883,15 +996,33 @@ impl<T: Transport> Cdp<T> {
         let method = params["request"]["method"].as_str().unwrap_or("GET");
         let url = params["request"]["url"].as_str().unwrap_or("");
         let stop = match at {
-            Some(i) => match self.tabs[i].guard.as_mut() {
-                Some(g) if !g.hold && super::save_guard::is_save(method, url, &g.patterns) => {
-                    if g.blocked.is_none() {
-                        g.blocked = Some(super::save_guard::blocked(method, url));
+            Some(i) => {
+                let tab = &self.tabs[i];
+                let verdict = match tab.guard.as_ref() {
+                    Some(g) if super::save_guard::is_save(method, url, &g.patterns) => {
+                        if g.hold { tab.late_save(params) } else { Some(true) }
                     }
-                    true
+                    _ => Some(false),
+                };
+                let Some(stop) = verdict else {
+                    // Which document sent it is not known yet: it waits,
+                    // paused, until it is (`resolve_parked`).
+                    self.tabs[i].parked.push(Parked {
+                        request_id,
+                        network_id: params["networkId"].as_str().unwrap_or("").to_string(),
+                        method: method.to_string(),
+                        url: url.to_string(),
+                        since: Instant::now(),
+                    });
+                    return Ok(());
+                };
+                if stop {
+                    if let Some(g) = self.tabs[i].guard.as_mut() {
+                        g.blocked.get_or_insert_with(|| super::save_guard::blocked(method, url));
+                    }
                 }
-                _ => false,
-            },
+                stop
+            }
             None => match &self.armed {
                 Some(p) if !self.hold && super::save_guard::is_save(method, url, p) => {
                     if self.blocked_elsewhere.is_none() {
@@ -902,6 +1033,13 @@ impl<T: Transport> Cdp<T> {
                 _ => false,
             },
         };
+        let on = at.map(|i| self.tabs[i].session_id.clone()).or(session).unwrap_or_default();
+        self.queue_answer(&on, &request_id, method, url, stop);
+        self.send_unsent_answers().await
+    }
+
+    /// Queue the answer to one paused request: stopped or continued.
+    fn queue_answer(&mut self, session: &str, request_id: &str, method: &str, url: &str, stop: bool) {
         let (what, params) = if stop {
             crate::applog::warn(format!(
                 "Auto Run stopped a save the page tried to send: {} {}",
@@ -912,8 +1050,46 @@ impl<T: Transport> Cdp<T> {
         } else {
             ("Fetch.continueRequest", serde_json::json!({ "requestId": request_id }))
         };
-        let on = at.map(|i| self.tabs[i].session_id.clone()).or(session).unwrap_or_default();
-        self.queue(&on, what, params, None);
+        self.queue(session, what, params, None);
+    }
+
+    /// Answer every parked save whose fate is known now: its document is
+    /// known, the hold or the guard ended, or it waited `PARK_LIMIT`
+    /// (stopped, fail closed).
+    async fn resolve_parked(&mut self) -> Result<(), CdpError> {
+        if self.tabs.iter().all(|t| t.parked.is_empty()) {
+            return Ok(());
+        }
+        let mut answers = Vec::new();
+        for t in &mut self.tabs {
+            let mut waiting = Vec::new();
+            for p in std::mem::take(&mut t.parked) {
+                let verdict = match t.guard.as_ref() {
+                    None => Some(false),
+                    Some(g) if !g.hold => Some(true),
+                    Some(_) => match t.request_loaders.get(&p.network_id) {
+                        Some(loader) => Some(t.held_out.contains(loader)),
+                        None if p.since.elapsed() >= PARK_LIMIT => Some(true),
+                        None => None,
+                    },
+                };
+                match verdict {
+                    None => waiting.push(p),
+                    Some(stop) => {
+                        if stop {
+                            if let Some(g) = t.guard.as_mut() {
+                                g.blocked.get_or_insert_with(|| super::save_guard::blocked(&p.method, &p.url));
+                            }
+                        }
+                        answers.push((t.session_id.clone(), p, stop));
+                    }
+                }
+            }
+            t.parked = waiting;
+        }
+        for (session, p, stop) in answers {
+            self.queue_answer(&session, &p.request_id, &p.method, &p.url, stop);
+        }
         self.send_unsent_answers().await
     }
 
@@ -1136,6 +1312,7 @@ impl<T: Transport> Cdp<T> {
         params: serde_json::Value,
         limit: Duration,
     ) -> Result<serde_json::Value, CdpError> {
+        self.resolve_parked().await?;
         self.send_unsent_answers().await?;
         let id = self.next_id;
         self.next_id += 1;
@@ -1261,6 +1438,8 @@ impl<T: Transport> Cdp<T> {
                 tab.url_without_query = address_of(url);
             }
         }
+        tab.observe_documents(&ev);
+        let parked = ev.method == "Network.requestWillBeSent" && !tab.parked.is_empty();
         // The record sees every event first and never claims one, so the
         // page log below is fed exactly as before.
         tab.net_record.observe(&ev);
@@ -1268,6 +1447,9 @@ impl<T: Transport> Cdp<T> {
         // buffer: a page volunteers thousands, and they would push out the
         // load event a navigation is about to wait for.
         if tab.page_log.observe(&ev) {
+            if parked {
+                self.resolve_parked().await?;
+            }
             return Ok(());
         }
         if tab.events.len() >= MAX_BUFFERED_EVENTS {
@@ -1307,6 +1489,7 @@ impl<T: Transport> Cdp<T> {
                         // `route_event`: the record and the downloads must
                         // still hear of it.
                         let i = at.expect("checked above");
+                        self.tabs[i].observe_documents(&ev);
                         self.tabs[i].net_record.observe(&ev);
                         let owner = if session.is_some() { self.tabs[i].session_id.clone() } else { self.main.clone() };
                         self.follow_download(&ev, &owner);

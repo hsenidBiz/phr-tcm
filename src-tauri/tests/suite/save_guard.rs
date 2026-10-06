@@ -315,8 +315,17 @@ async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
     // after it was asked for (see browser_tabs for why).
     cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    // The login is sent by the sign-in page itself, which the browser says
+    // (its request's document); a save the browser cannot place is stopped.
+    let mut login: serde_json::Value = serde_json::from_str(&paused("r1", "POST", "https://hr.example/Account/SubmitLogin")).unwrap();
+    login["params"]["networkId"] = json!("n1");
     cdp.transport_mut().incoming.extend([
-        paused("r1", "POST", "https://hr.example/Account/SubmitLogin"),
+        json!({ "method": "Network.requestWillBeSent", "params": {
+            "requestId": "n1", "loaderId": "L-signin",
+            "request": { "method": "POST", "url": "https://hr.example/Account/SubmitLogin" }
+        } })
+        .to_string(),
+        login.to_string(),
         r#"{"id":4,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
