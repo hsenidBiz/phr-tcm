@@ -881,8 +881,8 @@ mod running {
     /// and what step 1 made recorded.
     #[tokio::test]
     async fn a_step_that_times_out_stops_the_run_and_leaves_nothing_held() {
-        let _leases = crate::serial::account_leases();
         let _act = crate::serial::activity_log();
+        let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
         r.script.lock().unwrap().hang_after = Some(1);
@@ -913,8 +913,8 @@ mod running {
 
     #[tokio::test]
     async fn a_failed_sign_in_stops_the_run_and_leaves_nothing_held() {
-        let _leases = crate::serial::account_leases();
         let _act = crate::serial::activity_log();
+        let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_broken(vec![], Some("#go"), &f, &[make_cycle(), add_suite()]);
         let report = run(&mut r, &f).await;
@@ -931,8 +931,8 @@ mod running {
 
     #[tokio::test]
     async fn a_refused_lease_stops_the_run_before_any_browser() {
-        let _leases = crate::serial::account_leases();
         let _act = crate::serial::activity_log();
+        let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
         let env = v2_lib::environments::active(r.root.path()).unwrap().id;
