@@ -307,6 +307,91 @@ has none for what you need, the Auto Run guide (`get_autorun_guide`) says
 how to find test users with the read-only database tools and offer them
 with `propose_accounts`. Never invent a password.
 
+## Fixtures
+
+A fixture makes a draft the same way every time, in seconds: an ordered
+list of saved templates run one after another in one browser, signed in
+once as the fixture's account. Build a fixture from proven templates: a
+step whose template is not proven is refused, and so is a template that
+deletes - a fixture never deletes.
+
+    {
+      "id": "pms-draft-cycle",
+      "name": "A draft performance cycle",
+      "account": "admin",
+      "steps": [
+        { "template": "pms-create-draft-cycle",
+          "params": { "cycleName": "{{prefix}} cycle {{now:yyyyMMdd HHmm}}" } },
+        { "template": "pms-add-competency",
+          "params": { "cycleId": "{{steps.1.cycleId}}" } }
+      ],
+      "outputs": { "cycle_id": "{{steps.1.cycleId}}" },
+      "creates": [
+        { "kind": "cycle", "id": "{{steps.1.cycleId}}", "name": "{{steps.1.cycleName}}" }
+      ]
+    }
+
+A step's params are text, and may hold `{{steps.<n>.<output>}}` (a declared
+output of an earlier step, `n` counting from 1), `{{now:<format>}}` (the
+run's start time in local time, with the letters `yyyy MM dd HH mm ss`) and
+`{{prefix}}` (the active environment's test name prefix). Text for a number,
+boolean or list param is read as one. `outputs` and each `creates` entry
+name one `{{steps.<n>.<output>}}` each, and a `creates` entry's id and name
+both come from one step whose template creates (effect `create`). A placeholder whose step gave no
+value stops the run at that step; it is never sent as text.
+
+A fixture performs a flow's stages itself, in order: a step whose template
+performs a later stage of a flow needs earlier steps that perform every
+stage before it, and takes the flow's subject as
+`{{steps.<m>.<subject>}}`, step m being the step that performs the flow's
+creating stage - so every stage acts on the one record that step made. A
+step whose flow, or whose stage, is no longer saved is refused.
+
+Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
+in a step's params. Everything a run makes is recorded as test-made - even
+when a later step fails - and Clean up only finds a name that starts with
+the prefix; the run warns about one that does not.
+
+`save_api_fixture { fixture }` checks the fixture and saves it, or answers
+with every problem, one sentence each. `run_api_fixture { id }` runs it and
+answers with its outputs, what it made and its warnings; it stops at the
+first failed step, with `step <n>: ` and that template's own sentence. A
+successful run's outputs become the fixture's current outputs; a failed one
+keeps the ones before. `list_api_fixtures` shows each fixture with its
+current outputs and last run. Saving and running need the API templates
+switch; listing does not. Each template step has its own 3-minute limit.
+
+When a shared draft is damaged, use Rebuild (run the fixture again), never
+a hand fix: the rebuild makes a fresh draft, scripts follow it through the
+fixture's outputs, and the damaged one is left for Clean up.
+
+## Delete templates
+
+A template with `"effect": "delete"` is a delete template. It deletes one
+draft the tests made, and it has exactly one shape:
+
+- `deletes_kind` names the kind of thing it deletes, as a fixture's
+  `creates` names it (`cycle`, `suite` and so on).
+- Its params are exactly one: `{ "name": "id", "type": "string", "required": true }`
+  (or `"type": "number"`), with no default.
+- `{{id}}` is the only placeholder in any of its steps. No other value and
+  no captured value may appear in a path, a query or a body.
+- Every POST step uses `{{id}}`.
+
+Any other shape is refused with `a delete template takes exactly one value,
+id, and deletes only that record`.
+
+Prove a delete template only with the `id` of a draft the tests made: a
+`present` entry of its kind, in the active environment, from the record of
+what fixtures and setups made. Any other `id` is refused with `a delete
+template is only proven on a draft the tests made`. A prove that succeeds
+deleted that draft, and the record marks it deleted.
+
+`run_api_template` refuses a delete template, and so does a fixture. Only
+the person's Clean up test-made drafts, in the app, runs one: it previews
+the drafts, the person ticks and confirms, and each is deleted through its
+kind's proven delete template.
+
 ## When a run fails
 
 The first failing step stops the run. Nothing is rolled back - the

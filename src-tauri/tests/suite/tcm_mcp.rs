@@ -80,8 +80,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the twenty-two dev-only
-    // tools (Auto Run's fourteen, then the API templates row's eight) are listed
+    // debug assertions on), so with nothing disabled the twenty-five dev-only
+    // tools (Auto Run's fourteen, then the API templates row's eleven) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -115,6 +115,9 @@ fn tools_list_names_every_tool() {
             "run_api_template",
             "save_api_flow",
             "get_api_flow_progress",
+            "save_api_fixture",
+            "run_api_fixture",
+            "list_api_fixtures",
             "record_app_quirk",
             "retire_app_quirk",
             "db_lookup",
@@ -430,10 +433,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 39 in this development build: nothing is disabled by an unreachable
-    // bridge, including the twenty-two dev-only tools, which default to ON here
+    // 42 in this development build: nothing is disabled by an unreachable
+    // bridge, including the twenty-five dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 39, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 42, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -748,13 +751,16 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 8] = [
+const API_TEMPLATE_TOOLS: [&str; 11] = [
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "save_api_fixture",
+    "run_api_fixture",
+    "list_api_fixtures",
     "record_app_quirk",
     "retire_app_quirk",
 ];
@@ -790,14 +796,20 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","record_app_quirk","retire_app_quirk"]}"#
+                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures","record_app_quirk","retire_app_quirk"]}"#
                     .into(),
             ));
         }
         Ok((200, "{}".into()))
     };
     let names = listed_names(&call);
-    assert!(names.iter().all(|n| !n.contains("api_template") && !n.contains("api_flow") && !n.contains("app_quirk")), "{names:?}");
+    assert!(
+        names.iter().all(|n| !n.contains("api_template")
+            && !n.contains("api_flow")
+            && !n.contains("api_fixture")
+            && !n.contains("app_quirk")),
+        "{names:?}"
+    );
 }
 
 /// Each tool reaches its own route; prove and run forward the arguments
@@ -814,11 +826,16 @@ fn the_api_template_tools_call_their_routes() {
         "template": { "id": "x" }, "account": "admin", "values": {}, "replace": true, "why": "the handler moved",
         "browser": "chrome",
     });
+    let fixture_args = serde_json::json!({ "fixture": { "id": "draft-cycle", "steps": [] } });
+    let run_fixture_args = serde_json::json!({ "id": "draft-cycle", "browser": "chrome" });
     let cases = [
         ("get_api_template_guide", serde_json::json!({}), "GET", "/api-template-guide", None),
         ("list_api_templates", serde_json::json!({}), "GET", "/api-templates", None),
         ("prove_api_template", prove_args.clone(), "POST", "/api-template-prove", Some(prove_args)),
         ("run_api_template", run_args.clone(), "POST", "/api-template-run", Some(run_args)),
+        ("save_api_fixture", fixture_args.clone(), "POST", "/api-template-fixture-save", Some(fixture_args)),
+        ("run_api_fixture", run_fixture_args.clone(), "POST", "/api-template-fixture-run", Some(run_fixture_args)),
+        ("list_api_fixtures", serde_json::json!({}), "GET", "/api-template-fixtures", None),
     ];
     for (name, args, method, path, body) in cases {
         let req = serde_json::json!({

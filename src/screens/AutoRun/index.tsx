@@ -512,6 +512,7 @@ export default function AutoRun({
         key={c.id}
         c={c}
         org={org}
+        project={project}
         script={scripts[i]}
         result={lastOf(i)}
         selected={selected.has(c.id)}

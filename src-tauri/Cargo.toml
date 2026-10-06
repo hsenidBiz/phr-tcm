@@ -90,6 +90,10 @@ csv = "1.4.0"
 # Windows-1252, for a CSV or text file that is not UTF-8. Already in the
 # build through calamine; named here because downloads.rs uses it directly.
 encoding_rs = "0.8.42"
+# The local time a fixture's {{now:<format>}} is written in (see
+# api_templates/fixture_run.rs). Already in the build through serde_with;
+# named here for its local clock.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

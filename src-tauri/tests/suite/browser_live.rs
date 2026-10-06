@@ -2474,6 +2474,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
     let cancel = AtomicBool::new(false);
     let end = replay_to_checked(
         &mut live.cdp,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         root.path(),
         "acme",
         "Web",

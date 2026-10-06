@@ -1130,8 +1130,8 @@ async fn a_retry_whose_browser_never_opens_keeps_the_first_gos_record() {
     let first = rec.retried.clone().expect("the first try's sentence is kept");
     assert!(first.starts_with("the browser stopped answering at step 1: "), "{first}");
     assert_eq!(rec.proposed, "Blocked");
-    assert_eq!(rec.reason, format!("{first}{RETRY_NOT_STARTED}Edge is not installed)"));
-    assert_eq!(RETRY_NOT_STARTED, " (a second try could not start: the browser did not open: ");
+    assert_eq!(rec.reason, format!("{first}{RETRY_NOT_STARTED}the browser did not open: Edge is not installed)"));
+    assert_eq!(RETRY_NOT_STARTED, " (a second try could not start: ");
     let failed: Vec<&ActionOutcome> = rec.steps.iter().flat_map(|s| &s.outcomes).filter(|o| !o.ok).collect();
     assert!(failed.iter().any(|o| o.harness), "the first go's steps are the record: {:?}", rec.steps);
 }

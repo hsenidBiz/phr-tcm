@@ -395,9 +395,49 @@ export const commands = {
 	 *  step 1, and the case goes on (the checks were skipped while
 	 *  `db_read_access`, the AI Bridge tab's Database Read Access switch, is
 	 *  off). Neither: the case goes on. The active environment's database is
-	 *  looked up only when the case's script has preconditions.
+	 *  looked up only when the case's script has preconditions. Once they are
+	 *  met, the case's fixtures are prepared as an unattended case's are
+	 *  (`autorun::setup::check_supervised`): a setup not approved, a shared
+	 *  fixture never built or a failed setup run is `blocked` with its
+	 *  sentence, and what the setup gave is kept for the case's steps.
 	 */
 	autoRunCheckPreconditions: (organization: string, project: string, caseId: number, dbReadAccess: boolean) => typedError<PreconditionCheck, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId, dbReadAccess })),
+	/**
+	 *  The editor's view of case `case_id`'s setup: its fixture, account,
+	 *  steps and what it makes, and where its approval stands. `None` when the
+	 *  saved script has no setup.
+	 */
+	autoRunSetupView: (organization: string, project: string, caseId: number) => typedError<{
+	fixture_name: string,
+	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	account: string,
+	/**  Each step as `<template name>: <params>`. */
+	steps: string[],
+	/**  What it makes, each as `<kind> <name>`. */
+	creates: string[],
+	/**  `approved`, `changed` (approved once, changed since) or `none`. */
+	approval: string,
+	/**  When it was approved, while `approval` is `approved`. */
+	approved_at: string | null,
+	/**
+	 *  What Approve setup signs: it approves only while the setup still
+	 *  has this fingerprint (`approval_target`).
+	 */
+	fingerprint: string,
+} | null, string>(__TAURI_INVOKE("auto_run_setup_view", { organization, project, caseId })),
+	/**
+	 *  The person's Approve setup: approves case `case_id`'s setup exactly as
+	 *  the person was shown it - `expected_fingerprint` is the
+	 *  `SetupView::fingerprint` they saw. A setup that changed since is
+	 *  refused (`setup::CHANGED_WHILE_LOOKING`) and nothing is approved. Any
+	 *  later change to the setup, its fixture or a template it runs clears it.
+	 */
+	autoRunApproveSetup: (organization: string, project: string, caseId: number, expectedFingerprint: string) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_approve_setup", { organization, project, caseId, expectedFingerprint })),
+	/**
+	 *  The person's Withdraw approval: case `case_id`'s setup is no longer
+	 *  approved, and the case is Blocked until it is approved again.
+	 */
+	autoRunWithdrawSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_withdraw_setup", { organization, project, caseId })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -454,6 +494,15 @@ export const commands = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
 	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
@@ -1129,6 +1178,44 @@ export const commands = {
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
 	apiTemplatesImport: (organization: string, project: string, path: string) => typedError<TemplatesImportResult, string>(__TAURI_INVOKE("api_templates_import", { organization, project, path })),
+	/**
+	 *  Every saved fixture of the project, with its run history, for the
+	 *  Fixtures tab.
+	 */
+	apiFixturesList: (organization: string, project: string) => typedError<SavedFixture[], string>(__TAURI_INVOKE("api_fixtures_list", { organization, project })),
+	/**
+	 *  Runs a saved fixture: Run (its first build) and Rebuild are the same
+	 *  command. A headless browser, as a template run from the AI Bridge uses;
+	 *  the run holds the one-at-a-time template slot throughout.
+	 */
+	apiFixtureRun: (organization: string, project: string, id: string) => typedError<FixtureReport_Serialize, string>(__TAURI_INVOKE("api_fixture_run", { organization, project, id })),
+	/**
+	 *  Removes a fixture and its run history - the person's, as removing a
+	 *  template is. What it made stays in the record of test-made drafts.
+	 */
+	apiFixtureRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_fixture_remove", { organization, project, id })),
+	/**
+	 *  The record entries Clean up test-made drafts would offer: those of
+	 *  `environment` named with `prefix` and at least `older_than_days` old,
+	 *  each with whether a proven delete template can delete it. Remembered,
+	 *  so a cleanup must state the same query. Only the webview calls this:
+	 *  there is no bridge route and no MCP tool for it.
+	 */
+	autoRunCleanupPreview: (organization: string, project: string, environment: string, prefix: string, olderThanDays: number) => typedError<CleanupLine_Serialize[], string>(__TAURI_INVOKE("auto_run_cleanup_preview", { organization, project, environment, prefix, olderThanDays })),
+	/**
+	 *  Deletes the ticked drafts (`entries`, each a kind and an id) of the
+	 *  preview it states (`environment`, `prefix`, `older_than_days`), which
+	 *  must be the last one made; one at a time, streaming
+	 *  `AutorunCleanupProgress`. Holds the one-at-a-time template slot, so it
+	 *  never overlaps a template or fixture run. Only the webview calls this:
+	 *  there is no bridge route and no MCP tool for it.
+	 */
+	autoRunCleanupRun: (organization: string, project: string, environment: string, prefix: string, olderThanDays: number, entries: CleanupPick[]) => typedError<CleanupReport, string>(__TAURI_INVOKE("auto_run_cleanup_run", { organization, project, environment, prefix, olderThanDays, entries })),
+	/**
+	 *  Stops the cleanup going, between its deletes. Only the webview calls
+	 *  this.
+	 */
+	autoRunCleanupStop: () => typedError<null, string>(__TAURI_INVOKE("auto_run_cleanup_stop")),
 	testFilesList: (organization: string, project: string) => typedError<TestFile[], string>(__TAURI_INVOKE("test_files_list", { organization, project })),
 	/**
 	 *  Copies the file the person picked at `path` into Test files. `replace`
@@ -1147,6 +1234,7 @@ export const commands = {
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
@@ -1482,6 +1570,12 @@ export type ApiTemplate_Deserialize = {
 	 */
 	stage?: StageRef | null,
 	/**
+	 *  For a template with the `delete` effect: the kind of thing it
+	 *  deletes (`cycle`, `suite` and so on), which Clean up matches against
+	 *  the record of test-made drafts. Left out of any other template.
+	 */
+	deletes_kind?: string | null,
+	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
 	 */
@@ -1505,6 +1599,12 @@ export type ApiTemplate_Serialize = {
 	 *  `check`, so a template saved before flows existed keeps loading.
 	 */
 	stage?: StageRef | null,
+	/**
+	 *  For a template with the `delete` effect: the kind of thing it
+	 *  deletes (`cycle`, `suite` and so on), which Clean up matches against
+	 *  the record of test-made drafts. Left out of any other template.
+	 */
+	deletes_kind?: string | null,
 	/**
 	 *  Written by the app from a successful proving run; a draft that
 	 *  carries one is refused by `check`.
@@ -1583,6 +1683,20 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  Emitted after each delete of a Clean up of test-made drafts, so the
+ *  dialog shows each result as it comes: the draft's kind and id (two
+ *  kinds may share an id), and `outcome`, `deleted` or the sentence the
+ *  delete failed with.
+ */
+export type AutorunCleanupProgress = {
+	done: number,
+	total: number,
+	kind: string,
+	id: string,
+	outcome: string,
 };
 
 /**
@@ -1943,6 +2057,15 @@ export type CaseScript_Deserialize = {
 	 */
 	preconditions?: Precondition_Deserialize[],
 	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
+	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
 	 *  every save validates them (`marks::check_marks`). Written only when
@@ -2026,6 +2149,15 @@ export type CaseScript_Serialize = {
 	 */
 	preconditions?: Precondition_Serialize[],
 	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
+	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
 	 *  every save validates them (`marks::check_marks`). Written only when
@@ -2060,6 +2192,55 @@ export type CellSpec = {
 	match?: CellMatch,
 };
 
+/**  One line of the preview. */
+export type CleanupLine = CleanupLine_Serialize | CleanupLine_Deserialize;
+
+/**  One line of the preview. */
+export type CleanupLine_Deserialize = {
+	entry: TestMade_Deserialize,
+	/**  A proven delete template for the entry's kind exists. */
+	deletable: boolean,
+	/**  Why it cannot be ticked, when it cannot. */
+	note: string | null,
+};
+
+/**  One line of the preview. */
+export type CleanupLine_Serialize = {
+	entry: TestMade_Serialize,
+	/**  A proven delete template for the entry's kind exists. */
+	deletable: boolean,
+	/**  Why it cannot be ticked, when it cannot. */
+	note: string | null,
+};
+
+/**
+ *  One draft a person ticked: its kind and its id, together, since two
+ *  kinds may share an id.
+ */
+export type CleanupPick = {
+	kind: string,
+	id: string,
+};
+
+/**  What a cleanup did, in the order it did it. */
+export type CleanupReport = {
+	results: CleanupResult[],
+	/**  How many were chosen to go. */
+	total: number,
+	/**  A Stop ended it before the last one. */
+	stopped: boolean,
+};
+
+/**  One entry's result. */
+export type CleanupResult = {
+	id: string,
+	kind: string,
+	name: string,
+	ok: boolean,
+	/**  `deleted`, or the sentence the delete failed with. */
+	outcome: string,
+};
+
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
 export type ConnectedUser = {
 	id: string,
@@ -2079,6 +2260,16 @@ export type CopiedIn = {
 export type CreatedItem = {
 	id: number,
 	url: string,
+};
+
+/**
+ *  One thing a fixture makes: its kind and the placeholders that name its
+ *  id and its name once the fixture has run.
+ */
+export type Creates = {
+	kind: string,
+	id: string,
+	name: string,
 };
 
 /**
@@ -2346,6 +2537,11 @@ export type EnvInput = {
 	allowed_origins: string[],
 	db_id: string,
 	test_environment: boolean,
+	/**
+	 *  Left out, an edit keeps the environment's prefix and a new
+	 *  environment gets the default.
+	 */
+	test_prefix?: string | null,
 };
 
 export type EnvListView = {
@@ -2364,6 +2560,7 @@ export type EnvView = {
 	allowed_origins: string[],
 	db_id: string,
 	test_environment: boolean,
+	test_prefix: string,
 	has_default_password: boolean,
 };
 
@@ -2444,6 +2641,68 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+export type Fixture = {
+	id: string,
+	name: string,
+	/**  An Auto Run account key, as a template run takes. */
+	account: string,
+	steps: FixtureStep[],
+	outputs?: { [key in string]: string },
+	creates?: Creates[],
+};
+
+/**  What a fixture run did. */
+export type FixtureReport = FixtureReport_Serialize | FixtureReport_Deserialize;
+
+/**  What a fixture run did. */
+export type FixtureReport_Deserialize = {
+	ok: boolean,
+	/**  The fixture's outputs - only when every step passed. */
+	outputs: { [key in string]: unknown },
+	/**  What the run made, as it was recorded as test-made. */
+	made: TestMade_Deserialize[],
+	/**  Each step's own report, in order, up to the one that stopped the run. */
+	steps: RunReport[],
+	/**
+	 *  Why the run stopped: `step <n>: <that template's sentence>`, or the
+	 *  reason it could not start.
+	 */
+	failed: string | null,
+	warnings: string[],
+};
+
+/**  What a fixture run did. */
+export type FixtureReport_Serialize = {
+	ok: boolean,
+	/**  The fixture's outputs - only when every step passed. */
+	outputs: { [key in string]: unknown },
+	/**  What the run made, as it was recorded as test-made. */
+	made: TestMade_Serialize[],
+	/**  Each step's own report, in order, up to the one that stopped the run. */
+	steps: RunReport[],
+	/**
+	 *  Why the run stopped: `step <n>: <that template's sentence>`, or the
+	 *  reason it could not start.
+	 */
+	failed: string | null,
+	warnings: string[],
+};
+
+/**  One running of a fixture, as its history keeps it. */
+export type FixtureRun = {
+	at: string,
+	ok: boolean,
+	/**  The 1-based step that failed, when one did. */
+	failed_step?: number | null,
+	detail?: string | null,
+	outputs?: { [key in string]: unknown },
+};
+
+export type FixtureStep = {
+	template: string,
+	params?: { [key in string]: string },
 };
 
 export type Flow = Flow_Serialize | Flow_Deserialize;
@@ -3427,9 +3686,10 @@ export type ReplayEnd_Deserialize =
 	outcomes: ActionOutcome_Deserialize[],
 } } | 
 /**
- *  A precondition of the case is not met: nothing was signed in, and
- *  the case is Blocked with this sentence as its reason, as a watched
- *  start blocks it.
+ *  A precondition of the case is not met, or its fixtures could not
+ *  give their values (`setup::prepare_case`): nothing was signed in,
+ *  and the case is Blocked with this sentence as its reason, as a
+ *  watched start blocks it.
  */
 { kind: "blocked"; detail: string } | 
 /**
@@ -3466,9 +3726,10 @@ export type ReplayEnd_Serialize =
 	outcomes: ActionOutcome_Serialize[],
 } } | 
 /**
- *  A precondition of the case is not met: nothing was signed in, and
- *  the case is Blocked with this sentence as its reason, as a watched
- *  start blocks it.
+ *  A precondition of the case is not met, or its fixtures could not
+ *  give their values (`setup::prepare_case`): nothing was signed in,
+ *  and the case is Blocked with this sentence as its reason, as a
+ *  watched start blocks it.
  */
 { kind: "blocked"; detail: string } | 
 /**
@@ -3731,6 +3992,25 @@ export type RunRecord = {
 	outputs?: { [key in string]: unknown },
 };
 
+export type RunReport = {
+	ok: boolean,
+	/**  The template's id. */
+	template: string,
+	/**  The template's declared outputs - only on success. */
+	outputs: { [key in string]: unknown },
+	/**
+	 *  Everything captured before the run stopped: what a failed run
+	 *  already did in the application, which nothing undoes.
+	 */
+	created: { [key in string]: unknown },
+	steps: StepReport[],
+	/**
+	 *  The name of whatever stopped the run (a step's name, or one of the
+	 *  `StepReport` names for the parts before the steps).
+	 */
+	failed: string | null,
+};
+
 /**
  *  A live run's identity plus every point's result row, so the runner can
  *  PATCH one case at a time as the tester advances.
@@ -3746,6 +4026,12 @@ export type RunStarted = {
 	 *  instead of discovering it at the end.
 	 */
 	unmatched: number[],
+};
+
+/**  A fixture together with its run history, as the tab lists it. */
+export type SavedFixture = {
+	fixture: Fixture,
+	runs: FixtureRun[],
 };
 
 /**  A template together with its run history, as the tab lists it. */
@@ -3767,6 +4053,37 @@ export type ScreenShot = {
 	name: string,
 	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
 	b64_png: string,
+};
+
+/**
+ *  A script's setup: the saved fixture whose run makes this case's own
+ *  draft, by id.
+ */
+export type Setup = {
+	fixture: string,
+};
+
+/**
+ *  A case's setup as the script editor shows it, with where its approval
+ *  stands.
+ */
+export type SetupView = {
+	fixture_name: string,
+	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	account: string,
+	/**  Each step as `<template name>: <params>`. */
+	steps: string[],
+	/**  What it makes, each as `<kind> <name>`. */
+	creates: string[],
+	/**  `approved`, `changed` (approved once, changed since) or `none`. */
+	approval: string,
+	/**  When it was approved, while `approval` is `approved`. */
+	approved_at: string | null,
+	/**
+	 *  What Approve setup signs: it approves only while the setup still
+	 *  has this fingerprint (`approval_target`).
+	 */
+	fingerprint: string,
 };
 
 export type SharedQueue = SharedQueue_Serialize | SharedQueue_Deserialize;
@@ -3962,6 +4279,20 @@ export type StepRecord_Serialize = {
 	 *  names only, never a path (unattended runs only).
 	 */
 	downloads?: string[],
+};
+
+/**
+ *  One step's result. Also used for the parts of a run that come before
+ *  the steps - `"Sign in"`, `"Anti-forgery token"`, `"Browser"` - when one
+ *  of those is what stopped it.
+ */
+export type StepReport = {
+	name: string,
+	/**  The step's `handler` query value, if it has one. */
+	handler: string | null,
+	status: number | null,
+	ok: boolean,
+	detail: string,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -4440,6 +4771,54 @@ export type TestFile = {
 	 *  the file system would not say.
 	 */
 	modified: string,
+};
+
+export type TestMade = TestMade_Serialize | TestMade_Deserialize;
+
+export type TestMade_Deserialize = {
+	/**  The id of the environment it was made in. */
+	environment: string,
+	/**
+	 *  What it is (`cycle`, `suite` and so on), as the fixture's `creates`
+	 *  names it - the kind a delete template deletes.
+	 */
+	kind: string,
+	/**  Its id in the application. */
+	id: string,
+	name: string,
+	/**  When it was made, ISO 8601 UTC. */
+	created_at: string,
+	/**  The id of the fixture that made it. */
+	fixture: string,
+	/**  The fixture run that made it. */
+	run_id: string,
+	/**  The case whose setup made it, when a setup did. */
+	case_id?: number | null,
+	/**  `present`, `deleted` or `delete failed: <the reason>`. */
+	status: string,
+};
+
+export type TestMade_Serialize = {
+	/**  The id of the environment it was made in. */
+	environment: string,
+	/**
+	 *  What it is (`cycle`, `suite` and so on), as the fixture's `creates`
+	 *  names it - the kind a delete template deletes.
+	 */
+	kind: string,
+	/**  Its id in the application. */
+	id: string,
+	name: string,
+	/**  When it was made, ISO 8601 UTC. */
+	created_at: string,
+	/**  The id of the fixture that made it. */
+	fixture: string,
+	/**  The fixture run that made it. */
+	run_id: string,
+	/**  The case whose setup made it, when a setup did. */
+	case_id?: number | null,
+	/**  `present`, `deleted` or `delete failed: <the reason>`. */
+	status: string,
 };
 
 export type TestPlan = {

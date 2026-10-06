@@ -402,3 +402,123 @@ test("a script's marks are kept when it is saved untouched", async () => {
     expect.objectContaining({ changes: ["cycle published"], needs_unchanged: ["cycle published"] }),
   );
 });
+
+// ---- The Setup section -------------------------------------------------
+
+const SETUP_SCRIPT = { case_id: 7, title: "t", steps: ONE_STEP, setup: { fixture: "Draft cycle" } };
+
+const setupView = (approval: string, fingerprint = "fp-1") => ({
+  fixture_name: "Draft cycle",
+  account: "hr.admin",
+  steps: ["Create cycle: name=Annual", "Open cycle: id={{cycle_id}}"],
+  creates: ["cycle Annual"],
+  approval,
+  approved_at: approval === "approved" ? "2026-10-06 09:30:00" : null,
+  fingerprint,
+});
+
+/** The editor with a script that has a setup, answering the three setup
+ * commands from `handlers`. */
+function mountSetup(
+  views: unknown[],
+  handlers: Record<string, (args: Record<string, unknown>) => unknown> = {},
+  script: unknown = SETUP_SCRIPT,
+) {
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  const saved: unknown[] = [];
+  let reads = 0;
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    calls.push({ cmd, args: a });
+    if (handlers[cmd]) return handlers[cmd](a);
+    if (cmd === "auto_run_load_script") return script;
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    if (cmd === "auto_run_setup_view") return views[Math.min(reads++, views.length - 1)];
+    if (cmd === "auto_run_save_script") {
+      saved.push(a.script);
+      return null;
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  return { calls, saved };
+}
+
+test("a script with no setup has no Setup section", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  await screen.findByRole("combobox", { name: "Runs as" });
+  expect(screen.queryByRole("region", { name: "Setup" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Approve setup" })).not.toBeInTheDocument();
+});
+
+test("the Setup section shows the fixture, account, steps and what it creates, with Approve setup", async () => {
+  mountSetup([setupView("none")]);
+  const section = await screen.findByRole("region", { name: "Setup" });
+  expect(within(section).getByText("Draft cycle")).toBeInTheDocument();
+  expect(within(section).getByText("hr.admin")).toBeInTheDocument();
+  expect(within(section).getByText("Create cycle: name=Annual")).toBeInTheDocument();
+  expect(within(section).getByText("Open cycle: id={{cycle_id}}")).toBeInTheDocument();
+  expect(section).toHaveTextContent("Creates cycle Annual");
+  expect(within(section).getByRole("button", { name: "Approve setup" })).toBeInTheDocument();
+  expect(within(section).queryByText("Changed since you approved it")).not.toBeInTheDocument();
+});
+
+test("Approve setup passes the fingerprint that was shown, then shows Approved with Withdraw approval", async () => {
+  const { calls } = mountSetup([setupView("none", "fp-shown")], {
+    auto_run_approve_setup: () => setupView("approved", "fp-shown"),
+    auto_run_withdraw_setup: () => setupView("none", "fp-shown"),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Approve setup" }));
+  expect(await screen.findByText(/^Approved \d/)).toBeInTheDocument();
+  expect(calls.find((c) => c.cmd === "auto_run_approve_setup")!.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    caseId: 7,
+    expectedFingerprint: "fp-shown",
+  });
+  expect(screen.queryByRole("button", { name: "Approve setup" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Withdraw approval" }));
+  expect(await screen.findByRole("button", { name: "Approve setup" })).toBeInTheDocument();
+  expect(calls.some((c) => c.cmd === "auto_run_withdraw_setup")).toBe(true);
+});
+
+test("a setup that changed since it was approved says so and offers Approve setup again", async () => {
+  mountSetup([setupView("changed")]);
+  expect(await screen.findByText("Changed since you approved it")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve setup" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Withdraw approval" })).not.toBeInTheDocument();
+});
+
+test("the changed-while-looking refusal is shown and the view is read again", async () => {
+  const REFUSAL = "the setup changed while you were looking at it - review it again before approving";
+  const { calls } = mountSetup([setupView("none", "old"), setupView("none", "new")], {
+    auto_run_approve_setup: () => {
+      throw REFUSAL;
+    },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Approve setup" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(REFUSAL);
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "auto_run_setup_view")).toHaveLength(2));
+  // The next press signs what is on screen now.
+  fireEvent.click(screen.getByRole("button", { name: "Approve setup" }));
+  await waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "auto_run_approve_setup").map((c) => c.args.expectedFingerprint)).toEqual([
+      "old",
+      "new",
+    ]),
+  );
+});
+
+test("saving from the editor sends no setup: Rust keeps the stored one", async () => {
+  const { saved } = mountSetup([setupView("approved")]);
+  await screen.findByRole("region", { name: "Setup" });
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("setup");
+});

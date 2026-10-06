@@ -40,7 +40,12 @@ type Form = {
   also: string;
   db_id: string;
   test_environment: boolean;
+  /** What every draft an Auto Run fixture or script makes here starts with. */
+  test_prefix: string;
 };
+
+/** The prefix a new environment starts with, as Rust's own default. */
+export const DEFAULT_TEST_PREFIX = "AUTOTEST";
 
 function formFor(env: EnvView): Form {
   return {
@@ -50,6 +55,7 @@ function formFor(env: EnvView): Form {
     also: env.allowed_origins.join("\n"),
     db_id: env.db_id,
     test_environment: env.test_environment,
+    test_prefix: env.test_prefix,
   };
 }
 
@@ -68,6 +74,7 @@ function inputFor(form: Form): EnvInput {
             .filter(Boolean),
     db_id: form.db_id,
     test_environment: form.test_environment,
+    test_prefix: form.test_prefix.trim(),
   };
 }
 
@@ -120,6 +127,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       also: "",
       db_id: current?.db_id ?? databases.data?.[0]?.id ?? "",
       test_environment: false,
+      test_prefix: DEFAULT_TEST_PREFIX,
     });
   };
 
@@ -306,6 +314,20 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 loading={databases.isPending}
                 onChange={(id) => setForm({ ...form, db_id: id })}
               />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted">Test name prefix</span>
+              <Input
+                aria-label="Test name prefix"
+                className="w-full"
+                placeholder={DEFAULT_TEST_PREFIX}
+                value={form.test_prefix}
+                onChange={(e) => setForm({ ...form, test_prefix: e.target.value })}
+              />
+              <span className="block text-xs text-faint">
+                Every draft a fixture or script makes here starts with this, so Clean up can tell it from
+                yours. 3 to 20 letters, digits or -.
+              </span>
             </label>
             <div className="space-y-1">
               <div className="flex items-center gap-2">

@@ -235,6 +235,12 @@ impl Held {
         Held::new(Holder::Setup, Duration::ZERO)
     }
 
+    /// Lets go of the account this browser holds, if any: its session has
+    /// been ended, and someone else may sign in as it.
+    pub fn let_go(&mut self) {
+        self.lease = None;
+    }
+
     /// The account this browser holds, if any.
     pub fn account(&self) -> Option<&str> {
         self.lease.as_ref().map(Lease::key)

@@ -61,6 +61,34 @@ happened that motivates it.
     allows one session per user; overlapping sign-ins cause empty 400s and
     dropped sessions. A lock that waits, or a warning.
 
+## Next batch: new script capabilities (agreed 2026-10-06, after part 5)
+
+12. **New tabs and popups.** A link or button that opens a new tab
+    (reports, print previews, help pages) cannot be followed today. Add
+    "expect a new tab" (with its address), "switch to tab" and "close tab",
+    so a script can check the new tab and come back.
+
+13. **Browser dialogs.** Every `alert`/`confirm` is accepted automatically
+    today (`browser/cdp.rs`, `Page.javascriptDialogOpening`), so a script
+    cannot check an "Are you sure?" message or test its Cancel path. Add
+    "expect a dialog" with its text, then accept or dismiss it. A dialog no
+    step expects is still accepted, as now.
+
+14. **Table and grid checks.** Most screens are grids, and scripts can only
+    count matches or look for text anywhere on the page. Add three checks:
+    - a row whose column X is A and column Y is B;
+    - a table sorted by a column;
+    - a table with N rows after a filter.
+
+15. **Page errors as a check.** JavaScript errors and failing requests are
+    already captured in the page log (`browser/page_log.rs`) but never affect
+    the result. Add a script option that fails or flags a case when the page
+    throws, or a request returns a 5xx, during a step.
+
+16. **PDF downloads.** Extend `expect_download` so it can check that a PDF
+    contains a piece of text, for generated forms and reports, reusing the
+    download pipeline from part 3.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through

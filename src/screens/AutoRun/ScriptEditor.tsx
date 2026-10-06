@@ -18,6 +18,7 @@ import { unwrapStr } from "../../lib/ipc";
 import { IconAdd, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { floorOf } from "./floor";
+import SetupSection from "./SetupSection";
 
 const PLACEHOLDER = `[
   {
@@ -158,6 +159,8 @@ export default function ScriptEditor({
       // Carried through, less any removed here (the save checks them
       // again).
       ...(preconditions.length ? { preconditions: preconditions.map(({ p }) => p) } : {}),
+      // No `setup`: only the assistant writes one, and Rust keeps the one
+      // stored for the case whatever a save sends.
       ...(changes.length ? { changes } : {}),
       ...(needsUnchanged.length ? { needs_unchanged: needsUnchanged } : {}),
     });
@@ -290,6 +293,8 @@ export default function ScriptEditor({
             names={needsUnchanged}
             onChange={setPickedNeeds}
           />
+
+          <SetupSection org={org} project={project} caseId={caseId} />
 
           {preconditions.length > 0 && (
             <div className="space-y-1">

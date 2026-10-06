@@ -105,6 +105,7 @@ async fn replay(
     let mut held = Held::supervised();
     replay_to_checked(
         d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         root,
         "acme",
         "Web",
@@ -319,6 +320,7 @@ async fn a_precondition_not_met_stops_it_with_its_blocked_sentence_and_signs_nob
     let db = FakeStageDb::new().answer("/*publish*/", Ok(false));
     let end = replay_to_checked(
         &mut d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         dir.path(),
         "acme",
         "Web",
@@ -353,6 +355,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
     let r = ReplayRequest { case_id: ID, step: 2, db_read_access: false };
     let end = replay_to_checked(
         &mut d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         dir.path(),
         "acme",
         "Web",
@@ -471,6 +474,7 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     let mut held = Held::supervised();
     let end = replay_to_checked(
         &mut d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         dir.path(),
         "acme",
         "Web",
@@ -641,6 +645,7 @@ async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
     let mut held = Held::supervised();
     let end = replay_to_checked(
         &mut d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
         dir.path(),
         "acme",
         "Web",

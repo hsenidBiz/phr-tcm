@@ -13,6 +13,7 @@ import {
   type Account,
   type AccountInput,
   type AuthStatus,
+  type CleanupLine_Serialize,
   type BoardData,
   type CaseHistory,
   type DbDatabase,
@@ -28,7 +29,9 @@ import {
   type ProposedAccount,
   type Quirk_Serialize,
   type RunOutcome,
+  type SavedFixture,
   type SavedTemplate_Serialize,
+  type SetupView,
   type SubmitItemResult,
   type TestCase,
   type TestCaseFull,
@@ -259,6 +262,8 @@ const scripts = new Map<number, DemoScript>([
       case_id: 5001,
       title: "Login - valid credentials",
       area: "Sign-in",
+      // Its data comes from the Locked user fixture, through a setup.
+      setup: { fixture: "locked-user" },
       steps: [
         {
           step_number: 1,
@@ -500,6 +505,7 @@ let environments: EnvListView = {
       allowed_origins: ["https://login.example.test"],
       db_id: "dev",
       test_environment: true,
+      test_prefix: "AUTOTEST",
       has_default_password: false,
     },
     {
@@ -509,6 +515,7 @@ let environments: EnvListView = {
       allowed_origins: [],
       db_id: "qa",
       test_environment: true,
+      test_prefix: "AUTOTEST",
       has_default_password: false,
     },
   ],
@@ -729,6 +736,95 @@ let apiTemplates: SavedTemplate_Serialize[] = [
     runs: [{ at: "2026-09-30 10:45:00", mode: "prove", account: "portal.admin", ok: true, outputs: { address_id: 88 } }],
   },
 ];
+
+/** The sample fixtures: drafts the templates above build for a script's
+ * setup: two built (one of them twice), and one never run. */
+let apiFixtures: SavedFixture[] = [
+  {
+    fixture: {
+      id: "locked-user",
+      name: "Locked user",
+      account: "portal.admin",
+      steps: [
+        { template: "accounts-create-user", params: { display_name: "AUTOTEST locked user", email: "locked.user@example.test" } },
+        { template: "accounts-lock-user", params: { user_id: "{{create.user_id}}" } },
+      ],
+      outputs: { user_id: "create.user_id" },
+      creates: [{ kind: "user", id: "{{user_id}}", name: "AUTOTEST locked user" }],
+    },
+    runs: [
+      { at: "2026-10-03 09:12:00", ok: true, outputs: { user_id: 3131 } },
+      { at: "2026-09-27 16:40:00", ok: true, outputs: { user_id: 3122 } },
+    ],
+  },
+  {
+    fixture: {
+      id: "user-with-address",
+      name: "User with a home address",
+      account: "portal.admin",
+      steps: [
+        { template: "accounts-create-user", params: { display_name: "AUTOTEST address user", email: "address.user@example.test" } },
+        { template: "profile-add-address", params: { user_id: "{{create.user_id}}", line1: "AUTOTEST home address" } },
+      ],
+      outputs: { user_id: "create.user_id", address_id: "address.address_id" },
+      creates: [
+        { kind: "user", id: "{{user_id}}", name: "AUTOTEST address user" },
+        { kind: "address", id: "{{address_id}}", name: "AUTOTEST home address" },
+      ],
+    },
+    runs: [{ at: "2026-09-25 10:30:00", ok: true, outputs: { user_id: 3110, address_id: 88 } }],
+  },
+  {
+    fixture: {
+      id: "expired-session-user",
+      name: "User whose session expires",
+      account: "portal.admin",
+      steps: [{ template: "accounts-create-user", params: { display_name: "AUTOTEST session user", email: "session.user@example.test" } }],
+      outputs: { user_id: "create.user_id" },
+      creates: [{ kind: "user", id: "{{user_id}}", name: "AUTOTEST session user" }],
+    },
+    runs: [],
+  },
+];
+
+/** A day count ago, as the record of test-made drafts writes a time. */
+const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+/** What the record of test-made drafts holds for the Staging environment:
+ * two users the Locked user fixture made (the older one replaced by a
+ * Rebuild), and an address no proven delete template can remove. */
+const testMade: CleanupLine_Serialize[] = [
+  {
+    entry: { environment: "staging", kind: "user", id: "3122", name: "AUTOTEST locked user", created_at: daysAgo(9), fixture: "Locked user", run_id: "fx-1", status: "present" },
+    deletable: true,
+    note: null,
+  },
+  {
+    entry: { environment: "staging", kind: "user", id: "3107", name: "AUTOTEST locked user", created_at: daysAgo(14), fixture: "Locked user", run_id: "fx-0", status: "present" },
+    deletable: true,
+    note: null,
+  },
+  {
+    entry: { environment: "staging", kind: "address", id: "88", name: "AUTOTEST home address", created_at: daysAgo(11), fixture: "User with a home address", run_id: "fx-2", status: "present" },
+    deletable: false,
+    note: "no proven delete template for address",
+  },
+];
+
+/** Case 5001's setup as the script editor shows it: approved once, and
+ * changed since, so it waits for a fresh approval. */
+let setupView: SetupView = {
+  fixture_name: "Locked user",
+  account: "portal.admin",
+  steps: [
+    "Create a user: display_name = AUTOTEST locked user, email = locked.user@example.test",
+    "Lock a user account: user_id = {{create.user_id}}",
+  ],
+  creates: ["user AUTOTEST locked user"],
+  approval: "changed",
+  approved_at: null,
+  fingerprint: "sample-setup-2",
+};
 
 /** A run of a selection, as an unattended run would save it: the machine
  * proposes, the person decides in the review. */
@@ -1522,7 +1618,11 @@ function applyPatches() {
     envSave: (env: EnvInput) => {
       if (!env || typeof env !== "object" || typeof env.id !== "string") return err("Demo mode: that environment is not valid");
       const old = environments.environments.find((e) => e.id === env.id);
-      const next = { ...env, has_default_password: old?.has_default_password ?? false };
+      const next = {
+        ...env,
+        test_prefix: env.test_prefix ?? old?.test_prefix ?? "AUTOTEST",
+        has_default_password: old?.has_default_password ?? false,
+      };
       environments = {
         ...environments,
         environments: old ? environments.environments.map((e) => (e.id === env.id ? next : e)) : [...environments.environments, next],
@@ -1704,6 +1804,32 @@ function applyPatches() {
     apiTemplatesOpenFlow: () => err("Demo mode: the flow page is off in sample data"),
     apiTemplatesExport: () => err("Demo mode: exporting templates is off in sample data"),
     apiTemplatesImport: () => err("Demo mode: importing templates is off in sample data"),
+    apiFixturesList: () => ok(apiFixtures),
+    apiFixtureRun: () => err("Demo mode: running a fixture is off in sample data"),
+    apiFixtureRemove: (_o: string, _p: string, id: string) => {
+      apiFixtures = apiFixtures.filter((f) => f.fixture.id !== id);
+      return ok(null);
+    },
+    autoRunCleanupPreview: (_o: string, _p: string, environment: string, prefix: string, olderThanDays: number) =>
+      ok(
+        testMade.filter(
+          (l) =>
+            l.entry.environment === environment &&
+            l.entry.name.startsWith(prefix) &&
+            Date.now() - Date.parse(l.entry.created_at) >= olderThanDays * 86_400_000,
+        ),
+      ),
+    autoRunCleanupRun: () => err("Demo mode: cleaning up is off in sample data"),
+    autoRunCleanupStop: () => ok(null),
+    autoRunSetupView: (_o: string, _p: string, caseId: number) => ok(caseId === 5001 ? setupView : null),
+    autoRunApproveSetup: () => {
+      setupView = { ...setupView, approval: "approved", approved_at: "2026-10-06 09:30:00" };
+      return ok(setupView);
+    },
+    autoRunWithdrawSetup: () => {
+      setupView = { ...setupView, approval: "none", approved_at: null };
+      return ok(setupView);
+    },
 
     buildLog: () =>
       ok(

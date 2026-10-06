@@ -517,6 +517,26 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["flow", "subject"]),
         },
         {
+            "name": "save_api_fixture",
+            "description": "Save a fixture: an ordered list of proven API templates that makes a draft the same way every time, so a test can have a fresh one in seconds. Each step names a template and its params as text, which may hold {{steps.<n>.<output>}} (an earlier step's declared output, n from 1), {{now:yyyyMMdd}} (the run's start time; the letters yyyy MM dd HH mm ss) and {{prefix}} (the environment's test name prefix). `outputs` maps a name to one {{steps.<n>.<output>}}; `creates` lists what the fixture makes as { kind, id, name } placeholders, recorded as test-made so Clean up can remove it. Every problem comes back together, one sentence each, and nothing is saved: a template that is not proven, one that deletes, a placeholder no earlier step gives, or creates without {{prefix}} in a step's params. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first.",
+            "inputSchema": schema(serde_json::json!({
+                "fixture": { "type": "object", "description": "{ id, name, account, steps: [{ template, params }], outputs?, creates? }, as get_api_template_guide describes." },
+            }), &["fixture"]),
+        },
+        {
+            "name": "run_api_fixture",
+            "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "The fixture's id, from list_api_fixtures." },
+                "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
+            }), &["id"]),
+        },
+        {
+            "name": "list_api_fixtures",
+            "description": "The fixtures saved for the current project, each with its steps, outputs, what it creates, its current outputs (from its newest successful run) and its last run. Read-only; answers with the API templates switch off.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "record_app_quirk",
             "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
             "inputSchema": schema(serde_json::json!({
@@ -961,6 +981,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "run_api_template" => call("POST", "/api-template-run", &args.to_string()),
         "save_api_flow" => call("POST", "/api-template-flow-save", &args.to_string()),
         "get_api_flow_progress" => call("POST", "/api-template-flow-progress", &args.to_string()),
+        // The bridge reads the fixture (or the id) out of the body, so the
+        // arguments object travels whole.
+        "save_api_fixture" => call("POST", "/api-template-fixture-save", &args.to_string()),
+        "run_api_fixture" => call("POST", "/api-template-fixture-run", &args.to_string()),
+        "list_api_fixtures" => call("GET", "/api-template-fixtures", ""),
         // The API templates row's own names for the quirk tools: the same
         // routes, with `from` set here rather than trusted to the caller.
         "record_app_quirk" | "retire_app_quirk" => {

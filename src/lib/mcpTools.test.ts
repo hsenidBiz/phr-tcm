@@ -177,7 +177,7 @@ test("only the switchable tools are left, as eight rows in a development build",
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
     "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files",
-    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+record_app_quirk+retire_app_quirk",
+    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
     "get_tags",
     "search_pbis",
@@ -250,9 +250,9 @@ test("with DEV stubbed true, the Auto Run scripts row carries all fourteen tools
   vi.resetModules();
 });
 
-/// Building an API template is one job - guide, list, prove, run, and the
-/// flow it belongs to - and the quirks it learns - so its eight tools are one row with one switch, offered where Auto Run is.
-test("the API templates row carries all eight tools and switches them together", () => {
+/// Building an API template is one job - guide, list, prove, run, the
+/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eleven tools are one row with one switch, offered where Auto Run is.
+test("the API templates row carries all eleven tools and switches them together", () => {
   const row = visibleRows().find((r) => r.label === "API templates");
   expect(row, "the API templates row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -262,6 +262,9 @@ test("the API templates row carries all eight tools and switches them together",
     "run_api_template",
     "save_api_flow",
     "get_api_flow_progress",
+    "save_api_fixture",
+    "run_api_fixture",
+    "list_api_fixtures",
     "record_app_quirk",
     "retire_app_quirk",
   ]);

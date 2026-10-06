@@ -127,6 +127,10 @@ export function runMode(r: RunRecord): "prove" | "run" {
 export const UNPROVEN_HINT =
   "Imported - not proven on this site. Prove it here before relying on it; its run history may be from the version it replaced.";
 
+/** Said beside a delete template that names no kind of thing it deletes. */
+export const NEEDS_KIND_HINT =
+  "Saved before Clean up existed. Your assistant names the kind of thing it deletes the next time it proves this template. Until then Clean up cannot use it.";
+
 function LastRun({ run }: { run: RunRecord | undefined }) {
   if (!run) return <span className="text-xs text-faint">never run</span>;
   const d = stampDate(run.at);
@@ -221,6 +225,12 @@ export default function TemplateRow({
           </Badge>
         )}
         <EffectBadge effect={t.effect} />
+        {/* A delete template saved before Clean up existed names no kind. */}
+        {t.effect === "delete" && !t.deletes_kind && (
+          <Badge className="bg-warning/15 text-warning" title={NEEDS_KIND_HINT}>
+            needs a kind
+          </Badge>
+        )}
         {stage && (
           <span className={cn("text-xs", stage.missing ? "text-warning" : "text-muted")}>
             {`Stage: ${stage.stage}${stage.missing ? " (no longer saved)" : ""}`}

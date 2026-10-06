@@ -214,7 +214,9 @@ export const aiBridge: Screen = {
       group: "environment",
       locate: { role: "button", name: "Edit environments" },
       name: "Edit environments",
-      does: "Adds, renames or removes environments, and sets each one's site address and database.",
+      does:
+        "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
+        "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up test-made drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -.",
     },
     {
       id: "api-templates-switch",

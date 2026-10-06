@@ -2077,6 +2077,7 @@ fn the_active_environment_says_when_it_has_no_database_or_address() {
         allowed_origins: vec![],
         db_id: String::new(),
         test_environment: false,
+        test_prefix: "AUTOTEST".into(),
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("\"Scratch\""), "{text}");
@@ -2097,6 +2098,7 @@ fn the_active_environment_says_when_its_database_is_gone() {
         allowed_origins: vec![],
         db_id: "removed-db".into(),
         test_environment: false,
+        test_prefix: "AUTOTEST".into(),
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("Its database is not set up any more."), "{text}");
@@ -2304,6 +2306,7 @@ fn scripted(case_id: i32) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        setup: None,
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,

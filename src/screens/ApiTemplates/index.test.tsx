@@ -1095,3 +1095,23 @@ test("the flow map marks an unproven template on its stage, in the drawing and i
   const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
   expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unproven).");
 });
+
+test("a delete template saved before Clean up names no kind, and its row says so without looking broken", async () => {
+  mockOverview({
+    origin: null,
+    templates: [
+      { template: template({ id: "old-delete", title: "Remove a goal", effect: "delete" }), runs: [] },
+      { template: template({ id: "new-delete", title: "Remove a cycle", effect: "delete", deletes_kind: "cycle" }), runs: [] },
+      { template: template({ id: "a-create", title: "Create a goal", effect: "create" }), runs: [] },
+    ],
+  });
+  renderScreen();
+  const old = await screen.findByRole("listitem", { name: "Remove a goal" });
+  const note = within(old).getByText("needs a kind");
+  expect(note).toHaveAttribute("title", expect.stringContaining("names the kind of thing it deletes"));
+  // Still an ordinary row: its effect badge and its Remove button are there.
+  expect(within(old).getByText("delete")).toBeInTheDocument();
+  expect(within(old).getByRole("button", { name: "Remove Remove a goal" })).toBeEnabled();
+  expect(within(screen.getByRole("listitem", { name: "Remove a cycle" })).queryByText("needs a kind")).toBeNull();
+  expect(within(screen.getByRole("listitem", { name: "Create a goal" })).queryByText("needs a kind")).toBeNull();
+});

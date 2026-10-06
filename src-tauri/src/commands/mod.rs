@@ -12,6 +12,7 @@ pub mod autorun_publish;
 pub mod autorun_record;
 pub mod autorun_record_signin;
 pub mod autorun_replay;
+pub mod autorun_setup;
 pub mod board;
 pub mod bugs;
 pub mod cases;

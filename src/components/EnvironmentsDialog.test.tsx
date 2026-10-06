@@ -27,16 +27,17 @@ type Env = {
   allowed_origins: string[];
   db_id: string;
   test_environment: boolean;
+  test_prefix: string;
   has_default_password: boolean;
 };
 
 const DEFAULT: Env = {
   id: "env-00000001", name: "Default", start_url: "", allowed_origins: [],
-  db_id: "dev-read", test_environment: false, has_default_password: false,
+  db_id: "dev-read", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false,
 };
 const QA: Env = {
   id: "env-00000002", name: "QA", start_url: "https://qa.example.internal/", allowed_origins: [],
-  db_id: "qa-read", test_environment: false, has_default_password: false,
+  db_id: "qa-read", test_environment: false, test_prefix: "QATEST", has_default_password: false,
 };
 
 /** A small stand-in for the Rust side: the list, plus whatever each command
@@ -112,7 +113,34 @@ test("a new environment is saved with an empty id and the form's fields", async 
     allowed_origins: ["https://login.example.com", "https://cdn.example.com"],
     db_id: "dev-read",
     test_environment: false,
+    test_prefix: "AUTOTEST",
   });
+});
+
+test("an environment's Test name prefix starts at AUTOTEST, is saved as typed and shows a refusal", async () => {
+  const { calls } = mount({
+    env_save: () => {
+      throw "the test name prefix must be 3 to 20 letters, digits or -";
+    },
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  const field = (await screen.findByRole("textbox", { name: "Test name prefix" })) as HTMLInputElement;
+  expect(field.value).toBe("AUTOTEST");
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Staging" } });
+  fireEvent.change(field, { target: { value: "x" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  expect(await screen.findByText("the test name prefix must be 3 to 20 letters, digits or -")).toBeInTheDocument();
+  expect((calls.find((c) => c.cmd === "env_save")!.args.env as { test_prefix: string }).test_prefix).toBe("x");
+  // The form stays open for a fix.
+  expect(screen.getByRole("textbox", { name: "Test name prefix" })).toBeInTheDocument();
+});
+
+test("editing an environment shows its own prefix", async () => {
+  mount();
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Edit QA" }));
+  expect(((await screen.findByRole("textbox", { name: "Test name prefix" })) as HTMLInputElement).value).toBe("QATEST");
 });
 
 test("Also allowed is off until there is a website address, and nothing stale is sent without one", async () => {

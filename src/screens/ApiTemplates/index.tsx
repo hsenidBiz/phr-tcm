@@ -8,13 +8,15 @@ import { Button } from "../../components/ui/button";
 import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
-import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconTestFiles } from "../../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconRemove, IconTestFiles } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
 import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
+import CleanupDialog from "./CleanupDialog";
+import FixturesTab, { FIXTURES_KEY } from "./FixturesTab";
 import FlowMap from "./FlowMap";
 import TestFilesDialog from "../AutoRun/TestFilesDialog";
 import ImportTemplates from "./ImportTemplates";
@@ -70,13 +72,14 @@ function exportedSentence(r: TemplatesExportResult): string {
 
 const JSON_FILTER = [{ name: "API templates", extensions: ["json"] }];
 
-/** The tab's two views: the templates as rows, or the flows as maps. */
-type View = "templates" | "flows";
+/** The tab's three views: the templates as rows, the flows as maps, or the fixtures. */
+type View = "templates" | "flows" | "fixtures";
 const VIEW_KEY = "tcm-v2-api-templates-view";
 
 function loadView(): View {
   try {
-    return localStorage.getItem(VIEW_KEY) === "flows" ? "flows" : "templates";
+    const saved = localStorage.getItem(VIEW_KEY);
+    return saved === "flows" || saved === "fixtures" ? saved : "templates";
   } catch {
     return "templates";
   }
@@ -126,6 +129,7 @@ export default function ApiTemplates({
   const [scrollTo, setScrollTo] = useState<string | null>(null);
   const [removing, setRemoving] = useState<SavedTemplate["template"] | null>(null);
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
+  const [cleaningUp, setCleaningUp] = useState(false);
   // The file picked to import, while its warning and result are up.
   const [importPath, setImportPath] = useState<string | null>(null);
   // The project's Test files - what a template's form step can upload.
@@ -143,6 +147,7 @@ export default function ApiTemplates({
   useEffect(() => {
     const un = events.apiTemplatesChanged.listen(() => {
       void qc.invalidateQueries({ queryKey: [KEY] });
+      void qc.invalidateQueries({ queryKey: [FIXTURES_KEY] });
     });
     return () => {
       un.then((f) => f()).catch(() => {});
@@ -173,6 +178,14 @@ export default function ApiTemplates({
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
+
+  // Only the count, for the tab; FixturesTab reads the same query for its rows.
+  const fixtures =
+    useQuery({
+      queryKey: [FIXTURES_KEY, org, project],
+      queryFn: () => unwrapStr(commands.apiFixturesList(org, project)),
+      enabled: Boolean(org && project),
+    }).data?.length ?? 0;
 
   const templates = useMemo(() => overview.data?.templates ?? [], [overview.data]);
   // An overview from before flows existed has no `flows` at all.
@@ -323,7 +336,7 @@ export default function ApiTemplates({
       {overview.isLoading && <p className="text-sm text-muted">Loading templates…</p>}
       {overview.isError && <p className="text-sm text-danger">{overview.error.message}</p>}
 
-      {overview.data && templates.length === 0 && flows.length === 0 && (
+      {overview.data && templates.length === 0 && flows.length === 0 && fixtures === 0 && (
         <div className="space-y-3 rounded-md border border-border bg-surface p-4">
           <p className="text-sm text-muted">
             Your assistant builds these from the application's code and proves each one before it appears
@@ -335,13 +348,14 @@ export default function ApiTemplates({
         </div>
       )}
 
-      {(templates.length > 0 || flows.length > 0) && (
+      {(templates.length > 0 || flows.length > 0 || fixtures > 0) && (
         <>
           <div role="tablist" aria-label="Show" className="flex gap-1 border-b border-border">
             {(
               [
                 ["templates", "Templates", templates.length],
                 ["flows", "Flows", flows.length],
+                ["fixtures", "Fixtures", fixtures],
               ] as const
             ).map(([id, label, count]) => (
               <button
@@ -358,6 +372,7 @@ export default function ApiTemplates({
               </button>
             ))}
           </div>
+          {view !== "fixtures" && (
           <Input
             aria-label={view === "flows" ? "Search flows" : "Search templates"}
             placeholder={view === "flows" ? "Search by title, module or stage" : "Search by title, module, id or stage"}
@@ -365,7 +380,19 @@ export default function ApiTemplates({
             onChange={(e) => setSearch(e.target.value)}
             className="w-full max-w-sm"
           />
-          {view === "flows" && flows.length === 0 ? (
+          )}
+          {view === "fixtures" ? (
+            <FixturesTab
+              org={org}
+              project={project}
+              cleanupSlot={
+                <Button size="sm" variant="outline" onClick={() => setCleaningUp(true)}>
+                  <IconRemove aria-hidden />
+                  Clean up test-made drafts
+                </Button>
+              }
+            />
+          ) : view === "flows" && flows.length === 0 ? (
             <p className="text-sm text-muted">
               No flows yet. Your assistant maps each wizard as a flow - its stages in order - before it builds the
               templates that perform them.
@@ -447,7 +474,7 @@ export default function ApiTemplates({
       {/* Collapse all, stuck bottom left like the test case screens' own: one
           button that folds every open group, and opens them all again once
           every group is folded. Portalled so it pins to the window. */}
-      {groups.length > 0 &&
+      {groups.length > 0 && view !== "fixtures" &&
         createPortal(
           <div
             className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
@@ -513,6 +540,8 @@ export default function ApiTemplates({
           onRemoved={() => void qc.invalidateQueries({ queryKey: [KEY] })}
         />
       )}
+
+      {cleaningUp && <CleanupDialog org={org} project={project} onClose={() => setCleaningUp(false)} />}
     </div>
   );
 }

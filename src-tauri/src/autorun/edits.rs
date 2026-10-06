@@ -38,6 +38,10 @@ pub const NO_SAVE_KEPT: &str =
 pub const PRECONDITIONS_KEPT: &str =
     "a repair cannot change a script's preconditions - save the script itself to change them";
 
+/// Said when a repair would add, change or remove a script's setup.
+pub const SETUP_KEPT: &str =
+    "a repair cannot add, change or remove a script's setup - save the script itself to change it";
+
 /// The end of Rule 3's refusal - the save route looks for it to decide
 /// whether the test case's own history could excuse the change.
 pub const NEVER_WEAKENED: &str = "an assertion is never removed or weakened by a repair";
@@ -188,6 +192,13 @@ pub fn check_edits_following_case(
     // save (`nav::check_project_rules`).
     if old.preconditions.iter().any(|p| !new.preconditions.contains(p)) {
         return Err(PRECONDITIONS_KEPT.to_string());
+    }
+
+    // Rule 13: a setup writes data in the application on every run of its
+    // case, once a person has approved it. A repair may not add one,
+    // change it or remove it: only the editor or an import can.
+    if old.setup != new.setup {
+        return Err(SETUP_KEPT.to_string());
     }
 
     // Rule 10: where the case starts is part of the script. A repair that

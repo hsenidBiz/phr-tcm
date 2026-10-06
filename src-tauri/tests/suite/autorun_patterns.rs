@@ -48,6 +48,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        setup: None,
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,

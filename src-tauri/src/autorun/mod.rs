@@ -8,6 +8,8 @@
 
 pub mod accounts;
 pub mod api_checks;
+pub mod approvals;
+pub mod cleanup;
 pub mod defects;
 pub mod downloads;
 pub mod edits;
@@ -31,9 +33,11 @@ pub mod replay_to;
 pub mod report;
 pub mod runner;
 pub mod sessions;
+pub mod setup;
 pub mod signin;
 pub mod signin_recorder;
 pub mod store;
+pub mod test_made;
 pub mod transient;
 
 use crate::browser::actions::{Action, ActionOutcome};
@@ -106,6 +110,14 @@ pub struct CaseScript {
     /// Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
+    /// The draft this case makes for itself before it signs in: a fixture
+    /// the run performs on every run of the case, once a person has
+    /// approved it in the script editor (`approvals`). Its outputs reach
+    /// the steps as `{{setup.<output>}}` (`setup`). A repair can never
+    /// add, change or remove it. Written only when there is one, so a
+    /// script without one reads exactly as it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<Setup>,
     /// Shared state this case leaves changed for the cases after it, by
     /// name (`"cycle published"`). Names compare by `marks::normalise`, and
     /// every save validates them (`marks::check_marks`). Written only when
@@ -142,6 +154,14 @@ pub struct Precondition {
     /// sentence when the precondition is not met.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+}
+
+/// A script's setup: the saved fixture whose run makes this case's own
+/// draft, by id.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct Setup {
+    pub fixture: String,
 }
 
 /// One case's suspected application defect: the step, and what the

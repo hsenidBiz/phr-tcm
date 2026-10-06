@@ -307,12 +307,14 @@ export default function RunPane({
   // to never overlap a browser command already in flight (a step, another
   // sign-in) - an explicit guard instead of a lucky race.
   const scriptAccount = script.isSuccess ? (script.data?.account ?? "") : null;
-  const hasPreconditions = (script.data?.preconditions?.length ?? 0) > 0;
+  // A setup is prepared by the same check, after the preconditions and
+  // before the sign-in: it needs its approval, and makes the case's draft.
+  const checksFirst = (script.data?.preconditions?.length ?? 0) > 0 || script.data?.setup != null;
   useEffect(() => {
     if (!opened || launches === 0 || scriptAccount === null || busy) return;
     if (signedFor.current === launches) return;
     signedFor.current = launches;
-    if (hasPreconditions) {
+    if (checksFirst) {
       void startCase(scriptAccount);
       return;
     }
@@ -323,10 +325,11 @@ export default function RunPane({
     void signInAs(scriptAccount, false);
     // startCase and signInAs are recreated every render; the values below
     // are the only things that should start a case.
-  }, [opened, launches, scriptAccount, hasPreconditions, busy]);
+  }, [opened, launches, scriptAccount, checksFirst, busy]);
 
-  /** A case whose script has preconditions: the app checks them first, and
-   * signs the case in only when every one is met. A case Blocked here keeps
+  /** A case whose script has preconditions or a setup: the app checks them
+   * first (and runs the setup), and signs the case in only when every one
+   * is met. A case Blocked here keeps
    * the sentence as its reason, never signs in, and runs no step. */
   const startCase = async (account: string) => {
     const forLaunch = launches;

@@ -74,7 +74,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
         test_files, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
@@ -101,6 +101,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunResetNeeded,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
+            events::AutorunCleanupProgress,
             events::GuideProgress
         ])
         .commands(collect_commands![
@@ -196,6 +197,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_answer_replay_request,
             autorun::auto_run_step,
             autorun::auto_run_check_preconditions,
+            autorun_setup::auto_run_setup_view,
+            autorun_setup::auto_run_approve_setup,
+            autorun_setup::auto_run_withdraw_setup,
             autorun::auto_run_load_script,
             autorun::auto_run_save_script,
             autorun::auto_run_clear_suspected_defect,
@@ -316,6 +320,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             api_templates::api_templates_open_flow,
             api_templates::api_templates_export,
             api_templates::api_templates_import,
+            api_templates::api_fixtures_list,
+            api_templates::api_fixture_run,
+            api_templates::api_fixture_remove,
+            api_templates::auto_run_cleanup_preview,
+            api_templates::auto_run_cleanup_run,
+            api_templates::auto_run_cleanup_stop,
             test_files::test_files_list,
             test_files::test_files_add,
             test_files::test_files_remove,
