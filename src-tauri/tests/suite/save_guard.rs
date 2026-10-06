@@ -312,20 +312,14 @@ async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
     let mut cdp = guarded(&[]).await;
     cdp.hold_saves(true);
     // The hold takes effect once the browser has answered a command sent
-    // after it was asked for (see browser_tabs for why).
+    // after it was asked for (`a_save_paused_before_the_hold_*` below).
     cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     // The login is sent by the sign-in page itself, which the browser says
     // (its request's document); a save the browser cannot place is stopped.
-    let mut login: serde_json::Value = serde_json::from_str(&paused("r1", "POST", "https://hr.example/Account/SubmitLogin")).unwrap();
-    login["params"]["networkId"] = json!("n1");
     cdp.transport_mut().incoming.extend([
-        json!({ "method": "Network.requestWillBeSent", "params": {
-            "requestId": "n1", "loaderId": "L-signin",
-            "request": { "method": "POST", "url": "https://hr.example/Account/SubmitLogin" }
-        } })
-        .to_string(),
-        login.to_string(),
+        sent_by("n1", "L-signin", "https://hr.example/Account/SubmitLogin"),
+        paused_from("r1", "https://hr.example/Account/SubmitLogin", "XHR", "n1"),
         r#"{"id":4,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
@@ -802,4 +796,144 @@ async fn a_try_naming_another_case_never_lifts_the_guard() {
     guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 6, true).await.unwrap();
     assert_eq!(held, None);
     assert!(!d.is_guarding_saves());
+}
+
+// ------------------------------------------- a sign-in's hold, judged honestly
+
+fn navigated(loader: &str, url: &str) -> String {
+    json!({ "method": "Page.frameNavigated", "params": { "frame": { "id": "F-main", "loaderId": loader, "url": url } } })
+        .to_string()
+}
+
+fn sent_by(network_id: &str, loader: &str, url: &str) -> String {
+    json!({ "method": "Network.requestWillBeSent", "params": {
+        "requestId": network_id, "loaderId": loader, "timestamp": 1.0,
+        "request": { "method": "POST", "url": url }
+    } })
+    .to_string()
+}
+
+fn paused_from(id: &str, url: &str, kind: &str, network_id: &str) -> String {
+    json!({ "method": "Fetch.requestPaused", "params": {
+        "requestId": id, "resourceType": kind, "networkId": network_id,
+        "request": { "method": "POST", "url": url, "headers": {} }
+    } })
+    .to_string()
+}
+
+async fn read_waiting(cdp: &mut Cdp<FakeTransport>) {
+    cdp.pump(Duration::from_millis(30)).await;
+}
+
+/// The draft page's pagehide beacon is paused before the sign-in asks for
+/// the hold, but its pause is read after. It is judged as it was when the
+/// browser paused it: refused. The hold takes effect only once the browser
+/// has answered a command sent after it was asked for.
+#[tokio::test]
+async fn a_save_paused_before_the_hold_is_refused_even_when_read_after_it() {
+    let mut cdp = guarded(&[]).await;
+    cdp.hold_saves(true);
+    // Read with no command since the hold: still guarded. Its answer is id 3.
+    cdp.transport_mut().incoming.push_back(paused("r0", "POST", "https://hr.example/api/SaveDraft"));
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r0").unwrap()["method"], "Fetch.failRequest");
+    // Read ahead of the answer to the first command since the hold (id 4).
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/api/SaveDraft?token=hunter2"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest", "the beacon was let through");
+    assert!(cdp.take_save_blocked().is_some_and(|b| b.contains("POST /api/SaveDraft")));
+    // From then on the hold is on: the sign-in's own requests go through.
+    cdp.transport_mut().incoming.extend([
+        sent_by("n2", "L-signin", "https://hr.example/api/Save"),
+        paused_from("r2", "https://hr.example/api/Save", "XHR", "n2"),
+    ]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
+    // Ending the hold takes effect at once.
+    cdp.hold_saves(false);
+    cdp.transport_mut().incoming.push_back(paused("r3", "POST", "https://hr.example/api/Save"));
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r3").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// A guarded client that has left the draft (loader L-draft) for the
+/// sign-in page (L-signin), and whose sign-in hold has taken effect. Its
+/// next frame is id 4.
+async fn signing_in() -> Cdp<FakeTransport> {
+    let mut cdp = guarded(&["login"]).await;
+    cdp.transport_mut().incoming.extend([
+        navigated("L-draft", "https://hr.example/draft"),
+        navigated("L-signin", "https://hr.example/login"),
+    ]);
+    read_waiting(&mut cdp).await;
+    cdp.hold_saves(true);
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    cdp
+}
+
+/// The page being left sends its beacon late: it is paused only after the
+/// hold took effect. A ping is still stopped.
+#[tokio::test]
+async fn a_ping_paused_after_the_hold_took_effect_is_still_refused() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.push_back(paused_from("r1", "https://hr.example/api/SaveDraft", "Ping", "n1"));
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert!(cdp.take_save_blocked().is_some_and(|b| b.contains("POST /api/SaveDraft")));
+}
+
+/// A save from the document left before the hold, paused after it took
+/// effect, is still stopped - here its document is learnt only after its
+/// pause is read.
+#[tokio::test]
+async fn a_save_from_the_page_being_left_paused_after_the_hold_is_still_refused() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.push_back(paused_from("r1", "https://hr.example/api/SaveDraft", "Fetch", "n1"));
+    read_waiting(&mut cdp).await;
+    assert!(answer_to(&cdp, "r1").is_none(), "answered before its document was known");
+    cdp.transport_mut().incoming.push_back(sent_by("n1", "L-draft", "https://hr.example/api/SaveDraft"));
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert!(cdp.take_save_blocked().is_some_and(|b| b.contains("POST /api/SaveDraft")));
+}
+
+/// The sign-in page's own login goes through: sent by the page the sign-in
+/// arrived on, or as the navigation that page's form starts.
+#[tokio::test]
+async fn the_sign_in_pages_own_login_goes_through() {
+    let mut cdp = signing_in().await;
+    cdp.transport_mut().incoming.extend([
+        sent_by("n1", "L-signin", "https://hr.example/api/login"),
+        paused_from("r1", "https://hr.example/api/login", "XHR", "n1"),
+        paused_from("r2", "https://hr.example/Account/login", "Document", "n2"),
+        sent_by("n2", "L-next", "https://hr.example/Account/login"),
+    ]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+/// A sign-in page's form post is a navigation, a new document by
+/// definition, so it goes through even when the browser does not say which
+/// document sent it (no Network domain). Any other save it cannot place is
+/// stopped.
+#[tokio::test]
+async fn a_sign_in_form_post_goes_through_even_unplaced() {
+    let mut cdp = signing_in().await;
+    let unplaced = |id: &str, kind: &str| {
+        json!({ "method": "Fetch.requestPaused", "params": {
+            "requestId": id, "resourceType": kind,
+            "request": { "method": "POST", "url": "https://hr.example/Account/login", "headers": {} }
+        } })
+        .to_string()
+    };
+    cdp.transport_mut().incoming.extend([unplaced("r1", "Document"), unplaced("r2", "XHR")]);
+    read_waiting(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
 }
