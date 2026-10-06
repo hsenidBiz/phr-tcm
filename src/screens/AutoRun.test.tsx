@@ -206,8 +206,8 @@ test("a rejected import call shows an error toast and re-enables the button", as
   expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeEnabled();
 });
 
-/// The script is authored as JSON for now - an assistant will generate
-/// these later, and hand-editing is how the format gets proven first.
+/// The script's full detail is JSON, behind Edit script - an assistant
+/// writes most of them, and hand-editing is how the format got proven.
 /// Invalid JSON must be refused at the point of saving, not written and
 /// discovered mid-run.
 test("the script editor refuses invalid JSON instead of saving it", async () => {
@@ -225,6 +225,8 @@ test("the script editor refuses invalid JSON instead of saving it", async () => 
   await expandCards();
 
   fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
+  // The window opens on the readable script; the JSON is behind Edit script.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
   fireEvent.change(box, { target: { value: "{ not json" } });
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
@@ -248,6 +250,8 @@ test("a valid script is saved for that case id", async () => {
   await expandCards();
 
   fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
+  // The window opens on the readable script; the JSON is behind Edit script.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
   fireEvent.change(box, {
     target: {
@@ -299,6 +303,8 @@ test("saving a script invalidates its query so the script and Run buttons update
   expect(within(row).queryByRole("button", { name: "Run #201" })).not.toBeInTheDocument();
 
   fireEvent.click(editButton);
+  // The window opens on the readable script; the JSON is behind Edit script.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
   fireEvent.change(box, {
     target: {
@@ -333,6 +339,8 @@ test("prefills the editor with a case's existing script", async () => {
   await expandCards();
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  // The window opens on the readable script; the JSON is behind Edit script.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = (await screen.findByLabelText("Action script JSON")) as HTMLTextAreaElement;
   await waitFor(() => expect(box.value).toContain("check_text"));
 });

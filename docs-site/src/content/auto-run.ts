@@ -19,6 +19,7 @@ import type { Screen, Step } from "../types";
 const CASES = "auto-run-cases";
 const SELECTED = "auto-run-selected";
 const SCRIPT = "auto-run-script";
+const SCRIPT_JSON = "auto-run-script-json";
 const SCRIPT_SETUP = "auto-run-script-setup";
 const WATCH = "auto-run-watch";
 const UNATTENDED = "auto-run-unattended";
@@ -34,6 +35,15 @@ const NAV: Step = { nav: "Auto Run" };
 const BLOCKED_BY_SETUP =
   "A case whose script has a setup is **Blocked** before it signs in when the setup is not approved, or when the fixture it needs has never been built. Approve it in the script editor, or build the fixture on the API Templates tab, under **Fixtures**.";
 const READY: Step = { waitFor: { role: "checkbox", name: "Select #5001" } };
+/** Opens #5003's script, which opens on the script in sentences. */
+const TO_SCRIPT: Step[] = [
+  NAV,
+  READY,
+  { click: { role: "button", name: "Show details for #5003" } },
+  { waitFor: { role: "button", name: "Hide details for #5003" } },
+  { click: { role: "button", name: "Edit script for #5003" } },
+  { waitFor: { role: "region", name: "Step 1" } },
+];
 /** Opens a case's card, where its Script and Run buttons are. */
 const OPEN_CARD = (id: number): Step[] => [
   { click: { role: "button", name: `Show details for #${id}` } },
@@ -68,8 +78,17 @@ export const autoRun: Screen = {
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
     {
       id: SCRIPT,
-      route: [NAV, READY, ...OPEN_CARD(5003), { click: { role: "button", name: "Edit script for #5003" } }, { waitFor: { role: "textbox", name: "Action script JSON" } }],
-      alt: "The script of a case with a precondition, beside the case's own steps",
+      route: TO_SCRIPT,
+      alt: "The script of a case with a precondition, in plain sentences beside the case's own steps",
+    },
+    {
+      id: SCRIPT_JSON,
+      route: [
+        ...TO_SCRIPT,
+        { click: { role: "button", name: "Edit script" } },
+        { waitFor: { role: "textbox", name: "Action script JSON" } },
+      ],
+      alt: "The same script as JSON, after Edit script",
     },
     {
       id: SCRIPT_SETUP,
@@ -93,7 +112,7 @@ export const autoRun: Screen = {
         { click: { role: "button", name: "Open browser" } },
         { waitFor: { role: "button", name: "Sign in again" } },
         { click: { role: "button", name: "Run step 1" } },
-        { waitFor: { text: 'Found heading "Dashboard"' } },
+        { waitFor: { text: 'Check the "Dashboard" heading is showing' } },
         { click: { role: "button", name: "Passed" } },
       ],
       alt: "Running one case while you watch: signed in, the first step run, and Passed chosen",
@@ -291,7 +310,7 @@ export const autoRun: Screen = {
       group: "scripts",
       locate: { role: "button", name: "Edit script for #5002" },
       name: "Script",
-      does: "Opens the case's script. On a case without one, the button reads **Add script**.",
+      does: "Opens the case's script, in plain sentences. On a case without one, the button reads **Add script**.",
     },
     {
       id: "add-script",
@@ -378,14 +397,41 @@ export const autoRun: Screen = {
         "The save words in the Setup panel decide what counts as a save. Only you can turn it off, here.",
     },
     {
-      id: "script-json",
+      id: "readable-script",
       shot: SCRIPT,
       group: "scripts",
-      locate: { role: "textbox", name: "Action script JSON" },
+      locate: { role: "region", name: "Action script" },
       name: "Action script",
       does:
-        "What the app does at each step, as JSON: open a page, click, type, upload a test file, and check what the page shows. " +
+        "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
+        "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
         "Most scripts are written by an assistant from the case's steps and imported with **More**, **Import scripts**.",
+      tips: ["An element the script finds only by its code shows that code in a smaller type. Point at it to see all of it."],
+    },
+    {
+      id: "show-json",
+      shot: SCRIPT,
+      group: "scripts",
+      locate: { role: "button", name: "Edit script" },
+      name: "Edit script",
+      does: "Shows the script as JSON in the same place, with every detail, to change it. The window always opens on the sentences.",
+    },
+    {
+      id: "script-json",
+      shot: SCRIPT_JSON,
+      group: "scripts",
+      locate: { role: "textbox", name: "Action script JSON" },
+      name: "Action script JSON",
+      does:
+        "The script as JSON, the way an assistant writes it. **Save script** saves what is here, from this view or from the sentences.",
+    },
+    {
+      id: "back-to-readable",
+      shot: SCRIPT_JSON,
+      group: "scripts",
+      locate: { role: "button", name: "Back to readable view" },
+      name: "Back to readable view",
+      does: "Shows the script in sentences again, your changes included. While the JSON is not valid it says what is wrong and stays on the JSON.",
     },
     {
       id: "checks",
