@@ -1328,7 +1328,11 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   const address = within(summary).getByText("https://qa.example.com/");
   expect(address).not.toHaveClass("truncate");
   expect(address).not.toHaveAttribute("title");
-  expect(address).toHaveClass("break-all");
+  // It wraps at its own punctuation (a <wbr> after each / . ? & =), never
+  // in the middle of a word.
+  expect(address).toHaveClass("break-words");
+  expect(address).not.toHaveClass("break-all");
+  expect(address.querySelectorAll("wbr").length).toBeGreaterThan(0);
   expect(within(summary).getByText("Built-in")).toBeInTheDocument();
   expect(within(summary).getByText("1 account on this machine")).toBeInTheDocument();
   expect(await within(summary).findByText("QA HR")).toBeInTheDocument();

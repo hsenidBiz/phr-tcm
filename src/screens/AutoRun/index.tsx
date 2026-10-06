@@ -61,9 +61,10 @@ import type { AutoRunTab } from "./useAutoRunReadiness";
 /** The screen's tabs, in order. The arrow keys walk this list. Setup is
  * not one: it is a panel beside the Test cases list. */
 /** The content on the left, the Setup panel on the right; stacked (panel
- * first) until the area's own width has room for both. */
+ * first) until the area's own width has room for both: 69rem is the list's
+ * 44rem minimum, a 1rem gap and the panel's 24rem minimum. */
 const TWO_COLUMNS =
-  "grid gap-4 @min-[69rem]:grid-cols-[minmax(0,1fr)_clamp(20rem,26%,28rem)] @min-[69rem]:items-start";
+  "grid gap-4 @min-[69rem]:grid-cols-[minmax(0,1fr)_clamp(24rem,28%,30rem)] @min-[69rem]:items-start";
 
 const TABS: { id: AutoRunTab; label: string }[] = [
   { id: "cases", label: "Test cases" },
