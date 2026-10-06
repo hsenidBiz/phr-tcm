@@ -839,6 +839,12 @@
         "w": 644,
         "h": 28
       },
+      "readable-script": {
+        "x": 726,
+        "y": 326,
+        "w": 644,
+        "h": 320
+      },
       "remove-precondition": {
         "x": 1281,
         "y": 867,
@@ -856,6 +862,26 @@
         "y": 828,
         "w": 106,
         "h": 28
+      },
+      "show-json": {
+        "x": 1269,
+        "y": 304,
+        "w": 101,
+        "h": 20
+      }
+    }
+  },
+  "auto-run-script-json": {
+    "size": {
+      "w": 1440,
+      "h": 900
+    },
+    "controls": {
+      "back-to-readable": {
+        "x": 1205,
+        "y": 304,
+        "w": 166,
+        "h": 20
       },
       "script-json": {
         "x": 727,

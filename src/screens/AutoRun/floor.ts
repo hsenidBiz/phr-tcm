@@ -23,7 +23,9 @@ function isCheckKind(kind: string): boolean {
 }
 
 /** One entry per case step with a non-empty expected result, in that
- * step's order, saying whether the script checks it. */
+ * step's order, saying whether the script checks it. The script comes
+ * straight from JSON a person is typing, so an entry or action that is not
+ * the shape it should be counts as no check rather than throwing. */
 export function floorOf(
   steps: { action: string; expected: string }[],
   script: StepScript[],
@@ -32,11 +34,15 @@ export function floorOf(
     .map((s, i) => ({ step_number: i + 1, expected: s.expected.trim() }))
     .filter((s) => s.expected !== "")
     .map(({ step_number }) => {
-      const scriptStep = script.find((ss) => ss.step_number === step_number);
+      const scriptStep = script.find((ss) => typeof ss === "object" && ss !== null && ss.step_number === step_number);
       if (!scriptStep) return { step_number, state: { kind: "unchecked" as const } };
-      const hasCheck = scriptStep.actions.some((a) => isCheckKind(a.kind));
+      const actions: unknown[] = Array.isArray(scriptStep.actions) ? scriptStep.actions : [];
+      const hasCheck = actions.some((a) => {
+        const kind = typeof a === "object" && a !== null ? (a as { kind?: unknown }).kind : undefined;
+        return typeof kind === "string" && isCheckKind(kind);
+      });
       if (hasCheck) return { step_number, state: { kind: "checked" as const } };
-      const reason = scriptStep.unchecked?.trim();
+      const reason = typeof scriptStep.unchecked === "string" ? scriptStep.unchecked.trim() : undefined;
       if (reason) return { step_number, state: { kind: "explained" as const, reason } };
       return { step_number, state: { kind: "unchecked" as const } };
     });
