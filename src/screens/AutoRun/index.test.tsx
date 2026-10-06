@@ -988,6 +988,22 @@ test("Expand all opens every card shown, and Collapse all shuts them", async () 
   expect(collapse).toBeDisabled();
 });
 
+test("Collapse all still shuts cards a search or a filter hides", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  openCard(1);
+  // The only open card is hidden now, but it is still open.
+  typeSearch("bravo");
+  expect(screen.queryByRole("button", { name: "Hide details for #1" })).not.toBeInTheDocument();
+  const collapse = screen.getByRole("button", { name: "Collapse all" });
+  expect(collapse).toBeEnabled();
+  fireEvent.click(collapse);
+  typeSearch("");
+  expect(screen.getByRole("button", { name: "Show details for #1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse all" })).toBeDisabled();
+});
+
 test("the open cards are remembered for each PBI while the screen is mounted", async () => {
   mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -1333,8 +1333,15 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   expect(screen.queryByRole("button", { name: "Edit site address" })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Filter by result" })).not.toBeInTheDocument();
 
+  // The toggle's visible words are its whole accessible name.
+  expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toHaveTextContent(
+    /^Show setup details$/,
+  );
   fireEvent.click(within(setupPanel()).getByRole("button", { name: "Show setup details" }));
   expect(within(setupPanel()).getByRole("button", { name: "Edit site address" })).toBeInTheDocument();
+  expect(within(setupPanel()).getByRole("button", { name: "Hide setup details" })).toHaveTextContent(
+    /^Hide setup details$/,
+  );
   expect(within(setupPanel()).queryByRole("list", { name: "Setup summary" })).not.toBeInTheDocument();
   fireEvent.click(within(setupPanel()).getByRole("button", { name: "Hide setup details" }));
   expect(within(setupPanel()).getByRole("list", { name: "Setup summary" })).toBeInTheDocument();

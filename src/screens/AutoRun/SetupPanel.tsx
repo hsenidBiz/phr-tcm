@@ -353,13 +353,14 @@ export default function SetupPanel({
           size="sm"
           variant="ghost"
           className="ml-auto"
-          aria-label={open ? "Hide setup details" : "Show setup details"}
           aria-expanded={open}
           aria-controls={bodyId}
           onClick={onToggle}
         >
           {open ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
-          {open ? "Hide details" : "Show details"}
+          {/* The visible words are the whole name, so a voice command
+              that reads them off the screen reaches the button. */}
+          {open ? "Hide setup details" : "Show setup details"}
         </Button>
       </div>
 

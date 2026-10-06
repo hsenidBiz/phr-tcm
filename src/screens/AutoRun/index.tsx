@@ -534,7 +534,9 @@ export default function AutoRun({
 
   const caseCount = cases.data ? rows.length : null;
   const searched = search.trim();
-  const anyOpen = shownIdx.some((i) => openHere.has(rows[i].id));
+  // Every open card counts, shown or not: a card a search or a filter hides
+  // is still open, and Collapse all is how it gets shut.
+  const anyOpen = rows.some((c) => openHere.has(c.id));
   const allOpen = shownIdx.length > 0 && shownIdx.every((i) => openHere.has(rows[i].id));
 
   return (
@@ -542,9 +544,9 @@ export default function AutoRun({
       {/* Two tabs, one panel at a time: the cases to run, with the setup a
           run needs beside them, and what came of past runs. Normal page
           flow, so the page's own bottom padding keeps the floating dock
-          clear of the last card. Test cases is wider on a wide window, for
-          the Setup panel's column. */}
-      <div className={cn("space-y-4", shown === "cases" ? "max-w-3xl min-[1100px]:max-w-6xl" : "max-w-3xl")}>
+          clear of the last card. Test cases may grow wider, for the Setup
+          panel's column, when its own width has room for one. */}
+      <div className={cn("space-y-4", shown === "cases" ? "max-w-6xl" : "max-w-3xl")}>
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab
             order, and the arrow keys move along. */}
@@ -586,15 +588,18 @@ export default function AutoRun({
           role="tabpanel"
           id={`${tabIds}-${shown}-panel`}
           aria-labelledby={`${tabIds}-${shown}-tab`}
-          className="min-w-0"
+          className="@container min-w-0"
         >
           {shown === "cases" && (
             // The list on the left and the Setup panel on the right, at a
-            // fixed readable width. On a narrow window the panel goes above
-            // the list: it comes first in the page, and moves last only
-            // where there is room beside it.
-            <div className="grid gap-4 min-[1100px]:grid-cols-[minmax(0,1fr)_20rem] min-[1100px]:items-start">
-              <div className="min-w-0 min-[1100px]:order-last">
+            // fixed readable width. Measured on this panel's own width, not
+            // the window's, so an open sidebar never squeezes the list: the
+            // panel goes beside the list only where the list keeps its full
+            // reading width (48rem, a 1rem gap, then 20rem). Narrower, the
+            // panel goes above the list at the list's width: it comes first
+            // in the page, and moves last only where there is room.
+            <div className="grid max-w-3xl gap-4 @min-[69rem]:max-w-none @min-[69rem]:grid-cols-[minmax(0,1fr)_20rem] @min-[69rem]:items-start">
+              <div className="min-w-0 @min-[69rem]:order-last">
                 <SetupPanel
                   setup={setup}
                   org={org}
