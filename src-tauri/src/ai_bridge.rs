@@ -1709,7 +1709,8 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::SignIn { .. }
         | Action::Reload
         | Action::ExpireSession
-        | Action::ReturnToArea => String::new(),
+        | Action::ReturnToArea { area: None } => String::new(),
+        Action::ReturnToArea { area: Some(area) } => area.trim().to_string(),
         Action::PressKey { key } => key.trim().to_string(),
         Action::ExpectDownload { name, .. } => name.trim().to_string(),
         // A tab's name; an opened tab's path, never its host or query.
@@ -1995,14 +1996,17 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     case_id: i32,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
-    use crate::autorun::runner::{area_route, AreaRoute, NEEDS_SCRIPT_AREA};
-    let resolved = matches!(action, crate::browser::actions::Action::ReturnToArea)
+    use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    // A bare `return_to_area` goes to the case's own area; one that names
+    // an area goes to that one.
+    let resolved = (matches!(action, crate::browser::actions::Action::ReturnToArea { .. }) && action.area_named().is_none())
         .then(|| area_route(root, organization, project, case_id));
     let area = match &resolved {
         Some(Ok(r)) => AreaRoute::To(r),
         Some(Err(why)) => AreaRoute::Unknown(why),
         None => AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
     };
+    let areas = area_routes(root, organization, project, &named_areas(std::iter::once(action)));
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. The runner's step loop still carries it out, so a tried
     // action behaves exactly as it will inside a script - the runner's own
@@ -2015,7 +2019,8 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     // it types the literal text it was given rather than standing in for
     // anything a recipe would have substituted.
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
-    let outcomes = match crate::autorun::runner::run_step_routed(
+    let mut run = InRun { areas: Some(&areas), ..Default::default() };
+    let outcomes = match crate::autorun::runner::run_step_in_run(
         d,
         root,
         organization,
@@ -2026,6 +2031,7 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
         lease,
         None,
         area,
+        &mut run,
     )
     .await
     {

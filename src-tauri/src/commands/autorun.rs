@@ -301,17 +301,21 @@ pub async fn auto_run_step(
     // Another case's tabs do not carry over into this one.
     crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
-    // A watched run makes no trip of its own: `return_to_area` builds the
-    // case's route from its saved script, and only when the step has one.
-    use crate::autorun::runner::{area_route, AreaRoute};
-    let wants_area = step.actions.iter().any(|a| matches!(a, crate::browser::actions::Action::ReturnToArea));
+    // A watched run makes no trip of its own: a bare `return_to_area` builds
+    // the case's route from its saved script, and one that names an area
+    // that area's route - each only when the step has one.
+    use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute};
+    let wants_area = step.actions.iter().flat_map(|a| a.each()).any(|a| {
+        matches!(a, crate::browser::actions::Action::ReturnToArea { .. }) && a.area_named().is_none()
+    });
     let resolved = if wants_area { Some(area_route(&root, &organization, &project, case_id)) } else { None };
     let area = match &resolved {
         Some(Ok(r)) => AreaRoute::To(r),
         Some(Err(why)) => AreaRoute::Unknown(why),
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
-    let mut run = crate::autorun::runner::InRun::default();
+    let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
+    let mut run = crate::autorun::runner::InRun { areas: Some(&areas), ..Default::default() };
     let outcomes = crate::autorun::runner::run_step_in_run(
         &mut session.cdp,
         &root,

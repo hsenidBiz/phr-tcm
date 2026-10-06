@@ -413,6 +413,10 @@ async fn run_case_in<D: Driver>(
     // the browser saved are put on the step they started in once the case
     // is over, so one still arriving as its step ended is not left out.
     let mut step_began: Vec<(usize, Instant)> = Vec::new();
+    // The other areas the script's `return_to_area` actions name, read once
+    // before step 1, as the case's own route was.
+    let names = runner::named_areas(script.steps.iter().flat_map(|s| s.actions.iter()));
+    let areas = runner::area_routes(root, organization, project, &names);
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
@@ -424,12 +428,13 @@ async fn run_case_in<D: Driver>(
         }
         on_step(step.step_number);
         let asked_at = Instant::now();
-        // `return_to_area` goes where the run went before step 1.
+        // A bare `return_to_area` goes where the run went before step 1; one
+        // that names an area, to that area.
         let area = match route {
             Some(r) => runner::AreaRoute::To(r),
             None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
         };
-        let mut in_run = runner::InRun { cancel: Some(cancel), ..Default::default() };
+        let mut in_run = runner::InRun { cancel: Some(cancel), areas: Some(&areas), ..Default::default() };
         let outcomes = match runner::run_step_in_run(
             d,
             root,

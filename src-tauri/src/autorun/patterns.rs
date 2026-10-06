@@ -368,7 +368,10 @@ pub fn action_target(action: &Action) -> Option<String> {
         // has the focus.
         Action::Reload => Some("the page".to_string()),
         Action::ExpireSession => Some("the session".to_string()),
-        Action::ReturnToArea => Some("the case's area".to_string()),
+        Action::ReturnToArea { .. } => Some(match action.area_named() {
+            Some(area) => format!("the {area} area"),
+            None => "the case's area".to_string(),
+        }),
         Action::PressKey { key } => Some(format!("the {} key", key.trim())),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
         // A tab by the name the script gave it.
