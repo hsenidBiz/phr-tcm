@@ -809,7 +809,9 @@ pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> 
 /// while the switch is off (`check_no_addresses`), only recorded areas
 /// (`check_areas`), marks within their limits (`marks::check_saved`), and
 /// preconditions that name a flow, a stage and a value the project has
-/// (`preconditions::check_saved`). The one call every save path makes (the
+/// (`preconditions::check_saved`), and a setup and fixture placeholders
+/// naming fixtures and outputs the project has (`setup::check_saved`).
+/// The one call every save path makes (the
 /// Script editor, a JSON import, the assistant's `save_autorun_script`, a
 /// repair included).
 pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[CaseScript]) -> Result<(), String> {
@@ -817,7 +819,8 @@ pub fn check_project_rules(root: &Path, org: &str, project: &str, scripts: &[Cas
     check_no_addresses(&nav, scripts)?;
     check_areas(&nav, scripts)?;
     super::marks::check_saved(scripts)?;
-    super::preconditions::check_saved(root, org, project, scripts)
+    super::preconditions::check_saved(root, org, project, scripts)?;
+    super::setup::check_saved_all(root, org, project, scripts)
 }
 
 /// What an assistant's guide gains for this project: the module-screen

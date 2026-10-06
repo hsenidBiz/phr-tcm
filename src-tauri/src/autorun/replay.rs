@@ -12,7 +12,7 @@
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
-use super::{preconditions, recipe, signin, transient};
+use super::{preconditions, recipe, setup, signin, transient};
 use super::plan::Reset;
 use super::{store, CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
 use crate::api_templates::gate::StageDb;
@@ -727,6 +727,10 @@ pub async fn run_cases<B: Browsers>(
 /// (`preconditions::check_case`), it never signs in, and the run goes on.
 /// While Database Read Access is off (`PreconditionDb::ReadingOff`) none
 /// is checked, and such a case runs carrying the `notice` that says so.
+/// After the preconditions and before its browser opens, a case that uses
+/// fixtures is prepared (`setup::prepare_case`): a setup not approved, a
+/// shared fixture never built or a setup run that failed Blocks it with
+/// that sentence, and its setup's browser comes from `browsers` too.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     browsers: &mut B,
@@ -869,13 +873,21 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                         notice = checked.notice;
                         match checked.blocked {
                             Some(why) => Err(why),
-                            None => Ok(path),
+                            // Then its fixtures: the setup's approval, the
+                            // shared drafts' values and the setup's own run,
+                            // in a browser of its own that is closed, and its
+                            // lease let go, before the case's browser opens.
+                            None => setup::prepare_case(browsers, root, organization, project, &script, timing)
+                                .await
+                                .map(|prepared| (path, prepared.script)),
                         }
                     }
                 };
                 let mut record = match ready {
                     Err(why) => blocked_before_start(&script, account, why),
-                    Ok(path) => {
+                    // The case runs from the copy with its fixture values in;
+                    // the saved script is never changed.
+                    Ok((path, script)) => {
                         // A path but no recipe: the sign-in fails first and
                         // says what to add, so no route is needed.
                         let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));

@@ -103,3 +103,13 @@ pub const CONNECTED_USER_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub fn connected_user(base_url: &str, org: &str) -> String {
     format!("connected-user:{base_url}|{org}")
 }
+
+/// How long what a case's setup gave is kept for its supervised steps: in
+/// effect the session. A case started again makes a fresh draft anyway.
+pub const SETUP_OUTPUTS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// What case `case_id`'s setup gave at its last supervised start or replay
+/// to a step (session tier only, `autorun::setup::remember`).
+pub fn setup_outputs(case_id: i32) -> String {
+    format!("setup-outputs:{case_id}")
+}

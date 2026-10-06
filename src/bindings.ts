@@ -395,9 +395,42 @@ export const commands = {
 	 *  step 1, and the case goes on (the checks were skipped while
 	 *  `db_read_access`, the AI Bridge tab's Database Read Access switch, is
 	 *  off). Neither: the case goes on. The active environment's database is
-	 *  looked up only when the case's script has preconditions.
+	 *  looked up only when the case's script has preconditions. Once they are
+	 *  met, the case's fixtures are prepared as an unattended case's are
+	 *  (`autorun::setup::check_supervised`): a setup not approved, a shared
+	 *  fixture never built or a failed setup run is `blocked` with its
+	 *  sentence, and what the setup gave is kept for the case's steps.
 	 */
 	autoRunCheckPreconditions: (organization: string, project: string, caseId: number, dbReadAccess: boolean) => typedError<PreconditionCheck, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId, dbReadAccess })),
+	/**
+	 *  The editor's view of case `case_id`'s setup: its fixture, account,
+	 *  steps and what it makes, and where its approval stands. `None` when the
+	 *  saved script has no setup.
+	 */
+	autoRunSetupView: (organization: string, project: string, caseId: number) => typedError<{
+	fixture_name: string,
+	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	account: string,
+	/**  Each step as `<template name>: <params>`. */
+	steps: string[],
+	/**  What it makes, each as `<kind> <name>`. */
+	creates: string[],
+	/**  `approved`, `changed` (approved once, changed since) or `none`. */
+	approval: string,
+	/**  When it was approved, while `approval` is `approved`. */
+	approved_at: string | null,
+} | null, string>(__TAURI_INVOKE("auto_run_setup_view", { organization, project, caseId })),
+	/**
+	 *  The person's Approve setup: approves case `case_id`'s setup as it is
+	 *  saved now. Any later change to the setup, its fixture or a template it
+	 *  runs clears it.
+	 */
+	autoRunApproveSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_approve_setup", { organization, project, caseId })),
+	/**
+	 *  The person's Withdraw approval: case `case_id`'s setup is no longer
+	 *  approved, and the case is Blocked until it is approved again.
+	 */
+	autoRunWithdrawSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_withdraw_setup", { organization, project, caseId })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -454,6 +487,15 @@ export const commands = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
 	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
@@ -1971,6 +2013,15 @@ export type CaseScript_Deserialize = {
 	 */
 	preconditions?: Precondition_Deserialize[],
 	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
+	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
 	 *  every save validates them (`marks::check_marks`). Written only when
@@ -2053,6 +2104,15 @@ export type CaseScript_Serialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  The draft this case makes for itself before it signs in: a fixture
+	 *  the run performs on every run of the case, once a person has
+	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
+	 *  add, change or remove it. Written only when there is one, so a
+	 *  script without one reads exactly as it always did.
+	 */
+	setup?: Setup | null,
 	/**
 	 *  Shared state this case leaves changed for the cases after it, by
 	 *  name (`"cycle published"`). Names compare by `marks::normalise`, and
@@ -3533,9 +3593,10 @@ export type ReplayEnd_Deserialize =
 	outcomes: ActionOutcome_Deserialize[],
 } } | 
 /**
- *  A precondition of the case is not met: nothing was signed in, and
- *  the case is Blocked with this sentence as its reason, as a watched
- *  start blocks it.
+ *  A precondition of the case is not met, or its fixtures could not
+ *  give their values (`setup::prepare_case`): nothing was signed in,
+ *  and the case is Blocked with this sentence as its reason, as a
+ *  watched start blocks it.
  */
 { kind: "blocked"; detail: string } | 
 /**
@@ -3572,9 +3633,10 @@ export type ReplayEnd_Serialize =
 	outcomes: ActionOutcome_Serialize[],
 } } | 
 /**
- *  A precondition of the case is not met: nothing was signed in, and
- *  the case is Blocked with this sentence as its reason, as a watched
- *  start blocks it.
+ *  A precondition of the case is not met, or its fixtures could not
+ *  give their values (`setup::prepare_case`): nothing was signed in,
+ *  and the case is Blocked with this sentence as its reason, as a
+ *  watched start blocks it.
  */
 { kind: "blocked"; detail: string } | 
 /**
@@ -3898,6 +3960,32 @@ export type ScreenShot = {
 	name: string,
 	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
 	b64_png: string,
+};
+
+/**
+ *  A script's setup: the saved fixture whose run makes this case's own
+ *  draft, by id.
+ */
+export type Setup = {
+	fixture: string,
+};
+
+/**
+ *  A case's setup as the script editor shows it, with where its approval
+ *  stands.
+ */
+export type SetupView = {
+	fixture_name: string,
+	/**  The Auto Run account the fixture runs as (a key, never a login). */
+	account: string,
+	/**  Each step as `<template name>: <params>`. */
+	steps: string[],
+	/**  What it makes, each as `<kind> <name>`. */
+	creates: string[],
+	/**  `approved`, `changed` (approved once, changed since) or `none`. */
+	approval: string,
+	/**  When it was approved, while `approval` is `approved`. */
+	approved_at: string | null,
 };
 
 export type SharedQueue = SharedQueue_Serialize | SharedQueue_Deserialize;

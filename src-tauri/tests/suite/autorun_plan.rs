@@ -366,6 +366,7 @@ fn script(case_id: i32, changes: &[&str], needs: &[&str]) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        setup: None,
         changes: names(changes),
         needs_unchanged: names(needs),
         saved_at: None,

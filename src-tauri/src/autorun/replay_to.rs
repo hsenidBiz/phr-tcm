@@ -13,6 +13,8 @@ use super::lease::Held;
 use super::nav::{Route, TripFrom};
 use super::preconditions::{self, NoDb, PreconditionDb};
 use super::runner::{self, AreaRoute, InRun, AFTER_STOP};
+use super::replay::Browsers;
+use super::setup::{self, NoBrowsers};
 use super::{replay, signin, store, CaseScript};
 use crate::api_templates::gate::StageDb;
 use crate::browser::actions::ActionOutcome;
@@ -58,9 +60,10 @@ pub enum ReplayEnd {
     /// `step` is 1, the step it never reached). `why` is the failure's
     /// sentence, and `outcomes` what ran, a failure carrying its screenshot.
     StoppedAt { phase: ReplayPhase, step: i32, why: String, outcomes: Vec<ActionOutcome> },
-    /// A precondition of the case is not met: nothing was signed in, and
-    /// the case is Blocked with this sentence as its reason, as a watched
-    /// start blocks it.
+    /// A precondition of the case is not met, or its fixtures could not
+    /// give their values (`setup::prepare_case`): nothing was signed in,
+    /// and the case is Blocked with this sentence as its reason, as a
+    /// watched start blocks it.
     Blocked(String),
     /// The stop control, or the browser closing, ended the replay before
     /// step `step` finished.
@@ -208,10 +211,11 @@ fn closed(o: &ActionOutcome) -> bool {
 }
 
 /// `replay_to_checked` as the person's own replay (it may lift an earlier
-/// case's guard), with the default timing, no earlier guard to carry, and no
-/// database to ask: a case with preconditions is refused with
-/// `preconditions::NEED_DB` while Database Read Access is on, and carries
-/// the notice while it is off.
+/// case's guard), with the default timing, no earlier guard to carry, no
+/// database to ask and no browser for a setup: a case with preconditions
+/// is refused with `preconditions::NEED_DB` while Database Read Access is
+/// on, and carries the notice while it is off; an approved setup fails to
+/// open its browser (`setup::NoBrowsers`).
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to<D: Driver>(
     d: &mut D,
@@ -235,6 +239,7 @@ pub async fn replay_to<D: Driver>(
     };
     replay_to_checked(
         d,
+        &mut NoBrowsers::<D>::default(),
         root,
         organization,
         project,
@@ -258,11 +263,15 @@ pub async fn replay_to<D: Driver>(
 /// assistant's, which may switch the guard on for a no-save case but never
 /// lifts one held for another case, as a try never does. `db` gives the
 /// place preconditions are asked (`preconditions::for_run`), looked at only
-/// when the script has some. `progress(k, total)` is called before each
+/// when the script has some. `setup_browsers` gives the browser a case's
+/// setup runs in (`setup::prepare_case`), after the preconditions and
+/// before anything is signed in; what the setup gave is kept for the steps
+/// the person runs after the replay (`setup::remember`). `progress(k, total)` is called before each
 /// step runs, `total` being `req.step - 1`. `cancel` is the stop control.
 #[allow(clippy::too_many_arguments)]
-pub async fn replay_to_checked<D: Driver, P: StageDb>(
+pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     d: &mut D,
+    setup_browsers: &mut B,
     root: &Path,
     organization: &str,
     project: &str,
@@ -295,6 +304,21 @@ pub async fn replay_to_checked<D: Driver, P: StageDb>(
     if let Some(why) = checked.blocked {
         return ReplayEnd::Blocked(why);
     }
+
+    // The case's fixtures, as an unattended case's: the setup needs its
+    // approval, and its run makes the case's own draft in a browser of its
+    // own, closed before this one signs in. The steps below run from the
+    // copy with the values in; the saved script is never changed.
+    if stopped() {
+        return ReplayEnd::Stopped { step: 1 };
+    }
+    let script = match setup::prepare_case(setup_browsers, root, organization, project, &script, timing).await {
+        Ok(prepared) => {
+            setup::remember(id, prepared.setup_outputs);
+            prepared.script
+        }
+        Err(why) => return ReplayEnd::Blocked(why),
+    };
 
     // The no-save guard, through the same path as a person's step.
     if let Err(why) =

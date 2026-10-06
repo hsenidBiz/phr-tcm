@@ -1135,6 +1135,12 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
             "test-made.json",
             "approvals/",
             "\"approvals\"",
+            "approvals::approve",
+            "approvals::withdraw",
+            "approvals::{",
+            "auto_run_setup_view",
+            "auto_run_approve_setup",
+            "auto_run_withdraw_setup",
         ] {
             assert!(!text.contains(writer), "{name} reaches {writer}");
         }

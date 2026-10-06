@@ -68,6 +68,7 @@ mod autorun_replay_to;
 mod autorun_report;
 mod autorun_reset;
 mod autorun_runner;
+mod autorun_setup;
 mod autorun_signin;
 mod autorun_store;
 mod autorun_transient;

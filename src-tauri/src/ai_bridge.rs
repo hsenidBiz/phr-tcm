@@ -2768,7 +2768,7 @@ fn repair_source(
 /// Compared the way the declared-edit gate compares steps - by
 /// `step_signature`, so JSON formatting does not count as a change -
 /// plus the fields outside the steps a save can carry, `title`,
-/// `account`, `no_save`, `preconditions` and `area` (a blank area is no
+/// `account`, `no_save`, `preconditions`, `setup` and `area` (a blank area is no
 /// area; case does not tell two area names apart). `no_save` counts: a re-send that leaves it
 /// out of a script marked Must not save is a repair turning it off, which
 /// the gate refuses - never a quiet "unchanged". Positional rather than keyed by step number, so a bundle
@@ -2783,6 +2783,7 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
         && old.account == sent.account
         && old.no_save == sent.no_save
         && old.preconditions == sent.preconditions
+        && old.setup == sent.setup
         && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
         && old.steps.iter().zip(&sent.steps).all(|(a, b)| {

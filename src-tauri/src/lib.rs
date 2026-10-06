@@ -74,7 +74,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
         test_files, testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
@@ -196,6 +196,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_answer_replay_request,
             autorun::auto_run_step,
             autorun::auto_run_check_preconditions,
+            autorun_setup::auto_run_setup_view,
+            autorun_setup::auto_run_approve_setup,
+            autorun_setup::auto_run_withdraw_setup,
             autorun::auto_run_load_script,
             autorun::auto_run_save_script,
             autorun::auto_run_clear_suspected_defect,

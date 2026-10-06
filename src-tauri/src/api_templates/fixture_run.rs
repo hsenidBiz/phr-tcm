@@ -395,6 +395,24 @@ pub async fn run_fixture_within<B: Browsers>(
     retry_pauses: &[Duration],
     clock: Clock,
 ) -> FixtureReport {
+    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None).await
+}
+
+/// `run_fixture_within` for case `case_id`'s setup (`autorun::setup`):
+/// what the run makes is recorded as test-made with that case's id.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_fixture_for<B: Browsers>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    clock: Clock,
+    case_id: Option<i32>,
+) -> FixtureReport {
     let at = applog::stamp();
     let created_at = applog::iso_stamp();
     let run_id = crate::autorun::store::new_run_id();
@@ -464,7 +482,7 @@ pub async fn run_fixture_within<B: Browsers>(
             created_at: created_at.clone(),
             fixture: f.id.clone(),
             run_id: run_id.clone(),
-            case_id: None,
+            case_id,
             status: PRESENT.to_string(),
         });
     }

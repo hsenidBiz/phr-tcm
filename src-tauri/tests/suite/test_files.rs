@@ -518,6 +518,7 @@ fn script_with(action: Value) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        setup: None,
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,

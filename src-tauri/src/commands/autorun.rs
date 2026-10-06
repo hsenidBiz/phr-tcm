@@ -273,6 +273,10 @@ pub async fn auto_run_step(
     step: StepScript,
 ) -> Result<Vec<ActionOutcome>, String> {
     let root = root(&app)?;
+    // The step's fixture values: shared drafts' current outputs, and what
+    // the case's setup gave at its start. The step the pane holds is never
+    // changed; a value still missing refuses the step with its sentence.
+    let step = crate::autorun::setup::resolve_step(&root, &organization, &project, case_id, &step)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
@@ -366,8 +370,14 @@ pub(crate) async fn replay_supervised(
     }
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     let account_before = session.account.clone();
+    // A case's setup runs in a browser of its own, the one last chosen.
+    let mut setup_browsers = crate::commands::autorun_replay::RealBrowsers::new(
+        crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
+        false,
+    );
     let end = replay_to::replay_to_checked(
         &mut session.cdp,
+        &mut setup_browsers,
         &root,
         organization,
         project,
@@ -395,7 +405,7 @@ pub(crate) async fn replay_supervised(
         ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::SignIn, .. } => "stopped while signing in".to_string(),
         ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::Area, .. } => "stopped going to the area".to_string(),
         ReplayEnd::StoppedAt { step, .. } => format!("stopped at step {step}"),
-        ReplayEnd::Blocked(_) => "blocked by a precondition".to_string(),
+        ReplayEnd::Blocked(_) => "blocked before signing in".to_string(),
         ReplayEnd::Stopped { step } => format!("stopped before step {step} finished"),
         ReplayEnd::Refused(_) => "refused".to_string(),
     };
@@ -433,7 +443,11 @@ pub fn auto_run_answer_replay_request(id: String, allow: bool) -> Result<(), Str
 /// step 1, and the case goes on (the checks were skipped while
 /// `db_read_access`, the AI Bridge tab's Database Read Access switch, is
 /// off). Neither: the case goes on. The active environment's database is
-/// looked up only when the case's script has preconditions.
+/// looked up only when the case's script has preconditions. Once they are
+/// met, the case's fixtures are prepared as an unattended case's are
+/// (`autorun::setup::check_supervised`): a setup not approved, a shared
+/// fixture never built or a failed setup run is `blocked` with its
+/// sentence, and what the setup gave is kept for the case's steps.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_check_preconditions(
@@ -445,10 +459,23 @@ pub async fn auto_run_check_preconditions(
 ) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
     let root = root(&app)?;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
-    crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
+    let mut checked = crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
         crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
     })
-    .await
+    .await?;
+    if checked.blocked.is_none() {
+        let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
+            crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
+            false,
+        );
+        let timing = crate::commands::autorun_replay::replay_timing(false);
+        if let Some(why) =
+            crate::autorun::setup::check_supervised(&mut browsers, &root, &organization, &project, case_id, &timing).await
+        {
+            checked = crate::autorun::preconditions::PreconditionCheck { blocked: Some(why), notice: None };
+        }
+    }
+    Ok(checked)
 }
 
 /// Put the supervised browser's no-save guard where this case needs it
