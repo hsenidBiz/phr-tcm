@@ -35,6 +35,10 @@ const PLACEHOLDER = `[
   }
 ]`;
 
+/** The button beside the script's label takes no more height than the
+ * label line it replaced, so nothing under the script moves down. */
+const HEADER_BUTTON = "-my-0.5 py-0.5";
+
 export default function ScriptEditor({
   caseId,
   title,
@@ -273,7 +277,7 @@ export default function ScriptEditor({
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script JSON</span>
-                <Button size="sm" variant="ghost" onClick={backToReadable}>
+                <Button size="sm" variant="ghost" className={HEADER_BUTTON} onClick={backToReadable}>
                   <IconBack aria-hidden />
                   Back to readable view
                 </Button>
@@ -293,6 +297,7 @@ export default function ScriptEditor({
                 <Button
                   size="sm"
                   variant="ghost"
+                  className={HEADER_BUTTON}
                   onClick={() => {
                     setProblem("");
                     setEditing(true);
