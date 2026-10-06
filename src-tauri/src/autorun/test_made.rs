@@ -103,9 +103,8 @@ pub(crate) fn record(root: &Path, entries: &[TestMade]) -> Result<(), String> {
 }
 
 /// Sets the status of the entry for `kind` `id` in `environment`. `Ok(false)`
-/// when there is no such entry. Only Clean up calls this.
-// Clean up of test-made drafts is its caller, and is not built yet.
-#[allow(dead_code)]
+/// when there is no such entry. Only Clean up calls this (`autorun::cleanup`:
+/// a cleanup's delete, and a proof that deleted an entry).
 pub(crate) fn set_status(root: &Path, environment: &str, kind: &str, id: &str, status: &str) -> Result<bool, String> {
     let _held = lock();
     let mut all = load(root)?;

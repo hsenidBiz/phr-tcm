@@ -121,19 +121,24 @@ pub const FETCH_FN: &str = r#"async function (req, token, limitMs) {
 }"#;
 
 /// Proving a draft (saved by the caller only on success; replacing an
-/// existing id needs `replace` and a `why`), or running a saved template.
+/// existing id needs `replace` and a `why`), running a saved template, or
+/// Clean up test-made drafts running a saved delete template
+/// (`autorun::cleanup`), the one way a delete template ever runs.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     Prove { replace: bool, why: Option<String> },
     Run,
+    Cleanup,
 }
 
 impl Mode {
-    /// `"prove"` / `"run"` - how the activity log and the app log name it.
+    /// `"prove"` / `"run"` / `"cleanup"` - how the activity log and the app
+    /// log name it.
     pub fn label(&self) -> &'static str {
         match self {
             Mode::Prove { .. } => "prove",
             Mode::Run => "run",
+            Mode::Cleanup => "cleanup",
         }
     }
 }
@@ -222,17 +227,21 @@ impl RunReport {
 /// anti-forgery page, the recipe and the account, a template's flow stage
 /// (`stage_problems`) - and, proving over an existing id, `replace: true`
 /// with a non-blank `why`. Running a delete template is refused here: only
-/// Clean up test-made drafts runs one.
+/// Clean up test-made drafts runs one, in `Mode::Cleanup`, which in turn
+/// runs nothing but a delete template.
 pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) -> Result<(), Vec<String>> {
     let t = &req.template;
     // A saved template carries the app's `proven` block, which `check`
     // refuses in a DRAFT; running a saved one is exactly when it is there.
     let mut problems = match req.mode {
-        Mode::Run => check(&ApiTemplate { proven: None, ..t.clone() }),
+        Mode::Run | Mode::Cleanup => check(&ApiTemplate { proven: None, ..t.clone() }),
         Mode::Prove { .. } => check(t),
     };
     if matches!(req.mode, Mode::Run) && t.effect == Effect::Delete {
         problems.push(deletes_refusal(&t.id));
+    }
+    if matches!(req.mode, Mode::Cleanup) && t.effect != Effect::Delete {
+        problems.push(format!("template {} does not delete, so Clean up does not run it", t.id));
     }
     problems.extend(check_values(t, &req.values));
     if !is_safe_relative_path(&t.antiforgery.page) {

@@ -1194,6 +1194,26 @@ export const commands = {
 	 *  template is. What it made stays in the record of test-made drafts.
 	 */
 	apiFixtureRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_fixture_remove", { organization, project, id })),
+	/**
+	 *  The record entries Clean up test-made drafts would offer: those of
+	 *  `environment` named with `prefix` and at least `older_than_days` old,
+	 *  each with whether a proven delete template can delete it. Only the
+	 *  webview calls this: there is no bridge route and no MCP tool for it.
+	 */
+	autoRunCleanupPreview: (organization: string, project: string, environment: string, prefix: string, olderThanDays: number) => typedError<CleanupLine_Serialize[], string>(__TAURI_INVOKE("auto_run_cleanup_preview", { organization, project, environment, prefix, olderThanDays })),
+	/**
+	 *  Deletes the ticked drafts (`ids`) of the last preview of `environment`,
+	 *  one at a time, streaming `AutorunCleanupProgress`. Holds the
+	 *  one-at-a-time template slot, so it never overlaps a template or fixture
+	 *  run. Only the webview calls this: there is no bridge route and no MCP
+	 *  tool for it.
+	 */
+	autoRunCleanupRun: (organization: string, project: string, environment: string, ids: string[]) => typedError<CleanupReport, string>(__TAURI_INVOKE("auto_run_cleanup_run", { organization, project, environment, ids })),
+	/**
+	 *  Stops the cleanup going, between its deletes. Only the webview calls
+	 *  this.
+	 */
+	autoRunCleanupStop: () => typedError<null, string>(__TAURI_INVOKE("auto_run_cleanup_stop")),
 	testFilesList: (organization: string, project: string) => typedError<TestFile[], string>(__TAURI_INVOKE("test_files_list", { organization, project })),
 	/**
 	 *  Copies the file the person picked at `path` into Test files. `replace`
@@ -1212,6 +1232,7 @@ export const commands = {
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
@@ -1660,6 +1681,18 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  Emitted after each delete of a Clean up of test-made drafts, so the
+ *  dialog shows each result as it comes. `outcome` is `deleted`, or the
+ *  sentence the delete failed with.
+ */
+export type AutorunCleanupProgress = {
+	done: number,
+	total: number,
+	id: string,
+	outcome: string,
 };
 
 /**
@@ -2153,6 +2186,46 @@ export type CellSpec = {
 	ref: string,
 	text: string,
 	match?: CellMatch,
+};
+
+/**  One line of the preview. */
+export type CleanupLine = CleanupLine_Serialize | CleanupLine_Deserialize;
+
+/**  One line of the preview. */
+export type CleanupLine_Deserialize = {
+	entry: TestMade_Deserialize,
+	/**  A proven delete template for the entry's kind exists. */
+	deletable: boolean,
+	/**  Why it cannot be ticked, when it cannot. */
+	note: string | null,
+};
+
+/**  One line of the preview. */
+export type CleanupLine_Serialize = {
+	entry: TestMade_Serialize,
+	/**  A proven delete template for the entry's kind exists. */
+	deletable: boolean,
+	/**  Why it cannot be ticked, when it cannot. */
+	note: string | null,
+};
+
+/**  What a cleanup did, in the order it did it. */
+export type CleanupReport = {
+	results: CleanupResult[],
+	/**  How many were chosen to go. */
+	total: number,
+	/**  A Stop ended it before the last one. */
+	stopped: boolean,
+};
+
+/**  One entry's result. */
+export type CleanupResult = {
+	id: string,
+	kind: string,
+	name: string,
+	ok: boolean,
+	/**  `deleted`, or the sentence the delete failed with. */
+	outcome: string,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */

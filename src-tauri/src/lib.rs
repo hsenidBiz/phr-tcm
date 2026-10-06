@@ -101,6 +101,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunResetNeeded,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
+            events::AutorunCleanupProgress,
             events::GuideProgress
         ])
         .commands(collect_commands![
@@ -322,6 +323,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             api_templates::api_fixtures_list,
             api_templates::api_fixture_run,
             api_templates::api_fixture_remove,
+            api_templates::auto_run_cleanup_preview,
+            api_templates::auto_run_cleanup_run,
+            api_templates::auto_run_cleanup_stop,
             test_files::test_files_list,
             test_files::test_files_add,
             test_files::test_files_remove,

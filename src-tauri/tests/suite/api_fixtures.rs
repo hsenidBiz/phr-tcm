@@ -1141,6 +1141,10 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
             "auto_run_setup_view",
             "auto_run_approve_setup",
             "auto_run_withdraw_setup",
+            "cleanup::run_cleanup",
+            "auto_run_cleanup_preview",
+            "auto_run_cleanup_run",
+            "auto_run_cleanup_stop",
         ] {
             assert!(!text.contains(writer), "{name} reaches {writer}");
         }

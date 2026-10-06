@@ -8,13 +8,14 @@ import { Button } from "../../components/ui/button";
 import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
-import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconTestFiles } from "../../lib/actionIcons";
+import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconRemove, IconTestFiles } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
 import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
+import CleanupDialog from "./CleanupDialog";
 import FixturesTab, { FIXTURES_KEY } from "./FixturesTab";
 import FlowMap from "./FlowMap";
 import TestFilesDialog from "../AutoRun/TestFilesDialog";
@@ -128,6 +129,7 @@ export default function ApiTemplates({
   const [scrollTo, setScrollTo] = useState<string | null>(null);
   const [removing, setRemoving] = useState<SavedTemplate["template"] | null>(null);
   const [removingFlow, setRemovingFlow] = useState<Flow | null>(null);
+  const [cleaningUp, setCleaningUp] = useState(false);
   // The file picked to import, while its warning and result are up.
   const [importPath, setImportPath] = useState<string | null>(null);
   // The project's Test files - what a template's form step can upload.
@@ -380,8 +382,16 @@ export default function ApiTemplates({
           />
           )}
           {view === "fixtures" ? (
-            // `cleanupSlot` is where Clean up test-made drafts goes.
-            <FixturesTab org={org} project={project} cleanupSlot={null} />
+            <FixturesTab
+              org={org}
+              project={project}
+              cleanupSlot={
+                <Button size="sm" variant="outline" onClick={() => setCleaningUp(true)}>
+                  <IconRemove aria-hidden />
+                  Clean up test-made drafts
+                </Button>
+              }
+            />
           ) : view === "flows" && flows.length === 0 ? (
             <p className="text-sm text-muted">
               No flows yet. Your assistant maps each wizard as a flow - its stages in order - before it builds the
@@ -530,6 +540,8 @@ export default function ApiTemplates({
           onRemoved={() => void qc.invalidateQueries({ queryKey: [KEY] })}
         />
       )}
+
+      {cleaningUp && <CleanupDialog org={org} project={project} onClose={() => setCleaningUp(false)} />}
     </div>
   );
 }

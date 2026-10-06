@@ -405,3 +405,92 @@ pub fn import_at(
     ));
     Ok(result)
 }
+
+/// What the last Clean up preview was asked for, by project: a cleanup run
+/// asks the same preview again rather than taking the webview's list of
+/// drafts, so only its ids cross from the webview.
+static CLEANUP_PREVIEW: std::sync::Mutex<Option<(String, String, crate::autorun::cleanup::CleanupQuery)>> =
+    std::sync::Mutex::new(None);
+
+/// Set by Stop; heard between deletes.
+static CLEANUP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Said when a cleanup is asked for before its preview.
+const PREVIEW_FIRST: &str = "preview the drafts to clean up first";
+
+/// The record entries Clean up test-made drafts would offer: those of
+/// `environment` named with `prefix` and at least `older_than_days` old,
+/// each with whether a proven delete template can delete it. Only the
+/// webview calls this: there is no bridge route and no MCP tool for it.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_cleanup_preview(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    environment: String,
+    prefix: String,
+    older_than_days: i32,
+) -> Result<Vec<crate::autorun::cleanup::CleanupLine>, String> {
+    refuse_unless_offered()?;
+    let root = crate::commands::autorun::root(&app)?;
+    let query = crate::autorun::cleanup::CleanupQuery { environment, prefix, older_than_days };
+    let lines = crate::autorun::cleanup::preview(&root, &organization, &project, &query, chrono::Utc::now())?;
+    *CLEANUP_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()) = Some((organization, project, query));
+    Ok(lines)
+}
+
+/// Deletes the ticked drafts (`ids`) of the last preview of `environment`,
+/// one at a time, streaming `AutorunCleanupProgress`. Holds the
+/// one-at-a-time template slot, so it never overlaps a template or fixture
+/// run. Only the webview calls this: there is no bridge route and no MCP
+/// tool for it.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_cleanup_run(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    environment: String,
+    ids: Vec<String>,
+) -> Result<crate::autorun::cleanup::CleanupReport, String> {
+    use tauri_specta::Event as _;
+    refuse_unless_offered()?;
+    let root = crate::commands::autorun::root(&app)?;
+    let query = match CLEANUP_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        Some((o, p, q)) if o == organization && p == project && q.environment == environment => q,
+        _ => return Err(PREVIEW_FIRST.to_string()),
+    };
+    let Some(_claim) = crate::api_templates::runner::claim() else {
+        return Err(crate::api_templates::runner::API_TEMPLATE_BUSY.to_string());
+    };
+    CLEANUP_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut browsers =
+        crate::commands::autorun_replay::RealBrowsers::new(crate::browser::launch::Browser::Edge, false);
+    let timing = crate::commands::autorun_replay::replay_timing(false);
+    let emitter = app.clone();
+    crate::autorun::cleanup::run_cleanup(
+        &mut browsers,
+        &root,
+        &organization,
+        &project,
+        &query,
+        &ids,
+        &timing,
+        &CLEANUP_STOP,
+        move |p| {
+            let _ = crate::events::AutorunCleanupProgress { done: p.done, total: p.total, id: p.id, outcome: p.outcome }
+                .emit(&emitter);
+        },
+    )
+    .await
+}
+
+/// Stops the cleanup going, between its deletes. Only the webview calls
+/// this.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_cleanup_stop() -> Result<(), String> {
+    CLEANUP_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}

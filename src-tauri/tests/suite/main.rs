@@ -41,6 +41,7 @@ mod audio;
 mod auth;
 mod autorun_accounts;
 mod autorun_api_checks;
+mod autorun_cleanup;
 mod autorun_bridge;
 mod autorun_commands;
 mod autorun_defects;

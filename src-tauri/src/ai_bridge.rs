@@ -966,6 +966,18 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
     if let Err(problems) = preflight(root, &req, existing) {
         return (400, problems.join("\n"));
     }
+    // A delete template is only proven on a draft the tests made: its `id`
+    // must be a `present` entry of its kind in the record, in the active
+    // environment. The proof that deletes it marks it deleted.
+    let deletes = match (&req.mode, req.template.effect) {
+        (Mode::Prove { .. }, crate::api_templates::Effect::Delete) => {
+            match crate::autorun::cleanup::proof_subject(root, &req.template, &req.values) {
+                Ok(entry) => Some(entry),
+                Err(sentence) => return (400, sentence),
+            }
+        }
+        _ => None,
+    };
     let id = req.template.id.as_str();
     let (org, project) = (req.org.as_str(), req.project.as_str());
 
@@ -1003,6 +1015,11 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
     let mut browsers = open(which);
     let report = run_template(&mut browsers, root, &req, timing).await;
     drop(browsers);
+    // Every step passed, so the entry is gone from the application, whether
+    // or not the template is saved below.
+    if let (true, Some(entry)) = (report.ok, &deletes) {
+        crate::autorun::cleanup::proof_deleted(root, entry);
+    }
 
     // A proven template on a flow must have done its own stage: the
     // subject from the values, or - creating it - from what was captured.

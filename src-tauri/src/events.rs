@@ -259,3 +259,14 @@ pub struct GuideProgress {
     pub total: u32,
 }
 
+
+/// Emitted after each delete of a Clean up of test-made drafts, so the
+/// dialog shows each result as it comes. `outcome` is `deleted`, or the
+/// sentence the delete failed with.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunCleanupProgress {
+    pub done: u32,
+    pub total: u32,
+    pub id: String,
+    pub outcome: String,
+}
