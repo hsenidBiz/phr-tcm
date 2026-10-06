@@ -10,22 +10,42 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::time::Duration;
-use v2_lib::browser::cdp::{Cdp, CdpError, Transport, TAB_UNGUARDED};
+use v2_lib::browser::cdp::{Cdp, CdpError, Transport, TAB_HELD_UNGUARDED, TAB_OPEN_UNGUARDED};
 
 const MAIN: &str = "S-main";
 
-/// The browser's own socket. Every command is answered as it is sent; a
-/// method in `refuse` is answered with an error.
+/// The browser's own socket. Every command is answered as it is sent.
+/// Each list below names a command as `method` (on any session) or
+/// `method@session`:
+/// - `refuse`: answered with an error;
+/// - `withhold`: its answer goes to `withheld`, for the test to hand over
+///   later;
+/// - `before_reply`: these frames arrive just ahead of its answer, once.
 struct FakeBrowser {
     incoming: VecDeque<String>,
     sent: Vec<Value>,
     refuse: Vec<String>,
+    withhold: Vec<String>,
+    withheld: Vec<String>,
+    before_reply: Vec<(String, Value)>,
 }
 
 impl FakeBrowser {
     fn new() -> Self {
-        FakeBrowser { incoming: VecDeque::new(), sent: vec![], refuse: vec![] }
+        FakeBrowser {
+            incoming: VecDeque::new(),
+            sent: vec![],
+            refuse: vec![],
+            withhold: vec![],
+            withheld: vec![],
+            before_reply: vec![],
+        }
     }
+}
+
+/// Does `name` (`method` or `method@session`) name this command?
+fn names(name: &str, method: &str, session: &str) -> bool {
+    name == method || name == format!("{method}@{session}")
 }
 
 impl Transport for FakeBrowser {
@@ -33,7 +53,12 @@ impl Transport for FakeBrowser {
         let v: Value = serde_json::from_str(&text).expect("the client sent a frame that is not JSON");
         let id = v["id"].as_u64().expect("every frame the client sends has an id");
         let method = v["method"].as_str().unwrap_or("").to_string();
-        let mut reply = if self.refuse.contains(&method) {
+        let session = v["sessionId"].as_str().unwrap_or("").to_string();
+        while let Some(i) = self.before_reply.iter().position(|(n, _)| names(n, &method, &session)) {
+            let (_, frame) = self.before_reply.remove(i);
+            self.incoming.push_back(frame.to_string());
+        }
+        let mut reply = if self.refuse.iter().any(|n| names(n, &method, &session)) {
             json!({ "id": id, "error": { "code": -32000, "message": "refused by the test" } })
         } else if method == "Target.attachToTarget" {
             json!({ "id": id, "result": { "sessionId": MAIN } })
@@ -44,7 +69,11 @@ impl Transport for FakeBrowser {
             reply["sessionId"] = s.clone();
         }
         self.sent.push(v);
-        self.incoming.push_back(reply.to_string());
+        if self.withhold.iter().any(|n| names(n, &method, &session)) {
+            self.withheld.push(reply.to_string());
+        } else {
+            self.incoming.push_back(reply.to_string());
+        }
         Ok(())
     }
     async fn recv(&mut self) -> Option<Result<String, String>> {
@@ -256,7 +285,144 @@ async fn a_guarded_tab_whose_interception_is_refused_is_held_and_fails_the_case(
         !sent_on(&cdp, "S-pop").iter().any(|m| m == "Runtime.runIfWaitingForDebugger"),
         "a tab that could not be guarded was let run"
     );
-    assert_eq!(cdp.take_save_blocked().as_deref(), Some(TAB_UNGUARDED));
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(TAB_HELD_UNGUARDED));
+}
+
+/// A tab that was already running when it was attached could not be held,
+/// and its case says so.
+#[tokio::test]
+async fn an_already_open_tab_that_cannot_be_guarded_says_so() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().refuse.push("Fetch.enable@S-old".to_string());
+    feed(&mut cdp, [attached("S-old", "T-old", "page", "https://hr.example/old", false)]);
+    settle(&mut cdp).await;
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(TAB_OPEN_UNGUARDED));
+}
+
+/// Review fix 1: a tab that opens while main's interception is still being
+/// switched on is guarded before it runs, not let run unguarded.
+#[tokio::test]
+async fn a_tab_that_opens_while_the_guard_is_switched_on_is_guarded_before_it_runs() {
+    let mut cdp = browser().await;
+    let pop = attached("S-pop", "T-pop", "page", "https://hr.example/pop", true);
+    cdp.transport_mut().before_reply.push(("Fetch.enable@S-main".to_string(), pop));
+    cdp.guard_saves(&[]).await.unwrap();
+    settle(&mut cdp).await;
+    let setup = sent_on(&cdp, "S-pop");
+    let fetch = setup.iter().position(|m| m == "Fetch.enable").unwrap_or_else(|| panic!("never guarded: {setup:?}"));
+    let run = setup
+        .iter()
+        .position(|m| m == "Runtime.runIfWaitingForDebugger")
+        .unwrap_or_else(|| panic!("never let run: {setup:?}"));
+    assert!(fetch < run, "{setup:?}");
+    feed(&mut cdp, [paused("S-pop", "r1", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// A guard that could not be switched on leaves the run as it was: a tab
+/// opened afterwards is not intercepted.
+#[tokio::test]
+async fn a_refused_guard_leaves_the_run_unguarded() {
+    let mut cdp = browser().await;
+    cdp.transport_mut().refuse.push("Fetch.enable@S-main".to_string());
+    assert!(cdp.guard_saves(&[]).await.is_err());
+    assert!(!cdp.is_guarding_saves());
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop", true)]);
+    settle(&mut cdp).await;
+    assert!(!sent_on(&cdp, "S-pop").iter().any(|m| m == "Fetch.enable"));
+}
+
+/// Review fix 2: a tab that opens while the guard is lifted is not guarded.
+#[tokio::test]
+async fn a_tab_that_opens_while_the_guard_is_lifted_is_not_guarded() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    let pop = attached("S-pop", "T-pop", "page", "https://hr.example/pop", true);
+    cdp.transport_mut().before_reply.push(("Fetch.disable@S-main".to_string(), pop));
+    cdp.stop_guarding_saves().await.unwrap();
+    settle(&mut cdp).await;
+    let setup = sent_on(&cdp, "S-pop");
+    assert!(!setup.iter().any(|m| m == "Fetch.enable"), "{setup:?}");
+    assert_eq!(setup.last().map(String::as_str), Some("Runtime.runIfWaitingForDebugger"));
+    assert!(!cdp.is_guarding_saves());
+}
+
+/// A popup that will not stop intercepting does not keep main guarded, and
+/// leaves the run counted as guarded so the lift is asked again.
+#[tokio::test]
+async fn a_popup_that_will_not_stop_intercepting_is_asked_again() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop", true)]);
+    settle(&mut cdp).await;
+    cdp.transport_mut().refuse.push("Fetch.disable@S-pop".to_string());
+    assert!(cdp.stop_guarding_saves().await.is_err());
+    assert!(sent_on(&cdp, MAIN).iter().any(|m| m == "Fetch.disable"), "main was not lifted");
+    assert!(cdp.is_guarding_saves(), "a tab still intercepts, so the lift must be asked again");
+    cdp.transport_mut().refuse.clear();
+    cdp.stop_guarding_saves().await.unwrap();
+    assert!(!cdp.is_guarding_saves());
+}
+
+/// After the lift, a case that may save is not intercepted, in main or in
+/// a tab it opens.
+#[tokio::test]
+async fn a_later_case_that_saves_is_not_intercepted() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.stop_guarding_saves().await.unwrap();
+    feed(
+        &mut cdp,
+        [
+            attached("S-pop", "T-pop", "page", "https://hr.example/pop", true),
+            paused(MAIN, "r1", "POST", "https://hr.example/api/Save"),
+        ],
+    );
+    settle(&mut cdp).await;
+    assert!(!sent_on(&cdp, "S-pop").iter().any(|m| m == "Fetch.enable"));
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+/// Review fix 3: a tab held for its guard is let run once the guard is
+/// lifted, even when its interception's refusal arrives during the lift.
+#[tokio::test]
+async fn a_held_tab_is_let_run_once_the_guard_is_lifted() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().refuse.push("Fetch.enable@S-pop".to_string());
+    cdp.transport_mut().withhold.push("Fetch.enable@S-pop".to_string());
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop", true)]);
+    settle(&mut cdp).await;
+    assert!(!sent_on(&cdp, "S-pop").iter().any(|m| m == "Runtime.runIfWaitingForDebugger"));
+    let late = std::mem::take(&mut cdp.transport_mut().withheld);
+    cdp.transport_mut().incoming.extend(late);
+    cdp.stop_guarding_saves().await.unwrap();
+    settle(&mut cdp).await;
+    let runs = sent_on(&cdp, "S-pop").iter().filter(|m| *m == "Runtime.runIfWaitingForDebugger").count();
+    assert_eq!(runs, 1);
+    assert_eq!(cdp.take_save_blocked(), None, "a refusal read after the lift failed the next case");
+}
+
+/// Review fix 5: a tab that refuses its page log or dialog handler is
+/// still let run, and the log says which tab, without its query.
+#[tokio::test]
+async fn a_refused_tab_setup_is_logged() {
+    let _log = crate::serial::log_tail();
+    let mut cdp = browser().await;
+    cdp.transport_mut().refuse.push("Page.enable@S-pop".to_string());
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop?token=hunter2", true)]);
+    settle(&mut cdp).await;
+    assert!(sent_on(&cdp, "S-pop").iter().any(|m| m == "Runtime.runIfWaitingForDebugger"));
+    let lines = v2_lib::applog::recent(200);
+    let warned = lines
+        .iter()
+        .find(|l| l.level == "warn" && l.message.contains("Page.enable"))
+        .unwrap_or_else(|| panic!("nothing was logged: {lines:?}"));
+    assert!(warned.message.ends_with(": https://hr.example/pop"), "{}", warned.message);
+    assert!(!lines.iter().any(|l| l.message.contains("hunter2")), "a query reached the log");
 }
 
 #[tokio::test]

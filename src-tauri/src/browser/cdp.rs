@@ -244,16 +244,23 @@ fn address_of(url: &str) -> String {
 }
 
 /// The sentence a no-save case fails with when a tab the page opened could
-/// not be guarded. That tab is held where it is, before it can send
-/// anything.
-pub const TAB_UNGUARDED: &str =
-    "this script must not save, but a tab the page opened could not be guarded - it was held before it could send anything";
+/// not be guarded. That tab is kept paused, so its own document never
+/// loads (but see `on_attached` for what can still reach it).
+pub const TAB_HELD_UNGUARDED: &str =
+    "this script must not save, but a tab the page opened could not be guarded, so it was kept paused";
+
+/// The same for a tab that was already running when it was attached (open
+/// before the connection was made): it could not be kept paused.
+pub const TAB_OPEN_UNGUARDED: &str = "this script must not save, but a tab that was already open could not be guarded";
 
 /// Which of a new tab's setup frames is waited on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SetupStep {
     Bypass,
     Fetch,
+    /// The page log, dialog handler or lifecycle events: a refusal only
+    /// loses that, and is logged.
+    Watch(&'static str),
 }
 
 /// One frame read off the socket, parsed once.
@@ -508,33 +515,54 @@ impl<T: Transport> Cdp<T> {
     /// Intercept every request the page makes, and fail the saves among
     /// them (`save_guard::is_save`) before they leave the browser. Every
     /// paused request is answered in `route_event`, the moment it is read,
-    /// so nothing waits on the caller. `Err` leaves the connection
-    /// unguarded for the tabs not yet asked, and the caller must not run a
-    /// no-save script on it. Asked again, it takes the new words and keeps a
-    /// stopped save not yet reported.
+    /// so nothing waits on the caller. `Err` leaves the tabs not yet asked
+    /// unguarded and the run's guard state as it was, and the caller must
+    /// not run a no-save script on it. Asked again, it takes the new words
+    /// and keeps a stopped save not yet reported.
     ///
     /// Service workers are bypassed first: a page's worker could otherwise
     /// send a request the page's own interception never sees. A browser that
     /// refuses the bypass is not guarded at all (fail closed).
     ///
     /// Every tab is guarded: each one open now, and each one the page opens
-    /// later, which is attached paused and guarded before its first request
-    /// (`on_attached`). What is still NOT covered: out-of-process
-    /// (cross-site) iframes are separate targets with their own requests,
-    /// and a save sent from one would go through.
+    /// later, which is attached paused and guarded before its own document
+    /// loads (`on_attached`). The run counts as guarded from the start of
+    /// this call, so a tab that opens while the others are still being
+    /// asked is guarded too, and the tabs are looked over again until none
+    /// is left unguarded.
+    ///
+    /// What is still NOT covered: out-of-process (cross-site) iframes are
+    /// separate targets with their own requests, and a save sent from one
+    /// would go through; and a page script can drive the `about:blank`
+    /// popup it just opened before that popup's guard is on.
     pub async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
-        let sessions: Vec<String> = self.tabs.iter().map(|t| t.session_id.clone()).collect();
-        for s in sessions {
-            match self.guard_tab(&s, patterns).await {
-                Ok(()) => {}
-                // A tab other than `main` that closed meanwhile has nothing
-                // left to guard.
-                Err(CdpError::Closed) if s != self.main && !self.has_tab(&s) => {}
-                Err(e) => return Err(e),
-            }
-        }
-        self.armed = Some(patterns.to_vec());
+        let before = (self.armed.replace(patterns.to_vec()), self.hold);
         self.hold = false;
+        let mut asked: Vec<String> = Vec::new();
+        // First every tab open now, so each takes the new words; then any
+        // tab that came without a guard while those were asked.
+        let mut next: Vec<String> = self.tabs.iter().map(|t| t.session_id.clone()).collect();
+        while !next.is_empty() {
+            for s in next {
+                asked.push(s.clone());
+                match self.guard_tab(&s, patterns).await {
+                    Ok(()) => {}
+                    // A tab other than `main` that closed meanwhile has
+                    // nothing left to guard.
+                    Err(CdpError::Closed) if s != self.main && !self.has_tab(&s) => {}
+                    Err(e) => {
+                        (self.armed, self.hold) = before;
+                        return Err(e);
+                    }
+                }
+            }
+            next = self
+                .tabs
+                .iter()
+                .filter(|t| t.guard.is_none() && !asked.contains(&t.session_id))
+                .map(|t| t.session_id.clone())
+                .collect();
+        }
         Ok(())
     }
 
@@ -551,11 +579,26 @@ impl<T: Transport> Cdp<T> {
         Ok(())
     }
 
-    /// Stop intercepting, in every tab. A tab's guard goes only once the
+    /// Stop intercepting, in every tab. The run stops counting as guarded
+    /// first, so a tab that opens meanwhile is not guarded, and a tab still
+    /// held for its guard is let run. A tab's guard goes only once the
     /// browser has said it stopped: until then requests may still be
     /// paused, and they are still answered as a guarded tab answers them.
+    /// One tab that will not stop does not keep the others guarded: every
+    /// tab is asked, and the first refusal is reported after.
     pub async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
+        self.armed = None;
+        let mut held = Vec::new();
+        for t in self.tabs.iter_mut().filter(|t| t.held) {
+            t.held = false;
+            held.push(t.session_id.clone());
+        }
+        for s in held {
+            self.queue(&s, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
+        }
+        self.send_unsent_answers().await?;
         let sessions: Vec<String> = self.tabs.iter().map(|t| t.session_id.clone()).collect();
+        let mut first_refusal = None;
         for s in sessions {
             let limit = self.limit_now();
             match self.call_on(Some(s.clone()), "Fetch.disable", serde_json::json!({}), limit).await {
@@ -565,15 +608,21 @@ impl<T: Transport> Cdp<T> {
                     }
                 }
                 Err(CdpError::Closed) if s != self.main && !self.has_tab(&s) => {}
-                Err(e) => return Err(e),
+                Err(e) => {
+                    first_refusal.get_or_insert(e);
+                }
             }
         }
-        self.armed = None;
-        Ok(())
+        match first_refusal {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
+    /// The run is guarded, or some tab still intercepts its requests: a
+    /// lift that did not finish is asked again.
     pub fn is_guarding_saves(&self) -> bool {
-        self.current().is_some_and(|t| t.guard.is_some())
+        self.armed.is_some() || self.tabs.iter().any(|t| t.guard.is_some())
     }
 
     /// Something must keep reading this connection between calls: a
@@ -853,9 +902,12 @@ impl<T: Transport> Cdp<T> {
     /// handler and lifecycle events, the seed scripts, and per-page
     /// downloads. Only then is it let run - and while guarded, only once
     /// the browser has accepted its interception (`on_setup_reply`), so a
-    /// tab that cannot be guarded never sends anything. Anything else (a
-    /// worker) and a second session on a tab already driven are simply let
-    /// run.
+    /// tab that cannot be guarded never loads its own document. That hold
+    /// is not airtight: the page that opened it can still script an
+    /// `about:blank` popup it holds a handle to before the popup's guard is
+    /// on, and a request sent that way is not intercepted. Anything else (a
+    /// worker, a service worker included) is let run with no setup at all,
+    /// and a second session on a tab already driven is let go.
     async fn on_attached(&mut self, p: &serde_json::Value) -> Result<(), CdpError> {
         let session = p["sessionId"].as_str().unwrap_or("").to_string();
         if session.is_empty() {
@@ -888,10 +940,14 @@ impl<T: Transport> Cdp<T> {
             self.queue(s, "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), Some(SetupStep::Bypass));
             self.queue(s, "Fetch.enable", super::save_guard::fetch_enable_params(), Some(SetupStep::Fetch));
         }
-        self.queue(s, "Network.enable", serde_json::json!({}), None);
-        self.queue(s, "Runtime.enable", serde_json::json!({}), None);
-        self.queue(s, "Page.enable", serde_json::json!({}), None);
-        self.queue(s, "Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true }), None);
+        for (method, params) in [
+            ("Network.enable", serde_json::json!({})),
+            ("Runtime.enable", serde_json::json!({})),
+            ("Page.enable", serde_json::json!({})),
+            ("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })),
+        ] {
+            self.queue(s, method, params, Some(SetupStep::Watch(method)));
+        }
         for (_, params) in self.seeds.clone() {
             self.queue(s, "Page.addScriptToEvaluateOnNewDocument", params, None);
         }
@@ -908,7 +964,11 @@ impl<T: Transport> Cdp<T> {
 
     /// The answer to one of a new tab's setup frames. A guarded tab runs
     /// once its interception is on; one whose bypass or interception was
-    /// refused stays held, and its case fails (`TAB_UNGUARDED`).
+    /// refused stays held, and its case fails (`TAB_HELD_UNGUARDED`, or
+    /// `TAB_OPEN_UNGUARDED` for a tab that was never paused). Once the run
+    /// is no longer guarded, a held tab is let run whatever the answer. A
+    /// refused page log, dialog handler or lifecycle events only loses
+    /// that, and is logged.
     async fn on_setup_reply(&mut self, id: u64, answer: Result<serde_json::Value, String>) -> Result<(), CdpError> {
         let Some((session, step)) = self.setup.remove(&id) else {
             return Ok(());
@@ -917,21 +977,32 @@ impl<T: Transport> Cdp<T> {
             return Ok(());
         };
         let refused = answer.is_err();
-        if let Err(message) = &answer {
-            crate::applog::warn(format!("Auto Run could not guard a tab the page opened: {message}"));
-        }
+        let unarmed = self.armed.is_none();
         let tab = &mut self.tabs[i];
-        if step == SetupStep::Bypass {
-            tab.unguardable |= refused;
-            return Ok(());
+        if let Err(message) = &answer {
+            let (what, method) = match step {
+                SetupStep::Bypass => ("guard", "Network.setBypassServiceWorker"),
+                SetupStep::Fetch => ("guard", "Fetch.enable"),
+                SetupStep::Watch(m) => ("watch", m),
+            };
+            crate::applog::warn(format!(
+                "Auto Run could not {what} a tab the page opened, {method} was refused ({message}): {}",
+                tab.url_without_query
+            ));
         }
-        if refused || tab.unguardable {
+        match step {
+            SetupStep::Watch(_) => return Ok(()),
+            SetupStep::Bypass => tab.unguardable |= refused,
+            SetupStep::Fetch => {}
+        }
+        if step == SetupStep::Fetch && !unarmed && (refused || tab.unguardable) {
+            let sentence = if tab.held { TAB_HELD_UNGUARDED } else { TAB_OPEN_UNGUARDED };
             if let Some(g) = tab.guard.as_mut() {
-                g.blocked.get_or_insert_with(|| TAB_UNGUARDED.to_string());
+                g.blocked.get_or_insert_with(|| sentence.to_string());
             }
             return Ok(());
         }
-        if tab.held {
+        if tab.held && (step == SetupStep::Fetch || unarmed) {
             tab.held = false;
             self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
             return self.send_unsent_answers().await;
