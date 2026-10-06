@@ -98,7 +98,7 @@ test("several missing test files are counted in the plural", () => {
   expect(within(s).getByText("2 test files missing")).toBeInTheDocument();
 });
 
-test("Open setup asks for the Setup tab", () => {
+test("Open setup asks for the Setup panel", () => {
   const onOpenSetup = vi.fn();
   strip({ onOpenSetup });
   fireEvent.click(screen.getByRole("button", { name: "Open setup" }));

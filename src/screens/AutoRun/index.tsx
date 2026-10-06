@@ -6,17 +6,9 @@
 // person reviewing a finished run and pressing Send (`RunReview`) is the
 // one door out - see `autorun::publish` on the Rust side.
 
-import { ChevronDown, ChevronRight, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
@@ -27,60 +19,48 @@ import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { cn } from "../../lib/cn";
-import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/environments";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
-  IconAccounts,
-  IconAdd,
   IconCancel,
   IconClearScripts,
-  IconEdit,
-  IconModulePaths,
-  IconRecipe,
-  IconRecord,
+  IconCollapseAll,
+  IconExpandAll,
   IconRun,
-  IconSiteAddress,
-  IconTestFiles,
-  IconSaveWords,
   IconUnattended,
 } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { logUi } from "../../lib/uiLog";
 import { Modal } from "../../components/ui/modal";
-import AccountsDialog from "./AccountsDialog";
-import AreasDialog from "./AreasDialog";
+import CaseCard from "./CaseCard";
+import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import ResetNeededPanel from "./ResetNeededPanel";
 import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
-import RecipeEditor from "./RecipeEditor";
 import ReadinessStrip from "./ReadinessStrip";
-import RecordSignInDialog from "./RecordSignInDialog";
 import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
-import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
+import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
 import { ResultToggleRow } from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
-  bucketTone,
+  lastRecords,
   lastResultFor,
   lastResults,
   type ResultBucket,
   type ResultFilter,
 } from "./verdicts";
-import SiteAddressDialog, { siteHost } from "./SiteAddressDialog";
-import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
-import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
-import { useAutoRunReadiness, type AutoRunTab } from "./useAutoRunReadiness";
+import { siteHost } from "./SiteAddressDialog";
+import type { AutoRunTab } from "./useAutoRunReadiness";
 
-/** The screen's tabs, in order. The arrow keys walk this list. */
+/** The screen's tabs, in order. The arrow keys walk this list. Setup is
+ * not one: it is a panel beside the Test cases list. */
 const TABS: { id: AutoRunTab; label: string }[] = [
   { id: "cases", label: "Test cases" },
   { id: "runs", label: "Past runs" },
-  { id: "setup", label: "Setup" },
 ];
 
 // How many imported case ids the success toast spells out before it falls
@@ -90,33 +70,8 @@ const MAX_IDS_IN_TOAST = 10;
 
 /** The filter that lets every case through. */
 const NO_FILTER: ReadonlySet<ResultBucket> = new Set();
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-/** One line of the Setup card: what it is, where it stands, one button.
- * A labelled group, so a screen reader hears the row's name with its state
- * and its button. */
-function SetupRow({
-  label,
-  state,
-  children,
-}: {
-  label: string;
-  state: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label={label}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
-    >
-      <span className="w-28 shrink-0 text-xs font-medium text-muted">{label}</span>
-      <span className="min-w-0 flex-1 text-sm text-text">{state}</span>
-      {children}
-    </div>
-  );
-}
+/** No card open. */
+const NONE_OPEN: ReadonlySet<number> = new Set();
 
 export default function AutoRun({
   org,
@@ -141,8 +96,8 @@ export default function AutoRun({
 
   // One script lookup per case, so the list can say which are drivable.
   // `combine` hands back just each script, and TanStack keeps the array the
-  // same object while no script has changed - the readiness check below
-  // reads it, and would otherwise redo its work on every render.
+  // same object while no script has changed - the readiness check reads
+  // it, and would otherwise redo its work on every render.
   const scripts = useQueries({
     queries: (cases.data ?? []).map((c) => ({
       queryKey: ["autorun-script", c.id],
@@ -155,129 +110,51 @@ export default function AutoRun({
   const [editing, setEditing] = useState<number | null>(null);
   // The case whose suspected-defect Clear is waiting on Keep / Clear.
   const [confirmingClear, setConfirmingClear] = useState<number | null>(null);
-  const [accountsOpen, setAccountsOpen] = useState(false);
-  const [recipeOpen, setRecipeOpen] = useState(false);
-  const [recordOpen, setRecordOpen] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
-  const [siteOpen, setSiteOpen] = useState(false);
-  const [testFilesOpen, setTestFilesOpen] = useState(false);
-  const [saveWordsOpen, setSaveWordsOpen] = useState(false);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  /** What the Setup card and the header line report. All three read small
-   * local files, and each shares its query key with the dialog that edits
-   * it, so a save there updates the card here. `?? null` because "nothing
-   * saved yet" is an answer, not a missing one. */
-  const setupReady = Boolean(org && project);
-  const recipe = useQuery({
-    queryKey: ["autorun-recipe", org, project],
-    queryFn: async () => (await unwrapStr(commands.autoRunLoadRecipe(org, project))) ?? null,
-    enabled: setupReady,
-    retry: false,
-  });
-  const envs = useEnvironments();
-  const accounts = useQuery({
-    queryKey: ["autorun-accounts"],
-    queryFn: async () => (await unwrapStr(commands.autoRunListAccounts())) ?? null,
-    retry: false,
-  });
-  const nav = useQuery({
-    queryKey: ["autorun-nav", org, project],
-    queryFn: async () => (await unwrapStr(commands.autoRunLoadNav(org, project))) ?? null,
-    enabled: setupReady,
-    retry: false,
-  });
-  /** A count once its query has answered - `null` only while it has not
-   * (pending) or could not (error). An answer of "no data" counts as none:
-   * keyed on the answer rather than on the data, so the row can never sit
-   * on "Loading…" after the query has already settled. */
-  const accountCount = accounts.isSuccess ? (accounts.data?.length ?? 0) : null;
-  // The documents this project's scripts upload. Shares its key with the
-  // dialog, so adding or removing one there updates the row.
-  const testFiles = useTestFiles(org, project);
-  const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
-  const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
+  /** What the Setup panel and the readiness strip report, and whether a
+   * run has what it needs. */
+  const setup = useAutoRunSetup({ org, project, scripts });
+  const { readiness, essentialsSettled, activeEnv, site, knownSiteUrl } = setup;
 
-  const saved = recipe.data;
-  // Where a run goes now: the active environment's address when it has one,
-  // else the saved recipe's - the header and the Setup row both say this.
-  // With no saved recipe the built-in one signs in at the environment's.
-  const site = effectiveSite(envs.data, saved);
-  const activeEnv = activeEnvironment(envs.data);
-  /** The same address, as far as it is KNOWN: `undefined` while the
-   * environments or the recipe it may fall back to have not answered, or
-   * could not be read - an unreadable recipe may well hold an address, so
-   * it never reads as "none". */
-  const knownSiteUrl = ((): string | undefined => {
-    if (envs.isPending) return undefined;
-    const own = activeEnv?.start_url.trim();
-    if (own) return own;
-    if (setupReady && (recipe.isPending || recipe.isError)) return undefined;
-    if (site.start_url) return site.start_url;
-    return envs.isError ? undefined : "";
-  })();
-  const testFileNames = useMemo(
-    () => (testFiles.isSuccess ? (testFiles.data ?? []).map((f) => f.name) : null),
-    [testFiles.isSuccess, testFiles.data],
-  );
-  // No project, no sign-in: the recipe is a project's. A recipe that could
-  // not be read is unknown, and its row says why.
-  const signIn: "saved" | "builtin" | "none" | null = !setupReady
-    ? "none"
-    : recipe.isSuccess
-      ? saved
-        ? "saved"
-        : "builtin"
-      : null;
-  const readiness = useAutoRunReadiness({
-    siteUrl: knownSiteUrl,
-    signIn,
-    accountCount,
-    areaCount,
-    scripts,
-    testFileNames,
-  });
-
-  /** Which tab shows. `null` until the screen has decided, once: Setup when
-   * something a run cannot go without is missing, Test cases otherwise.
-   * After that only the person's clicks - and a review closing - move it,
-   * so setup that changes later (the last account removed, say) never
-   * pulls anyone off the tab they are on. */
-  const [tab, setTab] = useState<AutoRunTab | null>(null);
+  /** Which tab shows. The screen always opens on Test cases; after that
+   * only the person's clicks, and a review closing, move it. */
+  const [tab, setTab] = useState<AutoRunTab>("cases");
+  const shown = tab;
   /** Past runs' result filter. Here rather than in the panel, which is not
    * mounted while another tab shows - the choice outlives it. */
   const [runsFilter, setRunsFilter] = useState<ResultFilter>("All");
-  /** Every essential read has answered, or failed. A failed read is shown
-   * on its Setup row and is never "missing" (see `useAutoRunReadiness`), so
-   * the screen still opens - on what it does know. */
-  const essentialsSettled =
-    !envs.isPending && !(setupReady && recipe.isPending) && !accounts.isPending;
-  /** Reads that failed, each as the sentence its Setup row already says.
-   * A failed read is never "missing" (it does not route the screen), but
-   * it must be visible on the tab the screen opens on, not only on Setup.
-   * The first three are what a run cannot go without; they also flag the
-   * Setup tab. */
-  const essentialUnreadable = [
-    ...(envs.isError ? ["The environments could not be read"] : []),
-    ...(setupReady && recipe.isError ? ["The saved recipe could not be read"] : []),
-    ...(accounts.isError ? ["The accounts could not be read"] : []),
-  ];
-  const unreadable = [
-    ...essentialUnreadable,
-    ...(setupReady && testFiles.isError ? ["The test files could not be read"] : []),
-  ];
-  const opening: AutoRunTab | null = essentialsSettled
-    ? readiness.essentialMissing
-      ? "setup"
-      : "cases"
-    : null;
+
+  /** Whether the Setup panel shows its full rows. `null` until the screen
+   * has decided, once: open when something a run cannot go without is
+   * missing, shut otherwise. After that only the person moves it (the
+   * toggle, or anything that asks to open the setup), so setup that
+   * changes later never springs it open under anyone. */
+  const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
   useEffect(() => {
-    if (tab === null && opening !== null) setTab(opening);
-  }, [tab, opening]);
+    if (panelChoice === null && essentialsSettled) setPanelChoice(readiness.essentialMissing);
+  }, [panelChoice, essentialsSettled, readiness.essentialMissing]);
   // The render that first knows the answer shows it, rather than one frame
-  // of nothing before the effect stores it.
-  const shown = tab ?? opening;
+  // of the other state before the effect stores it.
+  const panelOpen = panelChoice ?? (essentialsSettled ? readiness.essentialMissing : false);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const panelToggleRef = useRef<HTMLButtonElement | null>(null);
+  /** Set by anything that asks for the setup (the strip's Open setup):
+   * once the panel is open and drawn, it is scrolled to and its toggle
+   * takes the focus, so the keyboard lands where the rows are. */
+  const [focusPanel, setFocusPanel] = useState(false);
+  useEffect(() => {
+    if (!focusPanel) return;
+    panelRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    panelToggleRef.current?.focus();
+    setFocusPanel(false);
+  }, [focusPanel]);
+  const openSetup = () => {
+    setTab("cases");
+    setPanelChoice(true);
+    setFocusPanel(true);
+  };
 
   const tabIds = useId();
   const tabRefs = useRef<Partial<Record<AutoRunTab, HTMLButtonElement | null>>>({});
@@ -326,24 +203,6 @@ export default function AutoRun({
     retry: false,
   });
   const runCount = runs.data ? runs.data.length : null;
-
-  /** The active environment's database, named on the Setup tab. The same
-   * list, under the same key, AI Bridge reads and edits. */
-  const databases = useQuery({
-    queryKey: ["db-databases"],
-    queryFn: async () => (await commands.dbDatabases()) ?? [],
-    retry: false,
-  });
-  const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
-  const dbLine = databases.isPending
-    ? "loading…"
-    : databases.isError
-      ? "could not be read"
-      : !activeDb
-        ? "not set up any more"
-        : activeDb.server
-          ? `${activeDb.label}: ${activeDb.database} on ${activeDb.server}`
-          : `${activeDb.label}: not set up yet`;
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every script
@@ -461,12 +320,36 @@ export default function AutoRun({
    * here, not in the tab, so it outlasts a trip to another tab and is gone
    * once the screen is left. */
   const [lastFilter, setLastFilter] = useState<ReadonlySet<ResultBucket>>(new Set());
+  /** What the search box holds. Lives here for the same reason as the
+   * filter, and is not saved. */
+  const [search, setSearch] = useState("");
+  /** The open cards, per PBI, while the screen is mounted. Not saved: a
+   * list that comes back half open on the next visit reads as clutter. */
+  const [openCards, setOpenCards] = useState<Record<number, ReadonlySet<number>>>({});
+  const openHere = (pbi && openCards[pbi.id]) || NONE_OPEN;
+  const setOpenHere = (change: (prev: ReadonlySet<number>) => ReadonlySet<number>) => {
+    if (!pbi) return;
+    const key = pbi.id;
+    setOpenCards((all) => ({ ...all, [key]: change(all[key] ?? NONE_OPEN) }));
+  };
+  const toggleCard = (id: number) =>
+    setOpenHere((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const expandAll = (ids: number[]) => setOpenHere((prev) => new Set([...prev, ...ids]));
+  const collapseAll = () => setOpenHere(() => NONE_OPEN);
 
   const rows = cases.data ?? [];
   const settled = useSettled(rows.length > 0);
   /** Each case's result in the newest run that holds it - the runs Past
    * runs lists, so the two tabs never disagree. */
   const last = useMemo(() => lastResults(runs.data ?? []), [runs.data]);
+  /** The same newest run for each case, with its record: an open card's
+   * last-run downloads come from the run its result came from. */
+  const lastRec = useMemo(() => lastRecords(runs.data ?? []), [runs.data]);
   /** Until the runs are read there is nothing to filter by, and if they
    * cannot be read there never will be: either way every case shows. */
   const runsReady = runs.data !== undefined;
@@ -478,8 +361,12 @@ export default function AutoRun({
     (acc, b) => ({ ...acc, [b]: rows.filter((_, i) => lastOf(i) === b).length }),
     {} as Record<ResultBucket, number>,
   );
-  /** The rows the filter lets through, by index in `rows`. */
-  const shownIdx = rows.flatMap((_, i) => (activeFilter.size === 0 || activeFilter.has(lastOf(i)) ? [i] : []));
+  /** The rows the filters and the search let through, by index in `rows`.
+   * Everything that acts on "what is shown" (Select all shown, a group's
+   * Select all, the selection itself) reads this one list. */
+  const shownIdx = rows.flatMap((c, i) =>
+    (activeFilter.size === 0 || activeFilter.has(lastOf(i))) && matchesSearch(c, search) ? [i] : [],
+  );
   const shownIds = new Set(shownIdx.map((i) => rows[i].id));
   /** Same title-prefix grouping View Test Cases uses, so a person reading
    * both screens is reading one idea. */
@@ -551,9 +438,9 @@ export default function AutoRun({
       return next;
     });
 
-  /** A case the filter hides leaves the selection, so a run only ever holds
-   * what the person can see. Checked after every render rather than in the
-   * filter's click, because the runs refreshing (one just finished) can hide
+  /** A case the filters or the search hide leaves the selection, so a run
+   * only ever holds what the person can see. Checked after every render
+   * rather than in the filter's click, because the runs refreshing (one just finished) can hide
    * a ticked case without anyone pressing anything. Not while the case list
    * itself is empty (loading): that is not the person's filter hiding them.
    *
@@ -570,7 +457,7 @@ export default function AutoRun({
     });
   });
 
-  /** The scripted cases the filter shows - what Select all shown covers. */
+  /** The scripted cases shown now - what Select all shown covers. */
   const shownRunnable = runnableIn(shownIdx);
   const shownTicked = shownRunnable.filter((id) => selected.has(id)).length;
 
@@ -614,81 +501,30 @@ export default function AutoRun({
     }
   };
 
-  /** One case row, by its index in `rows` - grouped and flat both render
+
+  /** One case card, by its index in `rows` - grouped and flat both render
    * the same thing, and `scripts[i]` is indexed the same way. */
-  const row = (i: number) => {
+  const card = (i: number) => {
     const c = rows[i];
-    const ready = hasScript(i);
-    const defect = scripts[i]?.suspected_defect;
-    const result = lastOf(i);
+    const rec = lastRec.get(c.id);
     return (
-      <li
+      <CaseCard
         key={c.id}
-        className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
-      >
-        {/* Only a scripted case can be run, so only a scripted case can be
-            ticked - a checkbox that selects something unrunnable would
-            just make the count lie. */}
-        <Checkbox
-          checked={selected.has(c.id)}
-          ariaLabel={`Select #${c.id}`}
-          className={ready ? undefined : "invisible"}
-          onCheckedChange={() => ready && toggleOne(c.id)}
-        />
-        <span className="id-mono text-faint">#{c.id}</span>
-        {/* The title gets the room and wraps, the way Update Test Cases'
-            rows do - a truncated title is exactly the part that tells two
-            similar cases apart. */}
-        <span className="min-w-0 flex-1 break-words text-text">{c.title}</span>
-        {/* The result of the case's last run, in Past runs' words and colours.
-            A case never run carries nothing: a mark that says "none" on
-            every fresh row is noise. */}
-        {result !== "Not run" && (
-          <span className={cn("shrink-0 text-xs font-medium", bucketTone[result])}>
-            <span className="sr-only">Last result: </span>
-            {result}
-          </span>
-        )}
-        {defect && (
-          <SuspectedDefectBadge
-            caseId={c.id}
-            defect={defect}
-            onClear={() => setConfirmingClear(c.id)}
-          />
-        )}
-        {/* No "Script ready" badge: the row says it with its buttons. A
-            scripted case has a Run button, outlined in the success colour
-            so a list reads at a glance as "these can run"; a case with no
-            script has no Run button, and its script button says Add.
-            Both stay outline buttons of one size, so a list of twenty is
-            not twenty bright buttons - the one primary action on the
-            screen is running the selection, in the dock. */}
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0"
-          aria-label={`${ready ? "Edit" : "Add"} script for #${c.id}`}
-          onClick={() => setEditing(c.id)}
-        >
-          {ready ? <IconEdit aria-hidden /> : <IconAdd aria-hidden />}
-          {ready ? "Script" : "Add script"}
-        </Button>
-        {ready && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0 border-success text-success hover:border-success hover:bg-success/10 hover:text-success"
-            aria-label={`Run #${c.id}`}
-            onClick={() => setRunning([c.id])}
-          >
-            <IconRun aria-hidden />
-            Run
-          </Button>
-        )}
-        {defect && confirmingClear === c.id && (
-          <ClearConfirm caseId={c.id} onDone={() => setConfirmingClear(null)} />
-        )}
-      </li>
+        c={c}
+        org={org}
+        script={scripts[i]}
+        result={lastOf(i)}
+        selected={selected.has(c.id)}
+        onSelect={() => toggleOne(c.id)}
+        open={openHere.has(c.id)}
+        onToggleOpen={() => toggleCard(c.id)}
+        onEdit={() => setEditing(c.id)}
+        onRun={() => setRunning([c.id])}
+        confirmingClear={confirmingClear === c.id}
+        onAskClear={() => setConfirmingClear(c.id)}
+        onClearDone={() => setConfirmingClear(null)}
+        lastRun={rec ? { runId: rec.run.id, steps: rec.record.steps } : undefined}
+      />
     );
   };
 
@@ -696,312 +532,94 @@ export default function AutoRun({
     return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
   }
 
-  const needsProject = setupReady ? undefined : "Pick an organization and project first";
-  const extraSites = site.allowed_origins.length;
   const caseCount = cases.data ? rows.length : null;
+  const searched = search.trim();
+  // Every open card counts, shown or not: a card a search or a filter hides
+  // is still open, and Collapse all is how it gets shut.
+  const anyOpen = rows.some((c) => openHere.has(c.id));
+  const allOpen = shownIdx.length > 0 && shownIdx.every((i) => openHere.has(rows[i].id));
 
   return (
     <>
-      {/* Three tabs, one panel at a time: the cases to run, what came of
-          past runs, and the setup a run needs. One reading width for all
-          three - the case rows read no better wider, and nothing ever sits
-          beside anything else. Normal page flow, so the page's own bottom
-          padding keeps the floating dock clear of the last row. */}
-      <div className="max-w-3xl space-y-4">
-        <div className="min-w-0 space-y-4">
-          {/* The Templates/Flows tab pattern from API Templates, with the
-              keyboard a tab list owes: only the chosen tab is in the Tab
-              order (the first, before the screen has chosen), and the arrow
-              keys move along. */}
-          <div role="tablist" aria-label="Auto Run sections" className="flex gap-1 border-b border-border">
-            {TABS.map(({ id, label }, i) => {
-              const selected = shown === id;
-              const count = id === "cases" ? caseCount : id === "runs" ? runCount : null;
-              const attention =
-                id === "setup" && (readiness.essentialMissing || essentialUnreadable.length > 0);
-              return (
-                <button
-                  key={id}
-                  ref={(el) => {
-                    tabRefs.current[id] = el;
-                  }}
-                  id={`${tabIds}-${id}-tab`}
-                  role="tab"
-                  aria-selected={selected}
-                  aria-controls={selected ? `${tabIds}-${id}-panel` : undefined}
-                  tabIndex={selected || (shown === null && i === 0) ? 0 : -1}
-                  className={cn(
-                    "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
-                    selected ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
-                  )}
-                  onClick={() => setTab(id)}
-                  onKeyDown={(e) => onTabKey(e, i)}
-                >
-                  {label}
-                  {count != null && (
-                    <>
-                      {" "}
-                      <span className="text-xs text-faint">{count}</span>
-                    </>
-                  )}
-                  {/* There is no site address, no way to sign in, or no
-                      account - said in words too, for a screen reader. */}
-                  {attention && (
-                    <>
-                      <TriangleAlert aria-hidden className="ml-1.5 inline size-3.5 align-[-2px] text-warning" />
-                      <span className="sr-only">, needs attention</span>
-                    </>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+      {/* Two tabs, one panel at a time: the cases to run, with the setup a
+          run needs beside them, and what came of past runs. Normal page
+          flow, so the page's own bottom padding keeps the floating dock
+          clear of the last card. Test cases may grow wider, for the Setup
+          panel's column, when its own width has room for one. */}
+      <div className={cn("space-y-4", shown === "cases" ? "max-w-6xl" : "max-w-3xl")}>
+        {/* The Templates/Flows tab pattern from API Templates, with the
+            keyboard a tab list owes: only the chosen tab is in the Tab
+            order, and the arrow keys move along. */}
+        <div role="tablist" aria-label="Auto Run sections" className="flex gap-1 border-b border-border">
+          {TABS.map(({ id, label }) => {
+            const isOn = shown === id;
+            const count = id === "cases" ? caseCount : runCount;
+            return (
+              <button
+                key={id}
+                ref={(el) => {
+                  tabRefs.current[id] = el;
+                }}
+                id={`${tabIds}-${id}-tab`}
+                role="tab"
+                aria-selected={isOn}
+                aria-controls={isOn ? `${tabIds}-${id}-panel` : undefined}
+                tabIndex={isOn ? 0 : -1}
+                className={cn(
+                  "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
+                  isOn ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
+                )}
+                onClick={() => setTab(id)}
+                onKeyDown={(e) => onTabKey(e, TABS.findIndex((t) => t.id === id))}
+              >
+                {label}
+                {count != null && (
+                  <>
+                    {" "}
+                    <span className="text-xs text-faint">{count}</span>
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {shown && (
-          <div
-            role="tabpanel"
-            id={`${tabIds}-${shown}-panel`}
-            aria-labelledby={`${tabIds}-${shown}-tab`}
-            className="min-w-0"
-          >
-            {shown === "setup" && (
-              <div className="space-y-3">
-                {/* Read-only here: the environment and its database are chosen on
-                    AI Bridge, which owns them. */}
-                {activeEnv && (
-                  <p className="text-xs text-muted">
-                    Environment <span className="font-medium text-text">{activeEnv.name}</span>, database{" "}
-                    <span className="font-medium text-text">{dbLine}</span>. Both change on the AI Bridge tab.
-                  </p>
-                )}
-                <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-                  <h2 className="text-sm font-semibold text-text">Setup</h2>
-                  <div className="space-y-3">
-                    <SetupRow
-                      label="Site address"
-                      state={
-                        !setupReady ? (
-                          <span className="text-muted">{needsProject}</span>
-                        ) : recipe.isLoading ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : recipe.isError ? (
-                          <span className="text-danger">The saved recipe could not be read</span>
-                        ) : envs.isError && !site.start_url ? (
-                          <span className="text-danger">The environments could not be read</span>
-                        ) : site.start_url ? (
-                          <>
-                            <span className="id-mono break-all">{site.start_url}</span>
-                            {extraSites > 0 && (
-                              <span className="ml-2 text-xs text-faint">
-                                +{plural(extraSites, "allowed site")}
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-muted">Not set up yet</span>
-                        )
-                      }
-                    >
-                      {/* The address is the active environment's, not the recipe's,
-                          so it is set here with or without a saved recipe: the
-                          built-in sign-in needs nothing more than this. */}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Edit site address"
-                        disabled={!setupReady}
-                        title={needsProject}
-                        onClick={() => setSiteOpen(true)}
-                      >
-                        <IconSiteAddress aria-hidden />
-                        Edit
-                      </Button>
-                    </SetupRow>
-
-                    <SetupRow
-                      label="Sign-in"
-                      state={
-                        !setupReady ? (
-                          <span className="text-muted">{needsProject}</span>
-                        ) : recipe.isLoading ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : recipe.isError ? (
-                          <span className="text-danger">Could not be read - open it to see why</span>
-                        ) : saved ? (
-                          "Recipe saved"
-                        ) : (
-                          // No saved recipe: the app's own runs. Recording or
-                          // editing one saves this project's, which replaces it.
-                          "Built-in"
-                        )
-                      }
-                    >
-                      {/* Record: sign in by hand once and the recipe is written.
-                          Edit: the recipe as JSON, for what a recording cannot say. */}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Record sign-in"
-                        disabled={!setupReady}
-                        title={needsProject}
-                        onClick={() => setRecordOpen(true)}
-                      >
-                        <IconRecord aria-hidden />
-                        Record
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Edit sign-in recipe"
-                        disabled={!setupReady}
-                        title={needsProject}
-                        onClick={() => setRecipeOpen(true)}
-                      >
-                        <IconRecipe aria-hidden />
-                        Edit
-                      </Button>
-                    </SetupRow>
-
-                    <SetupRow
-                      label="Accounts"
-                      state={
-                        accounts.isError ? (
-                          <span className="text-danger">The accounts could not be read</span>
-                        ) : accounts.isPending || accountCount == null ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : accountCount === 0 ? (
-                          <span className="text-muted">None yet</span>
-                        ) : (
-                          `${plural(accountCount, "account")} on this machine`
-                        )
-                      }
-                    >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Edit accounts"
-                        onClick={() => setAccountsOpen(true)}
-                      >
-                        <IconAccounts aria-hidden />
-                        Edit
-                      </Button>
-                    </SetupRow>
-
-                    <SetupRow
-                      label="Areas"
-                      state={
-                        !setupReady ? (
-                          <span className="text-muted">{needsProject}</span>
-                        ) : nav.isError ? (
-                          <span className="text-danger">The areas could not be read</span>
-                        ) : nav.isPending || areaCount == null ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : areaCount === 0 ? (
-                          <span className="text-muted">None recorded yet</span>
-                        ) : (
-                          `${plural(areaCount, "area")} recorded`
-                        )
-                      }
-                    >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Edit areas"
-                        disabled={!setupReady}
-                        title={needsProject}
-                        onClick={() => setNavOpen(true)}
-                      >
-                        <IconModulePaths aria-hidden />
-                        Edit
-                      </Button>
-                    </SetupRow>
-
-                    <SetupRow
-                      label="Test files"
-                      state={
-                        !setupReady ? (
-                          <span className="text-muted">{needsProject}</span>
-                        ) : testFiles.isError ? (
-                          <span className="text-danger">The test files could not be read</span>
-                        ) : testFiles.isPending || testFileCount == null ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : testFileCount === 0 ? (
-                          <span className="text-muted">None yet</span>
-                        ) : (
-                          plural(testFileCount, "file")
-                        )
-                      }
-                    >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Manage test files"
-                        disabled={!setupReady}
-                        title={needsProject}
-                        onClick={() => setTestFilesOpen(true)}
-                      >
-                        <IconTestFiles aria-hidden />
-                        Manage
-                      </Button>
-                    </SetupRow>
-
-                    {/* What a script marked Must not save has stopped: the
-                        built-in words, fixed, then the project's own. */}
-                    <SetupRow
-                      label="Save words"
-                      state={
-                        !setupReady ? (
-                          <span className="text-muted">{needsProject}</span>
-                        ) : nav.isError ? (
-                          <span className="text-danger">The save words could not be read</span>
-                        ) : nav.isPending ? (
-                          <span className="text-muted">Loading…</span>
-                        ) : (
-                          <>
-                            <span className="text-muted">
-                              {(nav.data?.built_in_save_words?.length
-                                ? nav.data.built_in_save_words
-                                : BUILT_IN_SAVE_WORDS
-                              ).join(", ")}
-                            </span>
-                            {(nav.data?.save_words ?? []).length > 0 && (
-                              <span>, {(nav.data?.save_words ?? []).join(", ")}</span>
-                            )}
-                          </>
-                        )
-                      }
-                    >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        aria-label="Edit save words"
-                        disabled={!setupReady || nav.isPending || nav.isError}
-                        title={needsProject}
-                        onClick={() => setSaveWordsOpen(true)}
-                      >
-                        <IconSaveWords aria-hidden />
-                        Edit
-                      </Button>
-                    </SetupRow>
-                  </div>
-                </section>
-                <p className="text-xs text-muted">
-                  An assistant&apos;s <span className="id-mono">/tcm:setup</span> command can walk you through
-                  this.
-                </p>
+        <div
+          role="tabpanel"
+          id={`${tabIds}-${shown}-panel`}
+          aria-labelledby={`${tabIds}-${shown}-tab`}
+          className="@container min-w-0"
+        >
+          {shown === "cases" && (
+            // The list on the left and the Setup panel on the right, at a
+            // fixed readable width. Measured on this panel's own width, not
+            // the window's, so an open sidebar never squeezes the list: the
+            // panel goes beside the list only where the list keeps its full
+            // reading width (48rem, a 1rem gap, then 20rem). Narrower, the
+            // panel goes above the list at the list's width: it comes first
+            // in the page, and moves last only where there is room.
+            <div className="grid max-w-3xl gap-4 @min-[69rem]:max-w-none @min-[69rem]:grid-cols-[minmax(0,1fr)_20rem] @min-[69rem]:items-start">
+              <div className="min-w-0 @min-[69rem]:order-last">
+                <SetupPanel
+                  setup={setup}
+                  org={org}
+                  project={project}
+                  caseModules={caseModules}
+                  open={panelOpen}
+                  onToggle={() => setPanelChoice(!panelOpen)}
+                  toggleRef={panelToggleRef}
+                  panelRef={panelRef}
+                />
               </div>
-            )}
 
-            {shown === "cases" && (
-              <section className="space-y-2">
+              <section className="min-w-0 space-y-2">
                 <h2 className="text-sm font-semibold text-text">
                   Test cases
                   {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
                 </h2>
-                {/* Where runs go and whether the setup is in place, in one line.
-                    Only once the three things a run cannot go without are
-                    known, so a slow read never shows as a warning. */}
+                {/* Where runs go and whether the setup is in place, in one
+                    line. Only once the three things a run cannot go without
+                    are known, so a slow read never shows as a warning. */}
                 {essentialsSettled && (
                   <ReadinessStrip
                     envName={activeEnv?.name ?? null}
@@ -1009,19 +627,52 @@ export default function AutoRun({
                     siteHost={
                       knownSiteUrl === undefined ? undefined : site.start_url ? siteHost(site.start_url) : null
                     }
-                    signIn={signIn}
-                    accountCount={accountCount}
-                    areaCount={areaCount}
-                    testFileCount={testFileCount}
+                    signIn={setup.signIn}
+                    accountCount={setup.accountCount}
+                    areaCount={setup.areaCount}
+                    testFileCount={setup.testFileCount}
                     missingTestFiles={readiness.missingTestFiles}
-                    unreadable={unreadable}
-                    onOpenSetup={() => {
-                      setTab("setup");
-                      // The button is in the panel that is about to unmount.
-                      tabRefs.current.setup?.focus();
-                    }}
+                    unreadable={setup.unreadable}
+                    onOpenSetup={openSetup}
                   />
                 )}
+
+                {/* Finding cases: the search, the last-result filters, and
+                    opening or closing every card shown. */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <CaseSearch value={search} onChange={setSearch} />
+                  {rows.length > 0 &&
+                    (runsFailed ? (
+                      <span className="text-xs text-muted">Past results could not be read</span>
+                    ) : (
+                      // Without numbers, and out of reach, until the runs are read.
+                      <ResultToggleRow
+                        label="Filter by last result"
+                        pressed={activeFilter}
+                        onToggle={toggleLast}
+                        counts={runsReady ? lastCounts : undefined}
+                        disabled={!runsReady}
+                      />
+                    ))}
+                  {rows.length > 0 && (
+                    <span className="ml-auto flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={allOpen}
+                        onClick={() => expandAll(shownIdx.map((i) => rows[i].id))}
+                      >
+                        <IconExpandAll aria-hidden />
+                        Expand all
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={!anyOpen} onClick={collapseAll}>
+                        <IconCollapseAll aria-hidden />
+                        Collapse all
+                      </Button>
+                    </span>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
                     <Checkbox
@@ -1038,9 +689,9 @@ export default function AutoRun({
                     />
                     Group by title
                   </label>
-                  {/* Ticks what the filter below shows (scripted cases only), so
-                      "run everything that failed" is two clicks. Off while
-                      nothing shown could be run. */}
+                  {/* Ticks what the search and the filters show (scripted
+                      cases only), so "run everything that failed" is two
+                      clicks. Off while nothing shown could be run. */}
                   <label
                     className={cn(
                       "flex items-center gap-2 text-xs",
@@ -1056,28 +707,13 @@ export default function AutoRun({
                     />
                     Select all shown
                   </label>
-                  {rows.length > 0 &&
-                    (runsFailed ? (
-                      <span className="text-xs text-muted">Past results could not be read</span>
-                    ) : (
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-muted">Last result</span>
-                        {/* Without numbers, and out of reach, until the runs are read. */}
-                        <ResultToggleRow
-                          label="Filter by last result"
-                          pressed={activeFilter}
-                          onToggle={toggleLast}
-                          counts={runsReady ? lastCounts : undefined}
-                          disabled={!runsReady}
-                        />
-                      </span>
-                    ))}
-                  {/* The rare actions. Clear scripts is housekeeping shown wherever
-                      Auto Run is (dev, or unlocked) - the whole tab is gated in one
-                      place (`autoRunVisible` in lib/extras.ts), so no further gating
-                      belongs here. Disabled rather than hidden: an item that vanishes
-                      the moment it would do nothing invites "where did it go". Danger
-                      only on hover, and it still asks first. */}
+                  {/* The rare actions. Clear scripts is housekeeping shown
+                      wherever Auto Run is (dev, or unlocked) - the whole tab
+                      is gated in one place (`autoRunVisible` in
+                      lib/extras.ts), so no further gating belongs here.
+                      Disabled rather than hidden: an item that vanishes the
+                      moment it would do nothing invites "where did it go".
+                      Danger only on hover, and it still asks first. */}
                   <span className="ml-auto">
                     <MoreActionsMenu
                       label="More"
@@ -1109,7 +745,9 @@ export default function AutoRun({
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
 
                 {rows.length > 0 && shownIdx.length === 0 && (
-                  <p className="text-xs text-muted">No cases match this filter.</p>
+                  <p className="text-xs text-muted">
+                    {searched ? `No test cases match "${searched}".` : "No cases match this filter."}
+                  </p>
                 )}
                 {grouped ? (
                   groups.map(({ name, indices }) => {
@@ -1154,13 +792,13 @@ export default function AutoRun({
                           <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                         </div>
                         <Collapse open={!shut} animateIn={settled}>
-                          <ul className="space-y-1">{indices.map(row)}</ul>
+                          <ul className="space-y-1">{indices.map(card)}</ul>
                         </Collapse>
                       </div>
                     );
                   })
                 ) : (
-                  <ul className="space-y-1">{shownIdx.map(row)}</ul>
+                  <ul className="space-y-1">{shownIdx.map(card)}</ul>
                 )}
 
                 {/* Actions on the selection live bottom-right, in the one shared
@@ -1209,50 +847,20 @@ export default function AutoRun({
                   </ActionDock>
                 )}
               </section>
-            )}
+            </div>
+          )}
 
-            {shown === "runs" && (
-              <PastRuns
-                pbiId={pbi.id}
-                onReview={setReviewing}
-                onReplay={replayCase}
-                filter={runsFilter}
-                onFilterChange={setRunsFilter}
-              />
-            )}
-          </div>
-        )}
+          {shown === "runs" && (
+            <PastRuns
+              pbiId={pbi.id}
+              onReview={setReviewing}
+              onReplay={replayCase}
+              filter={runsFilter}
+              onFilterChange={setRunsFilter}
+            />
+          )}
+        </div>
       </div>
-
-      {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
-      {recipeOpen && (
-        <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
-      )}
-      {recordOpen && (
-        <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />
-      )}
-      {testFilesOpen && (
-        <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />
-      )}
-      {siteOpen && (
-        <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />
-      )}
-      {saveWordsOpen && (
-        <SaveWordsDialog
-          org={org}
-          project={project}
-          view={nav.data ?? null}
-          onClose={() => setSaveWordsOpen(false)}
-        />
-      )}
-      {navOpen && (
-        <AreasDialog
-          org={org}
-          project={project}
-          caseModules={caseModules}
-          onClose={() => setNavOpen(false)}
-        />
-      )}
 
       {orderingOpen && (
         <ExecutionOrderDialog

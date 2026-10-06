@@ -69,8 +69,21 @@ function mockList(
 }
 
 /** Switches the screen to its tab of that name, the way a person would. */
-function openTab(name: "Test cases" | "Past runs" | "Setup") {
+function openTab(name: "Test cases" | "Past runs") {
   fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+}
+
+/** Shows the Setup panel's full rows, the way a person would. The panel
+ * already shows them when something a run needs is missing (as in most of
+ * these mocks), and then there is nothing to press. */
+function openSetup() {
+  const show = screen.queryByRole("button", { name: "Show setup details" });
+  if (show) fireEvent.click(show);
+}
+
+/** Opens a case's card, which is where its Script and Run buttons are. */
+function openCard(id: number) {
+  fireEvent.click(screen.getByRole("button", { name: `Show details for #${id}` }));
 }
 
 /** Opens the Test cases tab's More menu and returns one of its items. */
@@ -79,10 +92,9 @@ function moreItem(name: "Import scripts" | "Clear scripts") {
   return screen.getByRole("menuitem", { name });
 }
 
-/** Renders the screen on its Test cases tab. The mocks here set nothing up,
- * so the opening rule alone would choose Setup; a tab clicked before the
- * setup has loaded is the person's choice, which the rule never overrides.
- * A test about the Setup rows or the past runs switches tab first. */
+/** Renders the screen on its Test cases tab, where the screen always opens.
+ * The mocks here set nothing up, so the Setup panel opens its full rows
+ * by itself. A test about the past runs switches tab first. */
 function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
@@ -98,7 +110,7 @@ test("the Setup card's Accounts and Sign-in buttons open their own dialogs", asy
   mockList([caseRow(1, "Login - valid credentials")], [1]);
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  openTab("Setup");
+  openSetup();
 
   fireEvent.click(screen.getByRole("button", { name: "Edit accounts" }));
   expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
@@ -235,7 +247,9 @@ test("an unscripted case cannot be ticked, so a bulk run never queues one", asyn
   await screen.findByText("Login - locked account");
 
   // Case 2 has no script: its checkbox is present for row alignment but
-  // inert, and Run is not offered at all.
+  // inert, and Run is not offered at all, not even on its open card.
+  openCard(2);
+  expect(await screen.findByRole("button", { name: "Add script for #2" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run #2" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
   expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
@@ -509,7 +523,7 @@ test("the Setup card's Areas button opens its dialog", async () => {
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  openTab("Setup");
+  openSetup();
   fireEvent.click(screen.getByRole("button", { name: "Edit areas" }));
   expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
@@ -713,7 +727,7 @@ test("a filter that shows nothing says so", async () => {
   expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
 });
 
-test("each row names its last result; a case never run carries no mark", async () => {
+test("each card names its last result, and a case never run says Not run", async () => {
   mockFilterList();
   renderScreen();
   await screen.findByText("Login - alpha");
@@ -727,9 +741,14 @@ test("each row names its last result; a case never run carries no mark", async (
   expect(within(rowOf("Reports - delta")).getByText("Passed")).toHaveTextContent(
     "Last result: Passed",
   );
-  expect(within(rowOf("Reports - echo")).queryByText(/Last result/)).not.toBeInTheDocument();
-  // The mark sits beside the row's own controls, it does not replace them.
+  // A case no run reached says so in the same words the Not run filter uses.
+  expect(within(rowOf("Reports - echo")).getByText("Not run")).toHaveTextContent("Last result: Not run");
+  // The mark sits beside the card's own controls, it does not replace them:
+  // they are on the open card.
+  expect(within(rowOf("Login - alpha")).queryByRole("button", { name: "Run #1" })).not.toBeInTheDocument();
+  openCard(1);
   expect(within(rowOf("Login - alpha")).getByRole("button", { name: "Run #1" })).toBeInTheDocument();
+  expect(within(rowOf("Login - alpha")).getByText("Failed")).toHaveTextContent("Last result: Failed");
 });
 
 test("a run stopped before a case leaves that case's older result standing", async () => {
@@ -828,6 +847,207 @@ test("the Last result choice survives a tab switch", async () => {
   expect(visibleTitles()).toEqual(["Login - alpha", "Login - charlie"]);
 });
 
+test("the result filters are pressed and released one by one, each with its count", async () => {
+  mockFilterList();
+  renderScreen();
+  const group = await lastResultGroup();
+  const failed = await within(group).findByRole("button", { name: "Failed (2)" });
+  const passed = within(group).getByRole("button", { name: "Passed (2)" });
+  fireEvent.click(failed);
+  expect(failed).toHaveAttribute("aria-pressed", "true");
+  expect(passed).toHaveAttribute("aria-pressed", "false");
+  // The count is part of the name, and stays when the button is pressed.
+  expect(failed).toHaveAccessibleName("Failed (2)");
+  fireEvent.click(failed);
+  expect(failed).toHaveAttribute("aria-pressed", "false");
+});
+
+// ---- Search ----
+
+const searchBox = () => screen.getByRole("textbox", { name: "Search test cases" });
+const typeSearch = (text: string) => fireEvent.change(searchBox(), { target: { value: text } });
+
+test("the search finds a case by its id, with or without #, and by its title in any case", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+
+  typeSearch("#4");
+  expect(visibleTitles()).toEqual(["Reports - delta"]);
+  typeSearch("4");
+  expect(visibleTitles()).toEqual(["Reports - delta"]);
+  typeSearch("CHARLIE");
+  expect(visibleTitles()).toEqual(["Login - charlie"]);
+  typeSearch("reports");
+  expect(visibleTitles()).toEqual(["Reports - delta", "Reports - echo"]);
+});
+
+test("the search narrows the list together with the result filters, grouped or not", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  await press("Failed (2)");
+  typeSearch("alpha");
+  expect(visibleTitles()).toEqual(["Login - alpha"]);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+  expect(await screen.findByText("Login (1)")).toBeInTheDocument();
+  expect(visibleTitles()).toEqual(["Login - alpha"]);
+});
+
+test("a search that matches nothing says so in its own words", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  typeSearch("  zulu ");
+  expect(screen.getByText('No test cases match "zulu".')).toBeInTheDocument();
+  expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
+  expect(visibleTitles()).toEqual([]);
+});
+
+test("Escape in the search box and the clear button both empty it", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  // Nothing to clear yet: no clear button.
+  expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
+
+  typeSearch("alpha");
+  expect(visibleTitles()).toHaveLength(1);
+  fireEvent.keyDown(searchBox(), { key: "Escape" });
+  expect(searchBox()).toHaveValue("");
+  expect(visibleTitles()).toHaveLength(6);
+
+  typeSearch("bravo");
+  expect(visibleTitles()).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(searchBox()).toHaveValue("");
+  expect(visibleTitles()).toHaveLength(6);
+});
+
+test("Select all shown covers only the cases the search leaves, and a search that hides a ticked case unticks it", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+
+  typeSearch("Login");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all shown" }));
+  // #1, #2 and #6 have scripts; #3 does not, and Reports are not shown.
+  expect(await screen.findByRole("button", { name: "Run 3 selected" })).toBeInTheDocument();
+
+  typeSearch("alpha");
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
+  typeSearch("");
+  expect(screen.getByRole("checkbox", { name: "Select #2" })).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByRole("checkbox", { name: "Select #4" })).toHaveAttribute("aria-checked", "false");
+});
+
+// ---- Case cards ----
+
+test("a collapsed card has no Script, Run or Add script button; opening it shows them", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  expect(screen.queryByRole("button", { name: /script for #/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Run #/ })).not.toBeInTheDocument();
+
+  // The title opens it, as the chevron does.
+  fireEvent.click(screen.getByRole("button", { name: "Alpha check" }));
+  expect(await screen.findByRole("button", { name: "Run #1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide details for #1" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.queryByRole("button", { name: "Add script for #2" })).not.toBeInTheDocument();
+
+  openCard(2);
+  expect(screen.getByText("No script yet")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add script for #2" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Hide details for #1" }));
+  expect(screen.queryByRole("button", { name: "Run #1" })).not.toBeInTheDocument();
+});
+
+test("Expand all opens every card shown, and Collapse all shuts them", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  const expand = await screen.findByRole("button", { name: "Expand all" });
+  const collapse = screen.getByRole("button", { name: "Collapse all" });
+  expect(collapse).toBeDisabled();
+
+  // Only what the filter shows is opened.
+  await press("Failed (2)");
+  fireEvent.click(expand);
+  expect(screen.getAllByRole("button", { name: /^Hide details for #/ }).map((b) => b.getAttribute("aria-label"))).toEqual([
+    "Hide details for #1",
+    "Hide details for #3",
+  ]);
+  expect(expand).toBeDisabled();
+  await press("Failed (2)");
+  expect(screen.getByRole("button", { name: "Show details for #2" })).toBeInTheDocument();
+
+  fireEvent.click(collapse);
+  expect(screen.queryByRole("button", { name: /^Hide details for #/ })).not.toBeInTheDocument();
+  expect(collapse).toBeDisabled();
+});
+
+test("Collapse all still shuts cards a search or a filter hides", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  openCard(1);
+  // The only open card is hidden now, but it is still open.
+  typeSearch("bravo");
+  expect(screen.queryByRole("button", { name: "Hide details for #1" })).not.toBeInTheDocument();
+  const collapse = screen.getByRole("button", { name: "Collapse all" });
+  expect(collapse).toBeEnabled();
+  fireEvent.click(collapse);
+  typeSearch("");
+  expect(screen.getByRole("button", { name: "Show details for #1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collapse all" })).toBeDisabled();
+});
+
+test("the open cards are remembered for each PBI while the screen is mounted", async () => {
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2]);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const other = { ...pbi, id: 43, title: "Other work" };
+  const view = render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Alpha check");
+  openCard(1);
+
+  view.rerender(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={other as never} />
+    </QueryClientProvider>,
+  );
+  // Another PBI's list starts shut.
+  expect(await screen.findByRole("button", { name: "Show details for #1" })).toBeInTheDocument();
+
+  view.rerender(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={pbi as never} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("button", { name: "Hide details for #1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show details for #2" })).toBeInTheDocument();
+});
+
+test("an open card shows the script's facts and its numbered steps", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+  openCard(1);
+  expect(await screen.findByRole("button", { name: "Run #1" })).toBeInTheDocument();
+  expect(screen.getByText("1 step")).toBeInTheDocument();
+  const steps = screen.getByRole("list", { name: "Script steps of #1" });
+  expect(within(steps).getAllByRole("listitem")).toHaveLength(1);
+  // A script with no account, area or marks prints no empty labels.
+  expect(screen.queryByText("Runs as")).not.toBeInTheDocument();
+  expect(screen.queryByText("Changes")).not.toBeInTheDocument();
+  expect(screen.queryByText("Files")).not.toBeInTheDocument();
+});
+
 // ---- Setup card, header line, site address ----
 
 const RECIPE = {
@@ -900,7 +1120,7 @@ test("the header names the active environment and the host of its address", asyn
   expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
   expect(screen.getByText("QA - qa.example.com").parentElement).toHaveTextContent("Environment QA - qa.example.com");
   // The Setup card says the same address, not the recipe's.
-  openTab("Setup");
+  openSetup();
   const site = row("Site address");
   expect(await within(site).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(site).queryByText("https://hr.example.internal/login")).not.toBeInTheDocument();
@@ -914,7 +1134,7 @@ test("an environment with no address of its own shows the recipe's host", async 
   );
   renderScreen();
   expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
-  openTab("Setup");
+  openSetup();
   expect(within(row("Site address")).getByText("https://hr.example.internal/login")).toBeInTheDocument();
 });
 
@@ -931,7 +1151,7 @@ test("the Setup card's Test files row counts the project's files, and Manage ope
   });
   renderScreen();
   await screen.findByText("Alpha check");
-  openTab("Setup");
+  openSetup();
 
   expect(await within(row("Test files")).findByText("2 files")).toBeInTheDocument();
   expect(listed[0]).toEqual(expect.objectContaining({ organization: "acme", project: "proj" }));
@@ -946,7 +1166,7 @@ test("the Test files row reads None yet for a project with none", async () => {
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  openTab("Setup");
+  openSetup();
   expect(await within(row("Test files")).findByText("None yet")).toBeInTheDocument();
   expect(within(row("Test files")).getByRole("button", { name: "Manage test files" })).toBeEnabled();
 });
@@ -957,7 +1177,7 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   await screen.findByText("Alpha check");
   // The strip on Test cases says there is no address yet.
   expect(await screen.findByText("no site set yet")).toBeInTheDocument();
-  openTab("Setup");
+  openSetup();
 
   expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
   await waitFor(() => expect(within(row("Site address")).getByText("Not set up yet")).toBeInTheDocument());
@@ -985,7 +1205,7 @@ test("with no saved recipe the built-in signs in at the environment's address", 
   renderScreen();
   await screen.findByText("Alpha check");
   expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
-  openTab("Setup");
+  openSetup();
   expect(await within(row("Site address")).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
   // Recording or editing saves the project's own recipe, which replaces it.
@@ -1005,7 +1225,7 @@ test("the Setup card and the readiness strip read a project that is set up", asy
   // The old header line's project name is gone.
   expect(screen.queryByText("proj")).not.toBeInTheDocument();
 
-  openTab("Setup");
+  openSetup();
 
   const site = row("Site address");
   expect(await within(site).findByText("https://hr.example.internal/login")).toBeInTheDocument();
@@ -1026,7 +1246,7 @@ test("saving a new site address writes it to the active environment, not the rec
   // No address of its own yet: the strip shows the recipe's host.
   expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
-  openTab("Setup");
+  openSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Edit site address" }));
   expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
   const start = screen.getByRole("textbox", { name: "Start address" }) as HTMLInputElement;
@@ -1114,7 +1334,7 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
       <AutoRun org="acme" project="" pbi={pbi as never} />
     </QueryClientProvider>,
   );
-  openTab("Setup");
+  openSetup();
   await screen.findByRole("button", { name: "Edit site address" });
 
   const why = "Pick an organization and project first";
@@ -1129,9 +1349,11 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
 });
 
 // The screen used to be two columns from xl (setup and cases left, Past
-// runs right). It is three tabs now, one panel at a time, so no width ever
-// shows two sections side by side.
-test("the setup, the case list and Past runs are one tab panel each, shown one at a time", async () => {
+// runs right), then three tabs. It is two tabs now: the Setup panel lives
+// on the Test cases tab beside the list, and Past runs is a panel of its
+// own. Where the panel sits is layout, which jsdom cannot see; which panel
+// holds it is not.
+test("the case list with its Setup panel, and Past runs, are one tab panel each, shown one at a time", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1]);
   renderScreen();
   await screen.findByText("Login - valid credentials");
@@ -1142,14 +1364,15 @@ test("the setup, the case list and Past runs are one tab panel each, shown one a
     expect(panels[0]).toHaveAccessibleName(new RegExp(`^${name}`));
     return panels[0];
   };
-  expect(within(only("Test cases")).getByRole("heading", { name: /^Test cases/ })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "Setup" })).not.toBeInTheDocument();
+  const cases = only("Test cases");
+  expect(within(cases).getByRole("heading", { name: /^Test cases/ })).toBeInTheDocument();
+  expect(within(cases).getByRole("region", { name: "Setup" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /^Setup/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Past runs" })).not.toBeInTheDocument();
 
-  openTab("Setup");
-  expect(within(only("Setup")).getByRole("heading", { name: "Setup" })).toBeInTheDocument();
   openTab("Past runs");
   expect(within(only("Past runs")).getByRole("heading", { name: "Past runs" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Setup" })).not.toBeInTheDocument();
 
   expect(document.querySelector('[class*="xl:grid-cols-"]')).toBeNull();
 });
@@ -1194,7 +1417,7 @@ test("the Save words row shows the built-in words and the project's own, and Edi
   );
   renderScreen();
   await screen.findByText("Login - valid credentials");
-  openTab("Setup");
+  openSetup();
   const words = row("Save words");
   await waitFor(() => expect(words).toHaveTextContent(`${builtIn.join(", ")}, recalc`));
   fireEvent.click(within(words).getByRole("button", { name: "Edit save words" }));

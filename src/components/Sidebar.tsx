@@ -68,7 +68,7 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun" },
+  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
   { id: "suites", label: "Search Suites", icon: GlyphSuites, tone: "nav-ico nav-ico-suites" },
   // An ordered list, because ordering is the first thing this screen does.
   { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage" },
@@ -182,7 +182,7 @@ export default function Sidebar<T extends string = Section>({
         return (
         // Only when collapsed: with the rail open the label is right there.
         // The note joins the tooltip so the status survives the icon rail.
-        <Tooltip key={id} label={note ? `${label} — In Development` : label} side="right" disabled={!collapsed}>
+        <Tooltip key={id} label={note ? `${label} (In Development)` : label} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}

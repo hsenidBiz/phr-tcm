@@ -109,6 +109,9 @@ export {
   // unattended run. One glyph per direction, named for the result.
   ChevronRight as IconShowSteps,
   ChevronDown as IconHideSteps,
+  // The same pair on an Auto Run case card: its script, steps and files.
+  ChevronRight as IconShowDetails,
+  ChevronDown as IconHideDetails,
   // Returning to the case running now after scrolling the list away.
   LocateFixed as IconFollowRun,
   // The mark beside a step the run has already carried out.
