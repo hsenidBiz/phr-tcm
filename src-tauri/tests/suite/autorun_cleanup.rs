@@ -348,6 +348,59 @@ fn only_the_fixture_runner_records_and_only_clean_up_sets_a_status() {
     assert_eq!(statuses, vec!["autorun/cleanup.rs"]);
 }
 
+/// Outside Clean up, the only thing that may mark a test-made draft
+/// deleted is a successful prove of a delete template: `proof_deleted` is
+/// called from the prove handler in `ai_bridge.rs`
+/// (`run_api_template_request`) and from nowhere else but `cleanup.rs`
+/// itself - a crate-wide scan naming the function each call sits in.
+#[test]
+fn only_a_successful_prove_or_clean_up_calls_proof_deleted() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut callers = Vec::new();
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let text = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
+                let name = p.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+                let mut current_fn = String::new();
+                for line in text.lines() {
+                    let t = line.trim_start();
+                    if t.starts_with("//") {
+                        continue;
+                    }
+                    // The nearest `fn` above a call is the function it is in.
+                    if let Some(i) = t.find("fn ") {
+                        let head = &t[..i];
+                        if head.split_whitespace().all(|w| {
+                            matches!(w, "pub" | "pub(crate)" | "pub(super)" | "async" | "const" | "unsafe")
+                        }) {
+                            current_fn = t[i + 3..]
+                                .split(|c: char| c == '(' || c == '<')
+                                .next()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
+                        }
+                    }
+                    if line.contains("proof_deleted(") && !line.contains("fn proof_deleted(") {
+                        callers.push(format!("{name}::{current_fn}"));
+                    }
+                }
+            }
+        }
+    }
+    callers.sort();
+    callers.dedup();
+    let prove = "ai_bridge.rs::run_api_template_request".to_string();
+    let stray: Vec<_> = callers.iter().filter(|c| **c != prove && !c.starts_with("autorun/cleanup.rs::")).collect();
+    assert!(stray.is_empty(), "proof_deleted called from {stray:?}");
+    assert!(callers.contains(&prove), "the prove handler no longer marks what it deleted: {callers:?}");
+}
+
 /// The same rule at cleanup, for a file saved before it: preflight refuses
 /// it in Cleanup mode, the preview does not offer it, and nothing is sent.
 #[tokio::test]
