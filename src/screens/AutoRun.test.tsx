@@ -1323,6 +1323,8 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   expect(await screen.findByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
   const summary = within(setupPanel()).getByRole("list", { name: "Setup summary" });
   expect(await within(summary).findByText("https://qa.example.com/")).toBeInTheDocument();
+  // A value cut short with an ellipsis can still be read in full on hover.
+  expect(within(summary).getByText("https://qa.example.com/")).toHaveAttribute("title", "https://qa.example.com/");
   expect(within(summary).getByText("Built-in")).toBeInTheDocument();
   expect(within(summary).getByText("1 account on this machine")).toBeInTheDocument();
   expect(await within(summary).findByText("QA HR")).toBeInTheDocument();

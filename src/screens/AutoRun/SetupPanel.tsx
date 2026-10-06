@@ -178,19 +178,24 @@ export function useAutoRunSetup({
 
 export type AutoRunSetup = ReturnType<typeof useAutoRunSetup>;
 
-/** One line of the full Setup rows: what it is, where it stands, its
- * buttons. A labelled group, so a screen reader hears the row's name with
- * its state and its buttons. */
+/** One of the full Setup rows: what it is and its buttons on one line,
+ * then where it stands, at the panel's full width below them. The panel is
+ * a narrow column, so a value never shares its line with the buttons: an
+ * address or a list of words gets the whole width to wrap in. A labelled
+ * group, so a screen reader hears the row's name with its state and its
+ * buttons. */
 function SetupRow({ label, state, children }: { label: string; state: ReactNode; children: ReactNode }) {
   return (
     <div
       role="group"
       aria-label={label}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
+      className="space-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
     >
-      <span className="w-24 shrink-0 text-xs font-medium text-muted">{label}</span>
-      <span className="min-w-0 flex-1 text-sm text-text">{state}</span>
-      {children}
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 text-xs font-medium text-muted">{label}</span>
+        <span className="flex shrink-0 flex-wrap justify-end gap-2">{children}</span>
+      </div>
+      <div className="break-words text-sm text-text">{state}</div>
     </div>
   );
 }
