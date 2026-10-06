@@ -74,6 +74,7 @@ mod autorun_runner;
 mod autorun_setup;
 mod autorun_signin;
 mod autorun_store;
+mod autorun_tables;
 mod autorun_transient;
 mod autorun_when_visible;
 mod backup;

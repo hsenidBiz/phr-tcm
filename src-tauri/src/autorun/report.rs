@@ -129,6 +129,24 @@ pub fn action_words(action: &Action) -> String {
             };
             format!("expect a dialog{said}{then}")
         }
+        Action::ExpectRow { table, cells, .. } => {
+            format!("expect a row in {} with {}", table.describe(), crate::browser::table::cells_words(&cells.0))
+        }
+        Action::ExpectNoRow { table, cells, .. } => {
+            format!("expect no row in {} with {}", table.describe(), crate::browser::table::cells_words(&cells.0))
+        }
+        Action::ExpectSorted { table, column, order, .. } => {
+            format!("expect {} sorted by {}, {}", table.describe(), column.trim(), order.word())
+        }
+        Action::ExpectRowCount { table, equals, at_least, at_most, .. } => {
+            let n = match (equals, at_least, at_most) {
+                (Some(n), _, _) => n.to_string(),
+                (None, Some(n), _) => format!("at least {n}"),
+                (None, None, Some(n)) => format!("at most {n}"),
+                _ => "some".to_string(),
+            };
+            format!("expect {} to have {n} rows", table.describe())
+        }
         Action::Drag { from, to, position, .. } => format!(
             "drag {} {} {}",
             from.describe(),

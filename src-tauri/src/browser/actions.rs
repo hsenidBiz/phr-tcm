@@ -6,6 +6,7 @@
 //! rather than guessing.
 
 use super::dialogs;
+use super::table;
 use super::drag;
 use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
@@ -247,6 +248,53 @@ pub enum Action {
         prompt_text: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
+    },
+    /// Some row of the table or grid `table` has every one of `cells` (by
+    /// column header): each text in its cell, ignoring case - or equal to
+    /// it with `exact` (see `table`). Retried like `expect_text`.
+    ExpectRow {
+        table: Target,
+        #[specta(type = BTreeMap<String, String>)]
+        cells: table::Cells,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exact: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// No row of `table` has every one of `cells`.
+    ExpectNoRow {
+        table: Target,
+        #[specta(type = BTreeMap<String, String>)]
+        cells: table::Cells,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exact: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The values of `column` in `table` are in `order`, read as text
+    /// (when `as` is left out), numbers or dates. Blank cells are passed
+    /// over.
+    ExpectSorted {
+        table: Target,
+        column: String,
+        order: table::SortOrder,
+        #[serde(rename = "as", default, skip_serializing_if = "Option::is_none")]
+        sort_as: Option<table::SortAs>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// `table` has `equals` rows, or `at_least`, or `at_most` - exactly
+    /// one of the three.
+    ExpectRowCount {
+        table: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_least: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_most: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
     },
 }
 
@@ -857,6 +905,39 @@ impl Action {
             }
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
+            Action::ExpectRow { table, cells, exact, .. } | Action::ExpectNoRow { table, cells, exact, .. } => {
+                let kind = self.kind();
+                if cells.0.is_empty() {
+                    return Err(format!("{kind} needs at least one cell"));
+                }
+                if cells.0.iter().any(|(c, _)| c.trim().is_empty()) {
+                    return Err(format!("{kind} has a cell with an empty column name"));
+                }
+                if let Some((c, _)) = cells.0.iter().find(|(_, t)| t.trim().is_empty() && !exact) {
+                    return Err(format!(
+                        "{kind}: an empty text for \"{}\" holds for any cell - give the text, or set exact for an empty cell",
+                        c.trim()
+                    ));
+                }
+                table.validate()
+            }
+            Action::ExpectSorted { table, column, sort_as, .. } => {
+                if column.trim().is_empty() {
+                    return Err("expect_sorted needs a column".to_string());
+                }
+                if let Some(table::SortAs::Format { date }) = sort_as {
+                    if !table::is_date_format(date) {
+                        return Err(format!(
+                            "expect_sorted: \"{date}\" is not a date format - use letters such as dd/MM/yyyy, MM/dd/yyyy, yyyy-MM-dd or d MMM yyyy"
+                        ));
+                    }
+                }
+                table.validate()
+            }
+            Action::ExpectRowCount { table, equals, at_least, at_most, .. } => {
+                table::row_count(*equals, *at_least, *at_most)?;
+                table.validate()
+            }
             Action::ExpectDialog { text, contains, answer, prompt_text, within_ms } => {
                 if text.is_some() && contains.is_some() {
                     return Err(dialogs::TEXT_OR_CONTAINS.to_string());
@@ -990,6 +1071,10 @@ impl Action {
                 | Action::ExpectTab { .. }
                 | Action::ExpectTabClosed { .. }
                 | Action::ExpectDialog { .. }
+                | Action::ExpectRow { .. }
+                | Action::ExpectNoRow { .. }
+                | Action::ExpectSorted { .. }
+                | Action::ExpectRowCount { .. }
         )
     }
 }
@@ -1287,6 +1372,23 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
         Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,
+        Action::ExpectRow { table, cells, exact, timeout_ms } => {
+            let check = table::TableCheck::Row { cells: &cells.0, exact: *exact };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectNoRow { table, cells, exact, timeout_ms } => {
+            let check = table::TableCheck::NoRow { cells: &cells.0, exact: *exact };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectSorted { table, column, order, sort_as, timeout_ms } => {
+            let text = table::SortAs::Kind(table::SortKind::Text);
+            let check = table::TableCheck::Sorted { column, order: *order, sort_as: sort_as.as_ref().unwrap_or(&text) };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
+            Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,
+            Err(why) => ActionOutcome::failed(why),
+        },
         // Run on its own (a try, a recipe), it arms itself: it can only
         // catch a dialog that opens from now on.
         Action::ExpectDialog { .. } => {

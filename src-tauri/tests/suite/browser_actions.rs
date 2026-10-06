@@ -650,6 +650,10 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
         Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
         Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -670,6 +674,10 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_tab"
                 | "expect_tab_closed"
                 | "expect_dialog"
+                | "expect_row"
+                | "expect_no_row"
+                | "expect_sorted"
+                | "expect_row_count"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {

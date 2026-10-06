@@ -222,6 +222,19 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     if whole.starts_with("the dialog said \"") {
         return ErrorClass::TextMismatch;
     }
+    // The table checks' own sentences (`browser::table`).
+    if whole.starts_with("the table has no column \"") {
+        return ErrorClass::NotFound;
+    }
+    if whole.starts_with("no row has ")
+        || whole.starts_with("a row has ")
+        || whole.contains(" order - row ")
+    {
+        return ErrorClass::TextMismatch;
+    }
+    if whole.starts_with("the table has ") && whole.contains(" rows, not ") {
+        return ErrorClass::CountMismatch;
+    }
     if whole.starts_with(crate::browser::drag::DID_NOT_FINISH) {
         return ErrorClass::TimedOut;
     }
@@ -392,6 +405,10 @@ pub fn action_target(action: &Action) -> Option<String> {
         }),
         Action::PressKey { key, .. } => Some(format!("the {} key", key.trim())),
         Action::ExpectDialog { .. } => Some("a dialog".to_string()),
+        Action::ExpectRow { table, .. }
+        | Action::ExpectNoRow { table, .. }
+        | Action::ExpectSorted { table, .. }
+        | Action::ExpectRowCount { table, .. } => Some(table.describe()),
         // What is picked up: a drag that cannot start is about it.
         Action::Drag { from, .. } => Some(from.describe()),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),

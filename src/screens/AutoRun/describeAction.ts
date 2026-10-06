@@ -297,6 +297,14 @@ function urlPart(contains: string): Sentence {
   return shown ? [words(`Check the address contains "${shown}"`)] : [words("Check the address has the expected query")];
 }
 
+/** A row's wanted cells: `Status "Active" and Name "Ann"`. */
+function cellWords(cells: unknown): string {
+  if (!isRecord(cells)) throw new Unreadable();
+  const said = Object.entries(cells).map(([column, text]) => `${column.trim()} "${str(text)}"`);
+  if (said.length === 0) throw new Unreadable();
+  return said.length === 1 ? said[0] : `${said.slice(0, -1).join(", ")} and ${said[said.length - 1]}`;
+}
+
 /** One action as a sentence. A `when_visible` is its heading only ("If ...
  * appears within 2 s:"); the actions under it are the caller's to list.
  * Total: anything that is not an action this app knows, in the shape it
@@ -401,6 +409,26 @@ function describeKnown(a: Action): Sentence {
       else if (answer !== "accept") throw new Unreadable();
       else then = promptText !== undefined ? `, type "${promptText}" and press OK` : " and press OK";
       return [words(`Expect a dialog${said}${then}${upTo(a.within_ms)}`)];
+    }
+    case "expect_row":
+    case "expect_no_row": {
+      const which = a.kind === "expect_row" ? "a row" : "no row";
+      return [words("Check "), ...describeTarget(a.table), words(` has ${which} with ${cellWords(a.cells)}${upTo(a.timeout_ms)}`)];
+    }
+    case "expect_sorted": {
+      const order = str(a.order);
+      if (order !== "ascending" && order !== "descending") throw new Unreadable();
+      return [words("Check "), ...describeTarget(a.table), words(` is sorted by ${str(a.column).trim()}, ${order}${upTo(a.timeout_ms)}`)];
+    }
+    case "expect_row_count": {
+      const given = [
+        ["", optNum(a.equals)],
+        ["at least ", optNum(a.at_least)],
+        ["at most ", optNum(a.at_most)],
+      ].filter(([, n]) => n !== undefined) as [string, number][];
+      if (given.length !== 1) throw new Unreadable();
+      const [how, n] = given[0];
+      return [words("Check "), ...describeTarget(a.table), words(` has ${how}${n} ${n === 1 ? "row" : "rows"}${upTo(a.timeout_ms)}`)];
     }
     case "drag": {
       const position = optStr(a.position) ?? "onto";

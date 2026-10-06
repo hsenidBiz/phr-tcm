@@ -2264,6 +2264,56 @@ document.getElementById('loads').textContent = 'load ' + n;
     port
 }
 
+/// The table checks read a real HTML table (its `thead`, not its `tfoot`)
+/// and a real div-based ARIA grid that fills itself half a second after the
+/// page loads - the first check on it has to wait.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn table_checks_read_a_real_table_and_a_loading_grid() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-table.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let html = json!({ "css": "#people-table" });
+    let grid = json!({ "role": "grid", "name": "Staff" });
+
+    // The grid first, while it is still empty: the check waits for it.
+    let out = run(&mut live, json!({ "kind": "expect_row", "table": grid, "cells": { "Name": "eli", "Status": "Active" } })).await;
+    must(out.clone());
+    assert_eq!(out.detail, "row 2 has Name \"eli\", Status \"Active\"");
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": grid, "equals": 3 })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": grid, "column": "Joined", "order": "descending", "as": "date" })).await);
+    must(run(&mut live, json!({ "kind": "expect_no_row", "table": grid, "cells": { "Name": "Ghost" } })).await);
+    let wrong = run_with(
+        &mut live,
+        json!({ "kind": "expect_sorted", "table": grid, "column": "Name", "order": "descending", "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert_eq!(wrong.detail, "Name is not in descending order - row 1 \"Dee Fox\" comes before row 2 \"Eli Gray\"");
+
+    must(run(&mut live, json!({ "kind": "expect_row", "table": html, "cells": { "name": "Ann Lee", "Status": "active" }, "exact": true })).await);
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": html, "equals": 3 })).await);
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": html, "at_least": 2 })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": html, "column": "Name", "order": "ascending" })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": html, "column": "Joined", "order": "descending", "as": "date" })).await);
+    let salary = run_with(
+        &mut live,
+        json!({ "kind": "expect_sorted", "table": html, "column": "Salary", "order": "descending", "as": "number", "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert!(salary.ok, "1,200 then 950 then -5 is descending, and the tfoot total is not a row: {}", salary.detail);
+    let wrong = run_with(
+        &mut live,
+        json!({ "kind": "expect_row_count", "table": html, "at_most": 2, "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert_eq!(wrong.detail, "the table has 3 rows, not at most 2");
+    let unknown = run_with(&mut live, json!({ "kind": "expect_row", "table": html, "cells": { "Grade": "A" }, "timeout_ms": 300 }), &timing()).await;
+    assert_eq!(unknown.detail, "the table has no column \"Grade\" - its columns are \"Name\", \"Status\", \"Joined\", \"Salary\"");
+}
+
 /// A `confirm` the page opens is dismissed by the step's `expect_dialog`,
 /// which then checks its words; the page writes what its `confirm` was
 /// answered. A dialog nobody expected is accepted, and said on the step.

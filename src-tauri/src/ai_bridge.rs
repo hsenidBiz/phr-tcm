@@ -1712,6 +1712,10 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ReturnToArea { area: None } => String::new(),
         Action::ReturnToArea { area: Some(area) } => area.trim().to_string(),
         Action::PressKey { key, .. } => key.trim().to_string(),
+        Action::ExpectRow { table, .. }
+        | Action::ExpectNoRow { table, .. }
+        | Action::ExpectSorted { table, .. }
+        | Action::ExpectRowCount { table, .. } => table.describe(),
         // The words it checks for are the script's, never a secret.
         Action::ExpectDialog { text, contains, .. } => text.clone().or_else(|| contains.clone()).unwrap_or_default(),
         Action::Drag { from, to, position, .. } => {

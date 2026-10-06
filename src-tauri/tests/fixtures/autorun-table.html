@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run table fixture</title>
+<!--
+  A real HTML table and a div-based ARIA grid holding the same people, so
+  the table checks read both kinds. The grid fills its rows half a second
+  after the page loads, as a grid fetching its data does, so a check has to
+  wait for it.
+-->
+<table id="people-table" aria-label="People">
+  <thead><tr><th>Name</th><th>Status</th><th>Joined</th><th>Salary</th></tr></thead>
+  <tbody>
+    <tr><td>Ann  Lee</td><td>Active</td><td>2026-01-05</td><td>1,200</td></tr>
+    <tr><td>Ben Ray</td><td>Inactive</td><td>2025-11-30</td><td>950</td></tr>
+    <tr><td>Cy Wu</td><td>Active</td><td></td><td>-5</td></tr>
+  </tbody>
+  <tfoot><tr><td>Total</td><td></td><td></td><td>2,145</td></tr></tfoot>
+</table>
+
+<div id="people-grid" role="grid" aria-label="Staff">
+  <div role="row">
+    <div role="columnheader">Name</div><div role="columnheader">Status</div><div role="columnheader">Joined</div>
+  </div>
+  <div id="grid-body"></div>
+</div>
+<script>
+  setTimeout(() => {
+    const rows = [['Dee Fox', 'Active', '5 Mar 2026'], ['Eli Gray', 'Active', '12 Feb 2026'], ['Fay Hall', 'Inactive', '1 Jan 2026']];
+    const body = document.getElementById('grid-body');
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'row');
+      for (const t of r) {
+        const c = document.createElement('div');
+        c.setAttribute('role', 'gridcell');
+        c.textContent = t;
+        row.appendChild(c);
+      }
+      body.appendChild(row);
+    }
+    const hidden = document.createElement('div');
+    hidden.setAttribute('role', 'row');
+    hidden.setAttribute('aria-hidden', 'true');
+    hidden.innerHTML = '<div role="gridcell">Ghost</div><div role="gridcell">Active</div><div role="gridcell">1 Jan 2020</div>';
+    body.appendChild(hidden);
+  }, 500);
+</script>

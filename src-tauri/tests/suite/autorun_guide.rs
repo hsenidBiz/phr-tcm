@@ -57,6 +57,10 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
         Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
         Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
     ];
     let emitted: Vec<String> = samples
         .iter()

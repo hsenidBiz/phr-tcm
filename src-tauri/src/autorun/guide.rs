@@ -40,6 +40,10 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_tab_closed",
     "drag",
     "expect_dialog",
+    "expect_row",
+    "expect_no_row",
+    "expect_sorted",
+    "expect_row_count",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -117,6 +121,10 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
 - `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End, with any of Ctrl, Shift, Alt and Meta held for it (`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`); `times` (1 to 50, default 1) presses it that many times
 - `{ "kind": "expect_dialog", "contains": "delete", "answer": "dismiss" }` - the next browser dialog (alert, confirm, prompt or the leave-page prompt) in any tab: pressed OK (`accept`) or Cancel (`dismiss`), then its message checked against `text` (equal) or `contains` (ignoring case); `prompt_text` and `within_ms` (default 10000) are optional (see "Browser dialogs")
+- `{ "kind": "expect_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Status": "Active", "Name": "Ann" } }` - some row of the table or grid has every one of those cells, by column header (see "Tables and grids")
+- `{ "kind": "expect_no_row", "table": ..., "cells": { "Name": "Ann" } }` - no row has them
+- `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
+- `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
@@ -458,6 +466,38 @@ try it waits at most 30 seconds, whatever `within_ms` says.
 
 Watched runs list no downloads, because their download folder is emptied
 when the browser closes; only an unattended run keeps its files.
+
+## Tables and grids
+
+Four checks read a table or grid the way a person does - by its column
+headers - instead of by cell positions or CSS:
+
+    { "kind": "expect_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Status": "Active", "Name": "Ann" } },
+    { "kind": "expect_no_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Name": "Ben" }, "exact": true },
+    { "kind": "expect_sorted", "table": { "role": "grid", "name": "Employees" }, "column": "Joined", "order": "descending", "as": "date" },
+    { "kind": "expect_row_count", "table": { "role": "grid", "name": "Employees" }, "equals": 5 }
+
+- `table` is an ordinary locator (frame chains included) that finds a
+  `<table>`, or an element with `role` `grid`, `treegrid` or `table`.
+  Anything else fails with "... is not a table or grid".
+- Columns are found by their header text, trimmed and ignoring case. An
+  unknown column fails and lists the columns the table has.
+- `cells` matches each text inside its cell, ignoring case; with
+  `"exact": true` the cell must equal it. `expect_row` needs one row with
+  every cell; `expect_no_row` fails on the first row that has them all.
+- `expect_sorted` passes over blank cells. `as` is `"text"` (the default,
+  ignoring case), `"number"` (`1,234`, `-5`, `3.5`) or `"date"`
+  (`yyyy-MM-dd`, `dd/MM/yyyy`, `MM/dd/yyyy`, `d MMM yyyy`). When the dates
+  could be day-first or month-first and the two readings order them
+  differently, give the format: `"as": { "date": "dd/MM/yyyy" }`.
+- `expect_row_count` takes exactly one of `equals`, `at_least` and
+  `at_most`.
+
+Each check reads the table again until it holds or its `timeout_ms` (the
+step's check timeout) runs out, so a grid still loading is waited for.
+Only the rows the page has drawn are read: a grid that shows rows page by
+page, or loads them as it scrolls, is checked as it is shown. Filter it or
+page to the rows the case is about first.
 
 ## Browser dialogs
 

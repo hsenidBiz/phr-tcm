@@ -74,6 +74,25 @@ describe("a sentence for every action kind", () => {
     [{ kind: "return_to_area", area: "  " }, "Return to the case's area"],
     [{ kind: "press_key", key: "Tab" }, "Press Tab"],
     [{ kind: "press_key", key: "Ctrl+ArrowUp" }, "Press Ctrl+ArrowUp"],
+    [
+      { kind: "expect_row", table: { role: "grid", name: "Employees" }, cells: { Status: "Active", Name: "Ann" } },
+      'Check the "Employees" table has a row with Status "Active" and Name "Ann"',
+    ],
+    [
+      { kind: "expect_no_row", table: { role: "grid", name: "Employees" }, cells: { Name: "Ben" }, exact: true },
+      'Check the "Employees" table has no row with Name "Ben"',
+    ],
+    [
+      { kind: "expect_row", table: { css: "#people" }, cells: { A: "1", B: "2", C: "3" }, timeout_ms: 5000 },
+      'Check the element #people has a row with A "1", B "2" and C "3" (up to 5 s)',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
+      'Check the "Employees" table is sorted by Joined, descending',
+    ],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, equals: 5 }, 'Check the "Employees" table has 5 rows'],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, at_least: 1 }, 'Check the "Employees" table has at least 1 row'],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, at_most: 3 }, 'Check the "Employees" table has at most 3 rows'],
     [{ kind: "expect_dialog", text: "Delete this cycle?", answer: "dismiss" }, 'Expect a dialog saying "Delete this cycle?" and press Cancel'],
     [{ kind: "expect_dialog", contains: "saved", answer: "accept" }, 'Expect a dialog containing "saved" and press OK'],
     [{ kind: "expect_dialog", answer: "accept" }, "Expect a dialog and press OK"],
@@ -146,7 +165,7 @@ describe("a sentence for every action kind", () => {
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
-        "expect_tab_closed", "drag", "expect_dialog",
+        "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
       ].sort(),
     );
   });
@@ -278,6 +297,9 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a drag with no to", { kind: "drag", from: "#a" }],
     ["a dialog answer it does not know", { kind: "expect_dialog", answer: "maybe" }],
     ["a dialog with no answer", { kind: "expect_dialog", text: "x" }],
+    ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
+    ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
+    ["a sort order it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "up" }],
   ])("%s", (_, action) => {
     expect(odd(action)).toBe(UNREADABLE);
   });
