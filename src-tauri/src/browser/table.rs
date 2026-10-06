@@ -26,6 +26,7 @@
 
 use super::actions::{harness, harness_timeout, ActionOutcome};
 use super::cdp::{CdpError, Driver};
+use super::dialogs::cut;
 use super::expect::NOT_ON_PAGE;
 use super::input::{matched_many, STILL_LOOKING};
 use super::locator::{resolve_explained, Target};
@@ -108,7 +109,7 @@ impl TableRead {
             let list = if self.headers.is_empty() {
                 "none - it has no header row".to_string()
             } else {
-                self.headers.iter().map(|h| format!("\"{h}\"")).collect::<Vec<_>>().join(", ")
+                self.headers.iter().map(|h| format!("\"{}\"", cut(h))).collect::<Vec<_>>().join(", ")
             };
             format!("the table has no column \"{}\" - its columns are {list}", name.trim())
         })
@@ -246,11 +247,28 @@ enum Key {
 /// A number as tables write it: a leading `-`, digits with `,` between
 /// thousands, an optional `.` and decimals.
 pub fn parse_number(value: &str) -> Option<f64> {
-    let v = value.trim();
-    let (neg, body) = match v.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, v),
-    };
+    let mut v = value.trim();
+    // One trailing percent sign: `40%` is 40.
+    if let Some(rest) = v.strip_suffix('%') {
+        v = rest.trim_end();
+    }
+    // One leading currency symbol or code, before or after a leading `-`,
+    // with or without a space: `-$5`, `$-5`, `LKR 1,250.50`, `Rs. 900`.
+    let mut neg = false;
+    if let Some(rest) = v.strip_prefix('-') {
+        neg = true;
+        v = rest.trim_start();
+    }
+    if let Some(rest) = strip_currency(v) {
+        v = rest.trim_start();
+        if !neg {
+            if let Some(rest) = v.strip_prefix('-') {
+                neg = true;
+                v = rest.trim_start();
+            }
+        }
+    }
+    let body = v;
     let (int, frac) = match body.split_once('.') {
         Some((i, f)) => (i, Some(f)),
         None => (body, None),
@@ -276,6 +294,28 @@ pub fn parse_number(value: &str) -> Option<f64> {
         None => plain.parse().ok()?,
     };
     Some(if neg { -n } else { n })
+}
+
+/// `v` without the currency symbol or code it starts with: `$`, the pound
+/// and euro signs as written, and `LKR`, `Rs.` and `Rs` ignoring case.
+/// `None` when it starts with none - or with letters that only begin a
+/// longer word.
+fn strip_currency(v: &str) -> Option<&str> {
+    for sym in ["$", "\u{a3}", "\u{20ac}"] {
+        if let Some(rest) = v.strip_prefix(sym) {
+            return Some(rest);
+        }
+    }
+    for code in ["lkr", "rs.", "rs"] {
+        let head: String = v.chars().take(code.len()).collect();
+        if head.eq_ignore_ascii_case(code) {
+            let rest = &v[head.len()..];
+            if !rest.starts_with(|c: char| c.is_alphabetic()) {
+                return Some(rest);
+            }
+        }
+    }
+    None
 }
 
 const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -397,7 +437,7 @@ fn parse_unslashed(value: &str) -> Option<(i32, u32, u32)> {
 }
 
 fn not_a(value: &str, column: &str, what: &str) -> String {
-    format!("\"{value}\" in {column} is not a {what}")
+    format!("\"{}\" in {column} is not a {what}", cut(value))
 }
 
 /// The dates in a column, ambiguity decided: every slashed date read as
@@ -463,10 +503,12 @@ pub fn check_sorted(column: &str, values: &[String], order: SortOrder, sort_as: 
             let (ra, a) = kept[i];
             let (rb, b) = kept[i + 1];
             return Err(format!(
-                "{column} is not in {} order - row {} \"{a}\" comes before row {} \"{b}\"",
+                "{column} is not in {} order - row {} \"{}\" comes before row {} \"{}\"",
                 order.word(),
                 ra + 1,
-                rb + 1
+                cut(a),
+                rb + 1,
+                cut(b)
             ));
         }
     }
@@ -532,12 +574,28 @@ impl TableCheck<'_> {
     }
 }
 
-/// Where a look ended.
+/// Where a look ended, with the table it read when it read one.
 enum Look {
-    Holds(String),
+    Holds { said: String, read: TableRead },
     /// Not yet, and what to say if it never does: a sentence of the
     /// table's own, or what stood between the locator and the table.
-    NotYet { said: String, by_locator: bool },
+    NotYet { said: String, by_locator: bool, read: Option<TableRead> },
+}
+
+/// How long a table must stay the same before a check that a row is
+/// ABSENT may pass (`TableCheck::needs_settling`).
+pub const SETTLE_MS: u64 = 750;
+/// The least time between two reads while a table settles.
+pub const SETTLE_POLL_MS: u64 = 250;
+
+impl TableCheck<'_> {
+    /// Does this check pass on a table with too FEW rows? `expect_no_row`,
+    /// a count of 0 and `at_most` do - so a grid whose rows have not
+    /// arrived yet would pass them at once. They pass only once the table
+    /// has held still for `SETTLE_MS`; the others pass as soon as they hold.
+    pub fn needs_settling(&self) -> bool {
+        matches!(self, TableCheck::NoRow { .. } | TableCheck::Count(RowCount::Equals(0) | RowCount::AtMost(_)))
+    }
 }
 
 async fn look<D: Driver>(d: &mut D, target: &Target, check: &TableCheck<'_>) -> Result<Look, CdpError> {
@@ -545,24 +603,26 @@ async fn look<D: Driver>(d: &mut D, target: &Target, check: &TableCheck<'_>) -> 
     let handle = match found.handles.as_slice() {
         [] => {
             let why = found.unreachable_frame.unwrap_or_else(|| NOT_ON_PAGE.to_string());
-            return Ok(Look::NotYet { said: why, by_locator: true });
+            return Ok(Look::NotYet { said: why, by_locator: true, read: None });
         }
         [one] => one.clone(),
         many if target.is_legacy() => many[0].clone(),
-        many => return Ok(Look::NotYet { said: matched_many(many.len()), by_locator: true }),
+        many => return Ok(Look::NotYet { said: matched_many(many.len()), by_locator: true, read: None }),
     };
     let v = page::call_value(d, &handle, READ_TABLE_JS, &[]).await?;
     let Some(read) = TableRead::from_value(&v) else {
-        return Ok(Look::NotYet { said: not_a_table(&target.describe()), by_locator: false });
+        return Ok(Look::NotYet { said: not_a_table(&target.describe()), by_locator: false, read: None });
     };
     Ok(match check.judge(&read) {
-        Ok(said) => Look::Holds(said),
-        Err(said) => Look::NotYet { said, by_locator: false },
+        Ok(said) => Look::Holds { said, read },
+        Err(said) => Look::NotYet { said, by_locator: false, read: Some(read) },
     })
 }
 
 /// Look, and look again (the table re-read each time) until `check` holds
-/// or `timeout_ms` runs out. The deadline is cleared on every way out.
+/// - and, for a check that a row is absent, until the table has also held
+/// still for `SETTLE_MS` - or `timeout_ms` runs out. Then the last read is
+/// judged. The deadline is cleared on every way out.
 pub async fn expect_table<D: Driver>(
     d: &mut D,
     target: &Target,
@@ -587,24 +647,58 @@ async fn keep_looking<D: Driver>(
 ) -> ActionOutcome {
     let mut looked = false;
     let mut last = format!("waited {timeout_ms}ms: {} {STILL_LOOKING}", target.describe());
+    let settling = check.needs_settling();
+    // The table as last read, and since when it has read the same.
+    let mut same: Option<(TableRead, Instant)> = None;
+    // The last read holds, but has not held still long enough yet.
+    let mut holding: Option<String> = None;
+    let mut keep = |read: Option<TableRead>| -> Duration {
+        let Some(read) = read else {
+            same = None;
+            return Duration::ZERO;
+        };
+        let since = match &same {
+            Some((before, t)) if *before == read => *t,
+            _ => Instant::now(),
+        };
+        same = Some((read, since));
+        since.elapsed()
+    };
     loop {
         page::release(d).await;
         match look(d, target, check).await {
-            Ok(Look::Holds(said)) => return ActionOutcome::passed(said),
-            Ok(Look::NotYet { said, by_locator }) => {
+            Ok(Look::Holds { said, read }) => {
                 looked = true;
+                let still = keep(Some(read));
+                if !settling || still >= Duration::from_millis(SETTLE_MS) {
+                    return ActionOutcome::passed(said);
+                }
+                holding = Some(said);
+            }
+            Ok(Look::NotYet { said, by_locator, read }) => {
+                looked = true;
+                keep(read);
+                holding = None;
                 last = if by_locator { format!("waited {timeout_ms}ms: {} {said}", target.describe()) } else { said };
             }
             Err(e) if e.is_transient() => {
                 looked = true;
+                keep(None);
+                holding = None;
                 last = format!("waited {timeout_ms}ms: {} {e}", target.describe());
             }
             Err(CdpError::Timeout { .. }) => {}
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
+            // Still changing when time ran out: the last read decides.
+            if let Some(said) = holding {
+                return ActionOutcome::passed(said);
+            }
             return if looked { ActionOutcome::failed(last) } else { harness_timeout(timeout_ms, &target.describe()) };
         }
-        d.idle(Duration::from_millis(poll_ms)).await;
+        let poll = if settling { poll_ms.max(SETTLE_POLL_MS) } else { poll_ms };
+        let left = deadline.saturating_duration_since(Instant::now());
+        d.idle(Duration::from_millis(poll).min(left)).await;
     }
 }

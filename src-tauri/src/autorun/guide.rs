@@ -486,18 +486,35 @@ headers - instead of by cell positions or CSS:
   `"exact": true` the cell must equal it. `expect_row` needs one row with
   every cell; `expect_no_row` fails on the first row that has them all.
 - `expect_sorted` passes over blank cells. `as` is `"text"` (the default,
-  ignoring case), `"number"` (`1,234`, `-5`, `3.5`) or `"date"`
-  (`yyyy-MM-dd`, `dd/MM/yyyy`, `MM/dd/yyyy`, `d MMM yyyy`). When the dates
-  could be day-first or month-first and the two readings order them
-  differently, give the format: `"as": { "date": "dd/MM/yyyy" }`.
+  ignoring case), `"number"` or `"date"` (`yyyy-MM-dd`, `dd/MM/yyyy`,
+  `MM/dd/yyyy`, `d MMM yyyy`). When the dates could be day-first or
+  month-first and the two readings order them differently, give the
+  format: `"as": { "date": "dd/MM/yyyy" }`.
+- A number may have `,` between thousands, decimals after a `.`, a
+  leading `-`, one `%` at the end, and one currency sign or code at the
+  start - `$`, the pound or euro sign, `LKR`, `Rs` or `Rs.` - before or
+  after the `-`, with or without a space: `1,234`, `-5`, `40%`,
+  `LKR 1,250.50`, `-$5`, `Rs. 900`. A column may mix them. `(5)` is not
+  read as a negative number.
+- Text is sorted by lowercased character order, which can differ from
+  the page's own order for accented letters.
 - `expect_row_count` takes exactly one of `equals`, `at_least` and
   `at_most`.
 
 Each check reads the table again until it holds or its `timeout_ms` (the
 step's check timeout) runs out, so a grid still loading is waited for.
+A check that something is absent - `expect_no_row`, `expect_row_count`
+with `"equals": 0` or `at_most` - passes only once the table has stayed
+the same for 750 ms, because a grid whose rows have not arrived yet looks
+empty. Where the case allows it, put a positive check first (an
+`expect_row` for a row that must be there), so the grid has loaded before
+the negative check reads it.
+
 Only the rows the page has drawn are read: a grid that shows rows page by
 page, or loads them as it scrolls, is checked as it is shown. Filter it or
-page to the rows the case is about first.
+page to the rows the case is about first. Rows in a table's footer
+(`tfoot`) are not read. Column spans are not followed: cells are matched
+to headers by their position in the row.
 
 ## Browser dialogs
 

@@ -134,7 +134,7 @@ fn numbers_read_thousands_separators_negatives_and_decimals() {
     assert_eq!(parse_number("1,234"), Some(1234.0));
     assert_eq!(parse_number("-5"), Some(-5.0));
     assert_eq!(parse_number("12,345,678.50"), Some(12_345_678.5));
-    for bad in ["1,23", "12a", "", "--1", "1.", "$5", "1,2345"] {
+    for bad in ["1,23", "12a", "", "--1", "1.", "1,2345"] {
         assert_eq!(parse_number(bad), None, "{bad}");
     }
     // As text "10" would sort before "9"; as numbers it does not.
@@ -148,6 +148,45 @@ fn numbers_read_thousands_separators_negatives_and_decimals() {
         check_sorted("Amount", &strings(&["10", "", "9"]), SortOrder::Descending, &NUMBER),
         Ok("Amount is in descending order (2 values)".to_string())
     );
+}
+
+#[test]
+fn numbers_read_amounts_and_percentages() {
+    assert_eq!(parse_number("40%"), Some(40.0));
+    assert_eq!(parse_number("12.5 %"), Some(12.5));
+    assert_eq!(parse_number("LKR 1,250.50"), Some(1250.5));
+    assert_eq!(parse_number("lkr1,250"), Some(1250.0));
+    assert_eq!(parse_number("-$5"), Some(-5.0));
+    assert_eq!(parse_number("$-5"), Some(-5.0));
+    assert_eq!(parse_number("- $ 5"), Some(-5.0));
+    assert_eq!(parse_number("Rs. 900"), Some(900.0));
+    assert_eq!(parse_number("rs900"), Some(900.0));
+    assert_eq!(parse_number("\u{a3}3"), Some(3.0));
+    assert_eq!(parse_number("\u{20ac} 1,000.25"), Some(1000.25));
+    for bad in ["(5)", "$$5", "5%%", "Rsx5", "USD 5", "-$-5", "$", "%", "LKR"] {
+        assert_eq!(parse_number(bad), None, "{bad}");
+    }
+    // A column may mix them.
+    let mixed = strings(&["-$5", "40%", "Rs. 99", "LKR 1,250.50"]);
+    assert!(check_sorted("Amount", &mixed, SortOrder::Ascending, &NUMBER).is_ok());
+}
+
+/// Page text in a sentence - a cell, a header - is cut to 200 characters,
+/// as a dialog's message is.
+#[test]
+fn page_text_in_a_sentence_is_cut_to_200_characters() {
+    let long = "z".repeat(300);
+    let cut = "z".repeat(200);
+    assert_eq!(
+        check_sorted("Name", &strings(&[&long, "a"]), SortOrder::Ascending, &TEXT),
+        Err(format!("Name is not in ascending order - row 1 \"{cut}\" comes before row 2 \"a\""))
+    );
+    assert_eq!(
+        check_sorted("Amount", &strings(&[&long]), SortOrder::Ascending, &NUMBER),
+        Err(format!("\"{cut}\" in Amount is not a number"))
+    );
+    let t = table(&[&long, "B"], &[]);
+    assert_eq!(t.column("C"), Err(format!("the table has no column \"C\" - its columns are \"{cut}\", \"B\"")));
 }
 
 #[test]
@@ -347,6 +386,91 @@ async fn a_check_that_never_holds_says_the_last_look() {
     )
     .await;
     assert_eq!(out.detail, "the table has no column \"Joined\" - its columns are \"Name\", \"Status\"");
+}
+
+/// A page whose table reads as `read(ms since the page was built)`.
+fn timed_page(read: fn(u128) -> Value) -> ScriptedDriver {
+    let fake = FakePage::default();
+    let born = std::time::Instant::now();
+    ScriptedDriver::new(move |method, params| {
+        if method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TABLE_JS {
+            return Ok(json!({ "result": { "value": read(born.elapsed().as_millis()) } }));
+        }
+        fake.answer(method, params)
+    })
+}
+
+/// Headers shown, no rows for 500 ms, then Ann's row: the grid was still
+/// loading, so a check that her row is absent must not pass on the empty
+/// reads.
+fn ann_after_500(ms: u128) -> Value {
+    if ms < 500 {
+        json!({ "headers": ["Name", "Status"], "rows": [] })
+    } else {
+        json!({ "headers": ["Name", "Status"], "rows": [["Ann", "Active"]] })
+    }
+}
+
+#[tokio::test]
+async fn a_loading_grid_does_not_pass_a_check_that_a_row_is_absent() {
+    let mut d = timed_page(ann_after_500);
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_no_row", "table": "#people", "cells": { "Name": "Ann" }, "timeout_ms": 2000 })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok, "passed on a grid still loading: {}", out.detail);
+    assert_eq!(out.detail, "a row has Name \"Ann\" (row 1)");
+
+    let mut d = timed_page(ann_after_500);
+    let out = execute_with(&mut d, &action(json!({ "kind": "expect_row_count", "table": "#people", "equals": 0, "timeout_ms": 2000 })), &quick()).await;
+    assert_eq!(out.detail, "the table has 1 rows, not 0");
+    let mut d = timed_page(ann_after_500);
+    let out = execute_with(&mut d, &action(json!({ "kind": "expect_row_count", "table": "#people", "at_most": 0, "timeout_ms": 2000 })), &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+
+    // A positive check still passes as soon as it holds.
+    let mut d = timed_page(ann_after_500);
+    let began = std::time::Instant::now();
+    let out = execute_with(&mut d, &action(json!({ "kind": "expect_row_count", "table": "#people", "at_least": 0, "timeout_ms": 2000 })), &quick()).await;
+    assert!(out.ok && began.elapsed().as_millis() < 400, "{} after {:?}", out.detail, began.elapsed());
+}
+
+#[tokio::test]
+async fn a_table_that_holds_still_passes_a_check_that_a_row_is_absent() {
+    fn empty(_: u128) -> Value {
+        json!({ "headers": ["Name", "Status"], "rows": [] })
+    }
+    for check in [
+        json!({ "kind": "expect_no_row", "table": "#people", "cells": { "Name": "Ann" }, "timeout_ms": 2000 }),
+        json!({ "kind": "expect_row_count", "table": "#people", "equals": 0, "timeout_ms": 2000 }),
+        json!({ "kind": "expect_row_count", "table": "#people", "at_most": 3, "timeout_ms": 2000 }),
+    ] {
+        let mut d = timed_page(empty);
+        let began = std::time::Instant::now();
+        let out = execute_with(&mut d, &action(check.clone()), &quick()).await;
+        let took = began.elapsed().as_millis();
+        assert!(out.ok, "{check}: {}", out.detail);
+        assert!((750..2000).contains(&took), "{check}: passed after {took} ms - it must hold still for 750 ms first");
+    }
+}
+
+/// Still changing when time runs out: the last read is judged.
+#[tokio::test]
+async fn a_table_still_changing_at_the_timeout_is_judged_by_its_last_read() {
+    fn changing(ms: u128) -> Value {
+        json!({ "headers": ["Name", format!("Status {}", ms / 100)], "rows": [] })
+    }
+    let mut d = timed_page(changing);
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_no_row", "table": "#people", "cells": { "Name": "Ann" }, "timeout_ms": 600 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "no row has Name \"Ann\" - the table has 0 rows");
 }
 
 #[tokio::test]
