@@ -732,10 +732,14 @@ works, so the noise is seen without failing every run.
 
 Errors between two steps count against the next step; errors before step
 1 (signing in, going to the module) and the run's own `api_request`
-answers are never counted. `ignore_page_errors` holds up to 10 phrases
-(each 1 to 120 characters): an error whose message, or whose request
-path, contains one of them, ignoring case, is not counted. Use it for
-noise the team already knows about, never for an error the case is about.
+answers are never counted. A page error during a `sign_in` partway
+through a case is not counted either: the sign-in is the run's own.
+`ignore_page_errors` holds up to 10 phrases (each 1 to 120 characters):
+an error whose message, or whose request path, contains one of them,
+ignoring case, is not counted. Ignored errors are left out before
+anything is counted, so `(and <n> more)` and `page errors seen` count
+only what is left. Use it for noise the team already knows about, never
+for an error the case is about.
 
 ## Preconditions
 

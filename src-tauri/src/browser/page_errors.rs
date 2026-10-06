@@ -181,10 +181,20 @@ fn path_of(url: &str) -> String {
     }
 }
 
-/// A message with every address in it cut to its path.
-fn scrubbed(text: &str) -> String {
+/// A message with every address in it cut to its path, and every path cut
+/// before its query: a whole address (`https://host/a?x`), a bare path
+/// (`/api/x?token=abc`), or anything else holding a `/` and a `?`.
+pub fn scrubbed(text: &str) -> String {
     text.split_whitespace()
-        .map(|w| if w.contains("://") { path_of(w) } else { w.to_string() })
+        .map(|w| {
+            if w.contains("://") {
+                path_of(w)
+            } else if w.starts_with('/') || (w.contains('/') && w.contains('?')) {
+                w.split(['?', '#']).next().unwrap_or("").to_string()
+            } else {
+                w.to_string()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }

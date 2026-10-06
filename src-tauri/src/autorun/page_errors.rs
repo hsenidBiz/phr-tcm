@@ -63,37 +63,50 @@ pub fn drop_all<D: Driver>(d: &mut D) {
     }
 }
 
+/// What judging a step's page errors did.
+#[derive(Debug, Default, PartialEq)]
+pub struct Judged {
+    /// How many a `flag` counted (0 for a `fail`, or none).
+    pub seen: u32,
+    /// The outcome a `fail` turned into the step's failure, by index - for
+    /// the caller to picture, as it pictures any failed action.
+    pub failed: Option<usize>,
+}
+
 /// Judge the page errors since the previous step on the step's outcomes,
-/// as `mode` says. Returns how many were counted for a `flag` (0 for a
-/// `fail` or none).
+/// as `mode` says. A step with no outcomes that fails is given one, so the
+/// failure is said.
 pub fn judge_step<D: Driver>(
     d: &mut D,
     mode: Option<PageErrors>,
     ignore: &[String],
-    outcomes: &mut [ActionOutcome],
-) -> u32 {
+    outcomes: &mut Vec<ActionOutcome>,
+) -> Judged {
     let taken = d.page_error_book().map(|b| b.take()).unwrap_or_default();
     let Some(mode) = mode else {
-        return 0;
+        return Judged::default();
     };
     let errors = counted(taken, ignore);
     let Some(said) = summary(&errors) else {
-        return 0;
+        return Judged::default();
     };
     match mode {
         PageErrors::Fail => {
             if let Some(failed) = outcomes.iter_mut().find(|o| !o.ok) {
                 failed.detail.push_str(&format!("{}{said})", crate::browser::page_errors::NOTE));
-            } else if let Some(last) = outcomes.last_mut() {
-                *last = ActionOutcome::failed(said);
+                return Judged::default();
             }
-            0
+            match outcomes.last_mut() {
+                Some(last) => *last = ActionOutcome::failed(said),
+                None => outcomes.push(ActionOutcome::failed(said)),
+            }
+            Judged { seen: 0, failed: Some(outcomes.len() - 1) }
         }
         PageErrors::Flag => {
             if let Some(last) = outcomes.last_mut() {
                 last.detail.push_str(&note(&errors));
             }
-            errors.len() as u32
+            Judged { seen: errors.len() as u32, failed: None }
         }
     }
 }

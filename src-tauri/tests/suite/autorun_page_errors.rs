@@ -244,6 +244,112 @@ async fn messages_and_paths_are_cut_to_200_characters() {
     assert_eq!(request.strip_prefix("a request was answered 500: GET ").unwrap().chars().count(), 200);
 }
 
+// ---- Watched runs -------------------------------------------------------------------------
+
+/// A watched browser goes from case to case: what the page met before case
+/// B's first step is not B's, but what it met between B's steps is.
+#[tokio::test]
+async fn a_watched_case_starts_with_a_clean_slate_and_counts_between_its_steps() {
+    use v2_lib::autorun::runner::supervised_step_begins;
+    let mut d = FakePage::default().driver();
+    let mut tabs_case = Some(1);
+    let feed = |d: &mut ScriptedDriver| {
+        for e in answered("x", "POST", "https://hr.example/api/Save", 500) {
+            d.page_errors.observe(&e);
+        }
+    };
+    let check = |n: i32| step(n, json!([{ "kind": "check_text", "value": "Saved" }]));
+
+    // Case A left a 500 behind; B's first step does not inherit it.
+    feed(&mut d);
+    supervised_step_begins(&mut d, &mut tabs_case, 2, true).await;
+    let (out, _) = run(&mut d, &check(1), Some(PageErrors::Fail), &[]).await;
+    assert!(out[0].ok, "{out:?}");
+
+    // Between B's steps 1 and 2: counted against step 2.
+    feed(&mut d);
+    supervised_step_begins(&mut d, &mut tabs_case, 2, false).await;
+    let (out, _) = run(&mut d, &check(2), Some(PageErrors::Fail), &[]).await;
+    assert_eq!(out[0].detail, "a request was answered 500: POST /api/Save");
+
+    // Another case, even started on a later step, starts clean too.
+    feed(&mut d);
+    supervised_step_begins(&mut d, &mut tabs_case, 3, false).await;
+    let (out, _) = run(&mut d, &check(4), Some(PageErrors::Fail), &[]).await;
+    assert!(out[0].ok, "{out:?}");
+
+    // And running a case's first step again starts it clean as well.
+    feed(&mut d);
+    supervised_step_begins(&mut d, &mut tabs_case, 3, true).await;
+    let (out, _) = run(&mut d, &check(1), Some(PageErrors::Fail), &[]).await;
+    assert!(out[0].ok, "{out:?}");
+}
+
+// ---- The smaller rules ------------------------------------------------------------------------
+
+/// A bare path in a message loses its query, as a whole address does.
+#[test]
+fn a_path_in_a_message_loses_its_query() {
+    use v2_lib::browser::page_errors::scrubbed;
+    assert_eq!(scrubbed("Failed to fetch /api/x?token=abc"), "Failed to fetch /api/x");
+    assert_eq!(scrubbed("see api/x?token=abc#frag"), "see api/x");
+    assert_eq!(scrubbed("at https://hr.example/app.js?v=3"), "at /app.js");
+    assert_eq!(scrubbed("a/b and c?d stay"), "a/b and c?d stay");
+}
+
+#[tokio::test]
+async fn a_path_query_never_reaches_the_sentence() {
+    let mut d = clicking_meets(thrown("TypeError: Failed to fetch /api/x?token=abc"));
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Fail), &[]).await;
+    assert_eq!(out[1].detail, "the page had an error: TypeError: Failed to fetch /api/x");
+}
+
+/// The outcome a page error failed is pictured, as a failed action is.
+#[tokio::test]
+async fn a_step_failed_by_page_errors_is_pictured() {
+    let fake = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(json!({ "data": "/9j/4AAQ" })),
+        _ => fake.answer(method, params),
+    });
+    d.on_call_events.push((CLICK.to_string(), thrown("Error: one").remove(0)));
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Fail), &[]).await;
+    assert!(!out[1].ok);
+    assert!(out[1].screenshot.is_some(), "{out:?}");
+    assert!(out[0].screenshot.is_none());
+}
+
+/// A step with no actions still fails: it is given an outcome to say so.
+#[tokio::test]
+async fn a_step_with_no_actions_still_fails_in_fail_mode() {
+    let mut d = FakePage::default().driver();
+    for e in thrown("Error: lonely") {
+        d.page_errors.observe(&e);
+    }
+    let (out, _) = run(&mut d, &step(1, json!([])), Some(PageErrors::Fail), &[]).await;
+    assert_eq!(out.len(), 1);
+    assert!(!out[0].ok);
+    assert_eq!(out[0].detail, "the page had an error: Error: lonely");
+    // In flag mode there is nothing to list it on, and nothing fails.
+    for e in thrown("Error: lonely") {
+        d.page_errors.observe(&e);
+    }
+    let (out, seen) = run(&mut d, &step(1, json!([])), Some(PageErrors::Flag), &[]).await;
+    assert!(out.is_empty());
+    assert_eq!(seen, 1);
+}
+
+/// The ignore phrases apply first: what they cover is not in the count.
+#[tokio::test]
+async fn and_n_more_counts_only_what_the_phrases_leave() {
+    let mut events = thrown("Error: real");
+    events.extend(thrown("ResizeObserver loop limit exceeded"));
+    events.extend(thrown("Error: also real"));
+    let mut d = clicking_meets(events);
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Fail), &["resizeobserver"]).await;
+    assert_eq!(out[1].detail, "the page had an error: Error: real (and 1 more)");
+}
+
 // ---- What a script may say --------------------------------------------------------------
 
 #[test]

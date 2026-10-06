@@ -304,7 +304,11 @@ pub async fn auto_run_step(
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // Another case's tabs do not carry over into this one.
-    crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
+    // The saved script's own choices about dialogs nobody expected and the
+    // page's own errors, and which of its steps comes first.
+    let saved = crate::autorun::store::load_script(&root, case_id).ok().flatten();
+    let first_step = saved.as_ref().and_then(|s| s.steps.iter().map(|s| s.step_number).min()) == Some(step.step_number);
+    crate::autorun::runner::supervised_step_begins(&mut session.cdp, &mut session.tabs_case, case_id, first_step).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: a bare `return_to_area` builds
     // the case's route from its saved script, and one that names an area
@@ -320,9 +324,6 @@ pub async fn auto_run_step(
         None => AreaRoute::Unknown(crate::autorun::runner::NEEDS_SCRIPT_AREA),
     };
     let areas = area_routes(&root, &organization, &project, &named_areas(&step.actions));
-    // The saved script's own choices about dialogs nobody expected and the
-    // page's own errors.
-    let saved = crate::autorun::store::load_script(&root, case_id).ok().flatten();
     let mut run = crate::autorun::runner::InRun {
         areas: Some(&areas),
         fail_on_unexpected_dialog: saved.as_ref().is_some_and(|s| s.fail_on_unexpected_dialog),
@@ -760,11 +761,62 @@ pub fn save_script_from_editor(
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
-    // Only the assistant writes a script's setup. Whatever the editor sent,
-    // the setup stored for this case stays as it is (none when nothing is
-    // stored), so the webview can never change a fixture and a stale editor
-    // can never write an old setup back over an approval.
-    script.setup = store::load_script(root, script.case_id)?.and_then(|stored| stored.setup);
+    // The editor owns what it shows: the steps, title, account, area, Must
+    // not save, preconditions and the shared-state marks. Everything else
+    // is the stored script's, whatever the editor sent - so a setting the
+    // editor has no control for survives a save from it, and a stale
+    // editor can never write an old value back. Spelt out field by field,
+    // so a new field cannot be added without saying whose it is.
+    let stored = store::load_script(root, script.case_id)?.unwrap_or_else(|| CaseScript {
+        case_id: script.case_id,
+        title: String::new(),
+        account: None,
+        area: None,
+        steps: Vec::new(),
+        repairs: 0,
+        last_repair: None,
+        suspected_defect: None,
+        no_save: false,
+        preconditions: Vec::new(),
+        setup: None,
+        changes: Vec::new(),
+        needs_unchanged: Vec::new(),
+        saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None,
+        ignore_page_errors: Vec::new(),
+    });
+    let CaseScript {
+        // The editor's own.
+        case_id: _,
+        title: _,
+        account: _,
+        area: _,
+        steps: _,
+        no_save: _,
+        preconditions: _,
+        changes: _,
+        needs_unchanged: _,
+        // Reset above: a person's save starts the repair count afresh.
+        repairs: _,
+        last_repair: _,
+        // The store keeps the mark on disk whatever a save sends
+        // (`store::save_scripts_atomically`).
+        suspected_defect: _,
+        // Every save stamps its own time.
+        saved_at: _,
+        // The stored script's. Only the assistant writes a setup, so the
+        // webview can never change a fixture or write an old one back over
+        // an approval.
+        setup,
+        fail_on_unexpected_dialog,
+        page_errors,
+        ignore_page_errors,
+    } = stored;
+    script.setup = setup;
+    script.fail_on_unexpected_dialog = fail_on_unexpected_dialog;
+    script.page_errors = page_errors;
+    script.ignore_page_errors = ignore_page_errors;
     // The project's rules - no address while that is switched off, only
     // recorded areas - the same ones the import and the assistant's save
     // apply.

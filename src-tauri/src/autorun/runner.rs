@@ -531,8 +531,13 @@ pub async fn run_step_in_run<D: Driver>(
         .find(|s| s.claimed_by.is_some())
         .or_else(|| seen.first())
         .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
-    // The page's own errors since the previous step was judged.
-    run.page_errors_seen = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
+    // The page's own errors since the previous step was judged. An outcome
+    // they failed is pictured, as any failed action is.
+    let judged = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
+    run.page_errors_seen = judged.seen;
+    if let Some(i) = judged.failed {
+        out[i].screenshot = picture(d, root).await;
+    }
     let ended_in = d.tab_name();
     run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
     Ok(out)
@@ -558,13 +563,27 @@ fn unexpected_dialog<D: Driver>(d: &mut D, read: &mut usize, fail: bool, outcome
 
 /// The supervised browser keeps one set of tabs across the cases a person
 /// runs in it: a step of another case than the last one (`case`) is a new
-/// case, so every tab but `main` is closed first. `tabs_case` is the case
-/// the browser's tabs belong to.
+/// case, so every tab but `main` is closed first - and the page errors met
+/// so far were another case's, so they are dropped too. `tabs_case` is the
+/// case the browser's tabs belong to.
 pub async fn tabs_for_case<D: Driver>(d: &mut D, tabs_case: &mut Option<i32>, case: i32) {
     if *tabs_case != Some(case) {
         d.close_other_tabs().await;
+        super::page_errors::drop_all(d);
     }
     *tabs_case = Some(case);
+}
+
+/// A supervised step is about to run: the case's tabs (`tabs_for_case`),
+/// and, for the case's first step, a clean page-error slate - whatever the
+/// page met before it (opening, a sign-in, a step run earlier) is no
+/// step's. Between two later steps of one case, errors still count against
+/// the next.
+pub async fn supervised_step_begins<D: Driver>(d: &mut D, tabs_case: &mut Option<i32>, case: i32, first_step: bool) {
+    tabs_for_case(d, tabs_case, case).await;
+    if first_step {
+        super::page_errors::drop_all(d);
+    }
 }
 
 /// What a plain action needs from the step it is in.

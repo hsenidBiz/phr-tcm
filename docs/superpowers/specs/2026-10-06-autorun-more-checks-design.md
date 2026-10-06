@@ -114,7 +114,7 @@ A script can set `page_errors: "fail" | "flag"`. It is absent by default, which 
 
 ### Ignoring known noise
 
-`ignore_page_errors: [<text>]` holds up to 10 phrases. An error whose message, or whose request path, contains one of them (ignoring case) is not counted.
+`ignore_page_errors: [<text>]` holds up to 10 phrases. An error whose message, or whose request path, contains one of them (ignoring case) is not counted. The phrases apply first: `(and <n> more)` and `page errors seen` count only the errors left after them.
 
 ## 4. PDF downloads
 
