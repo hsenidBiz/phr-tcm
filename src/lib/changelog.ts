@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.6",
+    date: "2026-10-06",
+    items: [
+      "Auto Run's test cases can be searched by id or title, and each case opens to show its script, steps and files, with Script and Run inside.",
+      "Auto Run's result filters are larger and easier to read, and Expand all and Collapse all open or close every case at once.",
+      "Auto Run's setup now sits beside the list of test cases as a short summary that opens to the full settings, in place of the Setup tab.",
+    ],
+  },
+  {
     version: "2.1.1-beta.5",
     date: "2026-10-06",
     items: [
