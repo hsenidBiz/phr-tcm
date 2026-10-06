@@ -203,6 +203,19 @@ test("an area the project has not recorded is kept and marked, not silently drop
   expect((saved[0] as { area: string }).area).toBe("Assessments");
 });
 
+test("an area named with a non-breaking space is the recorded area, as a run reads it", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, area: "manage\u00a0 cycle" }, ACCOUNTS, saved);
+  const pick = await screen.findByRole("combobox", { name: "Area" });
+  await waitFor(() => expect(pick).toHaveTextContent("Manage Cycle"));
+  expect(pick).not.toHaveTextContent("not recorded");
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { area: string }).area).toBe("Manage Cycle");
+});
+
 test("Must not save is off for an old script, and ticking it writes no_save", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);

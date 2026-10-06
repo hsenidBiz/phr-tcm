@@ -23,6 +23,7 @@ import { IconBack, IconCancel, IconRecord, IconRemove, IconRun, IconStop } from 
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
+import { areaKey, sameAreaName } from "../../lib/areaName";
 
 type Phase =
   | { kind: "list" }
@@ -36,8 +37,8 @@ type Phase =
   | { kind: "checking"; module: string; area: string }
   | { kind: "failed"; module: string; area: string; why: string };
 
-/** How two names are compared: trimmed, case ignored (the backend's rule). */
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+/** How two names are compared: the backend's rule (`areaKey`). */
+const sameName = sameAreaName;
 
 /** The browser the person last picked in Auto Run (the run panes' own
  * key), so a recording opens in the browser they already chose. */
@@ -408,7 +409,7 @@ export default function AreasDialog({
               </p>
             )}
             {groups.map((g) => (
-              <section key={g.module.trim().toLowerCase()} role="group" aria-label={g.module} className="space-y-2">
+              <section key={areaKey(g.module)} role="group" aria-label={g.module} className="space-y-2">
                 <h3 className="text-xs font-semibold text-text">{g.module}</h3>
                 <ul className="space-y-2">
                   {g.areas.map((m) => (
