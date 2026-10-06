@@ -6,7 +6,7 @@
 // readable view returns once the JSON parses.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type Action, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -21,7 +21,7 @@ import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove } from
 import { cn } from "../../lib/cn";
 import { floorOf } from "./floor";
 import SetupSection from "./SetupSection";
-import { describeAction, type Sentence } from "./describeAction";
+import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
 
 const PLACEHOLDER = `[
   {
@@ -115,6 +115,21 @@ export default function ScriptEditor({
   // The window always opens on the readable script; Edit script shows the
   // JSON in its place.
   const [editing, setEditing] = useState(false);
+  // Where the focus goes when the view swaps: into the JSON after Edit
+  // script, back onto Edit script after Back to readable view. Not on
+  // opening, which is the modal's own business.
+  const swapped = useRef(false);
+  const jsonView = useRef<HTMLDivElement>(null);
+  const readableView = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!swapped.current) return;
+    if (editing) jsonView.current?.querySelector("textarea")?.focus();
+    else readableView.current?.querySelector("button")?.focus();
+  }, [editing]);
+  const swapTo = (toEditing: boolean) => {
+    swapped.current = true;
+    setEditing(toEditing);
+  };
   const value =
     text ?? (existing.data ? JSON.stringify(existing.data.steps, null, 2) : "");
 
@@ -159,7 +174,7 @@ export default function ScriptEditor({
   };
 
   const backToReadable = () => {
-    if (parseValue()) setEditing(false);
+    if (parseValue()) swapTo(false);
   };
 
   const save = async () => {
@@ -274,7 +289,7 @@ export default function ScriptEditor({
           )}
 
           {editing ? (
-            <div className="space-y-1">
+            <div ref={jsonView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script JSON</span>
                 <Button size="sm" variant="ghost" className={HEADER_BUTTON} onClick={backToReadable}>
@@ -291,7 +306,7 @@ export default function ScriptEditor({
               />
             </div>
           ) : (
-            <div className="space-y-1">
+            <div ref={readableView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">Action script</span>
                 <Button
@@ -300,7 +315,7 @@ export default function ScriptEditor({
                   className={HEADER_BUTTON}
                   onClick={() => {
                     setProblem("");
-                    setEditing(true);
+                    swapTo(true);
                   }}
                 >
                   <IconEdit aria-hidden />
@@ -405,6 +420,9 @@ function SentenceView({ sentence }: { sentence: Sentence }) {
         ) : (
           <span key={i} title={p.title}>
             {p.text}
+            {/* Hover is not the only way to the selector: a screen reader
+                hears it too. */}
+            {p.title && <span className="sr-only">{` (selector ${p.title})`}</span>}
           </span>
         ),
       )}
@@ -412,21 +430,41 @@ function SentenceView({ sentence }: { sentence: Sentence }) {
   );
 }
 
+/** The unreadable line, in the sentence shape. */
+const UNREADABLE_LINE: Sentence = [{ kind: "words", text: UNREADABLE }];
+
+/** One action's sentence and the actions nested under it. The describer is
+ * total already; this catches anyway, so one odd action can only ever cost
+ * its own line, never the window. */
+function readAction(a: unknown): { sentence: Sentence; then: readonly unknown[] | null } {
+  try {
+    const sentence = describeAction(a as Action);
+    const rec = typeof a === "object" && a !== null ? (a as { kind?: unknown; then?: unknown }) : null;
+    const then = rec?.kind === "when_visible" && Array.isArray(rec.then) && rec.then.length > 0 ? rec.then : null;
+    return { sentence, then: sentenceText(sentence) === UNREADABLE ? null : then };
+  } catch {
+    return { sentence: UNREADABLE_LINE, then: null };
+  }
+}
+
 /** A step's actions as a list of sentences; a `when_visible`'s own actions
  * indented under its "If ... appears" line. */
-function ActionList({ actions }: { actions: readonly Action[] }) {
+function ActionList({ actions }: { actions: readonly unknown[] }) {
   return (
     <ul className="space-y-0.5">
-      {actions.map((a, i) => (
-        <li key={i} className="break-words">
-          <SentenceView sentence={describeAction(a)} />
-          {a.kind === "when_visible" && Array.isArray(a.then) && a.then.length > 0 && (
-            <div className="mt-0.5 border-l border-border/60 pl-3">
-              <ActionList actions={a.then} />
-            </div>
-          )}
-        </li>
-      ))}
+      {actions.map((a, i) => {
+        const { sentence, then } = readAction(a);
+        return (
+          <li key={i} className="break-words">
+            <SentenceView sentence={sentence} />
+            {then && (
+              <div className="mt-0.5 border-l border-border/60 pl-3">
+                <ActionList actions={then} />
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -445,10 +483,13 @@ function ReadableScript({
   steps: { action: string; expected: string; shared?: number | null }[];
   org: string;
 }) {
-  // Only entries shaped like steps: the box can hold any JSON array.
-  const groups = script.filter(
-    (s): s is StepScript => typeof s === "object" && s !== null && typeof s.step_number === "number",
+  // Only entries shaped like steps: the box can hold any JSON array. The
+  // rest are counted, so nothing in the script goes unmentioned.
+  const groups = (script as unknown[]).filter(
+    (s): s is StepScript =>
+      typeof s === "object" && s !== null && Number.isInteger((s as { step_number?: unknown }).step_number),
   );
+  const skipped = script.length - groups.length;
   return (
     <div
       role="region"
@@ -458,12 +499,12 @@ function ReadableScript({
     >
       {loading ? (
         <p className="text-muted">Loading the script...</p>
-      ) : groups.length === 0 ? (
+      ) : groups.length === 0 && skipped === 0 ? (
         <p className="text-muted">No actions yet. Press Edit script to write them.</p>
       ) : (
         groups.map((s, i) => {
           const own = steps[s.step_number - 1];
-          const actions = Array.isArray(s.actions) ? s.actions : [];
+          const actions: unknown[] | null = Array.isArray(s.actions) ? s.actions : null;
           return (
             <section key={`${i}-${s.step_number}`} aria-label={`Step ${s.step_number}`} className="space-y-1">
               <h3 className="text-xs font-medium text-text">
@@ -476,12 +517,27 @@ function ReadableScript({
                 )}
               </h3>
               <div className="pl-3">
-                {actions.length > 0 ? <ActionList actions={actions} /> : <p className="text-muted">No actions</p>}
-                {s.unchecked && <p className="mt-0.5 text-muted">Not checked: {s.unchecked}</p>}
+                {actions === null ? (
+                  <p>{UNREADABLE}</p>
+                ) : actions.length > 0 ? (
+                  <ActionList actions={actions} />
+                ) : (
+                  <p className="text-muted">No actions</p>
+                )}
+                {typeof s.unchecked === "string" && s.unchecked && (
+                  <p className="mt-0.5 text-muted">Not checked: {s.unchecked}</p>
+                )}
               </div>
             </section>
           );
         })
+      )}
+      {!loading && skipped > 0 && (
+        <p className="text-muted">
+          {skipped === 1
+            ? "1 more entry is shown only in Edit script."
+            : `${skipped} more entries are shown only in Edit script.`}
+        </p>
       )}
     </div>
   );

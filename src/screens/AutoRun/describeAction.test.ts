@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import type { Action } from "../../bindings";
-import { describeAction, describeTarget, pathOnly, sentenceText } from "./describeAction";
+import { describeAction, describeTarget, pathOnly, sentenceText, UNREADABLE } from "./describeAction";
 
 const say = (a: Action) => sentenceText(describeAction(a));
 const SAVE = { role: "button", name: "Save & Continue" };
@@ -204,5 +204,76 @@ describe("addresses are paths only", () => {
     expect(say({ kind: "check_url", contains: "https://secret-host.example.test/x?y=1" })).toBe(
       'Check the address contains "/x"',
     );
+  });
+});
+
+describe("an action that is not the right shape reads as one plain line, never a throw", () => {
+  const odd = (a: unknown) => say(a as Action);
+
+  test("the line has a plain hyphen", () => {
+    expect(UNREADABLE).toBe("Could not read this action - press Edit script to see it");
+  });
+
+  test.each([
+    ["a null action", null],
+    ["a number", 3],
+    ["an array", []],
+    ["no kind", { selector: "#a" }],
+    ["an unknown kind", { kind: "teleport" }],
+    ["a missing field", { kind: "navigate" }],
+    ["a field of the wrong type", { kind: "check_text", value: 4 }],
+    ["a null selector", { kind: "click", selector: null }],
+    ["a null step in a locator chain", { kind: "click", selector: [{ role: "dialog" }, null] }],
+    ["an empty locator chain", { kind: "click", selector: [] }],
+    ["a locator with nothing to find by", { kind: "click", selector: { nth: 1 } }],
+    ["a role that is not text", { kind: "click", selector: { role: 7 } }],
+    ["download headers that are not a list", { kind: "expect_download", name: "a.xlsx", headers: { exact: "A" } }],
+    ["a when_visible wait that is not a number", { kind: "when_visible", selector: "#a", within_ms: "soon", then: [] }],
+  ])("%s", (_, action) => {
+    expect(odd(action)).toBe(UNREADABLE);
+  });
+
+  test("describeTarget on its own says it could not read the selector", () => {
+    expect(sentenceText(describeTarget(null))).toBe("an element it could not read");
+    expect(sentenceText(describeTarget([null] as never))).toBe("an element it could not read");
+  });
+});
+
+describe("no host or query string in any sentence", () => {
+  test("a protocol-relative navigate", () => {
+    expect(say({ kind: "navigate", url: "//cdn.example.test/a/b?token=1" })).toBe("Go to /a/b");
+  });
+
+  test("check_text, with an address inside other words", () => {
+    expect(say({ kind: "check_text", value: "Open https://hr.example.test/a?b=1 now" })).toBe(
+      'Check the page shows "Open /a now"',
+    );
+    expect(say({ kind: "check_text", value: "Version 1.5/2 of 6" })).toBe('Check the page shows "Version 1.5/2 of 6"');
+  });
+
+  test("expect_text", () => {
+    expect(say({ kind: "expect_text", selector: { role: "link" }, equals: "www.example.test/help?x=1" })).toBe(
+      'Check the link reads "/help"',
+    );
+  });
+
+  test("expect_attribute", () => {
+    expect(
+      say({ kind: "expect_attribute", selector: { role: "link", name: "Help" }, name: "href", equals: "https://h.example.test/x?y=1" }),
+    ).toBe('Check the "Help" link has href set to "/x"');
+    expect(
+      say({ kind: "expect_attribute", selector: { role: "link", name: "Help" }, name: "href", equals: "hr.example.test/docs" }),
+    ).toBe('Check the "Help" link has href set to "/docs"');
+  });
+
+  test("check_url: a host followed by a path, a query, and a handler", () => {
+    expect(say({ kind: "check_url", contains: "hr.example.test/hr/home?x=1" })).toBe('Check the address contains "/hr/home"');
+    expect(say({ kind: "check_url", contains: "PerformanceCycle?mode=Create" })).toBe(
+      'Check the address contains "PerformanceCycle"',
+    );
+    expect(say({ kind: "check_url", contains: "/Manage?id=3&handler=Save" })).toBe(
+      'Check the address contains "/Manage?handler=Save"',
+    );
+    expect(say({ kind: "check_url", contains: "?mode=Create" })).toBe("Check the address has the expected query");
   });
 });

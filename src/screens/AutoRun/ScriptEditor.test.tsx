@@ -659,3 +659,65 @@ test("a case with no script yet opens readable, saying there are no actions", as
   expect(await screen.findByText("No actions yet. Press Edit script to write them.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Edit script" })).toBeInTheDocument();
 });
+
+// ---- An odd script, focus, and keyboard access to selectors -------------
+
+const UNREADABLE_LINE = "Could not read this action - press Edit script to see it";
+
+test.each([
+  ["a null action", [{ step_number: 1, actions: [null] }]],
+  ["a null locator step", [{ step_number: 1, actions: [{ kind: "click", selector: [{ role: "dialog" }, null] }] }]],
+  ["an unknown kind", [{ step_number: 1, actions: [{ kind: "teleport" }] }]],
+  ["a missing actions array", [{ step_number: 1, unchecked: 5 }]],
+])("%s shows the unreadable line, and Edit script still shows the JSON", async (_, steps) => {
+  mountWith({ case_id: 7, title: "t", steps }, ACCOUNTS, [], [{ action: "Open it", expected: "It opens" }]);
+  const one = await screen.findByRole("region", { name: "Step 1" });
+  expect(within(one).getByText(UNREADABLE_LINE)).toBeInTheDocument();
+  // The rest of the window is still there.
+  expect(screen.getByText("Step 1: NOT CHECKED")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+  const box = screen.getByRole("textbox", { name: "Action script JSON" }) as HTMLTextAreaElement;
+  expect(JSON.parse(box.value)).toEqual(steps);
+});
+
+test("an odd action typed in the editor reads as the unreadable line, and the typed JSON is kept", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  const typed = '[{"step_number":1,"actions":[null,{"kind":"reload"}]}]';
+  fireEvent.change(screen.getByRole("textbox", { name: "Action script JSON" }), { target: { value: typed } });
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  expect(await screen.findByText(UNREADABLE_LINE)).toBeInTheDocument();
+  expect(screen.getByText("Reload the page")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+  expect(screen.getByRole("textbox", { name: "Action script JSON" })).toHaveValue(typed);
+});
+
+test("entries that are not steps are counted at the end of the readable script", async () => {
+  mountWith({ case_id: 7, title: "t", steps: [...ONE_STEP, null, "x", { step_number: "two" }] }, ACCOUNTS, []);
+  expect(await screen.findByText("3 more entries are shown only in Edit script.")).toBeInTheDocument();
+  expect(screen.getByText('Check the page shows "ok"')).toBeInTheDocument();
+});
+
+test("one entry that is not a step is counted in the singular", async () => {
+  mountWith({ case_id: 7, title: "t", steps: [null] }, ACCOUNTS, []);
+  expect(await screen.findByText("1 more entry is shown only in Edit script.")).toBeInTheDocument();
+  expect(screen.queryByText("No actions yet. Press Edit script to write them.")).not.toBeInTheDocument();
+});
+
+test("Edit script moves the focus into the JSON, and Back to readable view onto Edit script", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Action script JSON" })).toHaveFocus());
+  fireEvent.click(screen.getByRole("button", { name: "Back to readable view" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit script" })).toHaveFocus());
+});
+
+test("an element named from its CSS carries the selector for a screen reader as well as on hover", async () => {
+  const steps = [{ step_number: 1, actions: [{ kind: "click", selector: 'input[placeholder="Email"]' }] }];
+  mountWith({ case_id: 7, title: "t", steps }, ACCOUNTS, []);
+  const one = await screen.findByRole("region", { name: "Step 1" });
+  expect(one).toHaveTextContent('Click the "Email" field (selector input[placeholder="Email"])');
+  const hidden = within(one).getByText('(selector input[placeholder="Email"])', { exact: false });
+  expect(hidden).toHaveClass("sr-only");
+  expect(hidden.parentElement).toHaveAttribute("title", 'input[placeholder="Email"]');
+});
