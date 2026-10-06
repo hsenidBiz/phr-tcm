@@ -253,13 +253,19 @@ async fn run_steps<B: Browsers>(
     limit: Duration,
     retry_pauses: &[Duration],
     clock: &Clock,
+    fixed: Option<&[Option<ApiTemplate>]>,
 ) -> Ran {
     let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new() };
     ran.vars.insert("prefix".to_string(), Value::String(prefix.to_string()));
 
     // The save rules again: a template may have been replaced, re-proven
-    // as a delete, or removed since the fixture was saved.
-    let lookup = |id: &str| template_store::load(root, org, project, id).ok().flatten();
+    // as a delete, or removed since the fixture was saved. With `fixed`,
+    // the templates are the ones given (a setup's, as they were
+    // fingerprinted), never read from disk again.
+    let lookup = |id: &str| match fixed {
+        Some(given) => given.iter().flatten().find(|t| t.id == id).cloned(),
+        None => template_store::load(root, org, project, id).ok().flatten(),
+    };
     let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
     if let Err(problems) = validate(f, &lookup, &flows) {
         ran.failed = Some((None, problems.join("; ")));
@@ -395,11 +401,14 @@ pub async fn run_fixture_within<B: Browsers>(
     retry_pauses: &[Duration],
     clock: Clock,
 ) -> FixtureReport {
-    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None).await
+    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None, None).await
 }
 
 /// `run_fixture_within` for case `case_id`'s setup (`autorun::setup`):
-/// what the run makes is recorded as test-made with that case's id.
+/// what the run makes is recorded as test-made with that case's id. With
+/// `fixed`, the steps run these templates (one per step, `None` for one
+/// not saved) rather than reading them from disk again, so a setup runs
+/// exactly what was fingerprinted for its approval.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_fixture_for<B: Browsers>(
     browsers: &mut B,
@@ -412,6 +421,7 @@ pub async fn run_fixture_for<B: Browsers>(
     retry_pauses: &[Duration],
     clock: Clock,
     case_id: Option<i32>,
+    fixed: Option<&[Option<ApiTemplate>]>,
 ) -> FixtureReport {
     let at = applog::stamp();
     let created_at = applog::iso_stamp();
@@ -419,7 +429,9 @@ pub async fn run_fixture_for<B: Browsers>(
 
     let ran = match crate::environments::active(root) {
         Ok(env) => {
-            let ran = run_steps(browsers, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock).await;
+            let ran =
+                run_steps(browsers, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed)
+                    .await;
             Some((env, ran))
         }
         Err(e) => {

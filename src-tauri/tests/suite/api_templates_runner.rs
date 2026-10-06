@@ -186,6 +186,12 @@ pub(crate) struct Rig {
 }
 
 impl Rig {
+    /// One more browser on the same application: it signs in on a page of
+    /// its own, and its requests are answered from the same `responses`.
+    pub(crate) fn another_page(&self) -> App {
+        let (inner, _state) = stateful_app(false, None);
+        App { inner, script: self.script.clone() }
+    }
     pub(crate) fn fetched(&self) -> Vec<Vec<Value>> {
         self.script.lock().unwrap().fetched.clone()
     }

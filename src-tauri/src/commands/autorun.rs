@@ -462,18 +462,30 @@ pub async fn auto_run_check_preconditions(
     let mut checked = crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
         crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)
     })
-    .await?;
-    if checked.blocked.is_none() {
-        let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
-            crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
-            false,
-        );
-        let timing = crate::commands::autorun_replay::replay_timing(false);
-        if let Some(why) =
-            crate::autorun::setup::check_supervised(&mut browsers, &root, &organization, &project, case_id, &timing).await
-        {
-            checked = crate::autorun::preconditions::PreconditionCheck { blocked: Some(why), notice: None };
-        }
+    .await
+    .inspect_err(|_| crate::autorun::setup::forget(case_id))?;
+    if checked.blocked.is_some() {
+        // A start that ends Blocked leaves no setup values behind.
+        crate::autorun::setup::forget(case_id);
+        return Ok(checked);
+    }
+    let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
+        crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
+        false,
+    );
+    let timing = crate::commands::autorun_replay::replay_timing(false);
+    // The supervised browser makes way for a setup that signs in as its
+    // account (`setup::make_way`); it is held while the setup runs, so no
+    // step can use it in between.
+    let mut slot = SESSION.lock().await;
+    let supervised = slot.as_mut().map(|s| (&mut s.cdp, &mut s.account, &mut s.lease));
+    let blocked =
+        crate::autorun::setup::check_supervised(&mut browsers, supervised, &root, &organization, &project, case_id, &timing)
+            .await;
+    drop(slot);
+    if let Some(why) = blocked {
+        // A precondition "checks skipped" notice is still said.
+        checked.blocked = Some(why);
     }
     Ok(checked)
 }

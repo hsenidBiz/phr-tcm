@@ -295,6 +295,10 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         return ReplayEnd::Stopped { step: 1 };
     }
 
+    // What an earlier start's setup gave is let go: a replay that ends
+    // before its own setup has run leaves nothing stale for the steps.
+    setup::forget(id);
+
     // Preconditions, exactly as a supervised case starts: one not met
     // stops the replay before anything is signed in.
     let checked = match preconditions::check_script(root, organization, project, id, db).await {
@@ -312,6 +316,9 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
+    // A setup that signs in as the account this browser holds: this
+    // browser's session is ended and its lease let go first.
+    setup::make_way(d, account, lease, root, organization, project, &script, timing).await;
     let script = match setup::prepare_case(setup_browsers, root, organization, project, &script, timing).await {
         Ok(prepared) => {
             setup::remember(id, prepared.setup_outputs);

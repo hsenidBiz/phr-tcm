@@ -887,26 +887,37 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                     Err(why) => blocked_before_start(&script, account, why),
                     // The case runs from the copy with its fixture values in;
                     // the saved script is never changed.
-                    Ok((path, script)) => {
+                    Ok((path, ready)) => {
                         // A path but no recipe: the sign-in fails first and
                         // says what to add, so no route is needed.
                         let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
                         let at = Place { run_id: &run_id, index, total, case_id, title, count };
-                        let go = Go { root, organization, project, script: &script, account, route: route.as_ref(), timing, cancel };
+                        let go = Go { root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
                         let first = one_go(browsers, &go, &at, progress)
                             .await
                             .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
                         // One more go, from sign-in in a fresh browser, for a
                         // failure that looked transient - once, never again,
-                        // and never after a stop.
-                        let looked_transient = if retry_transient { transient::is_transient(&first, Some(&script)) } else { None };
+                        // and never after a stop. It gets a fresh draft: the
+                        // setup runs again first (the first go may have
+                        // changed its draft), and a setup that cannot run
+                        // keeps the first go's record.
+                        let looked_transient = if retry_transient { transient::is_transient(&first, Some(&ready)) } else { None };
                         match looked_transient {
-                            Some(why) if !cancel.load(Ordering::SeqCst) => match one_go(browsers, &go, &at, progress).await {
-                                Ok(second) => transient::after_retry(why, first.duration_ms, second),
-                                // No second go to keep: the first go's steps
-                                // and evidence stay the record.
-                                Err(open) => transient::retry_not_started(first, &open),
-                            },
+                            Some(why) if !cancel.load(Ordering::SeqCst) => {
+                                match setup::prepare_case(browsers, root, organization, project, &script, timing).await {
+                                    Err(not) => transient::retry_not_started(first, &not),
+                                    Ok(again) => {
+                                        let go = Go { script: &again.script, ..go };
+                                        match one_go(browsers, &go, &at, progress).await {
+                                            Ok(second) => transient::after_retry(why, first.duration_ms, second),
+                                            // No second go to keep: the first go's
+                                            // steps and evidence stay the record.
+                                            Err(open) => transient::retry_not_started(first, &open),
+                                        }
+                                    }
+                                }
+                            }
                             _ => first,
                         }
                     }

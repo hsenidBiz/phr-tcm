@@ -419,13 +419,20 @@ export const commands = {
 	approval: string,
 	/**  When it was approved, while `approval` is `approved`. */
 	approved_at: string | null,
+	/**
+	 *  What Approve setup signs: it approves only while the setup still
+	 *  has this fingerprint (`approval_target`).
+	 */
+	fingerprint: string,
 } | null, string>(__TAURI_INVOKE("auto_run_setup_view", { organization, project, caseId })),
 	/**
-	 *  The person's Approve setup: approves case `case_id`'s setup as it is
-	 *  saved now. Any later change to the setup, its fixture or a template it
-	 *  runs clears it.
+	 *  The person's Approve setup: approves case `case_id`'s setup exactly as
+	 *  the person was shown it - `expected_fingerprint` is the
+	 *  `SetupView::fingerprint` they saw. A setup that changed since is
+	 *  refused (`setup::CHANGED_WHILE_LOOKING`) and nothing is approved. Any
+	 *  later change to the setup, its fixture or a template it runs clears it.
 	 */
-	autoRunApproveSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_approve_setup", { organization, project, caseId })),
+	autoRunApproveSetup: (organization: string, project: string, caseId: number, expectedFingerprint: string) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_approve_setup", { organization, project, caseId, expectedFingerprint })),
 	/**
 	 *  The person's Withdraw approval: case `case_id`'s setup is no longer
 	 *  approved, and the case is Blocked until it is approved again.
@@ -3986,6 +3993,11 @@ export type SetupView = {
 	approval: string,
 	/**  When it was approved, while `approval` is `approved`. */
 	approved_at: string | null,
+	/**
+	 *  What Approve setup signs: it approves only while the setup still
+	 *  has this fingerprint (`approval_target`).
+	 */
+	fingerprint: string,
 };
 
 export type SharedQueue = SharedQueue_Serialize | SharedQueue_Deserialize;

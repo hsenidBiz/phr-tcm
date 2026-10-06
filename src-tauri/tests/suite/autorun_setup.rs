@@ -275,12 +275,14 @@ impl Driver for Either {
     }
 }
 
-/// The setup's browser first, then the case's; records what happened, in
-/// order, and whether the setup's account was still leased when the case's
-/// browser opened.
+/// A setup's browser, then the case's, and again for a retry; records
+/// what happened, in order, and whether the setup's account was still
+/// leased when the case's browser opened.
 struct Ordered {
-    setup: Option<App>,
-    case: Option<ScriptedDriver>,
+    setups: std::collections::VecDeque<App>,
+    cases: std::collections::VecDeque<ScriptedDriver>,
+    /// The next browser asked for is a setup's.
+    want_setup: bool,
     events: Arc<Mutex<Vec<String>>>,
     env: String,
     checks: Arc<Mutex<Vec<String>>>,
@@ -289,13 +291,17 @@ struct Ordered {
 impl Browsers for Ordered {
     type D = Either;
     async fn open(&mut self) -> Result<Either, String> {
-        if let Some(app) = self.setup.take() {
-            self.events.lock().unwrap().push("setup opened".into());
-            return Ok(Either::Setup(app));
+        if self.want_setup {
+            if let Some(app) = self.setups.pop_front() {
+                self.want_setup = false;
+                self.events.lock().unwrap().push("setup opened".into());
+                return Ok(Either::Setup(app));
+            }
         }
         let held = lease::is_held(&self.env, ACCOUNT);
         self.events.lock().unwrap().push(format!("case opened, setup account leased: {held}"));
-        self.case.take().map(Either::Case).ok_or_else(|| "no browser left".to_string())
+        self.want_setup = true;
+        self.cases.pop_front().map(Either::Case).ok_or_else(|| "no browser left".to_string())
     }
     async fn close(&mut self, d: Either) {
         let what = match &d {
@@ -343,8 +349,9 @@ fn new_run() -> LocalRun {
 fn ordered(r: &mut Rig, case: ScriptedDriver) -> Ordered {
     let env = v2_lib::environments::active_id(r.root.path()).unwrap();
     Ordered {
-        setup: r.browsers.next.take(),
-        case: Some(case),
+        setups: r.browsers.next.take().into_iter().collect(),
+        cases: [case].into(),
+        want_setup: true,
         events: Arc::default(),
         env,
         checks: Arc::default(),
@@ -352,10 +359,14 @@ fn ordered(r: &mut Rig, case: ScriptedDriver) -> Ordered {
 }
 
 async fn run_one(r: &Rig, browsers: &mut Ordered, case_id: i32) -> LocalRun {
+    run_with(r, browsers, case_id, false).await
+}
+
+async fn run_with(r: &Rig, browsers: &mut Ordered, case_id: i32, retry: bool) -> LocalRun {
     let mut run = new_run();
     let cancel = AtomicBool::new(false);
     let cases = [CaseToRun { case_id, title: format!("case {case_id}"), module: None }];
-    run_cases(browsers, r.root.path(), ORG, PROJECT, &mut run, &cases, None, false, &quick(), &cancel, &mut |_| {})
+    run_cases(browsers, r.root.path(), ORG, PROJECT, &mut run, &cases, None, retry, &quick(), &cancel, &mut |_| {})
         .await
         .unwrap();
     run
@@ -419,6 +430,50 @@ async fn a_setup_not_approved_blocks_the_case_with_nothing_opened() {
     assert_eq!(r.sign_ins(), 0);
     assert!(r.fetched().is_empty());
     assert!(test_made::list(r.root.path()).is_empty());
+}
+
+/// A transient failure runs the case again from a fresh draft: the setup
+/// runs again first, and the second go uses what that run gave.
+#[tokio::test]
+async fn a_retry_makes_a_fresh_draft_and_uses_it() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![the_cycle(), answer(200, json!({ "cycleId": 275, "cycleName": "AUTOTEST cycle" }))]);
+    let sc = script(14, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(r.root.path(), &sc).unwrap();
+    approve(r.root.path(), &sc);
+
+    // The first go's browser stops answering: a transient failure.
+    let silent = ScriptedDriver::new(|method, _| match method {
+        "Runtime.evaluate" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let second_page = r.another_page();
+    let mut browsers = ordered(&mut r, silent);
+    browsers.setups.push_back(second_page);
+    browsers.cases.push_back(case_page(&["275"]));
+    let run = run_with(&r, &mut browsers, 14, true).await;
+
+    let case = &run.cases[0];
+    assert!(case.retried.is_some(), "{case:?}");
+    assert_eq!(case.proposed, "Passed", "{case:?}");
+    assert_eq!(
+        *browsers.events.lock().unwrap(),
+        vec![
+            "setup opened",
+            "setup closed",
+            "case opened, setup account leased: false",
+            "case closed",
+            "setup opened",
+            "setup closed",
+            "case opened, setup account leased: false",
+            "case closed",
+        ]
+    );
+    assert_eq!(*browsers.checks.lock().unwrap(), vec!["275"], "the second go checks the second draft");
+    let made: Vec<(String, Option<i32>)> =
+        test_made::list(r.root.path()).into_iter().map(|m| (m.id, m.case_id)).collect();
+    assert_eq!(made, vec![("274".to_string(), Some(14)), ("275".to_string(), Some(14))]);
 }
 
 /// A failed setup run Blocks the case with the fixture's own sentence, and
@@ -496,13 +551,59 @@ async fn any_change_to_what_was_approved_clears_the_approval() {
     assert_eq!(state(&root, &sc), Approval::Changed);
     blocked(&mut r, &sc).await;
 
-    // The fixture's account, outputs and creates are in it too.
-    approve(&root, &sc);
+}
+
+/// Review Focus 2, one part at a time: each of the fixture's params,
+/// account, outputs and creates is in the fingerprint on its own.
+#[test]
+fn each_part_of_the_fixture_is_in_the_fingerprint() {
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let sc = script(15, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    let changes: [(&str, fn(&mut Fixture)); 4] = [
+        ("params", |f| {
+            f.steps[0].params.insert("cycleName".into(), "{{prefix}} another cycle".into());
+        }),
+        ("account", |f| f.account = "admin".into()),
+        ("outputs", |f| {
+            f.outputs.insert("cycle_name".into(), "{{steps.1.cycleName}}".into());
+        }),
+        ("creates", |f| f.creates[0].kind = "draft cycle".into()),
+    ];
+    for (what, change) in changes {
+        fixture_store::save(root, ORG, PROJECT, &fixture("own")).unwrap();
+        approve(root, &sc);
+        assert!(matches!(state(root, &sc), Approval::Approved { .. }), "{what}");
+        let mut f = fixture("own");
+        change(&mut f);
+        fixture_store::save(root, ORG, PROJECT, &f).unwrap();
+        assert_eq!(state(root, &sc), Approval::Changed, "{what}");
+    }
+}
+
+/// Approve setup signs what the person was shown: a setup that changed
+/// after they looked is refused, and nothing is approved.
+#[tokio::test]
+async fn an_approval_of_a_setup_that_changed_since_it_was_shown_is_refused() {
+    let _slot = crate::serial::api_template_run();
+    let mut r = setup_rig(vec![]);
+    let root = r.root.path().to_path_buf();
+    let sc = script(16, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    let shown = setup::view(&root, ORG, PROJECT, &sc).unwrap().unwrap();
+    assert_eq!(setup::approval_target(&root, ORG, PROJECT, &sc, &shown.fingerprint), Ok(shown.fingerprint.clone()));
+
     let mut f = fixture("own");
     f.steps[0].params.insert("cycleName".into(), "{{prefix}} another cycle".into());
-    f.account = "admin".into();
     fixture_store::save(&root, ORG, PROJECT, &f).unwrap();
-    assert_eq!(state(&root, &sc), Approval::Changed);
+    assert_eq!(
+        setup::approval_target(&root, ORG, PROJECT, &sc, &shown.fingerprint),
+        Err("the setup changed while you were looking at it - review it again before approving".to_string())
+    );
+    assert_eq!(setup::CHANGED_WHILE_LOOKING, "the setup changed while you were looking at it - review it again before approving");
+    assert_eq!(state(&root, &sc), Approval::None);
+    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick()).await;
+    assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
+    assert_eq!(r.browsers.opened, 0);
 }
 
 #[tokio::test]
@@ -602,6 +703,9 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut held = Held::supervised();
 
+    // What an earlier start gave, which a Blocked replay must not leave.
+    setup::remember(9, [("cycle_id".to_string(), json!(1))].into());
+
     // Not approved: Blocked, nothing opened, the case's browser untouched.
     let end = replay_to_checked(
         &mut d,
@@ -623,6 +727,12 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     assert_eq!(end, ReplayEnd::Blocked(NOT_APPROVED.into()));
     assert_eq!(r.browsers.opened, 0);
     assert!(d.calls.is_empty(), "{:?}", d.methods());
+    let step2 = store::load_script(&root, 9).unwrap().unwrap().steps[1].clone();
+    assert_eq!(
+        setup::resolve_step(&root, ORG, PROJECT, 9, &step2),
+        Err("setup gave no cycle_id - start the case again".to_string()),
+        "a Blocked start leaves nothing stale"
+    );
 
     approve(&root, &sc);
     let end = replay_to_checked(
@@ -648,14 +758,90 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     assert_eq!(test_made::list(&root)[0].case_id, Some(9));
 
     // Step 2, run by the person next, gets what the setup gave.
-    let step2 = store::load_script(&root, 9).unwrap().unwrap().steps[1].clone();
     let filled = setup::resolve_step(&root, ORG, PROJECT, 9, &step2).unwrap();
     assert_eq!(serde_json::to_value(&filled.actions).unwrap()[0]["value"], json!("274"));
     // A case whose setup never ran here has no value to give.
     assert_eq!(
         setup::resolve_step(&root, ORG, PROJECT, 9_999, &step2),
-        Err(setup::setup_gave_none("cycle_id"))
+        Err(setup::start_again("cycle_id"))
     );
+}
+
+/// The supervised browser signed in as the account the setup runs as: its
+/// session is ended and its lease let go, the setup signs in as that
+/// account, and the case's own sign-in takes the lease again.
+#[tokio::test]
+async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_after() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let mut r = setup_rig(vec![the_cycle()]);
+    let root = r.root.path().to_path_buf();
+    save_nav(&root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+        .unwrap();
+    let mut as_admin = fixture("own");
+    as_admin.account = "admin".into();
+    fixture_store::save(&root, ORG, PROJECT, &as_admin).unwrap();
+    let mut sc = script(17, Some("own"), json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#c{{setup.cycle_id}}" } }] },
+        { "step_number": 2, "actions": [check("{{setup.cycle_id}}")] }
+    ]));
+    sc.account = Some("admin".into());
+    sc.area = Some("Leave".into());
+    store::save_script(&root, &sc).unwrap();
+    approve(&root, &sc);
+
+    // The supervised browser holds admin.
+    let mut held = Held::supervised();
+    held.hold(&root, "admin").await.unwrap();
+    let mut account = Some("admin".to_string());
+    let env = v2_lib::environments::active_id(&root).unwrap();
+    assert!(lease::is_held(&env, "admin"));
+
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let req = ReplayRequest { case_id: 17, step: 2, db_read_access: false };
+    let (mut guarded, cancel) = (None, AtomicBool::new(false));
+    let end = replay_to_checked(
+        &mut d,
+        &mut r.browsers,
+        &root,
+        ORG,
+        PROJECT,
+        &req,
+        &mut account,
+        &mut held,
+        &mut guarded,
+        true,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+    )
+    .await;
+    assert!(matches!(end, ReplayEnd::Ready { case_id: 17, step: 2, .. }), "{end:?}");
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1), "the setup ran");
+    assert_eq!(r.sign_ins(), 1, "the setup signed in as admin");
+    assert_eq!(held.account(), Some("admin"), "the case's sign-in took the lease again");
+    assert_eq!(account.as_deref(), Some("admin"));
+    assert!(app.log.lock().unwrap().contains(&"click #c274".to_string()), "{:?}", app.log.lock().unwrap());
+}
+
+/// A supervised browser signed in as another account is left alone.
+#[tokio::test]
+async fn a_supervised_browser_on_another_account_is_left_alone() {
+    let _leases = crate::serial::account_leases();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let sc = script(18, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    approve(root, &sc);
+    let mut held = Held::supervised();
+    held.hold(root, "admin").await.unwrap();
+    let mut account = Some("admin".to_string());
+    let mut d = common::FakePage::default().driver();
+    setup::make_way(&mut d, &mut account, &mut held, root, ORG, PROJECT, &sc, &quick()).await;
+    assert_eq!(held.account(), Some("admin"));
+    assert_eq!(account.as_deref(), Some("admin"));
+    assert!(d.calls.is_empty(), "{:?}", d.methods());
 }
 
 // ---- old scripts and repairs ---------------------------------------------------

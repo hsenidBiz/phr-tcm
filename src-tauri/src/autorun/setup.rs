@@ -54,6 +54,18 @@ pub fn setup_gave_none(output: &str) -> String {
     format!("setup gave no {output} - check its fixture's outputs in API Templates, Fixtures")
 }
 
+/// The Blocked sentence for a supervised step that still holds a
+/// `{{setup.<output>}}`: what the setup gave at the case's start is not
+/// kept (the start was Blocked, or someone else signed in since).
+pub fn start_again(output: &str) -> String {
+    format!("setup gave no {output} - start the case again")
+}
+
+/// Said when the setup changed between the person seeing it and pressing
+/// Approve setup: nothing is approved.
+pub const CHANGED_WHILE_LOOKING: &str =
+    "the setup changed while you were looking at it - review it again before approving";
+
 /// Save-time: a setup naming a fixture the project does not have.
 pub fn no_fixture(id: &str) -> String {
     format!("setup: there is no fixture {id}")
@@ -241,13 +253,16 @@ fn fixture_vars(fixtures: &BTreeMap<String, FixtureValues>) -> BTreeMap<String, 
 }
 
 /// The Blocked sentence for the first of our placeholders still in
-/// `steps`, if any. `setup_too`: a `{{setup.` counts; otherwise only a
-/// `{{fixture.` does (before the setup has run).
-fn leftover(steps: &[StepScript], fixtures: &BTreeMap<String, FixtureValues>, setup_too: bool) -> Option<String> {
+/// `steps`, if any. `setup`: the sentence for a `{{setup.` left over;
+/// `None` before the setup has run, when only a `{{fixture.` counts.
+fn leftover(
+    steps: &[StepScript],
+    fixtures: &BTreeMap<String, FixtureValues>,
+    setup: Option<fn(&str) -> String>,
+) -> Option<String> {
     refs(steps).into_iter().find_map(|r| match r {
         Ref::Fixture { id, .. } => Some(not_built(fixtures.get(&id).map_or(id.as_str(), |f| f.name.as_str()))),
-        Ref::Setup { output } if setup_too => Some(setup_gave_none(&output)),
-        Ref::Setup { .. } => None,
+        Ref::Setup { output } => setup.map(|say| say(&output)),
     })
 }
 
@@ -266,7 +281,7 @@ pub fn resolve(
         vars.insert(format!("setup.{output}"), v.clone());
     }
     let steps = substitute_steps(&script.steps, &vars)?;
-    if let Some(why) = leftover(&steps, fixtures, true) {
+    if let Some(why) = leftover(&steps, fixtures, Some(setup_gave_none)) {
         return Err(why);
     }
     Ok(CaseScript { steps, ..script.clone() })
@@ -350,7 +365,7 @@ pub async fn prepare_case_within<B: Browsers>(
         Some(s) => {
             let now = current(root, org, project, s).map_err(|why| setup_failed(&why))?;
             match approvals::state(root, id, &now.fingerprint) {
-                Approval::Approved { .. } => Some(now.fixture),
+                Approval::Approved { .. } => Some(now),
                 other => {
                     crate::applog::info(format!("case {id}: setup is {}, so the case is Blocked", other.word()));
                     return Err(NOT_APPROVED.to_string());
@@ -361,16 +376,32 @@ pub async fn prepare_case_within<B: Browsers>(
 
     let fixtures = fixture_values(root, org, project, &script.steps);
     let shared = substitute_steps(&script.steps, &fixture_vars(&fixtures))?;
-    if let Some(why) = leftover(&shared, &fixtures, false) {
+    if let Some(why) = leftover(&shared, &fixtures, None) {
         return Err(why);
     }
 
     let mut setup_outputs = BTreeMap::new();
-    if let Some(f) = setup {
+    if let Some(now) = setup {
         let Some(_claim) = claim() else {
             return Err(setup_failed(API_TEMPLATE_BUSY));
         };
-        let report = run_fixture_for(browsers, root, org, project, &f, timing, limit, retry_pauses, clock, Some(id)).await;
+        // The templates that were fingerprinted, never read again: what
+        // runs is exactly what the person approved.
+        let f = &now.fixture;
+        let report = run_fixture_for(
+            browsers,
+            root,
+            org,
+            project,
+            f,
+            timing,
+            limit,
+            retry_pauses,
+            clock,
+            Some(id),
+            Some(&now.templates),
+        )
+        .await;
         if !report.ok {
             crate::applog::info(format!("case {id}: setup fixture {} failed, {} made", f.id, report.made.len()));
             return Err(setup_failed(&report.message()));
@@ -390,6 +421,12 @@ pub async fn prepare_case_within<B: Browsers>(
 /// again.
 pub fn remember(case_id: i32, outputs: BTreeMap<String, Value>) {
     crate::cache::session_put(&crate::cache::keys::setup_outputs(case_id), outputs);
+}
+
+/// Lets go of what case `case_id`'s setup gave at an earlier supervised
+/// start: a start that ends Blocked or in an error leaves nothing stale.
+pub fn forget(case_id: i32) {
+    remember(case_id, BTreeMap::new());
 }
 
 /// What case `case_id`'s setup gave at its last supervised start, if it is
@@ -415,7 +452,7 @@ pub fn resolve_step(root: &Path, org: &str, project: &str, case_id: i32, step: &
         }
     }
     let steps = substitute_steps(one, &vars)?;
-    if let Some(why) = leftover(&steps, &fixtures, true) {
+    if let Some(why) = leftover(&steps, &fixtures, Some(start_again)) {
         return Err(why);
     }
     Ok(steps.into_iter().next().unwrap_or_else(|| step.clone()))
@@ -460,6 +497,9 @@ pub struct SetupView {
     pub approval: String,
     /// When it was approved, while `approval` is `approved`.
     pub approved_at: Option<String>,
+    /// What Approve setup signs: it approves only while the setup still
+    /// has this fingerprint (`approval_target`).
+    pub fingerprint: String,
 }
 
 /// One fixture step as the editor shows it: its template's title (or its
@@ -491,26 +531,87 @@ pub fn view(root: &Path, org: &str, project: &str, script: &CaseScript) -> Resul
             Approval::Approved { at } => Some(at),
             _ => None,
         },
+        fingerprint: now.fingerprint.clone(),
     }))
+}
+
+/// The fingerprint Approve setup may record for `script`: the setup's as
+/// saved now, and only when it is the one the person was shown
+/// (`expected`, from `SetupView::fingerprint`). Otherwise
+/// `CHANGED_WHILE_LOOKING`, and nothing may be approved.
+pub fn approval_target(root: &Path, org: &str, project: &str, script: &CaseScript, expected: &str) -> Result<String, String> {
+    let Some(s) = &script.setup else { return Err(format!("case {}'s script has no setup", script.case_id)) };
+    let now = current(root, org, project, s)?;
+    if now.fingerprint != expected {
+        return Err(CHANGED_WHILE_LOOKING.to_string());
+    }
+    Ok(now.fingerprint)
+}
+
+/// Before a supervised setup: when the supervised browser is signed in as
+/// the account the setup's fixture runs as, its session is ended (the
+/// `expire_session` action) and its lease let go, so the setup can sign in
+/// as that account. PeoplesHR keeps one session per user, so the setup's
+/// sign-in would end it anyway. The case's own sign-in follows as usual.
+/// A browser signed in as another account, a setup that is not approved
+/// and a script with no setup leave the browser alone.
+#[allow(clippy::too_many_arguments)]
+pub async fn make_way<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    account: &mut Option<String>,
+    lease: &mut super::lease::Held,
+    root: &Path,
+    org: &str,
+    project: &str,
+    script: &CaseScript,
+    timing: &Timing,
+) {
+    let Some(s) = &script.setup else { return };
+    let Ok(now) = current(root, org, project, s) else { return };
+    if !matches!(approvals::state(root, script.case_id, &now.fingerprint), Approval::Approved { .. }) {
+        return;
+    }
+    let key = now.fixture.account.as_str();
+    if lease.account() != Some(key) && account.as_deref() != Some(key) {
+        return;
+    }
+    let ended = crate::browser::actions::execute_with(d, &crate::browser::actions::Action::ExpireSession, timing).await;
+    if !ended.ok {
+        crate::applog::info(format!(
+            "case {}: the Auto Run browser's session as {key} could not be ended before its setup; its lease is let go all the same",
+            script.case_id
+        ));
+    }
+    *account = None;
+    lease.let_go();
+    crate::applog::info(format!("case {}: the Auto Run browser let go of {key} for the case's setup", script.case_id));
 }
 
 /// The supervised start's part: case `case_id`'s fixtures prepared as an
 /// unattended case's are, with what its setup gave kept for its steps
-/// (`remember`). `Some` is the Blocked sentence. A case with no script
-/// has nothing to prepare.
-pub async fn check_supervised<B: Browsers>(
+/// (`remember`); what an earlier start gave is let go first (`forget`).
+/// `supervised`, the supervised browser with its account and lease, makes
+/// way for a setup that signs in as its account (`make_way`). `Some` is
+/// the Blocked sentence. A case with no script has nothing to prepare.
+#[allow(clippy::too_many_arguments)]
+pub async fn check_supervised<B: Browsers, D: crate::browser::cdp::Driver>(
     browsers: &mut B,
+    supervised: Option<(&mut D, &mut Option<String>, &mut super::lease::Held)>,
     root: &Path,
     org: &str,
     project: &str,
     case_id: i32,
     timing: &Timing,
 ) -> Option<String> {
+    forget(case_id);
     let script = match super::store::load_script(root, case_id) {
         Ok(Some(s)) => s,
         Ok(None) => return None,
         Err(why) => return Some(why),
     };
+    if let Some((d, account, lease)) = supervised {
+        make_way(d, account, lease, root, org, project, &script, timing).await;
+    }
     match prepare_case(browsers, root, org, project, &script, timing).await {
         Ok(prepared) => {
             remember(case_id, prepared.setup_outputs);

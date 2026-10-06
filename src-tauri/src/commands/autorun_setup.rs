@@ -31,9 +31,11 @@ pub fn auto_run_setup_view(
     setup::view(&root, &organization, &project, &script)
 }
 
-/// The person's Approve setup: approves case `case_id`'s setup as it is
-/// saved now. Any later change to the setup, its fixture or a template it
-/// runs clears it.
+/// The person's Approve setup: approves case `case_id`'s setup exactly as
+/// the person was shown it - `expected_fingerprint` is the
+/// `SetupView::fingerprint` they saw. A setup that changed since is
+/// refused (`setup::CHANGED_WHILE_LOOKING`) and nothing is approved. Any
+/// later change to the setup, its fixture or a template it runs clears it.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_approve_setup(
@@ -41,12 +43,12 @@ pub fn auto_run_approve_setup(
     organization: String,
     project: String,
     case_id: i32,
+    expected_fingerprint: String,
 ) -> Result<setup::SetupView, String> {
     let root = super::autorun::root(&app)?;
     let script = script_with_setup(&root, case_id)?;
-    let Some(s) = &script.setup else { return Err(format!("case {case_id}'s script has no setup")) };
-    let now = setup::current(&root, &organization, &project, s)?;
-    approvals::approve(&root, case_id, &now.fingerprint)?;
+    let fp = setup::approval_target(&root, &organization, &project, &script, &expected_fingerprint)?;
+    approvals::approve(&root, case_id, &fp)?;
     crate::applog::info(format!("Auto Run: the person approved case {case_id}'s setup"));
     setup::view(&root, &organization, &project, &script)?.ok_or_else(|| format!("case {case_id}'s script has no setup"))
 }
