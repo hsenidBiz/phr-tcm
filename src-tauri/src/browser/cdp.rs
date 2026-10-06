@@ -19,7 +19,8 @@
 //!   reported instead of waited on forever;
 //! - events are kept while a call waits for its reply, because the event a
 //!   caller wants (a page load) usually arrives before it asks;
-//! - a JavaScript dialog is accepted the moment it opens. Measured on real
+//! - a JavaScript dialog is answered the moment it opens - as an armed
+//!   `expect_dialog` asks, or else accepted (`dialogs`). Measured on real
 //!   Edge: an `alert()` leaves every later call pending until it is handled.
 //!
 //! A no-save script's connection also intercepts every request
@@ -650,6 +651,13 @@ pub struct Cdp<T: Transport = WsTransport> {
     seeds: Vec<(String, serde_json::Value)>,
     /// The setup frames of new tabs whose answers matter, by id.
     setup: HashMap<u64, (String, SetupStep)>,
+    /// Who answers each dialog, in any tab, and the dialogs seen
+    /// (`dialogs`). One for the whole run, never per tab: an
+    /// `expect_dialog` claims the next dialog wherever it opens.
+    book: super::dialogs::DialogBook,
+    /// The page errors every tab met since the runner last took them
+    /// (`page_errors`). One for the whole run, like `book`.
+    page_errors: super::page_errors::PageErrorBook,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -749,6 +757,8 @@ impl<T: Transport> Cdp<T> {
             downloads_per_page: false,
             seeds: vec![],
             setup: HashMap::new(),
+            book: super::dialogs::DialogBook::default(),
+            page_errors: super::page_errors::PageErrorBook::default(),
         }
     }
 
@@ -1159,7 +1169,9 @@ impl<T: Transport> Cdp<T> {
     /// a step waits for it, and a tab the page opens is set up and let run;
     /// any other just sleeps, as every wait loop always did.
     pub async fn idle(&mut self, wait: Duration) {
-        if self.wants_reading() || self.downloads.is_some() {
+        // An armed `expect_dialog` is waiting on a dialog: it is read, and
+        // answered, the moment it opens.
+        if self.wants_reading() || self.downloads.is_some() || self.book.is_armed() {
             self.pump(wait).await;
         } else {
             tokio::time::sleep(wait).await;
@@ -1962,23 +1974,34 @@ impl<T: Transport> Cdp<T> {
             return self.answer_paused(at, session, &ev.params).await;
         }
         if ev.method == "Page.javascriptDialogOpening" {
-            let Some(i) = at else {
-                return Ok(());
+            // A dialog in a tab not registered yet (one the page opened a
+            // moment ago) is still answered on its own session: left open,
+            // it would hold that page up.
+            let on = match (at, &session) {
+                (Some(i), _) => self.tabs[i].session_id.clone(),
+                (None, Some(s)) => s.clone(),
+                (None, None) => return Ok(()),
             };
             let kind = ev.params["type"].as_str().unwrap_or("dialog");
             let message = ev.params["message"].as_str().unwrap_or("");
-            let tab = &mut self.tabs[i];
-            if tab.dialogs.len() >= MAX_REMEMBERED_DIALOGS {
-                tab.dialogs.remove(0);
+            // The run's armed `expect_dialog` claims it, from whichever tab;
+            // nobody's is accepted, as always, and noted on the tab.
+            let answer = self.book.opened(kind, message);
+            if let Some(i) = at {
+                let tab = &mut self.tabs[i];
+                if self.book.seen().last().is_some_and(|s| s.claimed_by.is_none()) {
+                    if tab.dialogs.len() >= MAX_REMEMBERED_DIALOGS {
+                        tab.dialogs.remove(0);
+                    }
+                    tab.dialogs.push(format!("{kind}: {message}"));
+                }
             }
-            tab.dialogs.push(format!("{kind}: {message}"));
-            let on = tab.session_id.clone();
             // Sent without waiting: its reply carries an id nobody is
             // waiting on and falls through `read_reply` harmlessly.
             let id = self.next_id;
             self.next_id += 1;
             self.transport
-                .send(frame_in(id, "Page.handleJavaScriptDialog", serde_json::json!({ "accept": true }), &on))
+                .send(frame_in(id, "Page.handleJavaScriptDialog", answer, &on))
                 .await
                 .map_err(CdpError::Transport)?;
             return Ok(());
@@ -1992,6 +2015,9 @@ impl<T: Transport> Cdp<T> {
         let Some(i) = at else {
             return Ok(());
         };
+        // Any tab's script errors and 5xx answers, for a script that checks
+        // page errors - read before the page log takes the event.
+        self.page_errors.observe(&ev);
         let tab = &mut self.tabs[i];
         tab.observe_documents(&ev);
         let parked = ev.method == "Network.requestWillBeSent" && !tab.parked.is_empty();
@@ -2252,6 +2278,17 @@ pub trait Driver {
     fn take_save_blocked(&mut self) -> Option<String> {
         None
     }
+    /// The run's dialog book (`dialogs`). A driver that answers no dialogs
+    /// of its own (a test's bare fake) has none: nothing is armed, and an
+    /// `expect_dialog` sees no dialog.
+    fn dialog_book(&mut self) -> Option<&mut super::dialogs::DialogBook> {
+        None
+    }
+    /// The run's page errors (`page_errors`). A driver that reads no page
+    /// events (a test's bare fake) has none.
+    fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
+        None
+    }
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2338,6 +2375,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn forget_events(&mut self) {
         Cdp::forget_events(self)
+    }
+    fn dialog_book(&mut self) -> Option<&mut super::dialogs::DialogBook> {
+        Some(&mut self.book)
+    }
+    fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
+        Some(&mut self.page_errors)
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)

@@ -18,6 +18,7 @@ import {
   type Reset,
   type ResetRecord_Serialize,
   type SignInOutcome,
+  type StepDialog,
 } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -137,6 +138,11 @@ export default function RunPane({
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
   /** The tab a step ran in, for a step that ran outside `main`. */
   const [stepTabs, setStepTabs] = useState<Record<number, string>>({});
+  // The browser dialog each step met, kept on its record as a run keeps it.
+  const [stepDialogs, setStepDialogs] = useState<Record<number, StepDialog>>({});
+  // The page errors each step counted under `"page_errors": "flag"`; the
+  // case's record carries their sum.
+  const [stepPageErrors, setStepPageErrors] = useState<Record<number, number>>({});
   const [verdict, setVerdict] = useState("");
   const verdictLabelId = useId();
   const [note, setNote] = useState("");
@@ -253,6 +259,13 @@ export default function RunPane({
       setStepTabs((prev) => {
         const { [stepNumber]: _gone, ...rest } = prev;
         return ranIn ? { ...rest, [stepNumber]: ranIn } : rest;
+      });
+      const counted = r.data.page_errors_seen;
+      setStepPageErrors((prev) => ({ ...prev, [stepNumber]: counted }));
+      const met = r.data.dialog;
+      setStepDialogs((prev) => {
+        const { [stepNumber]: _gone, ...rest } = prev;
+        return met ? { ...rest, [stepNumber]: met } : rest;
       });
     } catch (e) {
       // See openBrowser above: a rethrown Error here would otherwise wedge
@@ -510,6 +523,7 @@ export default function RunPane({
   }, []);
 
   /** The verdict in front of the person right now, as a record. */
+  const pageErrorsSeen = Object.values(stepPageErrors).reduce((sum, n) => sum + n, 0);
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
     title,
@@ -529,6 +543,7 @@ export default function RunPane({
           results[s.step_number] ??
           (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
         ...(stepTabs[s.step_number] ? { tab: stepTabs[s.step_number] } : {}),
+        ...(stepDialogs[s.step_number] ? { dialog: stepDialogs[s.step_number] } : {}),
       })),
     ],
     // A case its preconditions blocked says so the way an unattended run
@@ -537,6 +552,8 @@ export default function RunPane({
     // Checks skipped while Database Read Access was off: said on the record
     // too, as an unattended run says it.
     ...(pre.notice ? { notice: pre.notice } : {}),
+    // Page errors a flagging script met, as an unattended run counts them.
+    ...(pageErrorsSeen ? { page_errors_seen: pageErrorsSeen } : {}),
   });
 
   /** Every case starts from a clean browser. Keeping one profile across
@@ -575,6 +592,8 @@ export default function RunPane({
         setRecords((r) => [...r, record]);
         setResults({});
         setStepTabs({});
+        setStepDialogs({});
+        setStepPageErrors({});
         setVerdict("");
         setNote("");
         setSignIn({ state: "idle", account: "", out: null });

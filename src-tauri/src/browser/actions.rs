@@ -5,6 +5,10 @@
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
+use super::dialogs;
+use super::table;
+use super::drag;
+use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
 use super::expect::{self, Check};
 use super::input::{self, Blocked};
@@ -143,9 +147,28 @@ pub enum Action {
     },
     /// Press one key on whatever has the focus, as a keyboard would: Tab
     /// and Shift+Tab move the focus, Enter and Space activate, Escape
-    /// closes. One of `PRESS_KEYS`, nothing else - a script that needs a
-    /// field's text uses `fill`.
-    PressKey { key: String },
+    /// closes. One of `PRESS_KEYS`, with any of Ctrl, Shift, Alt and Meta
+    /// held for it (`Ctrl+ArrowUp`, see `keys`), nothing else - a script
+    /// that needs a field's text uses `fill`. `times` (1 to 50) presses the
+    /// same combination that many times.
+    PressKey {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        times: Option<u8>,
+    },
+    /// Pick `from` up and drop it on `to` - before it, after it, or onto
+    /// it (`position`, onto when left out) - as a mouse would, within
+    /// `within_ms` (`drag::DRAG_WAIT_MS` when left out). Serves pages that
+    /// drag with mouse or pointer events and pages that use the browser's
+    /// own drag and drop alike (see `drag`).
+    Drag {
+        from: Target,
+        to: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<DropAt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
     /// The focus is on this element, or on something inside it (a card
     /// whose own button has it counts, as `:focus-within` would).
     ExpectFocused {
@@ -172,6 +195,9 @@ pub enum Action {
         cells: Option<Vec<CellSpec>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         contains_text: Option<Vec<String>>,
+        /// What a PDF's text must hold - for a name ending in .pdf only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pdf: Option<PdfSpec>,
         /// Any other key the script carried - see `Stray`.
         #[serde(flatten)]
         #[specta(skip)]
@@ -206,6 +232,103 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
     },
+    /// The next browser dialog (`alert`, `confirm`, `prompt`,
+    /// `beforeunload`) in any tab: answered as `answer` says, with
+    /// `prompt_text` typed into a prompt first, then its message checked -
+    /// equal to `text`, or holding `contains` (ignoring case), or anything
+    /// when neither is given. Armed when its step starts, so a dialog an
+    /// earlier action of the step opens is caught; it waits up to
+    /// `within_ms` (`dialogs::DIALOG_WAIT_MS` when left out) once the
+    /// step's other actions are done. Carried out by the runner, which arms
+    /// a step's expectations; run on its own, it arms itself first.
+    ExpectDialog {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<String>,
+        answer: DialogAnswer,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
+    /// Some row of the table or grid `table` has every one of `cells` (by
+    /// column header): each text in its cell, ignoring case - or equal to
+    /// it with `exact` (see `table`). Retried like `expect_text`.
+    ExpectRow {
+        table: Target,
+        #[specta(type = BTreeMap<String, String>)]
+        cells: table::Cells,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exact: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// No row of `table` has every one of `cells`.
+    ExpectNoRow {
+        table: Target,
+        #[specta(type = BTreeMap<String, String>)]
+        cells: table::Cells,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exact: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The values of `column` in `table` are in `order`, read as text
+    /// (when `as` is left out), numbers or dates. Blank cells are passed
+    /// over.
+    ExpectSorted {
+        table: Target,
+        column: String,
+        order: table::SortOrder,
+        #[serde(rename = "as", default, skip_serializing_if = "Option::is_none")]
+        sort_as: Option<table::SortAs>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// `table` has `equals` rows, or `at_least`, or `at_most` - exactly
+    /// one of the three.
+    ExpectRowCount {
+        table: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_least: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_most: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+}
+
+/// How an `expect_dialog` answers: OK, or Cancel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogAnswer {
+    Accept,
+    Dismiss,
+}
+
+/// Where on `to` a `drag` drops: its upper part, its lower part, or its
+/// middle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DropAt {
+    Before,
+    After,
+    #[default]
+    Onto,
+}
+
+impl DropAt {
+    /// As a sentence says it: `dragged <from> before <to>`.
+    pub fn word(self) -> &'static str {
+        match self {
+            DropAt::Before => "before",
+            DropAt::After => "after",
+            DropAt::Onto => "onto",
+        }
+    }
 }
 
 /// How long `expect_tab` and `expect_tab_closed` wait when they name no
@@ -272,6 +395,58 @@ pub struct CellSpec {
     pub how: CellMatch,
 }
 
+/// One phrase, or a list of them: `"Total"` or `["Total", "Net pay"]`.
+/// Kept as the script wrote it, so a file round-trips unchanged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(untagged)]
+pub enum Phrases {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Phrases {
+    pub fn list(&self) -> Vec<String> {
+        match self {
+            Phrases::One(s) => vec![s.clone()],
+            Phrases::Many(v) => v.clone(),
+        }
+    }
+}
+
+/// An `expect_download`'s `pdf` block: phrases the PDF contains, its page
+/// count, and phrases on given pages.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contains: Option<Phrases>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<PdfPages>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_page: Option<Vec<PdfOnPage>>,
+    /// Any other key the block carried - see `Stray`.
+    #[serde(flatten)]
+    #[specta(skip)]
+    pub stray: Stray,
+}
+
+/// The PDF's page count: exactly one of the three.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfPages {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_least: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_most: Option<u32>,
+}
+
+/// Phrases one page holds. `page` counts from 1, and `-1` is the last.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PdfOnPage {
+    pub page: i32,
+    pub contains: Phrases,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CellMatch {
@@ -312,12 +487,13 @@ fn check_download(
     headers: &Option<HeadersSpec>,
     cells: &Option<Vec<CellSpec>>,
     contains_text: &Option<Vec<String>>,
+    pdf: &Option<PdfSpec>,
     stray: &Stray,
 ) -> Result<(), String> {
     if let Some(key) = stray.keys().next() {
         let shown: String = key.chars().take(40).collect();
         return Err(format!(
-            "expect_download has no \"{shown}\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+            "expect_download has no \"{shown}\" - it takes name, within_ms, sheet, headers, cells, contains_text and pdf"
         ));
     }
     if name.trim().is_empty() {
@@ -329,6 +505,15 @@ fn check_download(
             return Err(format!("within_ms is at most {DOWNLOAD_WAIT_MAX_MS} (got {ms})"))
         }
         _ => {}
+    }
+    if let Some(pdf) = pdf {
+        if sheet.is_some() || headers.is_some() || cells.is_some() {
+            return Err("a download check is either a PDF check or a spreadsheet check".to_string());
+        }
+        if !name.trim().to_lowercase().ends_with(".pdf") {
+            return Err("pdf checks need a name ending in .pdf".to_string());
+        }
+        check_pdf_spec(pdf)?;
     }
     if sheet.is_some() {
         needs_type("sheet", name, SHEET_TYPES)?;
@@ -390,27 +575,69 @@ fn check_download(
     Ok(())
 }
 
-/// The keys `press_key` may press, as a script names them: name, the DOM
-/// `key`, the DOM `code`, the Windows virtual key, the text a key types
-/// (for those that type one) and whether Shift is held.
-pub const PRESS_KEYS: &[(&str, &str, &str, i64, Option<&str>, bool)] = &[
-    ("Tab", "Tab", "Tab", 9, None, false),
-    ("Shift+Tab", "Tab", "Tab", 9, None, true),
-    ("Enter", "Enter", "Enter", 13, Some("\r"), false),
-    ("Space", " ", "Space", 32, Some(" "), false),
-    ("Escape", "Escape", "Escape", 27, None, false),
-    ("ArrowUp", "ArrowUp", "ArrowUp", 38, None, false),
-    ("ArrowDown", "ArrowDown", "ArrowDown", 40, None, false),
-    ("ArrowLeft", "ArrowLeft", "ArrowLeft", 37, None, false),
-    ("ArrowRight", "ArrowRight", "ArrowRight", 39, None, false),
-    ("Home", "Home", "Home", 36, None, false),
-    ("End", "End", "End", 35, None, false),
-];
-
-/// The names `press_key` accepts, for a refusal to list.
-fn key_names() -> String {
-    PRESS_KEYS.iter().map(|k| k.0).collect::<Vec<_>>().join(", ")
+/// What `validate` says about an `expect_download`'s `pdf` block.
+fn check_pdf_spec(pdf: &PdfSpec) -> Result<(), String> {
+    if let Some(key) = pdf.stray.keys().next() {
+        let shown: String = key.chars().take(40).collect();
+        return Err(format!("pdf has no \"{shown}\" - it takes contains, pages and on_page"));
+    }
+    if pdf.contains.is_none() && pdf.pages.is_none() && pdf.on_page.is_none() {
+        return Err("pdf is empty - give contains, pages or on_page, or leave pdf out".to_string());
+    }
+    if let Some(c) = &pdf.contains {
+        phrases_given("pdf contains", c)?;
+    }
+    if let Some(p) = &pdf.pages {
+        let given = [p.equals, p.at_least, p.at_most].iter().filter(|n| n.is_some()).count();
+        if given != 1 {
+            return Err("pdf pages takes exactly one of equals, at_least or at_most".to_string());
+        }
+        if p.equals == Some(0) || p.at_least == Some(0) || p.at_most == Some(0) {
+            return Err("pdf pages counts from 1".to_string());
+        }
+    }
+    if let Some(on) = &pdf.on_page {
+        if on.is_empty() {
+            return Err("pdf on_page is an empty list - give at least one page, or leave on_page out".to_string());
+        }
+        for o in on {
+            if o.page == 0 || o.page < -1 {
+                return Err("on_page: page counts from 1, or -1 for the last page".to_string());
+            }
+            phrases_given("pdf on_page contains", &o.contains)?;
+        }
+    }
+    Ok(())
 }
+
+/// A list of phrases holds at least one, and none is empty.
+fn phrases_given(key: &str, phrases: &Phrases) -> Result<(), String> {
+    let list = phrases.list();
+    if list.is_empty() {
+        return Err(format!("{key} is an empty list - give at least one text"));
+    }
+    if list.iter().any(|t| t.trim().is_empty()) {
+        return Err(format!("{key} has an empty text - every PDF contains nothing"));
+    }
+    Ok(())
+}
+
+/// The keys `press_key` may press, as a script names them: name, the DOM
+/// `key`, the DOM `code`, the Windows virtual key, and the text a key types
+/// (for those that type one). Shift+Tab, once a row of its own, is Tab with
+/// Shift held (`keys::parse`), and is pressed with Shift held as before.
+pub const PRESS_KEYS: &[(&str, &str, &str, i64, Option<&str>)] = &[
+    ("Tab", "Tab", "Tab", 9, None),
+    ("Enter", "Enter", "Enter", 13, Some("\r")),
+    ("Space", " ", "Space", 32, Some(" ")),
+    ("Escape", "Escape", "Escape", 27, None),
+    ("ArrowUp", "ArrowUp", "ArrowUp", 38, None),
+    ("ArrowDown", "ArrowDown", "ArrowDown", 40, None),
+    ("ArrowLeft", "ArrowLeft", "ArrowLeft", 37, None),
+    ("ArrowRight", "ArrowRight", "ArrowRight", 39, None),
+    ("Home", "Home", "Home", 36, None),
+    ("End", "End", "End", 35, None),
+];
 
 /// How long a script's `when_visible` waits when it names no `within_ms`.
 pub const WHEN_VISIBLE_MS: u32 = 2000;
@@ -586,7 +813,9 @@ pub const PAGE_LACKS: &str = "page does NOT contain ";
 pub const URL_IS: &str = "url is ";
 /// What an upload's click opened instead of a file chooser.
 pub const FILE_CHOOSER: &str = "file chooser";
-/// Appended when a page raised dialogs during the action.
+/// Appended, in run files from before `dialogs`, when a page raised
+/// dialogs during the action. Now ` (a <kind> dialog was accepted: ...)`
+/// (`dialogs::accepted`); both are read back by `autorun::patterns`.
 pub const DIALOG_NOTE: &str = " (the page showed ";
 
 /// A harness failure, said plainly: the app under test did nothing wrong,
@@ -787,13 +1016,75 @@ impl Action {
                 check_guarded(then)
             }
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
-            Action::PressKey { key } if !PRESS_KEYS.iter().any(|k| k.0 == key.trim()) => {
-                Err(format!("press_key \"{key}\" is not a key it presses - use one of {}", key_names()))
+            Action::PressKey { key, times } => keys::check(key, *times),
+            Action::ExpectRow { table, cells, exact, .. } | Action::ExpectNoRow { table, cells, exact, .. } => {
+                let kind = self.kind();
+                if cells.0.is_empty() {
+                    return Err(format!("{kind} needs at least one cell"));
+                }
+                if cells.0.iter().any(|(c, _)| c.trim().is_empty()) {
+                    return Err(format!("{kind} has a cell with an empty column name"));
+                }
+                if let Some((c, _)) = cells.0.iter().find(|(_, t)| t.trim().is_empty() && !exact) {
+                    return Err(format!(
+                        "{kind}: an empty text for \"{}\" holds for any cell - give the text, or set exact for an empty cell",
+                        c.trim()
+                    ));
+                }
+                table.validate()
             }
-            Action::PressKey { .. } => Ok(()),
+            Action::ExpectSorted { table, column, sort_as, .. } => {
+                if column.trim().is_empty() {
+                    return Err("expect_sorted needs a column".to_string());
+                }
+                if let Some(table::SortAs::Format { date }) = sort_as {
+                    if !table::is_date_format(date) {
+                        return Err(format!(
+                            "expect_sorted: \"{date}\" is not a date format - use letters such as dd/MM/yyyy, MM/dd/yyyy, yyyy-MM-dd or d MMM yyyy"
+                        ));
+                    }
+                }
+                table.validate()
+            }
+            Action::ExpectRowCount { table, equals, at_least, at_most, .. } => {
+                table::row_count(*equals, *at_least, *at_most)?;
+                table.validate()
+            }
+            Action::ExpectDialog { text, contains, answer, prompt_text, within_ms } => {
+                if text.is_some() && contains.is_some() {
+                    return Err(dialogs::TEXT_OR_CONTAINS.to_string());
+                }
+                if contains.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                    return Err(
+                        "expect_dialog has an empty contains - every message contains nothing; leave it out to take any message"
+                            .to_string(),
+                    );
+                }
+                if prompt_text.is_some() && *answer == DialogAnswer::Dismiss {
+                    return Err(dialogs::PROMPT_NEEDS_ACCEPT.to_string());
+                }
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    Some(ms) if *ms > dialogs::DIALOG_WAIT_MAX_MS => {
+                        Err(format!("expect_dialog waits at most {} ms, not {ms}", dialogs::DIALOG_WAIT_MAX_MS))
+                    }
+                    _ => Ok(()),
+                }
+            }
+            Action::Drag { from, to, within_ms, .. } => {
+                from.validate().map_err(|e| format!("drag from: {e}"))?;
+                to.validate().map_err(|e| format!("drag to: {e}"))?;
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    Some(ms) if *ms > drag::DRAG_WAIT_MAX_MS => {
+                        Err(format!("drag waits at most {} ms, not {ms}", drag::DRAG_WAIT_MAX_MS))
+                    }
+                    _ => Ok(()),
+                }
+            }
             Action::ExpectFocused { selector, .. } => selector.validate(),
-            Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, stray } => {
-                check_download(name, within_ms, sheet, headers, cells, contains_text, stray)
+            Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, pdf, stray } => {
+                check_download(name, within_ms, sheet, headers, cells, contains_text, pdf, stray)
             }
             Action::ExpectTab { name, url_contains, within_ms } => {
                 check_tab_name("expect_tab", name)?;
@@ -891,6 +1182,11 @@ impl Action {
                 | Action::ExpectDownload { .. }
                 | Action::ExpectTab { .. }
                 | Action::ExpectTabClosed { .. }
+                | Action::ExpectDialog { .. }
+                | Action::ExpectRow { .. }
+                | Action::ExpectNoRow { .. }
+                | Action::ExpectSorted { .. }
+                | Action::ExpectRowCount { .. }
         )
     }
 }
@@ -1187,7 +1483,45 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
-        Action::PressKey { key } => press_key(d, key.trim(), timing).await,
+        Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,
+        Action::ExpectRow { table, cells, exact, timeout_ms } => {
+            let check = table::TableCheck::Row { cells: &cells.0, exact: *exact };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectNoRow { table, cells, exact, timeout_ms } => {
+            let check = table::TableCheck::NoRow { cells: &cells.0, exact: *exact };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectSorted { table, column, order, sort_as, timeout_ms } => {
+            let text = table::SortAs::Kind(table::SortKind::Text);
+            let check = table::TableCheck::Sorted { column, order: *order, sort_as: sort_as.as_ref().unwrap_or(&text) };
+            table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
+            Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,
+            Err(why) => ActionOutcome::failed(why),
+        },
+        // Run on its own (a try, a recipe), it arms itself: it can only
+        // catch a dialog that opens from now on.
+        Action::ExpectDialog { .. } => {
+            let Some(want) = expectation(action) else {
+                return ActionOutcome::failed("expect_dialog could not be read");
+            };
+            let plan = dialogs::plan_of(STANDALONE_DIALOG, want.answer, &want.prompt_text.map(str::to_string));
+            if let Some(book) = d.dialog_book() {
+                book.take_seen();
+                book.arm(vec![plan]);
+            }
+            let out = dialogs::judge(d, STANDALONE_DIALOG, &want, timing).await;
+            if let Some(book) = d.dialog_book() {
+                book.disarm();
+            }
+            out
+        }
+        Action::Drag { from, to, position, within_ms } => {
+            let within = within_ms.unwrap_or(drag::DRAG_WAIT_MS);
+            drag::drag(d, from, to, position.unwrap_or_default(), within, timing).await
+        }
         Action::ExpectFocused { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Focused, wait(timeout_ms, timing), timing.poll_ms).await
         }
@@ -1322,39 +1656,24 @@ pub(crate) async fn focus_now<D: Driver>(d: &mut D) -> String {
     }
 }
 
-/// `press_key`: the key down and up, sent to the page as a keyboard sends
-/// it, so its default does what a person's would - Tab moves the focus,
-/// Enter submits, Space presses a button. Says where the focus went after.
-async fn press_key<D: Driver>(d: &mut D, name: &str, timing: &Timing) -> ActionOutcome {
-    let Some(&(_, key, code, vk, text, shift)) = PRESS_KEYS.iter().find(|k| k.0 == name) else {
-        return ActionOutcome::failed(format!("press_key \"{name}\" is not a key it presses - use one of {}", key_names()));
+/// `press_key`: the combination down and up (`keys`), `times` times, sent
+/// to the page as a keyboard sends it, so its default does what a person's
+/// would - Tab moves the focus, Enter submits, Space presses a button. Says
+/// where the focus went after.
+async fn press_key<D: Driver>(d: &mut D, key: &str, times: u8, timing: &Timing) -> ActionOutcome {
+    let combo = match keys::parse(key) {
+        Ok(c) => c,
+        Err(why) => return ActionOutcome::failed(why),
     };
-    // Shift is 8 in the protocol's modifier bits.
-    let modifiers = if shift { 8 } else { 0 };
-    let mut down = json!({
-        "type": if text.is_some() { "keyDown" } else { "rawKeyDown" },
-        "key": key, "code": code,
-        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
-        "modifiers": modifiers,
-    });
-    if let Some(t) = text {
-        down["text"] = json!(t);
-        down["unmodifiedText"] = json!(t);
-    }
-    if let Err(e) = d.call("Input.dispatchKeyEvent", down).await {
-        return failed_by(e);
-    }
-    let up = json!({
-        "type": "keyUp", "key": key, "code": code,
-        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
-        "modifiers": modifiers,
-    });
-    if let Err(e) = d.call("Input.dispatchKeyEvent", up).await {
-        return failed_by(e);
+    for _ in 0..times {
+        if let Err(e) = combo.press(d).await {
+            return failed_by(e);
+        }
     }
     // A moment for the page to move the focus before saying where it is.
     d.idle(Duration::from_millis(timing.poll_ms.min(200))).await;
-    ActionOutcome::passed(format!("pressed {name}; {}", focus_now(d).await))
+    let pressed = if times > 1 { format!("{} {times} times", combo.name()) } else { combo.name() };
+    ActionOutcome::passed(format!("pressed {pressed}; {}", focus_now(d).await))
 }
 
 /// What `expire_session` says when the site has no cookies to drop.
@@ -1612,13 +1931,40 @@ async fn keep_finding<D: Driver>(
     }
 }
 
-/// A dialog raised BETWEEN two actions is reported with the NEXT one: the
-/// client only reads frames off the socket while a call is in flight, so
-/// nothing is noticed until something asks again.
+/// The id an `expect_dialog` run on its own arms itself under.
+const STANDALONE_DIALOG: u32 = u32::MAX;
+
+/// What an `expect_dialog` checks, or `None` for any other action.
+pub fn expectation(action: &Action) -> Option<dialogs::Expectation<'_>> {
+    match action {
+        Action::ExpectDialog { text, contains, answer, prompt_text, within_ms } => Some(dialogs::Expectation {
+            text: text.as_deref(),
+            contains: contains.as_deref(),
+            answer: *answer,
+            prompt_text: prompt_text.as_deref(),
+            within_ms: within_ms.unwrap_or(dialogs::DIALOG_WAIT_MS),
+        }),
+        _ => None,
+    }
+}
+
+/// A dialog nobody expected, accepted while this action ran, is said on
+/// it: ` (a confirm dialog was accepted: "Leave?")`. One raised BETWEEN two
+/// actions is reported with the NEXT one: the client only reads frames off
+/// the socket while a call is in flight, so nothing is noticed until
+/// something asks again. (Run files from before said
+/// ` (the page showed confirm: Leave? and it was accepted)` - `DIALOG_NOTE`.)
 fn append_dialogs<D: Driver>(d: &mut D, out: &mut ActionOutcome) {
     let dialogs = d.take_dialogs();
     if !dialogs.is_empty() {
-        out.detail.push_str(&format!("{DIALOG_NOTE}{} and it was accepted)", dialogs.join("; ")));
+        let said: Vec<String> = dialogs
+            .iter()
+            .map(|s| match s.split_once(": ") {
+                Some((kind, message)) => dialogs::accepted(kind, message),
+                None => dialogs::accepted("dialog", s),
+            })
+            .collect();
+        out.detail.push_str(&format!(" ({})", said.join("; ")));
     }
 }
 

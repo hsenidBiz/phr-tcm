@@ -73,6 +73,59 @@ describe("a sentence for every action kind", () => {
     [{ kind: "return_to_area", area: "Common Configurator" }, 'Go to the "Common Configurator" area'],
     [{ kind: "return_to_area", area: "  " }, "Return to the case's area"],
     [{ kind: "press_key", key: "Tab" }, "Press Tab"],
+    [{ kind: "press_key", key: "Ctrl+ArrowUp" }, "Press Ctrl+ArrowUp"],
+    [
+      { kind: "expect_row", table: { role: "grid", name: "Employees" }, cells: { Status: "Active", Name: "Ann" } },
+      'Check the "Employees" table has a row with Status "Active" and Name "Ann"',
+    ],
+    [
+      { kind: "expect_no_row", table: { role: "grid", name: "Employees" }, cells: { Name: "Ben" }, exact: true },
+      'Check the "Employees" table has no row with Name "Ben"',
+    ],
+    [
+      { kind: "expect_row", table: { css: "#people" }, cells: { A: "1", B: "2", C: "3" }, timeout_ms: 5000 },
+      'Check the element #people has a row with A "1", B "2" and C "3" (up to 5 s)',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
+      'Check the "Employees" table is sorted by Joined, descending, as dates',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Salary", order: "ascending", as: "number" },
+      'Check the "Employees" table is sorted by Salary, ascending, as numbers',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "ascending", as: { date: "dd/MM/yyyy" } },
+      'Check the "Employees" table is sorted by Joined, ascending, as dates (dd/MM/yyyy)',
+    ],
+    [
+      { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Name", order: "ascending" },
+      'Check the "Employees" table is sorted by Name, ascending',
+    ],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, equals: 5 }, 'Check the "Employees" table has 5 rows'],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, at_least: 1 }, 'Check the "Employees" table has at least 1 row'],
+    [{ kind: "expect_row_count", table: { role: "grid", name: "Employees" }, at_most: 3 }, 'Check the "Employees" table has at most 3 rows'],
+    [{ kind: "expect_dialog", text: "Delete this cycle?", answer: "dismiss" }, 'Expect a dialog saying "Delete this cycle?" and press Cancel'],
+    [{ kind: "expect_dialog", contains: "saved", answer: "accept" }, 'Expect a dialog containing "saved" and press OK'],
+    [{ kind: "expect_dialog", answer: "accept" }, "Expect a dialog and press OK"],
+    [
+      { kind: "expect_dialog", text: "Your name?", answer: "accept", prompt_text: "Kim", within_ms: 5000 },
+      'Expect a dialog saying "Your name?", type "Kim" and press OK (up to 5 s)',
+    ],
+    [{ kind: "press_key", key: "Ctrl+ArrowUp", times: 1 }, "Press Ctrl+ArrowUp"],
+    [{ kind: "press_key", key: "Ctrl+ArrowUp", times: 3 }, "Press Ctrl+ArrowUp 3 times"],
+    [
+      { kind: "drag", from: { role: "row", name: "Grade C" }, to: { role: "row", name: "Grade A" }, position: "before" },
+      'Drag the "Grade C" row before the "Grade A" row',
+    ],
+    [
+      { kind: "drag", from: { role: "row", name: "Grade C" }, to: { role: "row", name: "Grade A" }, position: "after" },
+      'Drag the "Grade C" row after the "Grade A" row',
+    ],
+    [
+      { kind: "drag", from: { role: "row", name: "Grade C" }, to: { role: "row", name: "Grade A" } },
+      'Drag the "Grade C" row onto the "Grade A" row',
+    ],
     [
       { kind: "expect_focused", selector: { role: "textbox", name: "Name" } },
       'Check the "Name" field has the focus',
@@ -90,6 +143,26 @@ describe("a sentence for every action kind", () => {
     [
       { kind: "expect_download", name: "errors*.csv", within_ms: 30000, contains_text: ["Row 3"] },
       'Check a file named like "errors*.csv" downloads (up to 30 s), containing "Row 3"',
+    ],
+    [
+      {
+        kind: "expect_download",
+        name: "Payslip*.pdf",
+        pdf: { contains: "Ada", pages: { equals: 3 }, on_page: [{ page: -1, contains: "Total" }] },
+      },
+      'Check a file named like "Payslip*.pdf" downloads, with the text "Ada", 3 pages, "Total" on the last page',
+    ],
+    [
+      {
+        kind: "expect_download",
+        name: "report.pdf",
+        pdf: { contains: ["Net pay", "Grade"], pages: { at_least: 1 }, on_page: [{ page: 2, contains: ["A", "B"] }] },
+      },
+      'Check a file named "report.pdf" downloads, with the text "Net pay", "Grade", at least 1 page, "A", "B" on page 2',
+    ],
+    [
+      { kind: "expect_download", name: "report.pdf", pdf: { pages: { at_most: 4 } } },
+      'Check a file named "report.pdf" downloads, at most 4 pages',
     ],
     [{ kind: "expect_tab", name: "report" }, 'Wait for a new tab and call it "report"'],
     [
@@ -124,7 +197,7 @@ describe("a sentence for every action kind", () => {
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
-        "expect_tab_closed",
+        "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
       ].sort(),
     );
   });
@@ -250,7 +323,18 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a locator with nothing to find by", { kind: "click", selector: { nth: 1 } }],
     ["a role that is not text", { kind: "click", selector: { role: 7 } }],
     ["download headers that are not a list", { kind: "expect_download", name: "a.xlsx", headers: { exact: "A" } }],
+    ["a pdf page count with two counts", { kind: "expect_download", name: "a.pdf", pdf: { pages: { equals: 1, at_most: 2 } } }],
+    ["a pdf page that is not a number", { kind: "expect_download", name: "a.pdf", pdf: { on_page: [{ page: "last", contains: "x" }] } }],
     ["a when_visible wait that is not a number", { kind: "when_visible", selector: "#a", within_ms: "soon", then: [] }],
+    ["a press_key times that is not a number", { kind: "press_key", key: "Tab", times: "twice" }],
+    ["a drag position it does not know", { kind: "drag", from: "#a", to: "#b", position: "beside" }],
+    ["a drag with no to", { kind: "drag", from: "#a" }],
+    ["a dialog answer it does not know", { kind: "expect_dialog", answer: "maybe" }],
+    ["a dialog with no answer", { kind: "expect_dialog", text: "x" }],
+    ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
+    ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
+    ["a sort order it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "up" }],
+    ["a sort reading it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "ascending", as: "money" }],
   ])("%s", (_, action) => {
     expect(odd(action)).toBe(UNREADABLE);
   });

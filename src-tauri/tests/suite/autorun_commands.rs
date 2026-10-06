@@ -339,6 +339,43 @@ fn an_editor_save_with_no_setup_keeps_the_stored_one() {
     assert_eq!(stored_setup(&root).as_deref(), Some("draft-cycle"));
 }
 
+/// The editor owns what it shows. Every other setting is the stored
+/// script's, so a save from an editor that never sent them keeps them all.
+#[test]
+fn an_editor_save_keeps_every_setting_it_does_not_show() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    put_fixtures(&root, &["draft-cycle"]);
+    let mut stored = with_setup(Some("draft-cycle"));
+    stored.fail_on_unexpected_dialog = true;
+    stored.page_errors = Some(v2_lib::autorun::PageErrors::Flag);
+    stored.ignore_page_errors = vec!["ResizeObserver".to_string()];
+    v2_lib::autorun::store::save_scripts_atomically(&root, &[stored]).unwrap();
+
+    // What the editor sends: its own fields, none of these.
+    let mut edited = with_setup(None);
+    edited.title = "renamed".to_string();
+    save_script_from_editor(&root, "acme", "Web", edited).unwrap();
+
+    let kept = load_script(&root, 7).unwrap().unwrap();
+    assert_eq!(kept.title, "renamed", "the editor's own field is the editor's");
+    assert!(kept.fail_on_unexpected_dialog);
+    assert_eq!(kept.page_errors, Some(v2_lib::autorun::PageErrors::Flag));
+    assert_eq!(kept.ignore_page_errors, ["ResizeObserver"]);
+    assert_eq!(kept.setup.map(|s| s.fixture).as_deref(), Some("draft-cycle"));
+
+    // And a stale editor cannot turn them on for a script that has none.
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    let mut sneaky = with_setup(None);
+    sneaky.page_errors = Some(v2_lib::autorun::PageErrors::Fail);
+    sneaky.fail_on_unexpected_dialog = true;
+    save_script_from_editor(&root, "acme", "Web", sneaky).unwrap();
+    let kept = load_script(&root, 7).unwrap().unwrap();
+    assert_eq!(kept.page_errors, None);
+    assert!(!kept.fail_on_unexpected_dialog);
+}
+
 #[test]
 fn an_editor_save_on_a_script_with_no_setup_stays_without_one() {
     let dir = TempDir::new();

@@ -23,6 +23,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
 import { resetLinesBefore } from "./plan";
 import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
@@ -377,6 +378,7 @@ export default function RunReview(props: {
                   <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                   <RetriedBadge first={c.retried} />
                   <NoticeBadge notice={c.notice} />
+                  <PageErrorsBadge seen={c.page_errors_seen} />
                   {replayTo !== null && (
                     <Button
                       size="sm"

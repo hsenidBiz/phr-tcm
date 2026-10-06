@@ -370,6 +370,8 @@ fn script(case_id: i32, changes: &[&str], needs: &[&str]) -> CaseScript {
         changes: names(changes),
         needs_unchanged: names(needs),
         saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None, ignore_page_errors: vec![],
     }
 }
 

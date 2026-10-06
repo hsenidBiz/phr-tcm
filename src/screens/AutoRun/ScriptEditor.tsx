@@ -199,6 +199,11 @@ export default function ScriptEditor({
       // stored for the case whatever a save sends.
       ...(changes.length ? { changes } : {}),
       ...(needsUnchanged.length ? { needs_unchanged: needsUnchanged } : {}),
+      // Settings this editor has no control for are carried through as the
+      // script has them, so a save from here never drops them.
+      ...(existing.data?.fail_on_unexpected_dialog ? { fail_on_unexpected_dialog: true } : {}),
+      ...(existing.data?.page_errors ? { page_errors: existing.data.page_errors } : {}),
+      ...(existing.data?.ignore_page_errors?.length ? { ignore_page_errors: existing.data.ignore_page_errors } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);

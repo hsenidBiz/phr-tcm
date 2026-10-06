@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run dialog fixture</title>
+<!--
+  A page that asks before it deletes, the way real pages do: a `confirm`
+  whose answer decides what the page writes. The tests read only what the
+  page wrote, never what Rust believes it answered.
+-->
+<button id="delete">Delete the cycle</button>
+<button id="greet">Say hello</button>
+<p id="answer">nothing asked</p>
+<script>
+  document.getElementById('delete').addEventListener('click', () => {
+    const yes = confirm('Delete this cycle?');
+    document.getElementById('answer').textContent = yes ? 'deleted' : 'kept';
+  });
+  document.getElementById('greet').addEventListener('click', () => {
+    alert('Hello');
+    document.getElementById('answer').textContent = 'greeted';
+  });
+</script>

@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run drag fixture</title>
+<!--
+  Two lists that reorder, each the way real pages do it:
+
+  - #mouse is sorted by pointer events, as SortableJS and grid row
+    reordering are: pointerdown on an item, pointerup on another drops it
+    before or after that one, by which half of it the pointer is over. It
+    moves nothing until the pointer has travelled, so a plain click is not a
+    drop.
+  - #native uses the browser's own drag and drop: draggable items, the
+    dragged item's id carried in the drag's data, dropped by `drop`.
+
+  Both also reorder from the keyboard: Ctrl+ArrowUp and Ctrl+ArrowDown move
+  the focused item, read from the keydown's own `ctrlKey`.
+
+  Each list writes its order beside it; the tests read only that.
+-->
+<style>
+  body { font: 16px sans-serif; margin: 20px; }
+  ul { list-style: none; padding: 0; width: 240px; display: inline-block; vertical-align: top; margin-right: 40px; }
+  li { height: 36px; line-height: 36px; margin: 4px 0; padding: 0 8px; background: #eee; border: 1px solid #999; user-select: none; }
+  li:focus { outline: 2px solid #36c; }
+</style>
+<ul id="mouse">
+  <li id="m-a" tabindex="0">A</li>
+  <li id="m-b" tabindex="0">B</li>
+  <li id="m-c" tabindex="0">C</li>
+  <li id="m-d" tabindex="0">D</li>
+</ul>
+<ul id="native">
+  <li id="n-a" tabindex="0" draggable="true">A</li>
+  <li id="n-b" tabindex="0" draggable="true">B</li>
+  <li id="n-c" tabindex="0" draggable="true">C</li>
+  <li id="n-d" tabindex="0" draggable="true">D</li>
+</ul>
+<p>Mouse list: <span id="mouse-order">A,B,C,D</span></p>
+<p>Native list: <span id="native-order">A,B,C,D</span></p>
+<script>
+  const show = (list) => {
+    document.getElementById(list.id + '-order').textContent =
+      Array.from(list.children).map((li) => li.textContent).join(',');
+  };
+  // Before or after `target`, by which half of it `y` is in.
+  const place = (item, target, y) => {
+    if (!target || target === item) return;
+    const r = target.getBoundingClientRect();
+    target.parentNode.insertBefore(item, y < r.top + r.height / 2 ? target : target.nextSibling);
+  };
+
+  // The pointer-sorted list.
+  const mouse = document.getElementById('mouse');
+  let held = null;
+  mouse.addEventListener('pointerdown', (e) => {
+    const li = e.target.closest('li');
+    if (li) held = { li, x: e.clientX, y: e.clientY, moved: false };
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (held && Math.hypot(e.clientX - held.x, e.clientY - held.y) > 5) held.moved = true;
+  });
+  document.addEventListener('pointerup', (e) => {
+    const was = held;
+    held = null;
+    if (!was || !was.moved) return;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const target = under && under.closest('#mouse li');
+    place(was.li, target, e.clientY);
+    show(mouse);
+  });
+
+  // The draggable list.
+  const native = document.getElementById('native');
+  native.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', e.target.id);
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  native.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+  native.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const item = document.getElementById(e.dataTransfer.getData('text/plain'));
+    place(item, e.target.closest('li'), e.clientY);
+    show(native);
+  });
+
+  // The keyboard alternative, on either list.
+  document.addEventListener('keydown', (e) => {
+    const li = document.activeElement && document.activeElement.closest('ul > li');
+    if (!li || !e.ctrlKey) return;
+    if (e.key === 'ArrowUp' && li.previousElementSibling) {
+      li.parentNode.insertBefore(li, li.previousElementSibling);
+    } else if (e.key === 'ArrowDown' && li.nextElementSibling) {
+      li.parentNode.insertBefore(li.nextElementSibling, li);
+    } else {
+      return;
+    }
+    e.preventDefault();
+    li.focus();
+    show(li.parentNode);
+  });
+</script>

@@ -1484,6 +1484,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
                 screenshot: None,
                 downloads: vec![],
                 tab: None,
+                dialog: None,
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -1491,6 +1492,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             account: None,
             retried: None,
             notice: None,
+            page_errors_seen: 0,
         }],
         mode: String::new(),
         published: None,
@@ -1870,13 +1872,14 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
         "case_id": 7, "title": "case 7", "verdict": "", "note": "", "steps": [], "proposed": "Failed"
     }))
     .unwrap();
-    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None });
+    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None });
     case.steps.push(StepRecord {
         step_number: 2,
         outcomes: vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")],
         screenshot: None,
         downloads: vec![],
         tab: None,
+        dialog: None,
     });
     run.cases.push(case);
     save_run(dir.path(), &run).unwrap();
@@ -2312,6 +2315,8 @@ fn scripted(case_id: i32) -> CaseScript {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None, ignore_page_errors: vec![],
     }
 }
 

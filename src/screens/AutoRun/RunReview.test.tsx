@@ -813,6 +813,14 @@ test("a case run a second time after a transient failure is labelled Retried", a
   expect(within(caseCard(201)).queryByText("Retried")).not.toBeInTheDocument();
 });
 
+test("a case whose script flagged page errors carries the count", async () => {
+  renderReview({ ...RUN, cases: RUN.cases.map((c) => (c.case_id === 202 ? { ...c, page_errors_seen: 2 } : c)) });
+
+  const label = await waitFor(() => within(caseCard(202)).getByText("page errors seen: 2"));
+  expect(label).toHaveClass("text-warning");
+  expect(within(caseCard(201)).queryByText(/page errors seen/)).not.toBeInTheDocument();
+});
+
 test("a case whose preconditions were not checked is labelled Not checked, with the sentence", async () => {
   const notice = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
   renderReview({ ...RUN, cases: RUN.cases.map((c) => (c.case_id === 202 ? { ...c, notice } : c)) });

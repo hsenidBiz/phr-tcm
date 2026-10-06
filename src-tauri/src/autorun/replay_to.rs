@@ -389,13 +389,22 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     // `return_to_area` actions name are read once, before the first.
     let names = runner::named_areas(script.steps.iter().filter(|s| s.step_number < n).flat_map(|s| s.actions.iter()));
     let areas = runner::area_routes(root, organization, project, &names);
+    // What the page met before step 1 is no step's error.
+    super::page_errors::drop_all(d);
     for step in script.steps.iter().filter(|s| s.step_number < n) {
         let k = step.step_number;
         if stopped() {
             return ReplayEnd::Stopped { step: k };
         }
         progress(k, n - 1);
-        let mut in_run = InRun { cancel: Some(cancel), areas: Some(&areas), ..Default::default() };
+        let mut in_run = InRun {
+            cancel: Some(cancel),
+            areas: Some(&areas),
+            fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
+            page_errors: script.page_errors,
+            ignore_page_errors: script.ignore_page_errors.clone(),
+            ..Default::default()
+        };
         let ran = runner::run_step_in_run(
             d,
             root,

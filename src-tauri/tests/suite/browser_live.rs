@@ -320,7 +320,7 @@ async fn an_alert_does_not_freeze_the_run() {
     let next = run(&mut live, json!({ "kind": "expect_text", "selector": "#count", "equals": "clicked 1" })).await;
     assert!(next.ok, "{}", next.detail);
     assert!(
-        out.detail.contains("alert: Saved!") || next.detail.contains("alert: Saved!"),
+        [&out.detail, &next.detail].iter().any(|d| d.contains("(an alert dialog was accepted: \"Saved!\")")),
         "nobody was told about the alert: {:?} / {:?}",
         out.detail,
         next.detail
@@ -2229,6 +2229,96 @@ async fn a_mid_script_sign_in_that_leaves_a_saving_draft_fails_the_case() {
 /// A one-page site for the keyboard and reload checks below: `/` counts its
 /// own loads in the tab's session storage (which a reload keeps), and a
 /// click - or Enter on the focused button - writes into `#out`.
+/// A page that throws when #boom is pressed and whose #save posts to a path
+/// the server answers 500; `/api/Own` answers 500 too, for the run's own
+/// `api_request`.
+fn errors_site() -> u16 {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<button id="boom">Boom</button>
+<button id="save">Save</button>
+<p id="out">nothing yet</p>
+<script>
+document.getElementById('boom').addEventListener('click', () => {
+  document.getElementById('out').textContent = 'boomed';
+  throw new Error('boom from the page');
+});
+document.getElementById('save').addEventListener('click', async () => {
+  await fetch('/api/Broken?token=hunter2', { method: 'POST' });
+  document.getElementById('out').textContent = 'tried';
+});
+</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let Ok(n) = stream.read(&mut buf) else { continue };
+            let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+            if line.starts_with("GET / ") {
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
+                    PAGE.len()
+                );
+            } else if line.contains(" /api/") {
+                let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno");
+            } else {
+                let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            }
+        }
+    });
+    port
+}
+
+/// A real page's thrown error fails a `fail` step; a real 5xx is counted
+/// by a `flag` step, and the run's own `api_request` 500 is not.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_errors_fail_or_flag_a_real_page() {
+    use v2_lib::autorun::lease::Held;
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    use v2_lib::autorun::PageErrors;
+    let port = errors_site();
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.unwrap();
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    v2_lib::autorun::page_errors::drop_all(&mut live.cdp);
+    let dir = tempfile::tempdir().unwrap();
+    let mut account = None;
+    let mut held = Held::supervised();
+
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 1, "actions": [
+        { "kind": "click", "selector": { "css": "#boom" } },
+        { "kind": "expect_text", "selector": { "css": "#out" }, "equals": "boomed" }
+    ] }))
+    .unwrap();
+    let mut r = InRun { page_errors: Some(PageErrors::Fail), ..Default::default() };
+    let out = run_step_in_run(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut r)
+        .await
+        .unwrap();
+    assert!(out[0].ok, "{out:?}");
+    assert_eq!(out[1].detail, "the page had an error: Error: boom from the page");
+
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 2, "actions": [
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "expect_text", "selector": { "css": "#out" }, "equals": "tried" },
+        { "kind": "api_request", "path": "/api/Own", "expect": { "status": 500 } }
+    ] }))
+    .unwrap();
+    let mut r = InRun { page_errors: Some(PageErrors::Flag), ..Default::default() };
+    let out = run_step_in_run(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut r)
+        .await
+        .unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(r.page_errors_seen, 1, "{out:?}");
+    let last = &out[2].detail;
+    assert!(last.ends_with(" (page errors: a request was answered 500: POST /api/Broken)"), "{last}");
+    assert!(!last.contains("hunter2") && !last.contains("127.0.0.1"), "{last}");
+}
+
 fn keys_site() -> u16 {
     const PAGE: &str = r#"<!doctype html><html><body>
 <p id="loads"></p>
@@ -2262,6 +2352,143 @@ document.getElementById('loads').textContent = 'load ' + n;
         }
     });
     port
+}
+
+/// The table checks read a real HTML table (its `thead`, not its `tfoot`)
+/// and a real div-based ARIA grid that fills itself half a second after the
+/// page loads - the first check on it has to wait.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn table_checks_read_a_real_table_and_a_loading_grid() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-table.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let html = json!({ "css": "#people-table" });
+    let grid = json!({ "role": "grid", "name": "Staff" });
+
+    // The grid first, while it is still empty: the check waits for it.
+    let out = run(&mut live, json!({ "kind": "expect_row", "table": grid, "cells": { "Name": "eli", "Status": "Active" } })).await;
+    must(out.clone());
+    assert_eq!(out.detail, "row 2 has Name \"eli\", Status \"Active\"");
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": grid, "equals": 3 })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": grid, "column": "Joined", "order": "descending", "as": "date" })).await);
+    must(run(&mut live, json!({ "kind": "expect_no_row", "table": grid, "cells": { "Name": "Ghost" } })).await);
+    let wrong = run_with(
+        &mut live,
+        json!({ "kind": "expect_sorted", "table": grid, "column": "Name", "order": "descending", "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert_eq!(wrong.detail, "Name is not in descending order - row 1 \"Dee Fox\" comes before row 2 \"Eli Gray\"");
+
+    must(run(&mut live, json!({ "kind": "expect_row", "table": html, "cells": { "name": "Ann Lee", "Status": "active" }, "exact": true })).await);
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": html, "equals": 3 })).await);
+    must(run(&mut live, json!({ "kind": "expect_row_count", "table": html, "at_least": 2 })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": html, "column": "Name", "order": "ascending" })).await);
+    must(run(&mut live, json!({ "kind": "expect_sorted", "table": html, "column": "Joined", "order": "descending", "as": "date" })).await);
+    let salary = run_with(
+        &mut live,
+        json!({ "kind": "expect_sorted", "table": html, "column": "Salary", "order": "descending", "as": "number", "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert!(salary.ok, "1,200 then 950 then -5 is descending, and the tfoot total is not a row: {}", salary.detail);
+    let wrong = run_with(
+        &mut live,
+        json!({ "kind": "expect_row_count", "table": html, "at_most": 2, "timeout_ms": 300 }),
+        &timing(),
+    )
+    .await;
+    assert_eq!(wrong.detail, "the table has 3 rows, not at most 2");
+    let unknown = run_with(&mut live, json!({ "kind": "expect_row", "table": html, "cells": { "Grade": "A" }, "timeout_ms": 300 }), &timing()).await;
+    assert_eq!(unknown.detail, "the table has no column \"Grade\" - its columns are \"Name\", \"Status\", \"Joined\", \"Salary\"");
+}
+
+/// A `confirm` the page opens is dismissed by the step's `expect_dialog`,
+/// which then checks its words; the page writes what its `confirm` was
+/// answered. A dialog nobody expected is accepted, and said on the step.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_dialog_answers_a_real_confirm() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-dialog.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let dir = tempfile::tempdir().unwrap();
+    let mut account = None;
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 1, "actions": [
+        { "kind": "click", "selector": { "css": "#delete" } },
+        { "kind": "expect_dialog", "text": "Delete this cycle?", "answer": "dismiss" },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "kept" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[1].detail, "a confirm dialog said \"Delete this cycle?\"; pressed Cancel");
+
+    // The wrong words: still answered as asked (OK here), then failed.
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 2, "actions": [
+        { "kind": "click", "selector": { "css": "#delete" } },
+        { "kind": "expect_dialog", "contains": "archive", "answer": "accept" },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "deleted" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert_eq!(out[1].detail, "the dialog said \"Delete this cycle?\", which does not contain \"archive\"");
+    assert!(out[2].ok, "the page went on: {out:?}");
+
+    // Nobody expected this alert: accepted, said, and the page went on.
+    let step: StepScript = serde_json::from_value(json!({ "step_number": 3, "actions": [
+        { "kind": "click", "selector": { "css": "#greet" } },
+        { "kind": "expect_text", "selector": { "css": "#answer" }, "equals": "greeted" }
+    ] }))
+    .unwrap();
+    let out = run_step(&mut live.cdp, dir.path(), "Acme", "Web", &step, &timing(), &mut account).await.unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    let said = out.iter().any(|o| o.detail.contains("(an alert dialog was accepted: \"Hello\")"));
+    assert!(said, "{out:?}");
+}
+
+/// `drag` reorders a list sorted by pointer events (the SortableJS kind)
+/// and a list using the browser's own drag and drop, and Ctrl+ArrowUp - a
+/// combination, held as a keyboard holds it - reorders both from the
+/// keyboard. Every order is the one the PAGE wrote after it moved an item.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn drag_and_ctrl_arrow_reorder_real_lists() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-drag.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let order = |list: &str, equals: &str| json!({ "kind": "expect_text", "selector": { "css": format!("#{list}-order") }, "equals": equals });
+
+    // Pointer events: D before A, then D after B.
+    let out = run(&mut live, json!({ "kind": "drag", "from": { "css": "#m-d" }, "to": { "css": "#m-a" }, "position": "before" })).await;
+    must(out.clone());
+    assert_eq!(out.detail, "dragged #m-d before #m-a");
+    must(run(&mut live, order("mouse", "D,A,B,C")).await);
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#m-d" }, "to": { "css": "#m-b" }, "position": "after" })).await);
+    must(run(&mut live, order("mouse", "A,B,D,C")).await);
+
+    // The browser's own drag and drop: C before A, then A after D.
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#n-c" }, "to": { "css": "#n-a" }, "position": "before" })).await);
+    must(run(&mut live, order("native", "C,A,B,D")).await);
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#n-a" }, "to": { "css": "#n-d" }, "position": "after" })).await);
+    must(run(&mut live, order("native", "C,B,D,A")).await);
+
+    // The keyboard: the page moves the focused item only when its keydown
+    // says Ctrl is down.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#n-a" } })).await);
+    must(run(&mut live, json!({ "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 })).await);
+    must(run(&mut live, order("native", "C,A,B,D")).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#m-c" } })).await);
+    must(run(&mut live, json!({ "kind": "press_key", "key": "ctrl+ArrowUp" })).await);
+    must(run(&mut live, order("mouse", "A,B,C,D")).await);
+    // An arrow without Ctrl moves nothing.
+    must(run(&mut live, json!({ "kind": "press_key", "key": "ArrowUp" })).await);
+    must(run(&mut live, order("mouse", "A,B,C,D")).await);
+
+    // Interception was switched off: a later click is an ordinary click.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#n-b" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_focused", "selector": { "css": "#n-b" } })).await);
 }
 
 /// Tab and Shift+Tab really move the focus, Enter really presses the focused
@@ -2496,6 +2723,42 @@ async fn expect_download_checks_the_file_a_step_downloaded() {
     .await;
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, "no download started within 1.5 s");
+}
+
+/// A PDF a real browser downloaded, read page by page: its text anywhere,
+/// its page count and its last page pass; a phrase on the wrong page fails
+/// with the spec's sentence.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_download_reads_a_downloaded_pdf() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut live = open_downloads(&dir.path().join("downloads")).await;
+
+    let out = download_step(&mut live, dir.path(), 1, vec![
+        json!({ "kind": "click", "selector": { "css": "#pdf" } }),
+        json!({ "kind": "expect_download", "name": "payslip*.pdf",
+                "pdf": { "contains": ["Ada Lovelace"], "pages": { "equals": 2 },
+                         "on_page": [ { "page": 1, "contains": "Payslip for October" }, { "page": -1, "contains": "Total 12,500.00" } ] } }),
+    ])
+    .await;
+    must(out[0].clone());
+    assert!(out[1].ok, "{}", out[1].detail);
+    assert!(out[1].detail.starts_with("downloaded \"Payslip.pdf\" ("), "{}", out[1].detail);
+    assert!(
+        out[1].detail.ends_with(
+            ", the PDF contains \"Ada Lovelace\", the PDF has 2 pages, page 1 of the PDF contains \"Payslip for October\", page 2 of the PDF contains \"Total 12,500.00\""
+        ),
+        "{}",
+        out[1].detail
+    );
+
+    let out = download_step(&mut live, dir.path(), 2, vec![
+        json!({ "kind": "click", "selector": { "css": "#pdf" } }),
+        json!({ "kind": "expect_download", "name": "Payslip*.pdf", "pdf": { "on_page": [ { "page": 1, "contains": "Total" } ] } }),
+    ])
+    .await;
+    assert!(!out[1].ok);
+    assert_eq!(out[1].detail, "page 1 of the PDF does not contain \"Total\"");
 }
 
 /// A replay to a step against a real page: a three-step case replayed to

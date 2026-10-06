@@ -16,6 +16,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import PageErrorsBadge from "./PageErrorsBadge";
 import { resetLinesBefore } from "./plan";
 import {
   RESULT_BUCKETS,
@@ -239,6 +240,7 @@ export default function PastRuns({
                           <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                           <RetriedBadge first={c.retried} />
                           <NoticeBadge notice={c.notice} />
+                          <PageErrorsBadge seen={c.page_errors_seen} />
                           {c.verdict ? (
                             <span className={cn("text-xs font-medium", rowTone[c.verdict] ?? "text-faint")}>
                               {c.verdict}

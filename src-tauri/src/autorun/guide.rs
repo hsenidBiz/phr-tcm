@@ -38,6 +38,12 @@ pub const ACTION_KINDS: &[&str] = &[
     "switch_tab",
     "close_tab",
     "expect_tab_closed",
+    "drag",
+    "expect_dialog",
+    "expect_row",
+    "expect_no_row",
+    "expect_sorted",
+    "expect_row_count",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -113,7 +119,13 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
-- `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
+- `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End, with any of Ctrl, Shift, Alt and Meta held for it (`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`); `times` (1 to 50, default 1) presses it that many times
+- `{ "kind": "expect_dialog", "contains": "delete", "answer": "dismiss" }` - the next browser dialog (alert, confirm, prompt or the leave-page prompt) in any tab: pressed OK (`accept`) or Cancel (`dismiss`), then its message checked against `text` (equal) or `contains` (ignoring case); `prompt_text` and `within_ms` (default 10000) are optional (see "Browser dialogs")
+- `{ "kind": "expect_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Status": "Active", "Name": "Ann" } }` - some row of the table or grid has every one of those cells, by column header (see "Tables and grids")
+- `{ "kind": "expect_no_row", "table": ..., "cells": { "Name": "Ann" } }` - no row has them
+- `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
+- `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
+- `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
 - `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")
@@ -229,6 +241,42 @@ check a case that tabs through controls:
 
     { "kind": "press_key", "key": "Tab" },
     { "kind": "expect_focused", "selector": { "role": "button", "name": "Activate" } }
+
+A key can be pressed with modifiers held, joined with `+`: `Ctrl`,
+`Shift`, `Alt` and `Meta`, in any case, before one of the keys above -
+`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`, `"Alt+ArrowDown"`.
+`times` presses the same combination again, up to 50 times:
+
+    { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+**Dragging to reorder.** `drag` picks `from` up and drops it on `to`, as a
+mouse would. Both are ordinary locators, frame chains included, and both
+are scrolled into view first. `position` says where on `to`: `before` (its
+upper part), `after` (its lower part) or `onto` (its middle, the default).
+It works for lists that drag with the mouse or pointer and for the
+browser's own drag and drop alike:
+
+    { "kind": "drag", "from": { "role": "row", "name": "Grade C" }, "to": { "role": "row", "name": "Grade A" }, "position": "before" }
+
+A drag says only that it was carried out, not that the page took any
+notice of it - a page that ignored the drop still passes the drag. Always
+follow it with a check of the new order, such as `expect_text` on the
+first item. It fails with "there was nothing to drag at ..." or "there
+was nowhere to drop at ..." when an element is missing or cannot be used,
+and with "the drag did not finish within N seconds" when the gesture ran
+out of time.
+
+Many screens that reorder by dragging also reorder from the keyboard,
+which is often the steadier way to test it: focus the item, then press
+the screen's reorder keys. Ctrl+Arrow and Alt+Arrow are the common ones;
+use the one the screen itself documents (its help text, a tooltip, or its
+accessible description), never a guess:
+
+    { "kind": "click", "selector": { "role": "row", "name": "Grade C" } },
+    { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+A page that saves on drop is still stopped under "must not save", as it is
+for any other action.
 
 **What a screen reader is told.** Auto Run reads the same accessibility
 tree a screen reader does, so a case about what is "announced" is checked
@@ -381,6 +429,12 @@ Or a workbook, checked with `cells`:
     { "kind": "click", "selector": { "role": "link", "name": "Download error log" } },
     { "kind": "expect_download", "name": "*Error*.xlsx", "sheet": "Errors", "cells": [ { "ref": "B2", "text": "Department is required", "match": "contains" } ] }
 
+A payslip or report printed to PDF, checked with `pdf`: the employee's
+name anywhere, two pages, and the total on the last page:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Download Payslip" } },
+    { "kind": "expect_download", "name": "Payslip*.pdf", "pdf": { "contains": ["Ada Lovelace"], "pages": { "equals": 2 }, "on_page": [ { "page": -1, "contains": "Total" } ] } }
+
 The names, buttons and words above are examples: use the file name the
 application really gives, with `*` for the part that changes (a date, a
 number), and the words the case's expected result names.
@@ -404,6 +458,18 @@ number), and the words the case's expected result names.
     0.5, so check header and text cells, not dates or percentages.
 - `contains_text` is only for a name ending in .csv or .txt: each text
   must appear somewhere in the file.
+- `pdf` is only for a name ending in .pdf, and never beside `sheet`,
+  `headers` or `cells`. Its text is compared ignoring case, with every run
+  of spaces and line breaks as one space. It takes any of:
+  - `contains`: a text, or a list of texts, each somewhere in the PDF;
+  - `pages`: exactly one of `{ "equals": n }`, `{ "at_least": n }` or
+    `{ "at_most": n }`;
+  - `on_page`: a list of `{ "page": p, "contains": ... }`, where `page`
+    counts from 1 and -1 is the last page.
+
+  A PDF that needs a password to open, a scanned PDF with no text in it,
+  and a damaged one all fail with `the PDF's text could not be read`; the
+  app log says which. A scanned PDF is never read as an image.
 - Saving refuses a key the file type cannot carry, a `within_ms` out of
   range, a `ref` that is not a cell like B2, and an empty list.
 
@@ -418,6 +484,95 @@ try it waits at most 30 seconds, whatever `within_ms` says.
 
 Watched runs list no downloads, because their download folder is emptied
 when the browser closes; only an unattended run keeps its files.
+
+## Tables and grids
+
+Four checks read a table or grid the way a person does - by its column
+headers - instead of by cell positions or CSS:
+
+    { "kind": "expect_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Status": "Active", "Name": "Ann" } },
+    { "kind": "expect_no_row", "table": { "role": "grid", "name": "Employees" }, "cells": { "Name": "Ben" }, "exact": true },
+    { "kind": "expect_sorted", "table": { "role": "grid", "name": "Employees" }, "column": "Joined", "order": "descending", "as": "date" },
+    { "kind": "expect_row_count", "table": { "role": "grid", "name": "Employees" }, "equals": 5 }
+
+- `table` is an ordinary locator (frame chains included) that finds a
+  `<table>`, or an element with `role` `grid`, `treegrid` or `table`.
+  Anything else fails with "... is not a table or grid".
+- Columns are found by their header text, trimmed and ignoring case. An
+  unknown column fails and lists the columns the table has.
+- `cells` matches each text inside its cell, ignoring case; with
+  `"exact": true` the cell must equal it. `expect_row` needs one row with
+  every cell; `expect_no_row` fails on the first row that has them all.
+- `expect_sorted` passes over blank cells. `as` is `"text"` (the default,
+  ignoring case), `"number"` or `"date"` (`yyyy-MM-dd`, `dd/MM/yyyy`,
+  `MM/dd/yyyy`, `d MMM yyyy`). When the dates could be day-first or
+  month-first and the two readings order them differently, give the
+  format: `"as": { "date": "dd/MM/yyyy" }`.
+- A number may have `,` between thousands, decimals after a `.`, a
+  leading `-`, one `%` at the end, and one currency sign or code at the
+  start - `$`, the pound or euro sign, `LKR`, `Rs` or `Rs.` - before or
+  after the `-`, with or without a space: `1,234`, `-5`, `40%`,
+  `LKR 1,250.50`, `-$5`, `Rs. 900`. A column may mix them. `(5)` is not
+  read as a negative number.
+- Text is sorted by lowercased character order, which can differ from
+  the page's own order for accented letters.
+- `expect_row_count` takes exactly one of `equals`, `at_least` and
+  `at_most`.
+
+Each check reads the table again until it holds or its `timeout_ms` (the
+step's check timeout) runs out, so a grid still loading is waited for.
+A check that something is absent - `expect_no_row`, `expect_row_count`
+with `"equals": 0` or `at_most` - passes only once the table has stayed
+the same for 750 ms, because a grid whose rows have not arrived yet looks
+empty. Where the case allows it, put a positive check first (an
+`expect_row` for a row that must be there), so the grid has loaded before
+the negative check reads it.
+
+Only the rows the page has drawn are read: a grid that shows rows page by
+page, or loads them as it scrolls, is checked as it is shown. Filter it or
+page to the rows the case is about first. Rows in a table's footer
+(`tfoot`) are not read. Column spans are not followed: cells are matched
+to headers by their position in the row.
+
+## Browser dialogs
+
+A page's own `alert`, `confirm` and `prompt`, and the browser's "Leave
+site?" prompt, are answered the moment they open, so the page never
+waits. Without an `expect_dialog`, every one is accepted (OK) and the step
+says so: `a confirm dialog was accepted: "..."`.
+
+To check one and choose the answer, put an `expect_dialog` in the step
+whose action opens it - anywhere in the step: every `expect_dialog` is
+armed when its step starts, claims the next dialog in any tab, and judges
+it once the step's other actions are done:
+
+    { "kind": "click", "selector": { "role": "button", "name": "Delete" } },
+    { "kind": "expect_dialog", "text": "Delete this cycle?", "answer": "dismiss" }
+
+- `answer` is `accept` (OK) or `dismiss` (Cancel), and is required.
+- `text` must equal the message (trimmed); `contains` must appear in it,
+  ignoring case. Give one or neither, never both.
+- `prompt_text` is typed into a `prompt` before OK; it needs `"answer":
+  "accept"`.
+- `within_ms` (default 10000, at most 60000) is how long it waits for its
+  dialog once the step's other actions are done.
+
+A dialog with the wrong words has still been answered as asked, so the
+page carries on; the step fails with `the dialog said "...", not "..."`
+or `the dialog said "...", which does not contain "..."`. No dialog fails
+it with `no dialog appeared within N seconds`. Two dialogs in one step
+need two `expect_dialog`s, in the order the dialogs open.
+
+A case that must notice any dialog it did not expect sets
+`"fail_on_unexpected_dialog": true` beside `case_id`. A dialog nobody
+expected is then still accepted, so the page can go on, and the step it
+appeared in fails with `an unexpected confirm dialog appeared: "..."`.
+
+A dialog that opens between steps, before the next step has started, is
+accepted and noted but never fails a step, even with
+`fail_on_unexpected_dialog`. A watched run reads `fail_on_unexpected_dialog`
+and `page_errors` from the saved script: an edit to them that has not been
+saved yet does not apply.
 
 ## Tabs
 
@@ -578,6 +733,37 @@ the person the page saves by itself.
 A repair can turn `no_save` on, never off - leaving it out of a repair is
 turning it off, and that is refused. Only a person, saving the script in
 the app, can turn it off.
+
+## Page errors
+
+A case can also judge the page's own errors - an uncaught script error,
+or a request answered 500 to 599 - in any tab, beside `case_id`:
+
+    { "case_id": 501, "title": "...", "page_errors": "fail", "ignore_page_errors": ["ResizeObserver"], "steps": [ ... ] }
+
+- `"page_errors": "fail"` fails the step they appear in, with `the page
+  had an error: <message>` or `a request was answered <status>: <method>
+  <path>` for the first, and `(and <n> more)` for the rest. A step that
+  already failed keeps its own failure, with the errors said after it.
+- `"page_errors": "flag"` judges the step as usual, lists each error in
+  the step's log, and counts them on the case: `page errors seen: <n>`,
+  shown in the review, in Past runs and in the report.
+- Left out, page errors are not looked at.
+
+Choose `fail` when an error means the case did not work, which is most
+cases. Choose `flag` for a page that is known to be noisy but still
+works, so the noise is seen without failing every run.
+
+Errors between two steps count against the next step; errors before step
+1 (signing in, going to the module) and the run's own `api_request`
+answers are never counted. A page error during a `sign_in` partway
+through a case is not counted either: the sign-in is the run's own.
+`ignore_page_errors` holds up to 10 phrases (each 1 to 120 characters):
+an error whose message, or whose request path, contains one of them,
+ignoring case, is not counted. Ignored errors are left out before
+anything is counted, so `(and <n> more)` and `page errors seen` count
+only what is left. Use it for noise the team already knows about, never
+for an error the case is about.
 
 ## Preconditions
 

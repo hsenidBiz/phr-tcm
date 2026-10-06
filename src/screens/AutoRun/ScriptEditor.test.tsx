@@ -215,6 +215,31 @@ test("Must not save is off for an old script, and ticking it writes no_save", as
   expect((saved[0] as { no_save?: boolean }).no_save).toBe(true);
 });
 
+test("settings the editor has no control for are kept when it saves", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      page_errors: "flag",
+      ignore_page_errors: ["ResizeObserver"],
+      fail_on_unexpected_dialog: true,
+    },
+    ACCOUNTS,
+    saved,
+  );
+  const save = await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({
+    page_errors: "flag",
+    ignore_page_errors: ["ResizeObserver"],
+    fail_on_unexpected_dialog: true,
+  });
+});
+
 test("a person saving from the editor can turn Must not save off", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP, no_save: true }, ACCOUNTS, saved);

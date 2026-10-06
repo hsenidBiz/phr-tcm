@@ -7,7 +7,7 @@ use crate::common;
 
 use common::{ready_probe, FakePage, ScriptedDriver};
 use serde_json::json;
-use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
+use v2_lib::browser::actions::{execute_in, execute_with, Action, DialogAnswer, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
@@ -333,7 +333,7 @@ async fn a_dialog_the_page_showed_is_mentioned() {
     d.dialogs.push("alert: Saved!".into());
     let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
     assert!(out.ok);
-    assert!(out.detail.contains("alert: Saved!") && out.detail.contains("accepted"), "{}", out.detail);
+    assert!(out.detail.ends_with(" (an alert dialog was accepted: \"Saved!\")"), "{}", out.detail);
 }
 
 /// A navigation landing between the readiness wait and the highlight
@@ -641,6 +641,7 @@ fn only_checks_and_expectations_are_checks() {
             headers: None,
             cells: None,
             contains_text: None,
+            pdf: None,
             stray: Default::default(),
         },
         Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },
@@ -648,6 +649,12 @@ fn only_checks_and_expectations_are_checks() {
         Action::SwitchTab { name: "r".into() },
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
+        Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
+        Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 
@@ -667,6 +674,11 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_download"
                 | "expect_tab"
                 | "expect_tab_closed"
+                | "expect_dialog"
+                | "expect_row"
+                | "expect_no_row"
+                | "expect_sorted"
+                | "expect_row_count"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -930,7 +942,7 @@ fn expect_download_refuses_what_could_never_be_checked() {
     // A misspelt key is refused rather than dropped without a word.
     assert_eq!(
         download_refusal(json!({ "kind": "expect_download", "name": "a.xlsx", "header": { "exact": ["A"] } })),
-        "expect_download has no \"header\" - it takes name, within_ms, sheet, headers, cells and contains_text"
+        "expect_download has no \"header\" - it takes name, within_ms, sheet, headers, cells, contains_text and pdf"
     );
 }
 

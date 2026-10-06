@@ -26,13 +26,14 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         title: format!("case {case_id}"),
         verdict: String::new(),
         note: String::new(),
-        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None }],
+        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None }],
         proposed: "Failed".into(),
         reason: format!("step {step_number}: {detail}"),
         duration_ms: None,
         account: None,
         retried: None,
         notice: None,
+        page_errors_seen: 0,
     }
 }
 
@@ -52,6 +53,8 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         changes: vec![],
         needs_unchanged: vec![],
         saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None, ignore_page_errors: vec![],
     }
 }
 
@@ -197,6 +200,7 @@ fn a_failure_in_one_case_only_is_no_pattern() {
         screenshot: None,
         downloads: vec![],
         tab: None,
+        dialog: None,
     });
     let mut s = script(11, 2, click("Save"));
     s.steps.push(StepScript { step_number: 3, actions: vec![click("Save")], unchecked: None });

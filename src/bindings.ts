@@ -524,6 +524,24 @@ export const commands = {
 	 *  time stands in for it then.
 	 */
 	saved_at?: string | null,
+	/**
+	 *  A browser dialog no `expect_dialog` claimed fails the step it
+	 *  appeared in (`an unexpected <kind> dialog appeared: ...`). Off, it
+	 *  is accepted and said on the step, as always. Written only when true.
+	 */
+	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -1306,12 +1324,12 @@ export type ActionOutcome_Serialize = {
 	screenshot?: string | null,
 };
 
-export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "check_text"; value: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; area?: never; cells?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "check_text"; value: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "sign_in"; account: string }) & { answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Put a file from the project's Test files into the page: into the
  *  file input `selector` names, or through the file chooser that
@@ -1319,20 +1337,20 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  *  runner finds the file (it knows the project) and hands this driver
  *  its path - see `upload_in`.
  */
-({ kind: "upload"; selector: Target_Deserialize; file: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "upload"; selector: Target_Deserialize; file: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Check a request the page made since this script step began: that
  *  one matching `url_contains` (and `method`, when given) finished,
  *  answered `status`, and, with `json`, carried those fields. Carried
  *  out by the runner, which alone holds the network record.
  */
-({ kind: "expect_response"; method?: string | null; url_contains: string; status?: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; key?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; then?: never; url?: never; value?: never; within_ms?: never } | 
+({ kind: "expect_response"; method?: string | null; url_contains: string; status?: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; key?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; value?: never; within_ms?: never } | 
 /**
  *  Ask the current site a GET question, sent by the page itself, and
  *  check the answer. `path` is a path on the page's own site, never an
  *  address. Carried out by the runner.
  */
-({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect?: ApiExpect_Deserialize }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect?: ApiExpect_Deserialize }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; pdf?: never; position?: never; prompt_text?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Something that may or may not show up (a consent banner, an "Another
  *  active session" prompt): if `selector` becomes visible within
@@ -1342,14 +1360,14 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  *  is the same step; this one is a case script's. Carried out by the
  *  runner, which alone can place an `upload` inside it.
  */
-({ kind: "when_visible"; selector: Target_Deserialize; within_ms?: number | null; then: Action_Deserialize[] }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+({ kind: "when_visible"; selector: Target_Deserialize; within_ms?: number | null; then: Action_Deserialize[] }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Reload the page, as a person pressing F5 would, and wait for it to
  *  load again. Where it lands is the application's business: a page
  *  that sends a reload elsewhere (PeoplesHR's wizard goes back to the
  *  home page) is followed by `return_to_area`, not by an address.
  */
-({ kind: "reload" }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "reload" }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  End the session the way a timeout would look to the site: the
  *  browser forgets what it holds for the page's own site, so the next
@@ -1357,7 +1375,7 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  *  server's own record is not touched - what a script then checks is
  *  how the application treats a request whose session is gone.
  */
-({ kind: "expire_session" }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "expire_session" }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Take the browser to an area by its recorded menu path: the case's
  *  own area (the trip a run makes before step 1) when `area` is left
@@ -1366,19 +1384,29 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  *  project that refuses `navigate`. Carried out by the runner, which
  *  alone knows the areas' routes.
  */
-({ kind: "return_to_area"; area?: string | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "return_to_area"; area?: string | null }) & { account?: never; answer?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Press one key on whatever has the focus, as a keyboard would: Tab
  *  and Shift+Tab move the focus, Enter and Space activate, Escape
- *  closes. One of `PRESS_KEYS`, nothing else - a script that needs a
- *  field's text uses `fill`.
+ *  closes. One of `PRESS_KEYS`, with any of Ctrl, Shift, Alt and Meta
+ *  held for it (`Ctrl+ArrowUp`, see `keys`), nothing else - a script
+ *  that needs a field's text uses `fill`. `times` (1 to 50) presses the
+ *  same combination that many times.
  */
-({ kind: "press_key"; key: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "press_key"; key: string; times?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Pick `from` up and drop it on `to` - before it, after it, or onto
+ *  it (`position`, onto when left out) - as a mouse would, within
+ *  `within_ms` (`drag::DRAG_WAIT_MS` when left out). Serves pages that
+ *  drag with mouse or pointer events and pages that use the browser's
+ *  own drag and drop alike (see `drag`).
+ */
+({ kind: "drag"; from: Target_Deserialize; to: Target_Deserialize; position?: DropAt | null; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  The focus is on this element, or on something inside it (a card
  *  whose own button has it counts, as `:focus-within` would).
  */
-({ kind: "expect_focused"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "expect_focused"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Check the file this step downloaded: the first download that started
  *  during the step, once it completes within `within_ms`
@@ -1389,7 +1417,9 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  */
 ({ kind: "expect_download"; name: string; within_ms?: number | null; sheet?: string | null; headers?: HeadersSpec | null; 
 /**  `None` when left out; an empty list is refused, not ignored. */
-cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; area?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+cells?: CellSpec[] | null; contains_text?: string[] | null; 
+/**  What a PDF's text must hold - for a name ending in .pdf only. */
+pdf?: PdfSpec_Deserialize | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; json?: never; key?: never; method?: never; order?: never; path?: never; position?: never; prompt_text?: never; query?: never; selector?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Wait for a tab the page opened since the previous step began (a
  *  `target=_blank` link, `window.open`), within `within_ms`
@@ -1397,35 +1427,66 @@ cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: neve
  *  `url_contains`, its address must contain that text. It does not
  *  switch to it: `switch_tab` does.
  */
-({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; value?: never } | 
+({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; value?: never } | 
 /**
  *  Open a new tab called `name` at `url`, in the same signed-in
  *  session, and switch to it. `url` follows `navigate`'s rules.
  */
-({ kind: "open_tab"; name: string; url: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "open_tab"; name: string; url: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Make the tab called `name` the current tab, and bring it to the
  *  front. Every later action acts in it.
  */
-({ kind: "switch_tab"; name: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "switch_tab"; name: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Close the tab called `name`. If it was the current tab, `main` is
  *  current again. `main` is never closed.
  */
-({ kind: "close_tab"; name: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "close_tab"; name: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  The page closes the tab called `name` itself (a print preview that
  *  closes after printing), within `within_ms` (`TAB_WAIT_MS` when left
  *  out).
  */
-({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
+({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  The next browser dialog (`alert`, `confirm`, `prompt`,
+ *  `beforeunload`) in any tab: answered as `answer` says, with
+ *  `prompt_text` typed into a prompt first, then its message checked -
+ *  equal to `text`, or holding `contains` (ignoring case), or anything
+ *  when neither is given. Armed when its step starts, so a dialog an
+ *  earlier action of the step opens is caught; it waits up to
+ *  `within_ms` (`dialogs::DIALOG_WAIT_MS` when left out) once the
+ *  step's other actions are done. Carried out by the runner, which arms
+ *  a step's expectations; run on its own, it arms itself first.
+ */
+({ kind: "expect_dialog"; text?: string | null; contains?: string | null; answer: DialogAnswer; prompt_text?: string | null; within_ms?: number | null }) & { account?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Some row of the table or grid `table` has every one of `cells` (by
+ *  column header): each text in its cell, ignoring case - or equal to
+ *  it with `exact` (see `table`). Retried like `expect_text`.
+ */
+({ kind: "expect_row"; table: Target_Deserialize; cells: { [key in string]: string }; exact?: boolean; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**  No row of `table` has every one of `cells`. */
+({ kind: "expect_no_row"; table: Target_Deserialize; cells: { [key in string]: string }; exact?: boolean; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  The values of `column` in `table` are in `order`, read as text
+ *  (when `as` is left out), numbers or dates. Blank cells are passed
+ *  over.
+ */
+({ kind: "expect_sorted"; table: Target_Deserialize; column: string; order: SortOrder; as?: SortAs | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; at_least?: never; at_most?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  `table` has `equals` rows, or `at_least`, or `at_most` - exactly
+ *  one of the three.
+ */
+({ kind: "expect_row_count"; table: Target_Deserialize; equals?: number | null; at_least?: number | null; at_most?: number | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never };
 
-export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "check_text"; value: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; area?: never; cells?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "check_text"; value: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Change who is signed in. Carried out by the runner (it needs the
  *  tester's accounts and the project's recipe), not by this driver.
  */
-({ kind: "sign_in"; account: string }) & { area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "sign_in"; account: string }) & { answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Put a file from the project's Test files into the page: into the
  *  file input `selector` names, or through the file chooser that
@@ -1433,20 +1494,20 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  *  runner finds the file (it knows the project) and hands this driver
  *  its path - see `upload_in`.
  */
-({ kind: "upload"; selector: Target_Serialize; file: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "upload"; selector: Target_Serialize; file: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Check a request the page made since this script step began: that
  *  one matching `url_contains` (and `method`, when given) finished,
  *  answered `status`, and, with `json`, carried those fields. Carried
  *  out by the runner, which alone holds the network record.
  */
-({ kind: "expect_response"; method?: string | null; url_contains: string; status: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; key?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; then?: never; url?: never; value?: never; within_ms?: never } | 
+({ kind: "expect_response"; method?: string | null; url_contains: string; status: number; json?: unknown | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; key?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; value?: never; within_ms?: never } | 
 /**
  *  Ask the current site a GET question, sent by the page itself, and
  *  check the answer. `path` is a path on the page's own site, never an
  *  address. Carried out by the runner.
  */
-({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect: ApiExpect_Serialize }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "api_request"; path: string; query?: { [key in string]: string }; expect: ApiExpect_Serialize }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; pdf?: never; position?: never; prompt_text?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Something that may or may not show up (a consent banner, an "Another
  *  active session" prompt): if `selector` becomes visible within
@@ -1456,14 +1517,14 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  *  is the same step; this one is a case script's. Carried out by the
  *  runner, which alone can place an `upload` inside it.
  */
-({ kind: "when_visible"; selector: Target_Serialize; within_ms?: number | null; then: Action_Serialize[] }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+({ kind: "when_visible"; selector: Target_Serialize; within_ms?: number | null; then: Action_Serialize[] }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Reload the page, as a person pressing F5 would, and wait for it to
  *  load again. Where it lands is the application's business: a page
  *  that sends a reload elsewhere (PeoplesHR's wizard goes back to the
  *  home page) is followed by `return_to_area`, not by an address.
  */
-({ kind: "reload" }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "reload" }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  End the session the way a timeout would look to the site: the
  *  browser forgets what it holds for the page's own site, so the next
@@ -1471,7 +1532,7 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  *  server's own record is not touched - what a script then checks is
  *  how the application treats a request whose session is gone.
  */
-({ kind: "expire_session" }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "expire_session" }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Take the browser to an area by its recorded menu path: the case's
  *  own area (the trip a run makes before step 1) when `area` is left
@@ -1480,19 +1541,29 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  *  project that refuses `navigate`. Carried out by the runner, which
  *  alone knows the areas' routes.
  */
-({ kind: "return_to_area"; area?: string | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "return_to_area"; area?: string | null }) & { account?: never; answer?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Press one key on whatever has the focus, as a keyboard would: Tab
  *  and Shift+Tab move the focus, Enter and Space activate, Escape
- *  closes. One of `PRESS_KEYS`, nothing else - a script that needs a
- *  field's text uses `fill`.
+ *  closes. One of `PRESS_KEYS`, with any of Ctrl, Shift, Alt and Meta
+ *  held for it (`Ctrl+ArrowUp`, see `keys`), nothing else - a script
+ *  that needs a field's text uses `fill`. `times` (1 to 50) presses the
+ *  same combination that many times.
  */
-({ kind: "press_key"; key: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "press_key"; key: string; times?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Pick `from` up and drop it on `to` - before it, after it, or onto
+ *  it (`position`, onto when left out) - as a mouse would, within
+ *  `within_ms` (`drag::DRAG_WAIT_MS` when left out). Serves pages that
+ *  drag with mouse or pointer events and pages that use the browser's
+ *  own drag and drop alike (see `drag`).
+ */
+({ kind: "drag"; from: Target_Serialize; to: Target_Serialize; position?: DropAt | null; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  The focus is on this element, or on something inside it (a card
  *  whose own button has it counts, as `:focus-within` would).
  */
-({ kind: "expect_focused"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "expect_focused"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Check the file this step downloaded: the first download that started
  *  during the step, once it completes within `within_ms`
@@ -1503,7 +1574,9 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  */
 ({ kind: "expect_download"; name: string; within_ms?: number | null; sheet?: string | null; headers?: HeadersSpec | null; 
 /**  `None` when left out; an empty list is refused, not ignored. */
-cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; area?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+cells?: CellSpec[] | null; contains_text?: string[] | null; 
+/**  What a PDF's text must hold - for a name ending in .pdf only. */
+pdf?: PdfSpec_Serialize | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; json?: never; key?: never; method?: never; order?: never; path?: never; position?: never; prompt_text?: never; query?: never; selector?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
 /**
  *  Wait for a tab the page opened since the previous step began (a
  *  `target=_blank` link, `window.open`), within `within_ms`
@@ -1511,28 +1584,59 @@ cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: neve
  *  `url_contains`, its address must contain that text. It does not
  *  switch to it: `switch_tab` does.
  */
-({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; value?: never } | 
+({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; value?: never } | 
 /**
  *  Open a new tab called `name` at `url`, in the same signed-in
  *  session, and switch to it. `url` follows `navigate`'s rules.
  */
-({ kind: "open_tab"; name: string; url: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "open_tab"; name: string; url: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Make the tab called `name` the current tab, and bring it to the
  *  front. Every later action acts in it.
  */
-({ kind: "switch_tab"; name: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "switch_tab"; name: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  Close the tab called `name`. If it was the current tab, `main` is
  *  current again. `main` is never closed.
  */
-({ kind: "close_tab"; name: string }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+({ kind: "close_tab"; name: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
  *  The page closes the tab called `name` itself (a print preview that
  *  closes after printing), within `within_ms` (`TAB_WAIT_MS` when left
  *  out).
  */
-({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; area?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
+({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  The next browser dialog (`alert`, `confirm`, `prompt`,
+ *  `beforeunload`) in any tab: answered as `answer` says, with
+ *  `prompt_text` typed into a prompt first, then its message checked -
+ *  equal to `text`, or holding `contains` (ignoring case), or anything
+ *  when neither is given. Armed when its step starts, so a dialog an
+ *  earlier action of the step opens is caught; it waits up to
+ *  `within_ms` (`dialogs::DIALOG_WAIT_MS` when left out) once the
+ *  step's other actions are done. Carried out by the runner, which arms
+ *  a step's expectations; run on its own, it arms itself first.
+ */
+({ kind: "expect_dialog"; text?: string | null; contains?: string | null; answer: DialogAnswer; prompt_text?: string | null; within_ms?: number | null }) & { account?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Some row of the table or grid `table` has every one of `cells` (by
+ *  column header): each text in its cell, ignoring case - or equal to
+ *  it with `exact` (see `table`). Retried like `expect_text`.
+ */
+({ kind: "expect_row"; table: Target_Serialize; cells: { [key in string]: string }; exact?: boolean; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**  No row of `table` has every one of `cells`. */
+({ kind: "expect_no_row"; table: Target_Serialize; cells: { [key in string]: string }; exact?: boolean; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; column?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  The values of `column` in `table` are in `order`, read as text
+ *  (when `as` is left out), numbers or dates. Blank cells are passed
+ *  over.
+ */
+({ kind: "expect_sorted"; table: Target_Serialize; column: string; order: SortOrder; as?: SortAs | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; at_least?: never; at_most?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  `table` has `equals` rows, or `at_least`, or `at_most` - exactly
+ *  one of the three.
+ */
+({ kind: "expect_row_count"; table: Target_Serialize; equals?: number | null; at_least?: number | null; at_most?: number | null; timeout_ms?: number | null }) & { account?: never; answer?: never; area?: never; as?: never; cells?: never; column?: never; contains?: never; contains_text?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; text?: never; then?: never; times?: never; to?: never; url?: never; url_contains?: never; value?: never; within_ms?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -2012,6 +2116,11 @@ export type CaseRecord_Deserialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  How many page errors a script with `"page_errors": "flag"` met in
+	 *  this case (`page_errors`). Written only when there were any.
+	 */
+	page_errors_seen?: number,
 };
 
 /**
@@ -2050,6 +2159,11 @@ export type CaseRecord_Serialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  How many page errors a script with `"page_errors": "flag"` met in
+	 *  this case (`page_errors`). Written only when there were any.
+	 */
+	page_errors_seen?: number,
 };
 
 /**
@@ -2148,6 +2262,24 @@ export type CaseScript_Deserialize = {
 	 *  time stands in for it then.
 	 */
 	saved_at?: string | null,
+	/**
+	 *  A browser dialog no `expect_dialog` claimed fails the step it
+	 *  appeared in (`an unexpected <kind> dialog appeared: ...`). Off, it
+	 *  is accepted and said on the step, as always. Written only when true.
+	 */
+	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 };
 
 /**
@@ -2240,6 +2372,24 @@ export type CaseScript_Serialize = {
 	 *  time stands in for it then.
 	 */
 	saved_at?: string | null,
+	/**
+	 *  A browser dialog no `expect_dialog` claimed fails the step it
+	 *  appeared in (`an unexpected <kind> dialog appeared: ...`). Off, it
+	 *  is accepted and said on the step, as always. Written only when true.
+	 */
+	fail_on_unexpected_dialog?: boolean,
+	/**
+	 *  Whether the page's own errors - uncaught script errors and 5xx
+	 *  answers - fail the step they appear in (`fail`) or are counted on
+	 *  the case (`flag`). Absent: they are not looked at.
+	 */
+	page_errors?: PageErrors | null,
+	/**
+	 *  Phrases whose page errors are not counted: found, ignoring case, in
+	 *  a script error's message or a request's path. At most 10. Written
+	 *  only when there are any.
+	 */
+	ignore_page_errors?: string[],
 };
 
 export type CellMatch = "exact" | "contains";
@@ -2426,6 +2576,9 @@ export type DetectedTool = {
 	global_registered_servers: string[],
 };
 
+/**  How an `expect_dialog` answers: OK, or Cancel. */
+export type DialogAnswer = "accept" | "dismiss";
+
 /**
  *  One file in a run's download folder, as Past runs and the review list
  *  it: its name and size, read from disk when asked (`store::download_files`),
@@ -2576,6 +2729,12 @@ export type DraftStepView = {
 	readable: string,
 	password: boolean,
 };
+
+/**
+ *  Where on `to` a `drag` drops: its upper part, its lower part, or its
+ *  middle.
+ */
+export type DropAt = "before" | "after" | "onto";
 
 export type Effect = "create" | "edit" | "delete";
 
@@ -3090,6 +3249,13 @@ export type Org = {
 	url: string,
 };
 
+/**  What a script does with the page's own errors. */
+export type PageErrors = 
+/**  The step fails. */
+"fail" | 
+/**  The step is judged as usual; the case counts them. */
+"flag";
+
 /**  Both schemes a page can wear, and which one it opens in. */
 export type PagePalette = {
 	light: ReportPalette,
@@ -3137,6 +3303,61 @@ export type PbiHit = {
 	title: string,
 	work_item_type: string,
 };
+
+/**  Phrases one page holds. `page` counts from 1, and `-1` is the last. */
+export type PdfOnPage = {
+	page: number,
+	contains: Phrases,
+};
+
+/**  The PDF's page count: exactly one of the three. */
+export type PdfPages = PdfPages_Serialize | PdfPages_Deserialize;
+
+/**  The PDF's page count: exactly one of the three. */
+export type PdfPages_Deserialize = {
+	equals?: number | null,
+	at_least?: number | null,
+	at_most?: number | null,
+};
+
+/**  The PDF's page count: exactly one of the three. */
+export type PdfPages_Serialize = {
+	equals?: number | null,
+	at_least?: number | null,
+	at_most?: number | null,
+};
+
+/**
+ *  An `expect_download`'s `pdf` block: phrases the PDF contains, its page
+ *  count, and phrases on given pages.
+ */
+export type PdfSpec = PdfSpec_Serialize | PdfSpec_Deserialize;
+
+/**
+ *  An `expect_download`'s `pdf` block: phrases the PDF contains, its page
+ *  count, and phrases on given pages.
+ */
+export type PdfSpec_Deserialize = {
+	contains?: Phrases | null,
+	pages?: PdfPages_Deserialize | null,
+	on_page?: PdfOnPage[] | null,
+};
+
+/**
+ *  An `expect_download`'s `pdf` block: phrases the PDF contains, its page
+ *  count, and phrases on given pages.
+ */
+export type PdfSpec_Serialize = {
+	contains?: Phrases | null,
+	pages?: PdfPages_Serialize | null,
+	on_page?: PdfOnPage[] | null,
+};
+
+/**
+ *  One phrase, or a list of them: `"Total"` or `["Total", "Net pay"]`.
+ *  Kept as the script wrote it, so a file round-trips unchanged.
+ */
+export type Phrases = string | string[];
 
 /**
  *  Emitted by submit_queue when the PBI had NO area-matched test plan and
@@ -4292,6 +4513,17 @@ export type SlowdownRequested = {
 	secs: number,
 };
 
+/**
+ *  How `expect_sorted` reads a column: `"text"`, `"number"`, `"date"`, or
+ *  `{ "date": "dd/MM/yyyy" }` for dates in one given format.
+ */
+export type SortAs = SortKind | { date: string };
+
+export type SortKind = "text" | "number" | "date";
+
+/**  Ascending or descending. */
+export type SortOrder = "ascending" | "descending";
+
 export type Stage = {
 	id: string,
 	title: string,
@@ -4315,6 +4547,16 @@ export type StateInfo = {
 
 export type Step = Step_Serialize | Step_Deserialize;
 
+/**
+ *  A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,
+ *  `beforeunload`) and its message, cut to 200 characters. Page text,
+ *  never a secret.
+ */
+export type StepDialog = {
+	kind: string,
+	message: string,
+};
+
 export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
 
 export type StepRecord_Deserialize = {
@@ -4334,6 +4576,12 @@ export type StepRecord_Deserialize = {
 	 *  from before tabs reads the same.
 	 */
 	tab?: string | null,
+	/**
+	 *  The browser dialog the step met, when it met one: the first it
+	 *  claimed with an `expect_dialog`, else the first nobody expected.
+	 *  Left out when there was none, so older run files read the same.
+	 */
+	dialog?: StepDialog | null,
 };
 
 export type StepRecord_Serialize = {
@@ -4353,6 +4601,12 @@ export type StepRecord_Serialize = {
 	 *  from before tabs reads the same.
 	 */
 	tab?: string | null,
+	/**
+	 *  The browser dialog the step met, when it met one: the first it
+	 *  claimed with an `expect_dialog`, else the first nobody expected.
+	 *  Left out when there was none, so older run files read the same.
+	 */
+	dialog?: StepDialog | null,
 };
 
 /**
@@ -4370,27 +4624,42 @@ export type StepReport = {
 };
 
 /**
- *  What a supervised step answers: one outcome per action, and the tab the
- *  step ran in when that was not `main` (`runner::InRun::tab`).
+ *  What a supervised step answers: one outcome per action, the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`), and the
+ *  browser dialog it met, if any (`runner::InRun::dialog`).
  */
 export type StepRun = StepRun_Serialize | StepRun_Deserialize;
 
 /**
- *  What a supervised step answers: one outcome per action, and the tab the
- *  step ran in when that was not `main` (`runner::InRun::tab`).
+ *  What a supervised step answers: one outcome per action, the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`), and the
+ *  browser dialog it met, if any (`runner::InRun::dialog`).
  */
 export type StepRun_Deserialize = {
 	outcomes: ActionOutcome_Deserialize[],
 	tab: string | null,
+	dialog: StepDialog | null,
+	/**
+	 *  How many page errors a `"page_errors": "flag"` script counted in the
+	 *  step (`runner::InRun::page_errors_seen`).
+	 */
+	page_errors_seen: number,
 };
 
 /**
- *  What a supervised step answers: one outcome per action, and the tab the
- *  step ran in when that was not `main` (`runner::InRun::tab`).
+ *  What a supervised step answers: one outcome per action, the tab the
+ *  step ran in when that was not `main` (`runner::InRun::tab`), and the
+ *  browser dialog it met, if any (`runner::InRun::dialog`).
  */
 export type StepRun_Serialize = {
 	outcomes: ActionOutcome_Serialize[],
 	tab: string | null,
+	dialog: StepDialog | null,
+	/**
+	 *  How many page errors a `"page_errors": "flag"` script counted in the
+	 *  step (`runner::InRun::page_errors_seen`).
+	 */
+	page_errors_seen: number,
 };
 
 /**  The actions that carry out one numbered step of a test case. */

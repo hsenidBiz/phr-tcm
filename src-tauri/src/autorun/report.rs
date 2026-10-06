@@ -18,7 +18,7 @@
 
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
-use crate::browser::actions::{Action, ActionOutcome};
+use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 
 /// The result buckets, in the order the report (and the Auto Run screen's
 /// filter row) lists them.
@@ -112,7 +112,47 @@ pub fn action_words(action: &Action) -> String {
             Some(area) => format!("go to the {area} area"),
             None => "go back to the case's area".to_string(),
         },
-        Action::PressKey { key } => format!("press {}", key.trim()),
+        Action::PressKey { key, times } => match times {
+            Some(n) if *n > 1 => format!("press {} {n} times", key.trim()),
+            _ => format!("press {}", key.trim()),
+        },
+        Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
+            let said = match (text, contains) {
+                (Some(t), _) => format!(" saying \"{t}\""),
+                (None, Some(c)) => format!(" containing \"{c}\""),
+                (None, None) => String::new(),
+            };
+            let then = match (answer, prompt_text) {
+                (DialogAnswer::Accept, Some(p)) => format!(", type \"{p}\" and press OK"),
+                (DialogAnswer::Accept, None) => " and press OK".to_string(),
+                (DialogAnswer::Dismiss, _) => " and press Cancel".to_string(),
+            };
+            format!("expect a dialog{said}{then}")
+        }
+        Action::ExpectRow { table, cells, .. } => {
+            format!("expect a row in {} with {}", table.describe(), crate::browser::table::cells_words(&cells.0))
+        }
+        Action::ExpectNoRow { table, cells, .. } => {
+            format!("expect no row in {} with {}", table.describe(), crate::browser::table::cells_words(&cells.0))
+        }
+        Action::ExpectSorted { table, column, order, .. } => {
+            format!("expect {} sorted by {}, {}", table.describe(), column.trim(), order.word())
+        }
+        Action::ExpectRowCount { table, equals, at_least, at_most, .. } => {
+            let n = match (equals, at_least, at_most) {
+                (Some(n), _, _) => n.to_string(),
+                (None, Some(n), _) => format!("at least {n}"),
+                (None, None, Some(n)) => format!("at most {n}"),
+                _ => "some".to_string(),
+            };
+            format!("expect {} to have {n} rows", table.describe())
+        }
+        Action::Drag { from, to, position, .. } => format!(
+            "drag {} {} {}",
+            from.describe(),
+            position.unwrap_or_default().word(),
+            to.describe()
+        ),
         Action::ExpectFocused { selector, .. } => format!("expect {} to have the focus", selector.describe()),
         Action::ExpectDownload { name, .. } => format!("expect a download named \"{}\"", name.trim()),
         Action::ExpectTab { name, .. } => format!("wait for a new tab and call it \"{name}\""),
@@ -363,8 +403,13 @@ fn case_section(
     h.push_str(&format!("<details class=\"case\"{open}>"));
     // Run a second time after a transient failure (`transient`).
     let retried = if case.retried.is_some() { " <span class=\"retried\">Retried</span>" } else { "" };
+    // Page errors a flagging script counted (`page_errors`).
+    let flagged = match case.page_errors_seen {
+        0 => String::new(),
+        n => format!(" <span class=\"retried\">page errors seen: {n}</span>"),
+    };
     h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}</summary>",
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}{flagged}</summary>",
         case.case_id,
         esc(&case.title),
         css_key(b)

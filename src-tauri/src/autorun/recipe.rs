@@ -235,6 +235,11 @@ fn check(action: &Action) -> Result<(), String> {
     if let Some(k @ ("expire_session" | "return_to_area")) = kind.as_deref() {
         return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
     }
+    // A dialog a step expects is a case's check; a sign-in's dialogs are
+    // answered as always, and its steps carry no expectations.
+    if kind.as_deref() == Some("expect_dialog") {
+        return Err("a sign-in recipe cannot contain expect_dialog - it belongs in a case script".to_string());
+    }
     // Every case signs in in its first tab, `main`: tabs are a case's own.
     if let Some(k @ ("expect_tab" | "open_tab" | "switch_tab" | "close_tab" | "expect_tab_closed")) = kind.as_deref() {
         return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));

@@ -8,7 +8,7 @@
 use v2_lib::autorun::guide::{autorun_guide, ACTION_KINDS};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::store::{configured_root, set_root};
-use v2_lib::browser::actions::Action;
+use v2_lib::browser::actions::{Action, DialogAnswer};
 
 /// Drift gate. An action the executor understands but the guide never
 /// mentions is one the assistant will never write; an action the guide
@@ -48,6 +48,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
             headers: None,
             cells: None,
             contains_text: None,
+            pdf: None,
             stray: Default::default(),
         },
         Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },
@@ -55,6 +56,12 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::SwitchTab { name: "r".into() },
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
+        Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
+        Action::ExpectDialog { text: None, contains: None, answer: DialogAnswer::Accept, prompt_text: None, within_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -583,6 +590,9 @@ fn the_guide_teaches_expect_download_with_its_two_examples() {
         "when the browser closes",
         "at most 30 seconds",
         "50%",
+        "`pdf` is only for a name ending in .pdf",
+        "-1 is the last page",
+        "the PDF's text could not be read",
     ] {
         assert!(section.contains(term), "the downloads section never says {term:?}");
     }
@@ -605,6 +615,24 @@ fn the_guide_teaches_expect_download_with_its_two_examples() {
         seen += 1;
     }
     assert!(seen >= 3, "the section should show the click and both examples, saw {seen}");
+}
+
+/// The dialogs section says a dialog between steps never fails a step,
+/// and that a watched run reads the saved script's settings.
+#[test]
+fn the_guide_says_when_a_dialog_never_fails_and_which_settings_a_watched_run_reads() {
+    let g = autorun_guide();
+    let section = g.split_once("## Browser dialogs").expect("no dialogs section").1;
+    let section = section.split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "A dialog that opens between steps, before the next step has started, is accepted and noted but never fails a step",
+        "A watched run reads `fail_on_unexpected_dialog` and `page_errors` from the saved script",
+        "an edit to them that has not been saved yet does not apply",
+    ] {
+        assert!(flat.contains(term), "the dialogs section never says {term:?}");
+    }
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
 /// Healing starts from the failing step: the repair section says to replay

@@ -11,9 +11,11 @@ use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
-use super::{store, StepScript};
+use super::{store, PageErrors, StepDialog, StepScript};
+use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN, WHEN_VISIBLE_MS,
+    execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
+    WHEN_VISIBLE_MS,
 };
 use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
@@ -244,6 +246,18 @@ pub struct InRun<'a> {
     /// (`area_routes`). `None` reads as none resolved: a named area then
     /// fails as not recorded.
     pub areas: Option<&'a NamedAreas>,
+    /// The case's `fail_on_unexpected_dialog`: a dialog no `expect_dialog`
+    /// claimed fails the step it appeared in.
+    pub fail_on_unexpected_dialog: bool,
+    /// Learned back: the dialog the step met, for its record.
+    pub dialog: Option<StepDialog>,
+    /// The case's `page_errors`: what the step does with the page's own
+    /// errors (`page_errors`). `None` looks at none.
+    pub page_errors: Option<PageErrors>,
+    /// The case's `ignore_page_errors`.
+    pub ignore_page_errors: Vec<String>,
+    /// Learned back: how many page errors a `flag` counted in the step.
+    pub page_errors_seen: u32,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -292,10 +306,28 @@ pub async fn run_step_in_run<D: Driver>(
     // A tab opened from now on, or during the step before, is one this
     // step's `expect_tab` may claim.
     d.step_began();
+    // A dialog from before the step began is not the step's. Every
+    // `expect_dialog` the step holds is armed now, in order, so one that an
+    // earlier action of the step opens is claimed and answered as asked.
+    let plans: Vec<dialogs::DialogPlan> = step
+        .actions
+        .iter()
+        .filter_map(expectation)
+        .enumerate()
+        .map(|(i, want)| dialogs::plan_of(i as u32, want.answer, &want.prompt_text.map(str::to_string)))
+        .collect();
+    if let Some(book) = d.dialog_book() {
+        book.take_seen();
+        book.arm(plans);
+    }
+    let mut dialogs_read = 0usize;
+    let fail_on_unexpected = run.fail_on_unexpected_dialog;
+    let mut deferred: Vec<(usize, u32)> = Vec::new();
     let mark = d.net_mark();
     let began = Instant::now();
     run.began = Some(began);
     run.tab = None;
+    run.dialog = None;
     let mut ran_in: Option<String> = None;
     let areas = run.areas;
     let here =
@@ -314,6 +346,13 @@ pub async fn run_step_in_run<D: Driver>(
             stopped.screenshot = picture(d, root).await;
             out.push(stopped);
             blocked = Some(AFTER_SAVE_BLOCKED);
+            continue;
+        }
+        // An `expect_dialog` judges once the step's other actions are done:
+        // its place is kept, and filled then.
+        if matches!(action, Action::ExpectDialog { .. }) {
+            deferred.push((out.len(), deferred.len() as u32));
+            out.push(ActionOutcome::failed("not run yet"));
             continue;
         }
         // The tab an action acted in. A tab action acts on the tabs, not in
@@ -404,7 +443,22 @@ pub async fn run_step_in_run<D: Driver>(
             },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
-            Action::ApiRequest { .. } => api_checks::api_request(d, action, timing).await,
+            Action::ApiRequest { path, .. } => {
+                // Its fetch is the run's own request: a 5xx it gets back is
+                // never the page's error.
+                let before = d.net_mark();
+                let outcome = api_checks::api_request(d, action, timing).await;
+                let own: Vec<String> = d
+                    .net_since(before)
+                    .into_iter()
+                    .filter(|e| e.method == "GET" && e.path_query.split(['?', '#']).next() == Some(path.as_str()))
+                    .map(|e| e.id)
+                    .collect();
+                if let Some(book) = d.page_error_book() {
+                    book.exclude(own);
+                }
+                outcome
+            }
             Action::ExpectDownload { .. } => {
                 // No Stop to hear: the wait is capped instead.
                 let cap = match run.cancel {
@@ -434,26 +488,102 @@ pub async fn run_step_in_run<D: Driver>(
             outcome = ActionOutcome::failed(sentence);
             blocked = Some(AFTER_SAVE_BLOCKED);
         }
+        unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
     }
+    // Each `expect_dialog`, in order, now the rest of the step has run.
+    for (slot, id) in deferred {
+        let mut outcome = match (blocked, step.actions.get(slot).and_then(expectation)) {
+            (Some(why), _) => ActionOutcome::failed(why),
+            (None, None) => ActionOutcome::failed("expect_dialog could not be read"),
+            (None, Some(want)) => dialogs::judge(d, id, &want, timing).await,
+        };
+        unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        if !outcome.ok && !outcome.harness && blocked.is_none() {
+            outcome.screenshot = picture(d, root).await;
+        }
+        out[slot] = outcome;
+    }
+    // What no dialog claimed goes no further than this step.
+    let seen = match d.dialog_book() {
+        Some(book) => {
+            book.disarm();
+            book.take_seen()
+        }
+        None => Vec::new(),
+    };
+    // One that opened after the step's last look: still this step's.
+    if let Some(last) = out.last_mut() {
+        if last.ok {
+            if let Some(s) = seen.iter().skip(dialogs_read).find(|s| s.claimed_by.is_none()) {
+                if fail_on_unexpected {
+                    *last = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+                }
+            }
+        }
+    }
+    run.dialog = seen
+        .iter()
+        .find(|s| s.claimed_by.is_some())
+        .or_else(|| seen.first())
+        .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
+    // The page's own errors since the previous step was judged. An outcome
+    // they failed is pictured, as any failed action is.
+    let judged = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
+    run.page_errors_seen = judged.seen;
+    if let Some(i) = judged.failed {
+        out[i].screenshot = picture(d, root).await;
+    }
     let ended_in = d.tab_name();
     run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
     Ok(out)
 }
 
+/// A dialog nobody expected, seen since the last look (`read` counts how
+/// many of the book's dialogs have been looked at): with
+/// `fail_on_unexpected_dialog` it fails `outcome`, when nothing else did,
+/// with its sentence. Without, the action already said it was accepted.
+fn unexpected_dialog<D: Driver>(d: &mut D, read: &mut usize, fail: bool, outcome: &mut ActionOutcome) {
+    let Some(book) = d.dialog_book() else {
+        return;
+    };
+    let seen = book.seen();
+    let first = seen.iter().skip(*read).find(|s| s.claimed_by.is_none()).cloned();
+    *read = seen.len();
+    if let Some(s) = first {
+        if fail && outcome.ok {
+            *outcome = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+        }
+    }
+}
+
 /// The supervised browser keeps one set of tabs across the cases a person
 /// runs in it: a step of another case than the last one (`case`) is a new
-/// case, so every tab but `main` is closed first. `tabs_case` is the case
-/// the browser's tabs belong to.
+/// case, so every tab but `main` is closed first - and the page errors met
+/// so far were another case's, so they are dropped too. `tabs_case` is the
+/// case the browser's tabs belong to.
 pub async fn tabs_for_case<D: Driver>(d: &mut D, tabs_case: &mut Option<i32>, case: i32) {
     if *tabs_case != Some(case) {
         d.close_other_tabs().await;
+        super::page_errors::drop_all(d);
     }
     *tabs_case = Some(case);
+}
+
+/// A supervised step is about to run: the case's tabs (`tabs_for_case`),
+/// and, for the case's first step, a clean page-error slate - whatever the
+/// page met before it (opening, a sign-in, a step run earlier) is no
+/// step's. Between two later steps of one case, errors still count against
+/// the next.
+pub async fn supervised_step_begins<D: Driver>(d: &mut D, tabs_case: &mut Option<i32>, case: i32, first_step: bool) {
+    tabs_for_case(d, tabs_case, case).await;
+    if first_step {
+        super::page_errors::drop_all(d);
+    }
 }
 
 /// What a plain action needs from the step it is in.
@@ -578,12 +708,12 @@ async fn expect_download<D: Driver>(
     cancel: Option<&AtomicBool>,
     cap: Option<u32>,
 ) -> ActionOutcome {
-    use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck};
+    use crate::autorun::downloads::{check_file, CellCheck, DownloadCheck, HeaderCheck, OnPage, PageCount, PdfCheck};
     use crate::browser::actions::{CellMatch, HeadersSpec, DOWNLOAD_WAIT_MS};
     if let Err(why) = action.validate() {
         return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
     }
-    let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, .. } = action else {
+    let Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, pdf, .. } = action else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_download"));
     };
     let asked = within_ms.unwrap_or(DOWNLOAD_WAIT_MS);
@@ -633,13 +763,62 @@ async fn expect_download<D: Driver>(
             .map(|c| CellCheck { r#ref: c.at.clone(), text: c.text.clone(), contains: c.how == CellMatch::Contains })
             .collect(),
         contains_text: contains_text.clone().unwrap_or_default(),
+        pdf: pdf.as_ref().map(|p| PdfCheck {
+            contains: p.contains.as_ref().map(|c| c.list()).unwrap_or_default(),
+            // `validate` above has made sure exactly one is given.
+            pages: p.pages.as_ref().and_then(|n| {
+                n.equals
+                    .map(PageCount::Equals)
+                    .or(n.at_least.map(PageCount::AtLeast))
+                    .or(n.at_most.map(PageCount::AtMost))
+            }),
+            on_page: p
+                .on_page
+                .iter()
+                .flatten()
+                .map(|o| OnPage { page: o.page, contains: o.contains.list() })
+                .collect(),
+        }),
     };
     let (path, shown) = (entry.path.clone(), entry.name.clone());
-    let checked = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check)).await;
-    match checked {
-        Ok(Ok(sentence)) => ActionOutcome::passed(sentence),
-        Ok(Err(sentence)) => ActionOutcome::failed(sentence),
-        Err(_) => ActionOutcome::failed(format!("\"{}\" could not be read", entry.name)),
+    let job = tokio::task::spawn_blocking(move || check_file(&path, &shown, &check));
+    await_file_read(job, &entry.name, cancel, FILE_READ_LIMIT).await
+}
+
+/// The longest a downloaded file's content may take to read.
+pub const FILE_READ_LIMIT: Duration = Duration::from_secs(60);
+
+/// How often a file read's wait looks at the run's Stop.
+const FILE_READ_POLL: Duration = Duration::from_millis(250);
+
+/// Waits for a download's check, read on a blocking thread, as its
+/// outcome. The run's Stop (`cancel`) ends the wait as `AFTER_STOP`, and a
+/// read that takes longer than `limit` fails naming the file only. Either
+/// way the thread is left to finish on its own: a blocking read cannot be
+/// interrupted, but it no longer holds up the step.
+pub async fn await_file_read(
+    mut job: tokio::task::JoinHandle<Result<String, String>>,
+    name: &str,
+    cancel: Option<&AtomicBool>,
+    limit: Duration,
+) -> ActionOutcome {
+    let deadline = Instant::now() + limit;
+    loop {
+        match tokio::time::timeout(FILE_READ_POLL.min(limit), &mut job).await {
+            Ok(Ok(Ok(sentence))) => return ActionOutcome::passed(sentence),
+            Ok(Ok(Err(sentence))) => return ActionOutcome::failed(sentence),
+            Ok(Err(_)) => return ActionOutcome::failed(format!("\"{name}\" could not be read")),
+            Err(_) => {}
+        }
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            return ActionOutcome::failed(AFTER_STOP);
+        }
+        if Instant::now() >= deadline {
+            return ActionOutcome::failed(format!(
+                "\"{name}\" took longer than {} seconds to read",
+                limit.as_secs()
+            ));
+        }
     }
 }
 

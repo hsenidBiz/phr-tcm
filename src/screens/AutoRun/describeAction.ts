@@ -274,7 +274,56 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
     const texts = strList(a.contains_text);
     if (texts.length) parts.push(`containing ${quoted(texts)}`);
   }
+  if (a.pdf != null) parts.push(...pdfDetails(a.pdf));
   return parts.length ? `, ${parts.join(", ")}` : "";
+}
+
+/** How an `expect_sorted` reads its column: `, as numbers`, `, as dates`,
+ * `, as dates (dd/MM/yyyy)`, `, as text`, or nothing when left out. */
+function sortedAs(as: unknown): string {
+  if (as == null) return "";
+  if (isRecord(as)) return `, as dates (${str(as.date)})`;
+  switch (str(as)) {
+    case "number":
+      return ", as numbers";
+    case "date":
+      return ", as dates";
+    case "text":
+      return ", as text";
+    default:
+      throw new Unreadable();
+  }
+}
+
+/** One phrase or a list of them, as the `pdf` block takes them. */
+const phrases = (v: unknown): string[] => (typeof v === "string" ? [v] : strList(v));
+
+/** An `expect_download`'s `pdf` block, as a clause per check:
+ * `with the text "Total"`, `3 pages`, `"Total" on the last page`. */
+function pdfDetails(pdf: unknown): string[] {
+  if (!isRecord(pdf)) throw new Unreadable();
+  const parts: string[] = [];
+  if (pdf.contains != null) parts.push(`with the text ${quoted(phrases(pdf.contains))}`);
+  if (pdf.pages != null) {
+    if (!isRecord(pdf.pages)) throw new Unreadable();
+    const given = [
+      ["", optNum(pdf.pages.equals)],
+      ["at least ", optNum(pdf.pages.at_least)],
+      ["at most ", optNum(pdf.pages.at_most)],
+    ].filter(([, n]) => n !== undefined) as [string, number][];
+    if (given.length !== 1) throw new Unreadable();
+    const [how, n] = given[0];
+    parts.push(`${how}${n} ${n === 1 ? "page" : "pages"}`);
+  }
+  if (pdf.on_page != null) {
+    if (!Array.isArray(pdf.on_page)) throw new Unreadable();
+    for (const o of pdf.on_page as unknown[]) {
+      if (!isRecord(o)) throw new Unreadable();
+      const page = num(o.page);
+      parts.push(`${quoted(phrases(o.contains))} on ${page === -1 ? "the last page" : `page ${page}`}`);
+    }
+  }
+  return parts;
 }
 
 /** An `expect_tab`'s address text: `, at an address containing "<path>"`,
@@ -295,6 +344,14 @@ function urlPart(contains: string): Sentence {
   const { path, handler } = splitAddress(contains);
   const shown = handler ? `${path}?handler=${handler}` : path;
   return shown ? [words(`Check the address contains "${shown}"`)] : [words("Check the address has the expected query")];
+}
+
+/** A row's wanted cells: `Status "Active" and Name "Ann"`. */
+function cellWords(cells: unknown): string {
+  if (!isRecord(cells)) throw new Unreadable();
+  const said = Object.entries(cells).map(([column, text]) => `${column.trim()} "${str(text)}"`);
+  if (said.length === 0) throw new Unreadable();
+  return said.length === 1 ? said[0] : `${said.slice(0, -1).join(", ")} and ${said[said.length - 1]}`;
 }
 
 /** One action as a sentence. A `when_visible` is its heading only ("If ...
@@ -386,8 +443,51 @@ function describeKnown(a: Action): Sentence {
       const area = optStr(a.area)?.trim();
       return [words(area ? `Go to the "${area}" area` : "Return to the case's area")];
     }
-    case "press_key":
-      return [words(`Press ${str(a.key)}`)];
+    case "press_key": {
+      const times = optNum(a.times);
+      return [words(`Press ${str(a.key).trim()}${times !== undefined && times > 1 ? ` ${times} times` : ""}`)];
+    }
+    case "expect_dialog": {
+      const text = optStr(a.text);
+      const contains = optStr(a.contains);
+      const said = text !== undefined ? ` saying "${text}"` : contains !== undefined ? ` containing "${contains}"` : "";
+      const answer = str(a.answer);
+      const promptText = optStr(a.prompt_text);
+      let then: string;
+      if (answer === "dismiss") then = " and press Cancel";
+      else if (answer !== "accept") throw new Unreadable();
+      else then = promptText !== undefined ? `, type "${promptText}" and press OK` : " and press OK";
+      return [words(`Expect a dialog${said}${then}${upTo(a.within_ms)}`)];
+    }
+    case "expect_row":
+    case "expect_no_row": {
+      const which = a.kind === "expect_row" ? "a row" : "no row";
+      return [words("Check "), ...describeTarget(a.table), words(` has ${which} with ${cellWords(a.cells)}${upTo(a.timeout_ms)}`)];
+    }
+    case "expect_sorted": {
+      const order = str(a.order);
+      if (order !== "ascending" && order !== "descending") throw new Unreadable();
+      return [
+        words("Check "),
+        ...describeTarget(a.table),
+        words(` is sorted by ${str(a.column).trim()}, ${order}${sortedAs(a.as)}${upTo(a.timeout_ms)}`),
+      ];
+    }
+    case "expect_row_count": {
+      const given = [
+        ["", optNum(a.equals)],
+        ["at least ", optNum(a.at_least)],
+        ["at most ", optNum(a.at_most)],
+      ].filter(([, n]) => n !== undefined) as [string, number][];
+      if (given.length !== 1) throw new Unreadable();
+      const [how, n] = given[0];
+      return [words("Check "), ...describeTarget(a.table), words(` has ${how}${n} ${n === 1 ? "row" : "rows"}${upTo(a.timeout_ms)}`)];
+    }
+    case "drag": {
+      const position = optStr(a.position) ?? "onto";
+      if (!["before", "after", "onto"].includes(position)) throw new Unreadable();
+      return [words("Drag "), ...describeTarget(a.from), words(` ${position} `), ...describeTarget(a.to)];
+    }
     case "expect_focused":
       return [words("Check "), ...describeTarget(a.selector), words(` has the focus${upTo(a.timeout_ms)}`)];
     case "expect_download": {
