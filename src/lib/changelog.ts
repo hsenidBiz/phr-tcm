@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.10",
+    date: "2026-10-06",
+    items: [
+      "Auto Run scripts can follow a tab the page opens, open a second tab, switch between tabs and close them, and each step says which tab it ran in.",
+      "A tab the page opens during a Must not save case is guarded before it can send anything, and a sign-in in one tab never lets another tab save.",
+    ],
+  },
+  {
     version: "2.1.1-beta.9",
     date: "2026-10-06",
     items: [
