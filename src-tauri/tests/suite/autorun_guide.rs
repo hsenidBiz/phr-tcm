@@ -728,3 +728,39 @@ fn the_guide_teaches_tabs_with_one_example_per_scenario() {
     }
     assert!(!tabs.contains('\u{2013}') && !tabs.contains('\u{2014}'), "a dash crept in");
 }
+
+/// The refresh section teaches `return_to_area` with an `area`: the
+/// configurator example, and the advice for a script that changes a
+/// setting in another area. Every example line is an action the runner
+/// accepts.
+#[test]
+fn the_guide_teaches_going_to_another_area_and_back() {
+    let g = autorun_guide().replace("\r\n", "\n");
+    let start = g.find("## Refreshing, sessions and the keyboard").expect("no Refreshing section");
+    let end = g[start + 1..].find("\n## ").map_or(g.len(), |i| start + 1 + i);
+    let section = &g[start..end];
+    for words in [
+        "**Another area, then back.**",
+        "{ \"kind\": \"return_to_area\", \"area\": \"Common Configurator\" },",
+        "{ \"kind\": \"check_text\", \"value\": \"MaxGoalGroups\" },",
+        "matched the way the\nscript's own `area` is",
+        "is refused when it is saved",
+        "must put the value back\nin its last step",
+        "`\"changes\": [\"configurator setting changed\"]`",
+        "should carry the same name in `needs_unchanged`",
+        "runs those cases first and pauses for a reset point",
+        "cannot\nbe \"must not save\"",
+        "the guard would stop the\nconfigurator's own Save",
+    ] {
+        assert!(section.contains(words), "the Refreshing section does not say {words:?}");
+    }
+    let mut named = 0;
+    for line in section.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
+        let json = line.trim().trim_end_matches(',');
+        let a: Action = serde_json::from_str(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+        assert!(a.validate().is_ok(), "{json}: {:?}", a.validate());
+        named += usize::from(a.area_named().is_some());
+    }
+    assert_eq!(named, 1, "the section should have the one configurator example");
+    assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
+}

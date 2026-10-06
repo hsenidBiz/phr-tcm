@@ -783,23 +783,26 @@ pub fn check_no_addresses(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), S
     Ok(())
 }
 
-/// Every area a script names must be one the project has recorded: a run
+/// Every area a script names - its own `area`, and any a `return_to_area`
+/// names - must be one the project has recorded: a run
 /// would refuse the case anyway, so the script is refused when it is saved,
 /// with the names it could have used. No `area`, or a blank one, is "the
 /// case's Module" and always passes. Names the first case it finds.
 pub fn check_areas(nav: &NavFile, scripts: &[CaseScript]) -> Result<(), String> {
     for sc in scripts {
-        let Some(area) = sc.area_name() else {
-            continue;
-        };
-        if find_area(nav, area).is_none() {
-            let names: Vec<&str> = nav.modules.iter().map(ModulePath::name).collect();
-            let recorded = if names.is_empty() {
-                "no areas are recorded yet".to_string()
-            } else {
-                format!("recorded areas: {}", names.join(", "))
-            };
-            return Err(format!("case {}: {} ({recorded})", sc.case_id, unrecorded_area(area)));
+        // The script's own area, then every area a `return_to_area` in it
+        // names - a `when_visible`'s guarded actions included.
+        let named = sc.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each).filter_map(Action::area_named);
+        for area in sc.area_name().into_iter().chain(named) {
+            if find_area(nav, area).is_none() {
+                let names: Vec<&str> = nav.modules.iter().map(ModulePath::name).collect();
+                let recorded = if names.is_empty() {
+                    "no areas are recorded yet".to_string()
+                } else {
+                    format!("recorded areas: {}", names.join(", "))
+                };
+                return Err(format!("case {}: {} ({recorded})", sc.case_id, unrecorded_area(area)));
+            }
         }
     }
     Ok(())
