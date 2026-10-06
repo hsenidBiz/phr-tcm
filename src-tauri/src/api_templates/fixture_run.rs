@@ -36,6 +36,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// What a fixture run did.
@@ -230,6 +231,71 @@ fn resolve(placeholder: &str, vars: &BTreeMap<String, Value>) -> Option<Value> {
     }
 }
 
+/// Said when a stop (`cancel`) ended a fixture run between its steps.
+pub const RUN_STOPPED: &str = "the run was stopped";
+
+/// What a run checks before its lease and its browser: the save rules
+/// again, every step's template, and step 1's values and preflight.
+struct Start {
+    templates: Vec<ApiTemplate>,
+    first: RunRequest,
+}
+
+/// The checks before the lease and the browser. A template may have been
+/// replaced, re-proven as a delete, or removed since the fixture was
+/// saved; with `fixed`, the templates are the ones given (a setup's, as
+/// they were fingerprinted), never read from disk again. Step 1's values
+/// can only use the prefix and the clock, so it is checked here too, and
+/// nothing is opened for a run that cannot start. `Err` is the step (if
+/// one) and the sentence.
+fn start(
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    prefix: &str,
+    clock: &Clock,
+    fixed: Option<&[Option<ApiTemplate>]>,
+) -> Result<Start, (Option<usize>, String)> {
+    let lookup = |id: &str| match fixed {
+        Some(given) => given.iter().flatten().find(|t| t.id == id).cloned(),
+        None => template_store::load(root, org, project, id).ok().flatten(),
+    };
+    let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
+    validate(f, &lookup, &flows).map_err(|problems| (None, problems.join("; ")))?;
+    let mut templates = Vec::with_capacity(f.steps.len());
+    for (i, step) in f.steps.iter().enumerate() {
+        match lookup(&step.template) {
+            Some(t) => templates.push(t),
+            // `validate` has just found it; gone in between is "not proven".
+            None => return Err((Some(i + 1), format!("step {}: template {} is not proven", i + 1, step.template))),
+        }
+    }
+    let vars = BTreeMap::from([("prefix".to_string(), Value::String(prefix.to_string()))]);
+    let first = step_request(1, org, project, &f.account, &templates[0], &f.steps[0].params, &vars, clock)
+        .map_err(|why| (Some(1), why))?;
+    preflight(root, &first, None).map_err(|problems| (Some(1), format!("step 1: {}", problems.join("; "))))?;
+    Ok(Start { templates, first })
+}
+
+/// Whether `f` would start now - the checks a run makes before its lease
+/// and its browser (`start`), with `fixed` templates as `run_fixture_for`
+/// takes them - without starting it. `Err` is the sentence the run would
+/// stop with.
+pub fn ready_to_run(
+    root: &Path,
+    org: &str,
+    project: &str,
+    f: &Fixture,
+    fixed: Option<&[Option<ApiTemplate>]>,
+) -> Result<(), String> {
+    let env = crate::environments::active(root).map_err(|e| {
+        applog::warn(format!("fixture {}: the active environment could not be read: {e}", f.id));
+        "the active environment could not be read - see Settings, Logs".to_string()
+    })?;
+    start(root, org, project, f, &env.test_prefix, &Clock::now_local(), fixed).map(|_| ()).map_err(|(_, why)| why)
+}
+
 /// What the steps did: each step's report, why the run stopped (with the
 /// step, when a step stopped it), and every value a later step, an output
 /// or a `creates` entry may read, under `steps.<n>.<output>`.
@@ -254,47 +320,21 @@ async fn run_steps<B: Browsers>(
     retry_pauses: &[Duration],
     clock: &Clock,
     fixed: Option<&[Option<ApiTemplate>]>,
+    cancel: Option<&AtomicBool>,
 ) -> Ran {
     let mut ran = Ran { steps: vec![], failed: None, vars: BTreeMap::new() };
     ran.vars.insert("prefix".to_string(), Value::String(prefix.to_string()));
+    let stopped = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
 
-    // The save rules again: a template may have been replaced, re-proven
-    // as a delete, or removed since the fixture was saved. With `fixed`,
-    // the templates are the ones given (a setup's, as they were
-    // fingerprinted), never read from disk again.
-    let lookup = |id: &str| match fixed {
-        Some(given) => given.iter().flatten().find(|t| t.id == id).cloned(),
-        None => template_store::load(root, org, project, id).ok().flatten(),
-    };
-    let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
-    if let Err(problems) = validate(f, &lookup, &flows) {
-        ran.failed = Some((None, problems.join("; ")));
-        return ran;
-    }
-    let mut templates = Vec::with_capacity(f.steps.len());
-    for (i, step) in f.steps.iter().enumerate() {
-        match lookup(&step.template) {
-            Some(t) => templates.push(t),
-            // `validate` has just found it; gone in between is "not proven".
-            None => {
-                ran.failed = Some((Some(i + 1), format!("step {}: template {} is not proven", i + 1, step.template)));
-                return ran;
-            }
-        }
-    }
-
-    // Step 1 is checked before the lease and the browser: its values can
-    // only use the prefix and the clock, so nothing is opened for a run
-    // that cannot start.
-    let first = match step_request(1, org, project, &f.account, &templates[0], &f.steps[0].params, &ran.vars, clock) {
-        Ok(r) => r,
-        Err(why) => {
-            ran.failed = Some((Some(1), why));
+    let Start { templates, first } = match start(root, org, project, f, prefix, clock, fixed) {
+        Ok(s) => s,
+        Err(failed) => {
+            ran.failed = Some(failed);
             return ran;
         }
     };
-    if let Err(problems) = preflight(root, &first, None) {
-        ran.failed = Some((Some(1), format!("step 1: {}", problems.join("; "))));
+    if stopped() {
+        ran.failed = Some((Some(1), RUN_STOPPED.to_string()));
         return ran;
     }
 
@@ -329,6 +369,12 @@ async fn run_steps<B: Browsers>(
         Ok(session) => {
             for (i, (step, t)) in f.steps.iter().zip(&templates).enumerate() {
                 let n = i + 1;
+                // A stop is heard between template steps: a step already
+                // sent runs to its own end.
+                if stopped() {
+                    ran.failed = Some((Some(n), RUN_STOPPED.to_string()));
+                    break;
+                }
                 let req = if n == 1 {
                     first.clone()
                 } else {
@@ -362,7 +408,8 @@ async fn run_steps<B: Browsers>(
                         ran.vars.insert(format!("steps.{n}.{name}"), v.clone());
                     }
                 }
-                ran.failed = Some((Some(n), format!("step {n}: {}", report.message())));
+                let why = if stopped() { RUN_STOPPED.to_string() } else { format!("step {n}: {}", report.message()) };
+                ran.failed = Some((Some(n), why));
                 ran.steps.push(report);
                 break;
             }
@@ -401,14 +448,16 @@ pub async fn run_fixture_within<B: Browsers>(
     retry_pauses: &[Duration],
     clock: Clock,
 ) -> FixtureReport {
-    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None, None).await
+    run_fixture_for(browsers, root, org, project, f, timing, limit, retry_pauses, clock, None, None, None).await
 }
 
 /// `run_fixture_within` for case `case_id`'s setup (`autorun::setup`):
 /// what the run makes is recorded as test-made with that case's id. With
 /// `fixed`, the steps run these templates (one per step, `None` for one
 /// not saved) rather than reading them from disk again, so a setup runs
-/// exactly what was fingerprinted for its approval.
+/// exactly what was fingerprinted for its approval. `cancel` stops the run
+/// between template steps with `RUN_STOPPED`; what it made by then is
+/// still recorded.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_fixture_for<B: Browsers>(
     browsers: &mut B,
@@ -422,6 +471,7 @@ pub async fn run_fixture_for<B: Browsers>(
     clock: Clock,
     case_id: Option<i32>,
     fixed: Option<&[Option<ApiTemplate>]>,
+    cancel: Option<&AtomicBool>,
 ) -> FixtureReport {
     let at = applog::stamp();
     let created_at = applog::iso_stamp();
@@ -430,7 +480,7 @@ pub async fn run_fixture_for<B: Browsers>(
     let ran = match crate::environments::active(root) {
         Ok(env) => {
             let ran =
-                run_steps(browsers, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed)
+                run_steps(browsers, root, org, project, f, &env.test_prefix, timing, limit, retry_pauses, &clock, fixed, cancel)
                     .await;
             Some((env, ran))
         }

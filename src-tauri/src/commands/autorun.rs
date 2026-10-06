@@ -87,7 +87,7 @@ pub use store::safe_run_id;
 /// exclusion - the other direction (`auto_run_open_browser` refusing
 /// while an unattended run is going) uses the pure, AppHandle-free
 /// `autorun_replay::replay_is_running` instead.
-pub(crate) async fn supervised_session_is_open() -> bool {
+pub async fn supervised_session_is_open() -> bool {
     SESSION.lock().await.is_some()
 }
 
@@ -225,8 +225,10 @@ fn close_session(s: Session) {
 #[specta::specta]
 pub async fn auto_run_close_browser() -> Result<(), String> {
     // A replay going in this browser is stopped first, without the lock it
-    // holds: it ends at its next look, and the browser closes after it.
+    // holds: it ends at its next look, and the browser closes after it. A
+    // case's setup still running is stopped between its template steps.
     crate::autorun::replay_to::stop();
+    crate::autorun::setup::stop();
     if let Some(s) = SESSION.lock().await.take() {
         close_session(s);
         crate::applog::info("Auto-run browser closed");
@@ -251,6 +253,7 @@ pub async fn close_autorun_browsers() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     crate::autorun::replay_to::stop();
+    crate::autorun::setup::stop();
     if let Some(s) = SESSION.lock().await.take() {
         close_session(s);
         crate::applog::info("Auto-run browser closed as the app exits");
@@ -474,20 +477,62 @@ pub async fn auto_run_check_preconditions(
         false,
     );
     let timing = crate::commands::autorun_replay::replay_timing(false);
-    // The supervised browser makes way for a setup that signs in as its
-    // account (`setup::make_way`); it is held while the setup runs, so no
-    // step can use it in between.
-    let mut slot = SESSION.lock().await;
-    let supervised = slot.as_mut().map(|s| (&mut s.cdp, &mut s.account, &mut s.lease));
-    let blocked =
-        crate::autorun::setup::check_supervised(&mut browsers, supervised, &root, &organization, &project, case_id, &timing)
-            .await;
-    drop(slot);
+    let blocked = supervised_setup(
+        &mut browsers,
+        &root,
+        &organization,
+        &project,
+        case_id,
+        &timing,
+        crate::api_templates::runner::RUN_LIMIT,
+        &crate::api_templates::runner::RETRY_PAUSES,
+    )
+    .await;
     if let Some(why) = blocked {
         // A precondition "checks skipped" notice is still said.
         checked.blocked = Some(why);
     }
     Ok(checked)
+}
+
+/// The supervised browser making way for a setup that signs in as `key`
+/// (`setup::make_way`). `SESSION` is held for that alone, never while the
+/// setup runs.
+pub async fn make_way_for_setup(key: String, timing: &crate::browser::timing::Timing) {
+    let mut slot = SESSION.lock().await;
+    if let Some(s) = slot.as_mut() {
+        crate::autorun::setup::make_way(&mut s.cdp, &mut s.account, &mut s.lease, &key, timing).await;
+    }
+}
+
+/// A supervised start's setup (`setup::check_supervised`), with the
+/// supervised browser making way only once the setup will run. Nothing
+/// here holds `SESSION` while the setup runs, so Close, a step, Open
+/// browser and an unattended Start all still answer; Close stops the
+/// setup between its template steps. `Some` is the Blocked sentence.
+#[allow(clippy::too_many_arguments)]
+pub async fn supervised_setup<B: crate::autorun::replay::Browsers>(
+    browsers: &mut B,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    timing: &crate::browser::timing::Timing,
+    limit: std::time::Duration,
+    retry_pauses: &[std::time::Duration],
+) -> Option<String> {
+    crate::autorun::setup::check_supervised(
+        browsers,
+        root,
+        organization,
+        project,
+        case_id,
+        timing,
+        |key| make_way_for_setup(key, timing),
+        limit,
+        retry_pauses,
+    )
+    .await
 }
 
 /// Put the supervised browser's no-save guard where this case needs it

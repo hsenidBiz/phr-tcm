@@ -877,7 +877,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             // shared drafts' values and the setup's own run,
                             // in a browser of its own that is closed, and its
                             // lease let go, before the case's browser opens.
-                            None => setup::prepare_case(browsers, root, organization, project, &script, timing)
+                            None => setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)
                                 .await
                                 .map(|prepared| (path, prepared.script)),
                         }
@@ -905,7 +905,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                         let looked_transient = if retry_transient { transient::is_transient(&first, Some(&ready)) } else { None };
                         match looked_transient {
                             Some(why) if !cancel.load(Ordering::SeqCst) => {
-                                match setup::prepare_case(browsers, root, organization, project, &script, timing).await {
+                                match setup::prepare_case(browsers, root, organization, project, &script, timing, cancel).await {
                                     Err(not) => transient::retry_not_started(first, &not),
                                     Ok(again) => {
                                         let go = Go { script: &again.script, ..go };

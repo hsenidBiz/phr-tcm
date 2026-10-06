@@ -316,16 +316,24 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
-    // A setup that signs in as the account this browser holds: this
-    // browser's session is ended and its lease let go first.
-    setup::make_way(d, account, lease, root, organization, project, &script, timing).await;
-    let script = match setup::prepare_case(setup_browsers, root, organization, project, &script, timing).await {
+    // A setup that signs in as the account this browser holds: once the
+    // setup will run, this browser's session is ended and its lease let
+    // go first (`setup::make_way`). Close stops the setup between its
+    // template steps.
+    let (way_d, way_account, way_lease) = (&mut *d, &mut *account, &mut *lease);
+    let make_way = |key: String| async move { setup::make_way(way_d, way_account, way_lease, &key, timing).await };
+    let prepared =
+        setup::prepare_case_hooked(setup_browsers, root, organization, project, &script, timing, cancel, make_way).await;
+    let script = match prepared {
         Ok(prepared) => {
             setup::remember(id, prepared.setup_outputs);
             prepared.script
         }
         Err(why) => return ReplayEnd::Blocked(why),
     };
+    if stopped() {
+        return ReplayEnd::Stopped { step: 1 };
+    }
 
     // The no-save guard, through the same path as a person's step.
     if let Err(why) =

@@ -33,6 +33,8 @@ use v2_lib::browser::cdp::{CdpError, Driver, Event};
 
 const CLOCK: Clock = Clock { year: 2026, month: 10, day: 6, hour: 14, minute: 30, second: 0 };
 const ACCOUNT: &str = "setupper";
+/// A stop nobody asks for.
+static NO_STOP: AtomicBool = AtomicBool::new(false);
 
 fn proven(mut t: ApiTemplate) -> ApiTemplate {
     t.proven = Some(Proven {
@@ -224,12 +226,12 @@ async fn an_unbuilt_shared_fixture_blocks_the_case_before_anything_opens() {
     let _slot = crate::serial::api_template_run();
     let mut r = setup_rig(vec![]);
     let sc = script(1, None, json!([{ "step_number": 1, "actions": [check("{{fixture.shared.cycle_id}}")] }]));
-    let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, &sc, &quick()).await;
+    let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, &sc, &quick(), &NO_STOP).await;
     assert_eq!(got.map(|p| p.script), Err(not_built("Fixture shared")));
     assert_eq!(r.browsers.opened, 0);
 
     build_shared(r.root.path());
-    let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, &sc, &quick()).await.unwrap();
+    let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, &sc, &quick(), &NO_STOP).await.unwrap();
     assert!(serde_json::to_string(&got.script.steps).unwrap().contains("\"100\""));
     assert_eq!(r.browsers.opened, 0, "a shared draft opens nothing");
 }
@@ -492,6 +494,8 @@ async fn a_failed_setup_blocks_with_the_fixtures_sentence() {
         PROJECT,
         &sc,
         &quick(),
+        &NO_STOP,
+        |_| std::future::ready(()),
         RUN_LIMIT,
         &QUICK_PAUSES,
         CLOCK,
@@ -525,7 +529,7 @@ async fn any_change_to_what_was_approved_clears_the_approval() {
     assert!(matches!(state(&root, &sc), Approval::Approved { .. }), "proven is not part of the fingerprint");
 
     async fn blocked(r: &mut Rig, sc: &CaseScript) {
-        let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, sc, &quick()).await;
+        let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, sc, &quick(), &NO_STOP).await;
         assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
         assert_eq!(r.browsers.opened, 0);
     }
@@ -601,7 +605,7 @@ async fn an_approval_of_a_setup_that_changed_since_it_was_shown_is_refused() {
     );
     assert_eq!(setup::CHANGED_WHILE_LOOKING, "the setup changed while you were looking at it - review it again before approving");
     assert_eq!(state(&root, &sc), Approval::None);
-    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick()).await;
+    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick(), &NO_STOP).await;
     assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
     assert_eq!(r.browsers.opened, 0);
 }
@@ -618,7 +622,7 @@ async fn a_withdrawn_approval_blocks_the_case_again() {
     approvals::withdraw(&root, 6).unwrap();
     assert_eq!(state(&root, &sc), Approval::None);
     approvals::withdraw(&root, 6).unwrap();
-    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick()).await;
+    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick(), &NO_STOP).await;
     assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
     assert_eq!(r.browsers.opened, 0);
 }
@@ -832,13 +836,11 @@ async fn a_supervised_browser_on_another_account_is_left_alone() {
     let _leases = crate::serial::account_leases();
     let r = setup_rig(vec![]);
     let root = r.root.path();
-    let sc = script(18, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    approve(root, &sc);
     let mut held = Held::supervised();
     held.hold(root, "admin").await.unwrap();
     let mut account = Some("admin".to_string());
     let mut d = common::FakePage::default().driver();
-    setup::make_way(&mut d, &mut account, &mut held, root, ORG, PROJECT, &sc, &quick()).await;
+    setup::make_way(&mut d, &mut account, &mut held, ACCOUNT, &quick()).await;
     assert_eq!(held.account(), Some("admin"));
     assert_eq!(account.as_deref(), Some("admin"));
     assert!(d.calls.is_empty(), "{:?}", d.methods());
@@ -919,4 +921,168 @@ fn only_the_setup_commands_approve_or_withdraw() {
     for name in ["fn auto_run_setup_view(", "fn auto_run_approve_setup(", "fn auto_run_withdraw_setup("] {
         assert!(commands.contains(name), "{name}");
     }
+}
+
+/// A case whose setup runs as `admin`, the account the supervised browser
+/// holds, in the Leave area; with `steps` as given.
+fn admin_case(root: &std::path::Path, case_id: i32, steps: Value) -> CaseScript {
+    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+        .unwrap();
+    let mut as_admin = fixture("own");
+    as_admin.account = "admin".into();
+    fixture_store::save(root, ORG, PROJECT, &as_admin).unwrap();
+    let mut sc = script(case_id, Some("own"), steps);
+    sc.account = Some("admin".into());
+    sc.area = Some("Leave".into());
+    store::save_script(root, &sc).unwrap();
+    sc
+}
+
+/// Replays `sc` to step 2 with the supervised browser signed in as admin;
+/// gives the end, and the account and lease the browser has afterwards.
+async fn replay_signed_in(r: &mut Rig, sc: &CaseScript) -> (ReplayEnd, Option<String>, Held, ScriptedDriver) {
+    let root = r.root.path().to_path_buf();
+    let mut held = Held::supervised();
+    held.hold(&root, "admin").await.unwrap();
+    let mut account = Some("admin".to_string());
+    let (mut d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    let req = ReplayRequest { case_id: sc.case_id, step: 2, db_read_access: false };
+    let (mut guarded, cancel) = (None, AtomicBool::new(false));
+    let end = replay_to_checked(
+        &mut d,
+        &mut r.browsers,
+        &root,
+        ORG,
+        PROJECT,
+        &req,
+        &mut account,
+        &mut held,
+        &mut guarded,
+        true,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+    )
+    .await;
+    (end, account, held, d)
+}
+
+/// The person is signed out only when the setup will run: a shared
+/// fixture never built Blocks the case with the browser still signed in.
+#[tokio::test]
+async fn an_unbuilt_shared_fixture_blocks_with_the_supervised_browser_still_signed_in() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let mut r = setup_rig(vec![the_cycle()]);
+    let sc = admin_case(
+        r.root.path(),
+        19,
+        json!([
+            { "step_number": 1, "actions": [check("{{fixture.shared.cycle_id}}")] },
+            { "step_number": 2, "actions": [check("{{setup.cycle_id}}")] }
+        ]),
+    );
+    approve(r.root.path(), &sc);
+    let (end, account, held, d) = replay_signed_in(&mut r, &sc).await;
+    assert_eq!(end, ReplayEnd::Blocked(not_built("Fixture shared")));
+    assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
+    assert!(d.calls.is_empty(), "the browser's session was not ended: {:?}", d.methods());
+    assert_eq!(r.browsers.opened, 0);
+}
+
+/// A setup that is not approved leaves the supervised browser signed in,
+/// its lease held.
+#[tokio::test]
+async fn a_setup_not_approved_leaves_the_supervised_browser_signed_in() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let mut r = setup_rig(vec![the_cycle()]);
+    let sc = admin_case(
+        r.root.path(),
+        21,
+        json!([
+            { "step_number": 1, "actions": [check("{{setup.cycle_id}}")] },
+            { "step_number": 2, "actions": [check("{{setup.cycle_id}}")] }
+        ]),
+    );
+    let (end, account, held, d) = replay_signed_in(&mut r, &sc).await;
+    assert_eq!(end, ReplayEnd::Blocked(NOT_APPROVED.into()));
+    assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
+    let env = v2_lib::environments::active_id(r.root.path()).unwrap();
+    assert!(lease::is_held(&env, "admin"));
+    assert!(d.calls.is_empty(), "{:?}", d.methods());
+    assert_eq!(r.browsers.opened, 0);
+}
+
+/// A supervised start whose setup's step hangs: case 22, approved.
+fn hanging_setup() -> Rig {
+    let r = setup_rig(vec![]);
+    r.script.lock().unwrap().hang_after = Some(0);
+    let sc = script(22, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(r.root.path(), &sc).unwrap();
+    approve(r.root.path(), &sc);
+    r
+}
+
+/// The step limit these tests give the setup: a short hang, never the
+/// real 3 minutes.
+const SHORT_STEP: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Close answers at once while a setup runs, and stops it: the case is
+/// Blocked with the stop's sentence.
+#[tokio::test]
+async fn close_answers_at_once_and_stops_a_running_setup() {
+    use v2_lib::commands::autorun::{auto_run_close_browser, supervised_setup};
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = hanging_setup();
+    let root = r.root.path().to_path_buf();
+    let timing = quick();
+    let began = Instant::now();
+    let (blocked, closed_in) = tokio::join!(
+        supervised_setup(&mut r.browsers, &root, ORG, PROJECT, 22, &timing, SHORT_STEP, &QUICK_PAUSES),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let at = Instant::now();
+            tokio::time::timeout(std::time::Duration::from_millis(300), auto_run_close_browser())
+                .await
+                .expect("Close answered while the setup ran")
+                .unwrap();
+            at.elapsed()
+        }
+    );
+    assert!(closed_in < std::time::Duration::from_millis(300), "{closed_in:?}");
+    assert_eq!(blocked.as_deref(), Some("setup failed: the run was stopped"));
+    assert!(began.elapsed() < std::time::Duration::from_secs(5), "{:?}", began.elapsed());
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1), "the setup's browser is closed");
+}
+
+/// Whether the supervised browser is open - what an unattended Start asks
+/// first - is answered while a setup runs.
+#[tokio::test]
+async fn the_supervised_browser_question_is_answered_during_a_setup() {
+    use v2_lib::commands::autorun::{supervised_session_is_open, supervised_setup};
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = hanging_setup();
+    let root = r.root.path().to_path_buf();
+    let timing = quick();
+    let (blocked, open) = tokio::join!(
+        supervised_setup(&mut r.browsers, &root, ORG, PROJECT, 22, &timing, SHORT_STEP, &QUICK_PAUSES),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::timeout(std::time::Duration::from_millis(300), supervised_session_is_open())
+                .await
+                .expect("answered while the setup ran")
+        }
+    );
+    assert!(!open);
+    // Nobody stopped it: the hanging step ran into its limit.
+    let why = blocked.unwrap();
+    assert!(why.starts_with("setup failed: step 1: "), "{why}");
 }

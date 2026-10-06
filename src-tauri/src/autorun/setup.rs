@@ -24,13 +24,14 @@ use super::approvals::{self, Approval};
 use super::replay::Browsers;
 use super::{CaseScript, Setup, StepScript};
 use crate::api_templates::fixture::Fixture;
-use crate::api_templates::fixture_run::{no_such_fixture, run_fixture_for, Clock};
+use crate::api_templates::fixture_run::{self, no_such_fixture, run_fixture_for, Clock};
 use crate::api_templates::runner::{claim, API_TEMPLATE_BUSY, RETRY_PAUSES, RUN_LIMIT};
 use crate::api_templates::{exec, fixture_store, store as template_store, ApiTemplate};
 use crate::browser::timing::Timing;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// The Blocked sentence for a setup that is not approved, or whose
@@ -317,7 +318,8 @@ pub struct Prepared {
     pub setup_outputs: BTreeMap<String, Value>,
 }
 
-/// `prepare_case_within` with the template runner's own limits.
+/// `prepare_case_within` with the template runner's own limits and
+/// nothing to do just before the setup runs.
 pub async fn prepare_case<B: Browsers>(
     browsers: &mut B,
     root: &Path,
@@ -325,9 +327,41 @@ pub async fn prepare_case<B: Browsers>(
     project: &str,
     script: &CaseScript,
     timing: &Timing,
+    cancel: &AtomicBool,
 ) -> Result<Prepared, String> {
-    prepare_case_within(browsers, root, org, project, script, timing, RUN_LIMIT, &RETRY_PAUSES, Clock::now_local())
-        .await
+    prepare_case_hooked(browsers, root, org, project, script, timing, cancel, |_| std::future::ready(())).await
+}
+
+/// `prepare_case_within` with the template runner's own limits.
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_case_hooked<B: Browsers, H, Fut>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    script: &CaseScript,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    before_run: H,
+) -> Result<Prepared, String>
+where
+    H: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    prepare_case_within(
+        browsers,
+        root,
+        org,
+        project,
+        script,
+        timing,
+        cancel,
+        before_run,
+        RUN_LIMIT,
+        &RETRY_PAUSES,
+        Clock::now_local(),
+    )
+    .await
 }
 
 /// Everything a case needs from fixtures before it signs in, in order:
@@ -339,22 +373,36 @@ pub async fn prepare_case<B: Browsers>(
 /// 3. its setup's fixture run, in a browser from `browsers` holding the
 ///    one-at-a-time template slot: what it makes is recorded as test-made
 ///    with this case's id, and its browser is closed and its lease
-///    released before this returns. A failed run is `setup_failed`;
+///    released before this returns. A failed run is `setup_failed`, and
+///    one `cancel` stopped between its steps is
+///    `setup failed: the run was stopped`;
 /// 4. the values into a copy of the script (`resolve`).
+///
+/// `before_run` is called with the fixture's account once every check that
+/// can still Block has passed (the approval, the shared fixtures, the
+/// one-at-a-time slot and the run's own checks before it signs in), just
+/// before the setup's browser opens: where a supervised browser makes way
+/// (`make_way`). It is never called for a case that will not run its setup.
 ///
 /// A script that uses no fixture comes back as it is, and nothing is read.
 #[allow(clippy::too_many_arguments)]
-pub async fn prepare_case_within<B: Browsers>(
+pub async fn prepare_case_within<B: Browsers, H, Fut>(
     browsers: &mut B,
     root: &Path,
     org: &str,
     project: &str,
     script: &CaseScript,
     timing: &Timing,
+    cancel: &AtomicBool,
+    before_run: H,
     limit: Duration,
     retry_pauses: &[Duration],
     clock: Clock,
-) -> Result<Prepared, String> {
+) -> Result<Prepared, String>
+where
+    H: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     if !uses_fixtures(script) {
         return Ok(Prepared { script: script.clone(), setup_outputs: BTreeMap::new() });
     }
@@ -388,6 +436,11 @@ pub async fn prepare_case_within<B: Browsers>(
         // The templates that were fingerprinted, never read again: what
         // runs is exactly what the person approved.
         let f = &now.fixture;
+        fixture_run::ready_to_run(root, org, project, f, Some(&now.templates)).map_err(|why| setup_failed(&why))?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(setup_failed(fixture_run::RUN_STOPPED));
+        }
+        before_run(f.account.clone()).await;
         let report = run_fixture_for(
             browsers,
             root,
@@ -400,6 +453,7 @@ pub async fn prepare_case_within<B: Browsers>(
             clock,
             Some(id),
             Some(&now.templates),
+            Some(cancel),
         )
         .await;
         if !report.ok {
@@ -548,71 +602,88 @@ pub fn approval_target(root: &Path, org: &str, project: &str, script: &CaseScrip
     Ok(now.fingerprint)
 }
 
-/// Before a supervised setup: when the supervised browser is signed in as
-/// the account the setup's fixture runs as, its session is ended (the
+/// Before a supervised setup signs in as `key`: when the supervised browser
+/// is signed in as that account, its session is ended (the
 /// `expire_session` action) and its lease let go, so the setup can sign in
-/// as that account. PeoplesHR keeps one session per user, so the setup's
-/// sign-in would end it anyway. The case's own sign-in follows as usual.
-/// A browser signed in as another account, a setup that is not approved
-/// and a script with no setup leave the browser alone.
-#[allow(clippy::too_many_arguments)]
+/// as it. PeoplesHR keeps one session per user, so the setup's sign-in
+/// would end it anyway. The case's own sign-in follows as usual. A browser
+/// signed in as another account is left alone. Called only from
+/// `prepare_case`'s `before_run`, once the setup will run.
 pub async fn make_way<D: crate::browser::cdp::Driver>(
     d: &mut D,
     account: &mut Option<String>,
     lease: &mut super::lease::Held,
-    root: &Path,
-    org: &str,
-    project: &str,
-    script: &CaseScript,
+    key: &str,
     timing: &Timing,
 ) {
-    let Some(s) = &script.setup else { return };
-    let Ok(now) = current(root, org, project, s) else { return };
-    if !matches!(approvals::state(root, script.case_id, &now.fingerprint), Approval::Approved { .. }) {
-        return;
-    }
-    let key = now.fixture.account.as_str();
     if lease.account() != Some(key) && account.as_deref() != Some(key) {
         return;
     }
     let ended = crate::browser::actions::execute_with(d, &crate::browser::actions::Action::ExpireSession, timing).await;
     if !ended.ok {
         crate::applog::info(format!(
-            "case {}: the Auto Run browser's session as {key} could not be ended before its setup; its lease is let go all the same",
-            script.case_id
+            "the Auto Run browser's session as {key} could not be ended before a setup; its lease is let go all the same"
         ));
     }
     *account = None;
     lease.let_go();
-    crate::applog::info(format!("case {}: the Auto Run browser let go of {key} for the case's setup", script.case_id));
+    crate::applog::info(format!("the Auto Run browser let go of {key} for a setup"));
+}
+
+/// The stop for a supervised start's setup: set by Close (`stop`), heard
+/// between the setup's template steps. Each start clears it.
+pub static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Ask a supervised start's setup that is running, if any, to stop.
+pub fn stop() {
+    CANCEL.store(true, Ordering::SeqCst);
 }
 
 /// The supervised start's part: case `case_id`'s fixtures prepared as an
 /// unattended case's are, with what its setup gave kept for its steps
 /// (`remember`); what an earlier start gave is let go first (`forget`).
-/// `supervised`, the supervised browser with its account and lease, makes
-/// way for a setup that signs in as its account (`make_way`). `Some` is
-/// the Blocked sentence. A case with no script has nothing to prepare.
+/// `before_run` is `prepare_case`'s: where the supervised browser makes
+/// way (`make_way`), only once the setup will run. Close stops it between
+/// template steps (`stop`). `Some` is the Blocked sentence. A case with no
+/// script has nothing to prepare.
 #[allow(clippy::too_many_arguments)]
-pub async fn check_supervised<B: Browsers, D: crate::browser::cdp::Driver>(
+pub async fn check_supervised<B: Browsers, H, Fut>(
     browsers: &mut B,
-    supervised: Option<(&mut D, &mut Option<String>, &mut super::lease::Held)>,
     root: &Path,
     org: &str,
     project: &str,
     case_id: i32,
     timing: &Timing,
-) -> Option<String> {
+    before_run: H,
+    limit: Duration,
+    retry_pauses: &[Duration],
+) -> Option<String>
+where
+    H: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     forget(case_id);
+    CANCEL.store(false, Ordering::SeqCst);
     let script = match super::store::load_script(root, case_id) {
         Ok(Some(s)) => s,
         Ok(None) => return None,
         Err(why) => return Some(why),
     };
-    if let Some((d, account, lease)) = supervised {
-        make_way(d, account, lease, root, org, project, &script, timing).await;
-    }
-    match prepare_case(browsers, root, org, project, &script, timing).await {
+    let prepared = prepare_case_within(
+        browsers,
+        root,
+        org,
+        project,
+        &script,
+        timing,
+        &CANCEL,
+        before_run,
+        limit,
+        retry_pauses,
+        Clock::now_local(),
+    )
+    .await;
+    match prepared {
         Ok(prepared) => {
             remember(case_id, prepared.setup_outputs);
             None
