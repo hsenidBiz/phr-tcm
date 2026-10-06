@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.7",
+    date: "2026-10-06",
+    items: [
+      "API Templates has a Fixtures tab. A fixture runs saved templates in order to make a draft the same way every time, and Rebuild makes a fresh one when a shared draft is damaged.",
+      "An Auto Run script can get a fresh draft of its own from a fixture before each run. You approve its setup once in the script editor, and any change to it needs your approval again.",
+      "Clean up test-made drafts lists the drafts your test runs made, by name prefix and age, and deletes only the ones you tick, after you confirm.",
+      "Each environment has a test name prefix, AUTOTEST unless you change it, so drafts the tests make are easy to find and clean up.",
+    ],
+  },
+  {
     version: "2.1.1-beta.6",
     date: "2026-10-06",
     items: [
