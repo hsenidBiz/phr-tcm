@@ -747,7 +747,8 @@ fn the_guide_teaches_going_to_another_area_and_back() {
         "is refused when it is saved",
         "must put the value back\nin its last step",
         "`\"changes\": [\"configurator setting changed\"]`",
-        "runs it last\nand pauses for a reset point if it is interrupted",
+        "should carry the same name in `needs_unchanged`",
+        "runs those cases first and pauses for a reset point",
         "cannot\nbe \"must not save\"",
         "the guard would stop the\nconfigurator's own Save",
     ] {

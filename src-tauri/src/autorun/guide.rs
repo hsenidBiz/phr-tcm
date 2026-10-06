@@ -201,8 +201,10 @@ not reached when the case runs, the rest of the step is not run.
 
 A script that changes a setting in another area must put the value back
 in its last step. It should carry a shared-state mark, such as
-`"changes": ["configurator setting changed"]`, so Auto Run runs it last
-and pauses for a reset point if it is interrupted. Such a script cannot
+`"changes": ["configurator setting changed"]`, and the cases that need
+that setting as it was should carry the same name in `needs_unchanged`.
+Auto Run then runs those cases first and pauses for a reset point before
+any of them that would run after it. Such a script cannot
 be "must not save" (`"no_save": true`), because the guard would stop the
 configurator's own Save.
 
