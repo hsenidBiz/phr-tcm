@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.9",
+    date: "2026-10-06",
+    items: [
+      "Auto Run's Script window shows the script in plain sentences, step by step, with Edit script for the full detail.",
+      "A case marked Must not save now also stops a save the page sends as a sign-in leaves it, however late it arrives.",
+    ],
+  },
+  {
     version: "2.1.1-beta.8",
     date: "2026-10-06",
     items: [
