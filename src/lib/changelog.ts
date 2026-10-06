@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.8",
+    date: "2026-10-06",
+    items: [
+      "Auto Run's dialogs use most of the window, so scripts, runs and settings are easier to read, and the script editor's steps scroll beside the script instead of in a short box.",
+      "Auto Run uses the full width of the window, and its setup sits beside Past runs as well as the test cases.",
+      "Expand all and Collapse all are now one floating button at the bottom of Auto Run's list.",
+      "The line above Auto Run's test cases shows the environment, and only mentions setup when something needs attention.",
+    ],
+  },
+  {
     version: "2.1.1-beta.7",
     date: "2026-10-06",
     items: [
