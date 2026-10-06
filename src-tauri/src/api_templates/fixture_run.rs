@@ -72,6 +72,13 @@ pub fn prefix_warning(kind: &str, name: &str) -> String {
     format!("{kind} {name} does not start with the test prefix, so Clean up will not find it")
 }
 
+/// The warning for a made thing recorded with no name: Clean up matches
+/// names against the prefix, so it is recorded all the same but never
+/// offered.
+pub fn no_name_warning(kind: &str, id: &str) -> String {
+    format!("{kind} {id} has no name, so Clean up will not find it")
+}
+
 /// Said when a fixture id is not saved for the project.
 pub fn no_such_fixture(id: &str) -> String {
     format!("no fixture called \"{id}\" is saved for this project")
@@ -533,7 +540,10 @@ pub async fn run_fixture_for<B: Browsers>(
                 String::new()
             }
         };
-        if !name.is_empty() && !name.starts_with(&env.test_prefix) {
+        // Compared as Clean up compares it: case ignored.
+        if name.is_empty() {
+            warnings.push(no_name_warning(&c.kind, &id));
+        } else if !name.to_lowercase().starts_with(&env.test_prefix.trim().to_lowercase()) {
             warnings.push(prefix_warning(&c.kind, &name));
         }
         made.push(TestMade {

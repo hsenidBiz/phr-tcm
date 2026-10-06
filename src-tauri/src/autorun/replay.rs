@@ -913,7 +913,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                                             Ok(second) => transient::after_retry(why, first.duration_ms, second),
                                             // No second go to keep: the first go's
                                             // steps and evidence stay the record.
-                                            Err(open) => transient::retry_not_started(first, &open),
+                                            Err(open) => transient::retry_not_started(
+                                                first,
+                                                &format!("the browser did not open: {open}"),
+                                            ),
                                         }
                                     }
                                 }

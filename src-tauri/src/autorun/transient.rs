@@ -29,9 +29,10 @@ pub const RETRY_PASSED: &str = "passed on a second try after a transient failure
 /// `)`: the second go's words first, so a reason still begins the way
 /// every reader of it expects (`step N:`, the trip's sentence...).
 pub const FIRST_TRY: &str = " (first try: ";
-/// After the first go's reason when the second go's browser never opened,
+/// After the first go's reason when the second go never started - its
+/// setup could not make a fresh draft, or its browser never opened -
 /// followed by why and closed by `)`.
-pub const RETRY_NOT_STARTED: &str = " (a second try could not start: the browser did not open: ";
+pub const RETRY_NOT_STARTED: &str = " (a second try could not start: ";
 
 /// Chrome's prefix for a request that failed at the network level.
 const NET_ERR: &str = "net::ERR_";

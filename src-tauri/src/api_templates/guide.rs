@@ -336,7 +336,8 @@ output of an earlier step, `n` counting from 1), `{{now:<format>}}` (the
 run's start time in local time, with the letters `yyyy MM dd HH mm ss`) and
 `{{prefix}}` (the active environment's test name prefix). Text for a number,
 boolean or list param is read as one. `outputs` and each `creates` entry
-name one `{{steps.<n>.<output>}}` each. A placeholder whose step gave no
+name one `{{steps.<n>.<output>}}` each, and a `creates` entry's id and name
+both come from one step whose template creates (effect `create`). A placeholder whose step gave no
 value stops the run at that step; it is never sent as text.
 
 A fixture performs a flow's stages itself, in order: a step whose template
@@ -363,6 +364,33 @@ switch; listing does not. Each template step has its own 3-minute limit.
 When a shared draft is damaged, use Rebuild (run the fixture again), never
 a hand fix: the rebuild makes a fresh draft, scripts follow it through the
 fixture's outputs, and the damaged one is left for Clean up.
+
+## Delete templates
+
+A template with `"effect": "delete"` is a delete template. It deletes one
+draft the tests made, and it has exactly one shape:
+
+- `deletes_kind` names the kind of thing it deletes, as a fixture's
+  `creates` names it (`cycle`, `suite` and so on).
+- Its params are exactly one: `{ "name": "id", "type": "string", "required": true }`
+  (or `"type": "number"`), with no default.
+- `{{id}}` is the only placeholder in any of its steps. No other value and
+  no captured value may appear in a path, a query or a body.
+- Every POST step uses `{{id}}`.
+
+Any other shape is refused with `a delete template takes exactly one value,
+id, and deletes only that record`.
+
+Prove a delete template only with the `id` of a draft the tests made: a
+`present` entry of its kind, in the active environment, from the record of
+what fixtures and setups made. Any other `id` is refused with `a delete
+template is only proven on a draft the tests made`. A prove that succeeds
+deleted that draft, and the record marks it deleted.
+
+`run_api_template` refuses a delete template, and so does a fixture. Only
+the person's Clean up test-made drafts, in the app, runs one: it previews
+the drafts, the person ticks and confirms, and each is deleted through its
+kind's proven delete template.
 
 ## When a run fails
 

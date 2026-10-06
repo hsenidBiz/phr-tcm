@@ -478,6 +478,37 @@ async fn a_retry_makes_a_fresh_draft_and_uses_it() {
     assert_eq!(made, vec![("274".to_string(), Some(14)), ("275".to_string(), Some(14))]);
 }
 
+/// A transient failure whose retry cannot make a fresh draft: the second
+/// go never starts, the first go's record stays, and the reason says the
+/// setup failed - never that a browser did not open.
+#[tokio::test]
+async fn a_retry_whose_setup_fails_says_the_setup_failed() {
+    use v2_lib::autorun::transient::RETRY_NOT_STARTED;
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![the_cycle(), answer(500, json!({ "error": "no" }))]);
+    let sc = script(15, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(r.root.path(), &sc).unwrap();
+    approve(r.root.path(), &sc);
+
+    let silent = ScriptedDriver::new(|method, _| match method {
+        "Runtime.evaluate" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let second_page = r.another_page();
+    let mut browsers = ordered(&mut r, silent);
+    browsers.setups.push_back(second_page);
+    let run = run_with(&r, &mut browsers, 15, true).await;
+
+    let case = &run.cases[0];
+    let first = case.retried.clone().expect("the first try's sentence is kept");
+    let not_started = format!("{first}{RETRY_NOT_STARTED}setup failed: step 1: ");
+    assert!(case.reason.starts_with(&not_started), "{}", case.reason);
+    assert!(case.reason.ends_with(')'), "{}", case.reason);
+    assert!(!case.reason.contains("the browser did not open"), "{}", case.reason);
+    assert_eq!(case.proposed, "Blocked");
+}
+
 /// A failed setup run Blocks the case with the fixture's own sentence, and
 /// leaves nothing open.
 #[tokio::test]

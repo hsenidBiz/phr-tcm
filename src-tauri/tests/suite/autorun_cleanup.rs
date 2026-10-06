@@ -240,6 +240,114 @@ fn a_delete_template_takes_exactly_one_value_id() {
     assert!(refused(&unused), "an id no step sends");
 }
 
+/// The `id` param is a string or a number: a date, a boolean or a list is
+/// refused.
+#[test]
+fn a_delete_templates_id_is_a_string_or_a_number() {
+    use v2_lib::api_templates::{check, delete_shape_ok, DELETE_SHAPE};
+    for (kind, ok) in [("string", true), ("number", true), ("date", false), ("boolean", false), ("list", false)] {
+        let mut t = delete_draft("x", Some("cycle"));
+        t.params[0] = serde_json::from_value(json!({ "name": "id", "type": kind, "required": true })).unwrap();
+        assert_eq!(delete_shape_ok(&t), ok, "{kind}");
+        assert_eq!(check(&t).contains(&DELETE_SHAPE.to_string()), !ok, "{kind}");
+    }
+}
+
+/// A delete template whose first step looks something up (a GET that
+/// captures `target`) and whose POST then deletes `{{target}}`, or a record
+/// written into the template, never reaches anything: refused at check, at
+/// preflight in Cleanup mode, and never offered by `delete_template_for`.
+fn looks_up_then_deletes(post_form: &str) -> ApiTemplate {
+    serde_json::from_value(json!({
+        "id": "remove-cycle", "title": "Delete a draft", "module": "PMS", "effect": "delete",
+        "description": "d", "sources": ["x:1"], "antiforgery": { "page": PAGE },
+        "deletes_kind": "cycle",
+        "params": [ { "name": "id", "type": "string", "required": true } ],
+        "steps": [
+            { "name": "Find", "method": "GET", "path": "/hr/pmsv10/performancecycle",
+              "query": { "handler": "Find", "Id": "{{id}}" }, "capture": { "target": "$.other" } },
+            { "name": "Delete", "method": "POST", "path": "/hr/pmsv10/performancecycle",
+              "query": { "handler": "DeleteCycle" }, "form": { "Id": post_form } }
+        ],
+        "outputs": []
+    }))
+    .unwrap()
+}
+
+fn refused_everywhere(t: ApiTemplate) {
+    use v2_lib::api_templates::runner::{preflight, Mode, RunRequest};
+    use v2_lib::api_templates::{check, delete_shape_ok, DELETE_SHAPE};
+    assert!(!delete_shape_ok(&t));
+    assert!(check(&t).contains(&DELETE_SHAPE.to_string()), "check: {:?}", check(&t));
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::recipe::save_recipe(dir.path(), ORG, PROJECT, &crate::common::recipe()).unwrap();
+    v2_lib::autorun::accounts::save_accounts(dir.path(), &[crate::common::account()]).unwrap();
+    let proven_t = proven(t, "2026-10-01 09:00:00", Some("Default"));
+    let mut values = serde_json::Map::new();
+    values.insert("id".into(), json!("1"));
+    let req = RunRequest {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        account: "admin".into(),
+        values,
+        mode: Mode::Cleanup,
+        template: proven_t.clone(),
+    };
+    let problems = preflight(dir.path(), &req, None).unwrap_err();
+    assert!(problems.contains(&DELETE_SHAPE.to_string()), "preflight: {problems:?}");
+    assert_eq!(delete_template_for(&[proven_t], "cycle", "Default"), None);
+}
+
+#[test]
+fn only_id_may_appear_in_a_delete_template() {
+    // A captured value standing in for the record.
+    refused_everywhere(looks_up_then_deletes("{{target}}"));
+}
+
+#[test]
+fn every_post_step_of_a_delete_template_uses_id() {
+    // A record written into the template: the POST never uses `{{id}}`,
+    // though the GET before it does.
+    refused_everywhere(looks_up_then_deletes("12345"));
+    // The same template deleting `{{id}}` is the valid shape.
+    let ok = looks_up_then_deletes("{{id}}");
+    let mut ok = ok;
+    ok.steps[0].capture.clear();
+    assert_eq!(v2_lib::api_templates::check(&ok), Vec::<String>::new());
+}
+
+/// Only the fixture runner adds to the record of test-made drafts, and
+/// only Clean up changes a status - a crate-wide scan of every caller. The
+/// prove path marks the entry it deleted through `cleanup::proof_deleted`,
+/// which lives in `autorun/cleanup.rs`, so it is no caller of its own.
+#[test]
+fn only_the_fixture_runner_records_and_only_clean_up_sets_a_status() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut records = Vec::new();
+    let mut statuses = Vec::new();
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let text = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
+                let name = p.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+                if text.contains("test_made::record(") {
+                    records.push(name.clone());
+                }
+                // The definition itself is not a call.
+                if text.lines().any(|l| l.contains("set_status(") && !l.contains("fn set_status(")) {
+                    statuses.push(name);
+                }
+            }
+        }
+    }
+    assert_eq!(records, vec!["api_templates/fixture_run.rs"]);
+    assert_eq!(statuses, vec!["autorun/cleanup.rs"]);
+}
+
 /// The same rule at cleanup, for a file saved before it: preflight refuses
 /// it in Cleanup mode, the preview does not offer it, and nothing is sent.
 #[tokio::test]

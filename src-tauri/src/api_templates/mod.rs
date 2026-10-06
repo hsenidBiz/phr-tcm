@@ -419,18 +419,33 @@ pub const DELETES_KIND_NEEDED: &str = "a delete template must say which kind it 
 /// Said when a delete template takes anything but the one record id.
 pub const DELETE_SHAPE: &str = "a delete template takes exactly one value, id, and deletes only that record";
 
-/// Whether a delete template has the only shape it may have: exactly one
-/// param, a required `id` with no default, which at least one step uses.
-/// Every other placeholder `check` already limits to the params and the
-/// step's earlier captures, so with `id` the only param nothing but the
-/// record given - and what the steps capture on the way, a fresh token
-/// say - can reach a request. Clean up hands `{{id}}` a record of the
-/// test-made drafts; a template with a second value could be pointed at
-/// anything.
+/// Whether a delete template has the only shape it may have, so that it
+/// can only ever reach the one record it is given:
+/// - exactly one param, a required `id` of type string or number, with no
+///   default;
+/// - `{{id}}` is the only placeholder anywhere in its steps - no other
+///   param, and no value a step captured, which could stand in for a
+///   record the template looked up itself;
+/// - every POST step (every step that writes) uses `{{id}}`, so none
+///   writes to a record fixed in the template.
+///
+/// Clean up hands `{{id}}` a record of the test-made drafts; a template of
+/// any other shape could be pointed at anything. The anti-forgery token is
+/// not a placeholder: the runner adds it itself.
 pub fn delete_shape_ok(t: &ApiTemplate) -> bool {
-    let one_id = matches!(t.params.as_slice(), [p] if p.name == "id" && p.required && p.default.is_none());
-    let uses_id = t.steps.iter().any(|s| step_placeholder_names(s).iter().any(|n| n == "id"));
-    one_id && uses_id
+    let one_id = matches!(
+        t.params.as_slice(),
+        [p] if p.name == "id"
+            && p.required
+            && p.default.is_none()
+            && matches!(p.kind, ParamType::String | ParamType::Number)
+    );
+    let names: Vec<Vec<String>> = t.steps.iter().map(step_placeholder_names).collect();
+    let only_id = names.iter().flatten().all(|n| n == "id");
+    let uses_id = names.iter().any(|n| n.iter().any(|n| n == "id"));
+    let posts_use_id =
+        t.steps.iter().zip(&names).filter(|(s, _)| s.method == Method::Post).all(|(_, n)| n.iter().any(|n| n == "id"));
+    one_id && only_id && uses_id && posts_use_id
 }
 
 /// Every problem with this template, in template order (top-level `id`

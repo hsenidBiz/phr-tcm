@@ -181,6 +181,27 @@ fn flow_problems(
     problems
 }
 
+/// Said when a `creates` entry is not wholly the work of one step whose
+/// template creates.
+pub fn creates_one_step(kind: &str) -> String {
+    format!("creates: {kind} must come from one step whose template creates")
+}
+
+/// Whether `c`'s id and name are both `{{steps.<m>.<x>}}` of the same step
+/// m, and step m's template creates: its effect is `create` and it sends at
+/// least one POST. A step that only reads (a GET) or edits found something
+/// that was already there; recording that as test-made would let Clean up
+/// offer to delete it.
+fn from_one_creating_step(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, c: &Creates) -> bool {
+    let step_of = |v: &str| step_ref_of(v, f.steps.len() + 1).map(|(m, _)| m);
+    match (step_of(&c.id), step_of(&c.name)) {
+        (Some(a), Some(b)) if a == b => templates(&f.steps[a - 1].template).is_some_and(|t| {
+            t.effect == Effect::Create && t.steps.iter().any(|s| s.method == super::Method::Post)
+        }),
+        _ => false,
+    }
+}
+
 /// Every problem with `f`, one sentence each. `templates` looks a template
 /// up by id; a template with no `proven` is not proven. `flows` looks a
 /// saved flow up by id, for the steps whose template performs a stage of
@@ -229,10 +250,18 @@ pub fn validate(
     }
 
     for c in &f.creates {
+        let mut from_steps = true;
         for value in [&c.id, &c.name] {
             if !is_step_value(f, templates, value) {
                 problems.push(format!("creates: {} does not come from a step", value.trim()));
+                from_steps = false;
             }
+        }
+        // Only what a creating step made is recorded as test-made - so
+        // Clean up only ever offers to delete a thing the tests created -
+        // and the id and the name are that one step's.
+        if from_steps && !from_one_creating_step(f, templates, c) {
+            problems.push(creates_one_step(&c.kind));
         }
     }
 

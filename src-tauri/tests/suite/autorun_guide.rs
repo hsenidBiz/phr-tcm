@@ -659,3 +659,27 @@ fn the_guide_teaches_marking_shared_state() {
     }
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
+
+/// The guide teaches a script's setup and shared fixtures: the two
+/// placeholders, the approval only a person gives and what clears it, and
+/// when to choose which.
+#[test]
+fn the_guide_teaches_setups_and_shared_fixtures() {
+    let g = autorun_guide();
+    let start = g.find("## Drafts a case needs: fixtures and setups").expect("the section is missing");
+    let section = g[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "`\"setup\": { \"fixture\": \"<id>\" }`",
+        "`{{setup.<output>}}`",
+        "`{{fixture.<id>.<output>}}`",
+        "A setup stays Blocked until a person approves it in the app",
+        "You cannot approve it, and no tool can.",
+        "changing any of them needs a new approval",
+        "Use a setup only when the case needs its own fresh draft",
+        "Otherwise use a shared `{{fixture...}}`",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}

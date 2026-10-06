@@ -529,6 +529,34 @@ Send each existing precondition back exactly as it is: a repair that
 leaves one out or changes it is refused, and only a person can drop or
 change one, in the app.
 
+## Drafts a case needs: fixtures and setups
+
+A fixture is a saved list of API templates that makes a draft the same way
+every time (see `get_api_template_guide`). A script reaches one in two ways.
+
+A shared draft: a step's value may hold `{{fixture.<id>.<output>}}`. When
+the case starts it is replaced with that fixture's current output, the one
+its newest successful run gave. Every case that names it uses the same
+draft. A fixture that has never been built Blocks the case until a person
+runs it from API Templates, Fixtures. An unknown fixture or output is
+refused when the script is saved.
+
+A case's own draft: a script may declare `"setup": { "fixture": "<id>" }`.
+The setup runs that fixture on every run of the case, after the
+preconditions and before the case's browser signs in, so the case starts
+from a fresh draft of its own. Its outputs reach the steps as
+`{{setup.<output>}}`. A setup that fails Blocks the case with
+`setup failed: ` and the fixture's own sentence.
+
+A setup stays Blocked until a person approves it in the app, in the script
+editor. You cannot approve it, and no tool can. The approval covers the
+setup, its fixture and every template the fixture uses: changing any of
+them needs a new approval before the case runs again.
+
+Use a setup only when the case needs its own fresh draft, for example
+because it changes or uses up the draft. Otherwise use a shared
+`{{fixture...}}`: it costs no run per case and needs no approval.
+
 ## Shared state a case changes
 
 Some cases change shared state, for example publishing a cycle. Other

@@ -165,6 +165,52 @@ fn a_creates_entry_must_come_from_a_step() {
     assert!(p.contains(&"creates: fixed name does not come from a step".to_string()), "{p:?}");
 }
 
+/// A template that only reads: one GET, effect `edit`, with the same
+/// declared outputs as the creating ones.
+fn reads_only(id: &str) -> ApiTemplate {
+    let mut t = template(id, "create", true);
+    t.effect = v2_lib::api_templates::Effect::Edit;
+    t.steps[0].method = v2_lib::api_templates::Method::Get;
+    t.steps[0].form = None;
+    t
+}
+
+/// `lookup`, plus `find-cycle` (reads only) and `get-cycle` (effect
+/// `create` but only a GET).
+fn lookup_with_readers(id: &str) -> Option<ApiTemplate> {
+    match id {
+        "find-cycle" => Some(reads_only(id)),
+        "get-cycle" => {
+            let mut t = reads_only(id);
+            t.effect = v2_lib::api_templates::Effect::Create;
+            Some(t)
+        }
+        _ => lookup(id),
+    }
+}
+
+#[test]
+fn a_creates_entry_must_come_from_one_creating_step() {
+    use v2_lib::api_templates::fixture::creates_one_step;
+    assert_eq!(creates_one_step("cycle"), "creates: cycle must come from one step whose template creates");
+    let refused = |f: &Fixture| validate(f, &lookup_with_readers, &no_flow).unwrap_err();
+
+    // The valid shape: id and name from step 1, which creates.
+    validate(&fixture(), &lookup_with_readers, &no_flow).unwrap();
+
+    // A template that only reads (a GET), whatever its effect.
+    for reader in ["find-cycle", "get-cycle"] {
+        let mut f = fixture();
+        f.steps[0].template = reader.into();
+        assert_eq!(refused(&f), vec![creates_one_step("cycle")], "{reader}");
+    }
+
+    // The id from one step and the name from another.
+    let mut f = fixture();
+    f.creates[0].name = "{{steps.2.cycleName}}".into();
+    assert_eq!(refused(&f), vec![creates_one_step("cycle")]);
+}
+
 #[test]
 fn a_fixture_with_creates_must_use_the_prefix() {
     let mut f = fixture();
@@ -265,7 +311,7 @@ fn a_delete_template_must_say_which_kind_it_deletes() {
     assert!(parse_draft(&create).is_ok());
 }
 
-// ---- placeholder rules folded in from the part 5 Task 1 review -----------
+// ---- placeholder rules: step indexes, whitespace and malformed references ---
 
 #[test]
 fn a_step_index_must_be_all_digits() {
@@ -809,6 +855,53 @@ mod running {
         assert_eq!(made[0].name, "Hand made cycle", "recorded all the same");
     }
 
+    /// The prefix is compared as Clean up compares it, case ignored; a made
+    /// thing with no name is warned about, and recorded all the same.
+    #[tokio::test]
+    async fn the_prefix_ignores_case_and_a_nameless_thing_is_warned_about() {
+        use v2_lib::api_templates::fixture_run::no_name_warning;
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut r = rig_with(
+            vec![answer(200, json!({ "cycleId": 276, "cycleName": "autotest lower case" })), answer(200, json!({ "suiteId": 9 }))],
+            &f,
+            &[make_cycle(), add_suite()],
+        );
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+
+        let mut r = rig_with(
+            vec![answer(200, json!({ "cycleId": 277, "cycleName": "" })), answer(200, json!({ "suiteId": 9 }))],
+            &f,
+            &[make_cycle(), add_suite()],
+        );
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.warnings, vec![no_name_warning("cycle", "277")]);
+        assert_eq!(report.warnings[0], "cycle 277 has no name, so Clean up will not find it");
+        let made = test_made::list(r.root.path());
+        assert_eq!((made.len(), made[0].name.as_str()), (1, ""), "recorded all the same");
+    }
+
+    /// The `creates` rule is checked again when the fixture runs: a step
+    /// whose template no longer creates is refused before any browser opens.
+    #[tokio::test]
+    async fn a_creates_entry_from_a_step_that_no_longer_creates_is_refused_at_run_time() {
+        let _act = crate::serial::activity_log();
+        let f = fixture();
+        let mut reader = make_cycle();
+        reader.effect = v2_lib::api_templates::Effect::Edit;
+        // Saved while step 1 still created; its template is replaced after.
+        let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
+        store::save(r.root.path(), ORG, PROJECT, &reader).unwrap();
+        let report = run(&mut r, &f).await;
+        assert!(!report.ok);
+        assert_eq!(report.failed.as_deref(), Some("creates: cycle must come from one step whose template creates"));
+        assert_eq!(r.browsers.opened, 0);
+        assert!(test_made::list(r.root.path()).is_empty());
+    }
+
     /// A fixture step whose template became a delete template after the
     /// fixture was saved is refused at run time with the save rule's own
     /// sentence, before any browser opens - and the run is still recorded.
@@ -1023,7 +1116,7 @@ mod running {
         );
         let draft = ApiTemplate { proven: None, ..t.clone() };
         let prove = RunRequest { template: draft, ..req(Mode::Prove { replace: false, why: None }) };
-        assert_eq!(preflight(dir.path(), &prove, None), Ok(()), "proving is Task 5's rule");
+        assert_eq!(preflight(dir.path(), &prove, None), Ok(()), "preflight leaves a prove to the record check");
     }
 
     /// The bridge's run: the switch first, then the fixture's sentence,
@@ -1157,4 +1250,31 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
             assert!(!text.contains(writer), "{name} reaches {writer}");
         }
     }
+}
+
+/// The guide's delete template section: the kind, the one shape, the prove
+/// rule, and who runs one.
+#[test]
+fn the_guide_explains_delete_templates() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let start = text.find("## Delete templates").expect("the section is missing");
+    let section = text[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "`deletes_kind`",
+        "`{ \"name\": \"id\", \"type\": \"string\", \"required\": true }` (or `\"type\": \"number\"`), with no default",
+        "`{{id}}` is the only placeholder in any of its steps",
+        "Every POST step uses `{{id}}`",
+        v2_lib::api_templates::DELETE_SHAPE,
+        "a `present` entry of its kind, in the active environment",
+        v2_lib::autorun::cleanup::PROVE_REFUSAL,
+        "the record marks it deleted",
+        "`run_api_template` refuses a delete template, and so does a fixture",
+        "Only the person's Clean up test-made drafts, in the app, runs one",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(one_line.contains("both come from one step whose template creates"), "{one_line}");
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
