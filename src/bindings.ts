@@ -2414,6 +2414,11 @@ export type CleanupLine_Deserialize = {
 	deletable: boolean,
 	/**  Why it cannot be ticked, when it cannot. */
 	note: string | null,
+	/**
+	 *  The title (or the id, for one with no title) of the delete template
+	 *  the run will use for this entry. None when it cannot be deleted.
+	 */
+	template?: string | null,
 };
 
 /**  One line of the preview. */
@@ -2423,6 +2428,11 @@ export type CleanupLine_Serialize = {
 	deletable: boolean,
 	/**  Why it cannot be ticked, when it cannot. */
 	note: string | null,
+	/**
+	 *  The title (or the id, for one with no title) of the delete template
+	 *  the run will use for this entry. None when it cannot be deleted.
+	 */
+	template?: string | null,
 };
 
 /**

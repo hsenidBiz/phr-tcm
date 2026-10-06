@@ -256,6 +256,7 @@ export default function CleanupDialog({
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted">
                       <span>{age(e.created_at)}</span>
                       <span>{`made by ${e.fixture}`}</span>
+                      {l.template && <span>{`deleted by ${l.template}`}</span>}
                       {e.status !== "present" && <span className="text-warning">{e.status}</span>}
                     </div>
                     {l.note && <p className="text-xs text-faint">{l.note}</p>}

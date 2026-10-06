@@ -83,6 +83,10 @@ pub struct CleanupLine {
     pub deletable: bool,
     /// Why it cannot be ticked, when it cannot.
     pub note: Option<String>,
+    /// The title (or the id, for one with no title) of the delete template
+    /// the run will use for this entry. None when it cannot be deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
 }
 
 /// What the preview was asked for. `run_cleanup` asks it again.
@@ -229,7 +233,8 @@ fn lines_with_templates(
         .map(|entry| {
             let t = delete_template_for(&templates, &entry.kind, &env.name).cloned();
             let note = t.is_none().then(|| no_delete_template(&entry.kind));
-            (CleanupLine { entry, deletable: t.is_some(), note }, t)
+            let template = t.as_ref().map(|t| if t.title.trim().is_empty() { t.id.clone() } else { t.title.clone() });
+            (CleanupLine { entry, deletable: t.is_some(), note, template }, t)
         })
         .collect())
 }
