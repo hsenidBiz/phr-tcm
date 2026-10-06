@@ -257,7 +257,7 @@ export default function ScriptEditor({
             Action script JSON
             <Textarea
               aria-label="Action script JSON"
-              className="mt-1 h-[32rem] w-full font-mono text-xs"
+              className="mt-1 h-80 w-full font-mono text-xs"
               placeholder={PLACEHOLDER}
               value={value}
               onChange={(e) => setText(e.target.value)}

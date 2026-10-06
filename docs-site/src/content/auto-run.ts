@@ -79,6 +79,7 @@ export const autoRun: Screen = {
         ...OPEN_CARD(5001),
         { click: { role: "button", name: "Edit script for #5001" } },
         { waitFor: { role: "button", name: "Approve setup" } },
+        { scrollTo: { role: "button", name: "Approve setup" } },
       ],
       alt: "The script of a case with a setup: the fixture it builds its data from, changed since it was approved",
     },
@@ -172,16 +173,8 @@ export const autoRun: Screen = {
       locate: { role: "group", name: "Readiness" },
       name: "Readiness",
       does:
-        "One line on where runs go and whether the setup is in place: the environment and its site, the sign-in, and how many accounts, areas and test files there are. " +
-        "A tick means that part is ready; a warning names what is missing.",
-    },
-    {
-      id: "open-setup",
-      shot: CASES,
-      group: "cases",
-      locate: { role: "button", name: "Open setup" },
-      name: "Open setup",
-      does: "Opens the Setup panel's full rows and moves to them.",
+        "One line on where runs go: the environment and its site. When something a run needs is missing, such as the sign-in, the accounts or a test file a script uploads, a warning names it here, even with the Setup panel shut. " +
+        "What is in place is shown in the Setup panel, not repeated here.",
     },
     {
       id: "search",
@@ -195,11 +188,12 @@ export const autoRun: Screen = {
     },
     {
       id: "expand-all",
-      shot: CASES,
+      shot: SELECTED,
       group: "cases",
       locate: { role: "button", name: "Expand all" },
       name: "Expand all",
-      does: "Opens every case the list shows, to read their scripts at once.",
+      does:
+        "Stuck at the bottom left of the window, so it is there however far you scroll. While no case is open it reads **Expand all** and opens every case the list shows, to read their scripts at once.",
     },
     {
       id: "collapse-all",
@@ -207,7 +201,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "button", name: "Collapse all" },
       name: "Collapse all",
-      does: "Closes every open case, the ones the search or a filter hides too.",
+      does: "The same button once a case is open: it reads **Collapse all** and closes every open case, the ones the search or a filter hides too.",
     },
     {
       id: "group-by-title",
