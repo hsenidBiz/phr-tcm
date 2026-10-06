@@ -2139,8 +2139,8 @@ async fn a_tab_the_page_opens_is_attached_and_its_save_is_stopped() {
 /// The tab actions end to end: follow a `target=_blank` link, claim the new
 /// tab by its address, read it, close it (`main` is current again), open a
 /// second tab at the page and go back to `main`. The guard is on all the
-/// way: the new tab posts a form the moment it opens, and the server must
-/// never receive it.
+/// way: the script clicks `#formsave` in the new tab, which posts a form,
+/// and the server must never receive it.
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_script_follows_a_link_into_a_tab_reads_it_closes_it_and_opens_another() {

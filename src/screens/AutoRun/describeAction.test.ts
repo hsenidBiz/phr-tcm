@@ -106,6 +106,8 @@ describe("a sentence for every action kind", () => {
     [{ kind: "switch_tab", name: "report" }, 'Switch to the "report" tab'],
     [{ kind: "close_tab", name: "report" }, 'Close the "report" tab'],
     [{ kind: "expect_tab_closed", name: "preview" }, 'Check the "preview" tab closes'],
+    [{ kind: "expect_tab", name: "report", url_contains: "id=7&token=abc" }, 'Wait for a new tab and call it "report"'],
+    [{ kind: "expect_tab", name: "report", url_contains: "?id=7" }, 'Wait for a new tab and call it "report"'],
   ];
 
   test.each(cases)("%j", (action, sentence) => {

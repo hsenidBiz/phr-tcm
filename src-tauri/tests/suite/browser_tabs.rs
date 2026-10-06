@@ -1287,3 +1287,78 @@ async fn a_close_that_times_out_does_not_stop_the_other_tabs_closing() {
     assert_eq!(cdp.tabs().len(), 1);
     assert_eq!(cdp.tab_name(), "main");
 }
+
+// ---------------------------------------------------------------------------
+// A sign-in in one tab holds only that tab.
+// ---------------------------------------------------------------------------
+
+/// A guarded browser with `main` on its draft (loader L-main) and a second
+/// tab, `second`, on the sign-in page (L-signin). The sign-in runs in
+/// `second`: it is current when the hold is asked for, and the hold has
+/// taken effect.
+async fn signing_in_in_second() -> Cdp<FakeBrowser> {
+    let mut cdp = browser().await;
+    feed(&mut cdp, [navigated(MAIN, "L-main", "https://hr.example/draft")]);
+    settle(&mut cdp).await;
+    cdp.step_began();
+    popup(&mut cdp, "S-pop", "T-pop", "about:blank").await;
+    cdp.expect_tab("second", None, Duration::from_millis(500)).await.unwrap();
+    feed(
+        &mut cdp,
+        [on("S-pop", "Page.frameNavigated", json!({ "frame": { "id": "T-pop", "loaderId": "L-signin", "url": "https://hr.example/login" } }))],
+    );
+    settle(&mut cdp).await;
+    cdp.guard_saves(&["login".to_string()]).await.unwrap();
+    cdp.switch_tab("second").await.unwrap();
+    cdp.hold_saves(true);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    cdp
+}
+
+/// `main`'s own draft saving while the sign-in runs in `second` is still
+/// stopped: the hold is `second`'s alone.
+#[tokio::test]
+async fn a_save_from_another_tabs_page_is_stopped_during_a_sign_in() {
+    let mut cdp = signing_in_in_second().await;
+    feed(
+        &mut cdp,
+        [
+            sent_by(MAIN, "n1", "L-main", "https://hr.example/api/Save"),
+            paused_from(MAIN, "r1", "https://hr.example/api/Save", "XHR", "n1"),
+        ],
+    );
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert!(cdp.take_save_blocked().is_some_and(|b| b.contains("POST /api/Save")));
+}
+
+/// A form `main` submits (a top-level navigation) during a sign-in in
+/// `second` is still stopped.
+#[tokio::test]
+async fn a_form_another_tab_submits_is_stopped_during_a_sign_in() {
+    let mut cdp = signing_in_in_second().await;
+    feed(&mut cdp, [paused_from(MAIN, "r1", "https://hr.example/api/Save", "Document", "n9")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+}
+
+/// The sign-in's own login, in `second`, goes through.
+#[tokio::test]
+async fn the_sign_in_tabs_own_login_goes_through() {
+    let mut cdp = signing_in_in_second().await;
+    feed(
+        &mut cdp,
+        [
+            sent_by("S-pop", "n1", "L-signin", "https://hr.example/api/login"),
+            paused_from("S-pop", "r1", "https://hr.example/api/login", "XHR", "n1"),
+        ],
+    );
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+    // Once the hold ends, `second` is stopped like any tab.
+    cdp.hold_saves(false);
+    feed(&mut cdp, [paused("S-pop", "r2", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
+}

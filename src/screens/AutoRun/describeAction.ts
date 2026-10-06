@@ -282,6 +282,9 @@ function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): strin
 function tabAddress(contains: unknown): string {
   const text = typeof contains === "string" ? contains.trim() : "";
   if (!text) return "";
+  // A query alone (`id=7&token=abc`) can carry a token, and names no
+  // place a person would recognise: the sentence leaves it out.
+  if (text.includes("=") && !splitAddress(text).path.includes("/")) return "";
   const shown = looksLikeAddress(text) || text.includes("/") || text.includes("?") ? pathOnly(text) : text;
   return `, at an address containing "${shown}"`;
 }

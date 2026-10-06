@@ -619,6 +619,10 @@ pub struct Cdp<T: Transport = WsTransport> {
     hold: bool,
     /// A hold asked for (`hold_saves(true)`) that has not taken effect yet.
     hold_pending: bool,
+    /// The tabs a hold covers, by session: the tab the sign-in runs in (the
+    /// current tab when it was asked for) and any tab opened during it.
+    /// Every other tab stays guarded as before: its saves are still stopped.
+    hold_tabs: HashSet<String>,
     /// The first command sent since the hold was asked for. The hold takes
     /// effect only once its answer (or a later one) is read: the browser
     /// writes every event it sent before that command arrived ahead of the
@@ -737,6 +741,7 @@ impl<T: Transport> Cdp<T> {
             armed: None,
             hold: false,
             hold_pending: false,
+            hold_tabs: HashSet::new(),
             hold_marker: None,
             blocked_elsewhere: None,
             unsent_answers: VecDeque::new(),
@@ -850,6 +855,7 @@ impl<T: Transport> Cdp<T> {
         let before = (self.armed.replace(patterns.to_vec()), self.hold);
         self.hold = false;
         self.hold_pending = false;
+        self.hold_tabs.clear();
         self.hold_marker = None;
         for t in &mut self.tabs {
             t.end_hold();
@@ -950,8 +956,10 @@ impl<T: Transport> Cdp<T> {
 
     /// Let every request through for a while, saves included, without
     /// switching interception off: a sign-in is the runner's own, and what
-    /// it sends is not the script's draft. Every tab, and a tab opened
-    /// meanwhile.
+    /// it sends is not the script's draft. Only in the tab the sign-in runs
+    /// in (the current tab), and a tab opened meanwhile (a sign-in's own
+    /// popup): every other tab is still the script's, and its saves are
+    /// still stopped.
     ///
     /// A request is judged as it was when the browser paused it, not when
     /// its pause is read: a save the page sent as it was left (a beacon on
@@ -972,7 +980,8 @@ impl<T: Transport> Cdp<T> {
             if !self.hold && !self.hold_pending {
                 self.hold_pending = true;
                 self.hold_marker = None;
-                for t in &mut self.tabs {
+                self.hold_tabs = HashSet::from([self.current.clone()]);
+                for t in self.tabs.iter_mut().filter(|t| t.session_id == self.current) {
                     t.start_hold();
                 }
             }
@@ -981,6 +990,7 @@ impl<T: Transport> Cdp<T> {
         self.hold_pending = false;
         self.hold_marker = None;
         self.set_hold(false);
+        self.hold_tabs.clear();
         for t in &mut self.tabs {
             t.end_hold();
         }
@@ -989,8 +999,9 @@ impl<T: Transport> Cdp<T> {
     fn set_hold(&mut self, hold: bool) {
         self.hold = hold;
         for t in &mut self.tabs {
+            let covered = self.hold_tabs.contains(&t.session_id);
             if let Some(g) = t.guard.as_mut() {
-                g.hold = hold;
+                g.hold = hold && covered;
             }
         }
     }
@@ -1001,7 +1012,7 @@ impl<T: Transport> Cdp<T> {
             self.hold_pending = false;
             self.hold_marker = None;
             self.set_hold(true);
-            for t in &mut self.tabs {
+            for t in self.tabs.iter_mut().filter(|t| self.hold_tabs.contains(&t.session_id)) {
                 t.hold_took_effect();
             }
         }
@@ -1391,6 +1402,7 @@ impl<T: Transport> Cdp<T> {
         // seen after the hold, so the sign-in's own.
         if self.hold || self.hold_pending {
             tab.start_hold();
+            self.hold_tabs.insert(session.clone());
         }
         let armed = self.armed.clone();
         if let Some(words) = &armed {
