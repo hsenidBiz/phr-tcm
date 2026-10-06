@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.11",
+    date: "2026-10-07",
+    items: [
+      "Auto Run scripts can press key combinations such as Ctrl+ArrowUp, press a key several times, and drag items to reorder a list.",
+      "Auto Run scripts can check what a browser dialog says and press OK or Cancel, or type into it, and can fail a case on a dialog they did not expect.",
+      "Auto Run scripts can check tables and grids: a row with given values, no such row, a column in order, and the number of rows.",
+      "An Auto Run script can fail or flag a case when the page has a script error or a server error, and a flagged case shows page errors seen.",
+      "Auto Run download checks can read PDFs: their text, their number of pages, and text on a given page.",
+      "An Auto Run script can visit another recorded area, such as a settings screen, and come back to its own.",
+    ],
+  },
+  {
     version: "2.1.1-beta.10",
     date: "2026-10-06",
     items: [
