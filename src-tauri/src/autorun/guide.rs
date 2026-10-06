@@ -38,6 +38,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "switch_tab",
     "close_tab",
     "expect_tab_closed",
+    "drag",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -113,7 +114,8 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
-- `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Shift+Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End
+- `{ "kind": "press_key", "key": "Tab" }` - press one key on whatever has the focus: Tab, Enter, Space, Escape, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home or End, with any of Ctrl, Shift, Alt and Meta held for it (`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`); `times` (1 to 50, default 1) presses it that many times
+- `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
 - `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")
@@ -229,6 +231,42 @@ check a case that tabs through controls:
 
     { "kind": "press_key", "key": "Tab" },
     { "kind": "expect_focused", "selector": { "role": "button", "name": "Activate" } }
+
+A key can be pressed with modifiers held, joined with `+`: `Ctrl`,
+`Shift`, `Alt` and `Meta`, in any case, before one of the keys above -
+`"Shift+Tab"`, `"Ctrl+ArrowUp"`, `"Ctrl+Shift+End"`, `"Alt+ArrowDown"`.
+`times` presses the same combination again, up to 50 times:
+
+    { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+**Dragging to reorder.** `drag` picks `from` up and drops it on `to`, as a
+mouse would. Both are ordinary locators, frame chains included, and both
+are scrolled into view first. `position` says where on `to`: `before` (its
+upper part), `after` (its lower part) or `onto` (its middle, the default).
+It works for lists that drag with the mouse or pointer and for the
+browser's own drag and drop alike:
+
+    { "kind": "drag", "from": { "role": "row", "name": "Grade C" }, "to": { "role": "row", "name": "Grade A" }, "position": "before" }
+
+A drag says only that it was carried out, not that the page took any
+notice of it - a page that ignored the drop still passes the drag. Always
+follow it with a check of the new order, such as `expect_text` on the
+first item. It fails with "there was nothing to drag at ..." or "there
+was nowhere to drop at ..." when an element is missing or cannot be used,
+and with "the drag did not finish within N seconds" when the gesture ran
+out of time.
+
+Many screens that reorder by dragging also reorder from the keyboard,
+which is often the steadier way to test it: focus the item, then press
+the screen's reorder keys. Ctrl+Arrow and Alt+Arrow are the common ones;
+use the one the screen itself documents (its help text, a tooltip, or its
+accessible description), never a guess:
+
+    { "kind": "click", "selector": { "role": "row", "name": "Grade C" } },
+    { "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 }
+
+A page that saves on drop is still stopped under "must not save", as it is
+for any other action.
 
 **What a screen reader is told.** Auto Run reads the same accessibility
 tree a screen reader does, so a case about what is "announced" is checked

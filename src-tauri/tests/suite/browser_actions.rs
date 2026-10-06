@@ -648,6 +648,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::SwitchTab { name: "r".into() },
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
+        Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 

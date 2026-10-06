@@ -1711,7 +1711,10 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ExpireSession
         | Action::ReturnToArea { area: None } => String::new(),
         Action::ReturnToArea { area: Some(area) } => area.trim().to_string(),
-        Action::PressKey { key } => key.trim().to_string(),
+        Action::PressKey { key, .. } => key.trim().to_string(),
+        Action::Drag { from, to, position, .. } => {
+            format!("{} {} {}", from.describe(), position.unwrap_or_default().word(), to.describe())
+        }
         Action::ExpectDownload { name, .. } => name.trim().to_string(),
         // A tab's name; an opened tab's path, never its host or query.
         Action::ExpectTab { name, .. }

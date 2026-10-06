@@ -55,6 +55,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::SwitchTab { name: "r".into() },
         Action::CloseTab { name: "r".into() },
         Action::ExpectTabClosed { name: "r".into(), within_ms: None },
+        Action::Drag { from: "s".into(), to: "t".into(), position: None, within_ms: None },
     ];
     let emitted: Vec<String> = samples
         .iter()

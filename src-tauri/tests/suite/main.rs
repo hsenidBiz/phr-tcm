@@ -82,6 +82,7 @@ mod browser_cdp;
 mod browser_downloads;
 mod browser_expect;
 mod browser_input;
+mod browser_keys_drag;
 mod browser_launch;
 mod browser_live;
 mod browser_locator;

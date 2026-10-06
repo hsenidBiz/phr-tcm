@@ -237,7 +237,16 @@ async fn shift_tab_holds_shift_and_enter_types_its_character() {
     let mut d = focus_page(true, "");
     assert!(execute_with(&mut d, &action(json!({ "kind": "press_key", "key": "Shift+Tab" })), &quick()).await.ok);
     let back = d.calls_to("Input.dispatchKeyEvent");
-    assert!(back.iter().all(|e| e["modifiers"] == 8), "Shift is held: {back:?}");
+    // Shift goes down first and comes up last; the Tab between carries it.
+    let seen: Vec<(&str, &str, i64)> = back
+        .iter()
+        .map(|e| (e["type"].as_str().unwrap(), e["key"].as_str().unwrap(), e["modifiers"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        seen,
+        [("rawKeyDown", "Shift", 8), ("rawKeyDown", "Tab", 8), ("keyUp", "Tab", 8), ("keyUp", "Shift", 0)],
+        "Shift is held: {back:?}"
+    );
 
     let mut d = focus_page(true, "");
     let out = execute_with(&mut d, &action(json!({ "kind": "press_key", "key": "Enter" })), &quick()).await;

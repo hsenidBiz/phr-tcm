@@ -2264,6 +2264,49 @@ document.getElementById('loads').textContent = 'load ' + n;
     port
 }
 
+/// `drag` reorders a list sorted by pointer events (the SortableJS kind)
+/// and a list using the browser's own drag and drop, and Ctrl+ArrowUp - a
+/// combination, held as a keyboard holds it - reorders both from the
+/// keyboard. Every order is the one the PAGE wrote after it moved an item.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn drag_and_ctrl_arrow_reorder_real_lists() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-drag.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let order = |list: &str, equals: &str| json!({ "kind": "expect_text", "selector": { "css": format!("#{list}-order") }, "equals": equals });
+
+    // Pointer events: D before A, then D after B.
+    let out = run(&mut live, json!({ "kind": "drag", "from": { "css": "#m-d" }, "to": { "css": "#m-a" }, "position": "before" })).await;
+    must(out.clone());
+    assert_eq!(out.detail, "dragged #m-d before #m-a");
+    must(run(&mut live, order("mouse", "D,A,B,C")).await);
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#m-d" }, "to": { "css": "#m-b" }, "position": "after" })).await);
+    must(run(&mut live, order("mouse", "A,B,D,C")).await);
+
+    // The browser's own drag and drop: C before A, then A after D.
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#n-c" }, "to": { "css": "#n-a" }, "position": "before" })).await);
+    must(run(&mut live, order("native", "C,A,B,D")).await);
+    must(run(&mut live, json!({ "kind": "drag", "from": { "css": "#n-a" }, "to": { "css": "#n-d" }, "position": "after" })).await);
+    must(run(&mut live, order("native", "C,B,D,A")).await);
+
+    // The keyboard: the page moves the focused item only when its keydown
+    // says Ctrl is down.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#n-a" } })).await);
+    must(run(&mut live, json!({ "kind": "press_key", "key": "Ctrl+ArrowUp", "times": 2 })).await);
+    must(run(&mut live, order("native", "C,A,B,D")).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#m-c" } })).await);
+    must(run(&mut live, json!({ "kind": "press_key", "key": "ctrl+ArrowUp" })).await);
+    must(run(&mut live, order("mouse", "A,B,C,D")).await);
+    // An arrow without Ctrl moves nothing.
+    must(run(&mut live, json!({ "kind": "press_key", "key": "ArrowUp" })).await);
+    must(run(&mut live, order("mouse", "A,B,C,D")).await);
+
+    // Interception was switched off: a later click is an ordinary click.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#n-b" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_focused", "selector": { "css": "#n-b" } })).await);
+}
+
 /// Tab and Shift+Tab really move the focus, Enter really presses the focused
 /// button, and a reload really loads the page again - each read from what
 /// the page itself shows, never from what Rust sent.

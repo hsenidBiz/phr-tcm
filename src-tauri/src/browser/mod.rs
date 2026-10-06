@@ -31,5 +31,7 @@ pub mod session;
 pub mod locator;
 pub mod input;
 pub mod expect;
+pub mod keys;
+pub mod drag;
 pub mod actions;
 pub mod snapshot;

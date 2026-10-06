@@ -5,6 +5,8 @@
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
+use super::drag;
+use super::keys;
 use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
 use super::expect::{self, Check};
 use super::input::{self, Blocked};
@@ -143,9 +145,28 @@ pub enum Action {
     },
     /// Press one key on whatever has the focus, as a keyboard would: Tab
     /// and Shift+Tab move the focus, Enter and Space activate, Escape
-    /// closes. One of `PRESS_KEYS`, nothing else - a script that needs a
-    /// field's text uses `fill`.
-    PressKey { key: String },
+    /// closes. One of `PRESS_KEYS`, with any of Ctrl, Shift, Alt and Meta
+    /// held for it (`Ctrl+ArrowUp`, see `keys`), nothing else - a script
+    /// that needs a field's text uses `fill`. `times` (1 to 50) presses the
+    /// same combination that many times.
+    PressKey {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        times: Option<u8>,
+    },
+    /// Pick `from` up and drop it on `to` - before it, after it, or onto
+    /// it (`position`, onto when left out) - as a mouse would, within
+    /// `within_ms` (`drag::DRAG_WAIT_MS` when left out). Serves pages that
+    /// drag with mouse or pointer events and pages that use the browser's
+    /// own drag and drop alike (see `drag`).
+    Drag {
+        from: Target,
+        to: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<DropAt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
     /// The focus is on this element, or on something inside it (a card
     /// whose own button has it counts, as `:focus-within` would).
     ExpectFocused {
@@ -206,6 +227,28 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         within_ms: Option<u32>,
     },
+}
+
+/// Where on `to` a `drag` drops: its upper part, its lower part, or its
+/// middle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DropAt {
+    Before,
+    After,
+    #[default]
+    Onto,
+}
+
+impl DropAt {
+    /// As a sentence says it: `dragged <from> before <to>`.
+    pub fn word(self) -> &'static str {
+        match self {
+            DropAt::Before => "before",
+            DropAt::After => "after",
+            DropAt::Onto => "onto",
+        }
+    }
 }
 
 /// How long `expect_tab` and `expect_tab_closed` wait when they name no
@@ -391,26 +434,21 @@ fn check_download(
 }
 
 /// The keys `press_key` may press, as a script names them: name, the DOM
-/// `key`, the DOM `code`, the Windows virtual key, the text a key types
-/// (for those that type one) and whether Shift is held.
-pub const PRESS_KEYS: &[(&str, &str, &str, i64, Option<&str>, bool)] = &[
-    ("Tab", "Tab", "Tab", 9, None, false),
-    ("Shift+Tab", "Tab", "Tab", 9, None, true),
-    ("Enter", "Enter", "Enter", 13, Some("\r"), false),
-    ("Space", " ", "Space", 32, Some(" "), false),
-    ("Escape", "Escape", "Escape", 27, None, false),
-    ("ArrowUp", "ArrowUp", "ArrowUp", 38, None, false),
-    ("ArrowDown", "ArrowDown", "ArrowDown", 40, None, false),
-    ("ArrowLeft", "ArrowLeft", "ArrowLeft", 37, None, false),
-    ("ArrowRight", "ArrowRight", "ArrowRight", 39, None, false),
-    ("Home", "Home", "Home", 36, None, false),
-    ("End", "End", "End", 35, None, false),
+/// `key`, the DOM `code`, the Windows virtual key, and the text a key types
+/// (for those that type one). Shift+Tab, once a row of its own, is Tab with
+/// Shift held (`keys::parse`), and is pressed with Shift held as before.
+pub const PRESS_KEYS: &[(&str, &str, &str, i64, Option<&str>)] = &[
+    ("Tab", "Tab", "Tab", 9, None),
+    ("Enter", "Enter", "Enter", 13, Some("\r")),
+    ("Space", " ", "Space", 32, Some(" ")),
+    ("Escape", "Escape", "Escape", 27, None),
+    ("ArrowUp", "ArrowUp", "ArrowUp", 38, None),
+    ("ArrowDown", "ArrowDown", "ArrowDown", 40, None),
+    ("ArrowLeft", "ArrowLeft", "ArrowLeft", 37, None),
+    ("ArrowRight", "ArrowRight", "ArrowRight", 39, None),
+    ("Home", "Home", "Home", 36, None),
+    ("End", "End", "End", 35, None),
 ];
-
-/// The names `press_key` accepts, for a refusal to list.
-fn key_names() -> String {
-    PRESS_KEYS.iter().map(|k| k.0).collect::<Vec<_>>().join(", ")
-}
 
 /// How long a script's `when_visible` waits when it names no `within_ms`.
 pub const WHEN_VISIBLE_MS: u32 = 2000;
@@ -787,10 +825,18 @@ impl Action {
                 check_guarded(then)
             }
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
-            Action::PressKey { key } if !PRESS_KEYS.iter().any(|k| k.0 == key.trim()) => {
-                Err(format!("press_key \"{key}\" is not a key it presses - use one of {}", key_names()))
+            Action::PressKey { key, times } => keys::check(key, *times),
+            Action::Drag { from, to, within_ms, .. } => {
+                from.validate().map_err(|e| format!("drag from: {e}"))?;
+                to.validate().map_err(|e| format!("drag to: {e}"))?;
+                match within_ms {
+                    Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+                    Some(ms) if *ms > drag::DRAG_WAIT_MAX_MS => {
+                        Err(format!("drag waits at most {} ms, not {ms}", drag::DRAG_WAIT_MAX_MS))
+                    }
+                    _ => Ok(()),
+                }
             }
-            Action::PressKey { .. } => Ok(()),
             Action::ExpectFocused { selector, .. } => selector.validate(),
             Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, stray } => {
                 check_download(name, within_ms, sheet, headers, cells, contains_text, stray)
@@ -1187,7 +1233,11 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
-        Action::PressKey { key } => press_key(d, key.trim(), timing).await,
+        Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,
+        Action::Drag { from, to, position, within_ms } => {
+            let within = within_ms.unwrap_or(drag::DRAG_WAIT_MS);
+            drag::drag(d, from, to, position.unwrap_or_default(), within, timing).await
+        }
         Action::ExpectFocused { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Focused, wait(timeout_ms, timing), timing.poll_ms).await
         }
@@ -1322,39 +1372,24 @@ pub(crate) async fn focus_now<D: Driver>(d: &mut D) -> String {
     }
 }
 
-/// `press_key`: the key down and up, sent to the page as a keyboard sends
-/// it, so its default does what a person's would - Tab moves the focus,
-/// Enter submits, Space presses a button. Says where the focus went after.
-async fn press_key<D: Driver>(d: &mut D, name: &str, timing: &Timing) -> ActionOutcome {
-    let Some(&(_, key, code, vk, text, shift)) = PRESS_KEYS.iter().find(|k| k.0 == name) else {
-        return ActionOutcome::failed(format!("press_key \"{name}\" is not a key it presses - use one of {}", key_names()));
+/// `press_key`: the combination down and up (`keys`), `times` times, sent
+/// to the page as a keyboard sends it, so its default does what a person's
+/// would - Tab moves the focus, Enter submits, Space presses a button. Says
+/// where the focus went after.
+async fn press_key<D: Driver>(d: &mut D, key: &str, times: u8, timing: &Timing) -> ActionOutcome {
+    let combo = match keys::parse(key) {
+        Ok(c) => c,
+        Err(why) => return ActionOutcome::failed(why),
     };
-    // Shift is 8 in the protocol's modifier bits.
-    let modifiers = if shift { 8 } else { 0 };
-    let mut down = json!({
-        "type": if text.is_some() { "keyDown" } else { "rawKeyDown" },
-        "key": key, "code": code,
-        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
-        "modifiers": modifiers,
-    });
-    if let Some(t) = text {
-        down["text"] = json!(t);
-        down["unmodifiedText"] = json!(t);
-    }
-    if let Err(e) = d.call("Input.dispatchKeyEvent", down).await {
-        return failed_by(e);
-    }
-    let up = json!({
-        "type": "keyUp", "key": key, "code": code,
-        "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk,
-        "modifiers": modifiers,
-    });
-    if let Err(e) = d.call("Input.dispatchKeyEvent", up).await {
-        return failed_by(e);
+    for _ in 0..times {
+        if let Err(e) = combo.press(d).await {
+            return failed_by(e);
+        }
     }
     // A moment for the page to move the focus before saying where it is.
     d.idle(Duration::from_millis(timing.poll_ms.min(200))).await;
-    ActionOutcome::passed(format!("pressed {name}; {}", focus_now(d).await))
+    let pressed = if times > 1 { format!("{} {times} times", combo.name()) } else { combo.name() };
+    ActionOutcome::passed(format!("pressed {pressed}; {}", focus_now(d).await))
 }
 
 /// What `expire_session` says when the site has no cookies to drop.

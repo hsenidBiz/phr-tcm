@@ -207,6 +207,9 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     {
         return ErrorClass::Navigation;
     }
+    if whole.starts_with(crate::browser::drag::DID_NOT_FINISH) {
+        return ErrorClass::TimedOut;
+    }
     if whole.starts_with(act::PAGE_LACKS) {
         return ErrorClass::PageTextMissing;
     }
@@ -372,7 +375,9 @@ pub fn action_target(action: &Action) -> Option<String> {
             Some(area) => format!("the {area} area"),
             None => "the case's area".to_string(),
         }),
-        Action::PressKey { key } => Some(format!("the {} key", key.trim())),
+        Action::PressKey { key, .. } => Some(format!("the {} key", key.trim())),
+        // What is picked up: a drag that cannot start is about it.
+        Action::Drag { from, .. } => Some(from.describe()),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
         // A tab by the name the script gave it.
         Action::ExpectTab { name, .. }

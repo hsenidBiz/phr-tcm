@@ -386,8 +386,15 @@ function describeKnown(a: Action): Sentence {
       const area = optStr(a.area)?.trim();
       return [words(area ? `Go to the "${area}" area` : "Return to the case's area")];
     }
-    case "press_key":
-      return [words(`Press ${str(a.key)}`)];
+    case "press_key": {
+      const times = optNum(a.times);
+      return [words(`Press ${str(a.key).trim()}${times !== undefined && times > 1 ? ` ${times} times` : ""}`)];
+    }
+    case "drag": {
+      const position = optStr(a.position) ?? "onto";
+      if (!["before", "after", "onto"].includes(position)) throw new Unreadable();
+      return [words("Drag "), ...describeTarget(a.from), words(` ${position} `), ...describeTarget(a.to)];
+    }
     case "expect_focused":
       return [words("Check "), ...describeTarget(a.selector), words(` has the focus${upTo(a.timeout_ms)}`)];
     case "expect_download": {

@@ -112,7 +112,16 @@ pub fn action_words(action: &Action) -> String {
             Some(area) => format!("go to the {area} area"),
             None => "go back to the case's area".to_string(),
         },
-        Action::PressKey { key } => format!("press {}", key.trim()),
+        Action::PressKey { key, times } => match times {
+            Some(n) if *n > 1 => format!("press {} {n} times", key.trim()),
+            _ => format!("press {}", key.trim()),
+        },
+        Action::Drag { from, to, position, .. } => format!(
+            "drag {} {} {}",
+            from.describe(),
+            position.unwrap_or_default().word(),
+            to.describe()
+        ),
         Action::ExpectFocused { selector, .. } => format!("expect {} to have the focus", selector.describe()),
         Action::ExpectDownload { name, .. } => format!("expect a download named \"{}\"", name.trim()),
         Action::ExpectTab { name, .. } => format!("wait for a new tab and call it \"{name}\""),
