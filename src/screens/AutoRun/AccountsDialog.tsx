@@ -23,6 +23,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { activeEnvironment, envKeys, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
@@ -249,7 +250,7 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
   const blocked = existing.isLoading || existing.isError || rows === null;
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3 p-5">
+    <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <div>
         <h2 className="text-sm font-semibold text-text">Accounts</h2>
         <p className="mt-1 text-xs text-muted">
@@ -347,7 +348,7 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
               </label>
               <span>{pickedCount} selected</span>
             </div>
-            <div className="max-h-[22rem] overflow-y-auto rounded-md border border-border">
+            <div className="max-h-[50vh] overflow-y-auto rounded-md border border-border">
               {shown.length === 0 ? (
                 <p className="p-3 text-xs text-muted">No logins match "{query.trim()}".</p>
               ) : (

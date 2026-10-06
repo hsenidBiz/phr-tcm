@@ -75,7 +75,7 @@ export default function SaveWordsDialog({
   });
 
   return (
-    <Modal onClose={onClose} labelledBy={headingId} className="flex w-full max-w-lg flex-col gap-3 p-5">
+    <Modal onClose={onClose} labelledBy={headingId} className="flex w-full max-w-2xl flex-col gap-3 p-5">
       <h2 id={headingId} className="text-sm font-semibold text-text">
         Save words
       </h2>

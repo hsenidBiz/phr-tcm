@@ -8,7 +8,9 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
+import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
@@ -58,6 +60,11 @@ import type { AutoRunTab } from "./useAutoRunReadiness";
 
 /** The screen's tabs, in order. The arrow keys walk this list. Setup is
  * not one: it is a panel beside the Test cases list. */
+/** The content on the left, the Setup panel on the right; stacked (panel
+ * first) until the area's own width has room for both. */
+const TWO_COLUMNS =
+  "grid gap-4 @min-[69rem]:grid-cols-[minmax(0,1fr)_clamp(20rem,26%,28rem)] @min-[69rem]:items-start";
+
 const TABS: { id: AutoRunTab; label: string }[] = [
   { id: "cases", label: "Test cases" },
   { id: "runs", label: "Past runs" },
@@ -121,6 +128,7 @@ export default function AutoRun({
   /** Which tab shows. The screen always opens on Test cases; after that
    * only the person's clicks, and a review closing, move it. */
   const [tab, setTab] = useState<AutoRunTab>("cases");
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
   const shown = tab;
   /** Past runs' result filter. Here rather than in the panel, which is not
    * mounted while another tab shows - the choice outlives it. */
@@ -151,7 +159,6 @@ export default function AutoRun({
     setFocusPanel(false);
   }, [focusPanel]);
   const openSetup = () => {
-    setTab("cases");
     setPanelChoice(true);
     setFocusPanel(true);
   };
@@ -387,6 +394,21 @@ export default function AutoRun({
       ),
     [rows],
   );
+
+  /** The one Setup panel, drawn on whichever tab shows; its open state is
+   * the one above, so it carries across a tab switch. */
+  const setupPanel = (
+    <SetupPanel
+      setup={setup}
+      org={org}
+      project={project}
+      caseModules={caseModules}
+      open={panelOpen}
+      onToggle={() => setPanelChoice(!panelOpen)}
+      toggleRef={panelToggleRef}
+      panelRef={panelRef}
+    />
+  );
   const hasScript = (i: number) => Boolean(scripts[i]);
   /** Only scripted cases can be run, so only they can be ticked. */
   const runnableIn = (indices: number[]) =>
@@ -530,7 +552,7 @@ export default function AutoRun({
   };
 
   if (!org || !pbi) {
-    return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
+    return <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
   }
 
   const caseCount = cases.data ? rows.length : null;
@@ -538,7 +560,6 @@ export default function AutoRun({
   // Every open card counts, shown or not: a card a search or a filter hides
   // is still open, and Collapse all is how it gets shut.
   const anyOpen = rows.some((c) => openHere.has(c.id));
-  const allOpen = shownIdx.length > 0 && shownIdx.every((i) => openHere.has(rows[i].id));
 
   return (
     <>
@@ -547,7 +568,7 @@ export default function AutoRun({
           flow, so the page's own bottom padding keeps the floating dock
           clear of the last card. Test cases may grow wider, for the Setup
           panel's column, when its own width has room for one. */}
-      <div className={cn("space-y-4", shown === "cases" ? "max-w-6xl" : "max-w-3xl")}>
+      <div className="space-y-4">
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab
             order, and the arrow keys move along. */}
@@ -599,18 +620,9 @@ export default function AutoRun({
             // reading width (48rem, a 1rem gap, then 20rem). Narrower, the
             // panel goes above the list at the list's width: it comes first
             // in the page, and moves last only where there is room.
-            <div className="grid max-w-3xl gap-4 @min-[69rem]:max-w-none @min-[69rem]:grid-cols-[minmax(0,1fr)_20rem] @min-[69rem]:items-start">
+            <div className={TWO_COLUMNS}>
               <div className="min-w-0 @min-[69rem]:order-last">
-                <SetupPanel
-                  setup={setup}
-                  org={org}
-                  project={project}
-                  caseModules={caseModules}
-                  open={panelOpen}
-                  onToggle={() => setPanelChoice(!panelOpen)}
-                  toggleRef={panelToggleRef}
-                  panelRef={panelRef}
-                />
+                {setupPanel}
               </div>
 
               <section className="min-w-0 space-y-2">
@@ -630,8 +642,6 @@ export default function AutoRun({
                     }
                     signIn={setup.signIn}
                     accountCount={setup.accountCount}
-                    areaCount={setup.areaCount}
-                    testFileCount={setup.testFileCount}
                     missingTestFiles={readiness.missingTestFiles}
                     unreadable={setup.unreadable}
                     onOpenSetup={openSetup}
@@ -655,23 +665,6 @@ export default function AutoRun({
                         disabled={!runsReady}
                       />
                     ))}
-                  {rows.length > 0 && (
-                    <span className="ml-auto flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={allOpen}
-                        onClick={() => expandAll(shownIdx.map((i) => rows[i].id))}
-                      >
-                        <IconExpandAll aria-hidden />
-                        Expand all
-                      </Button>
-                      <Button size="sm" variant="ghost" disabled={!anyOpen} onClick={collapseAll}>
-                        <IconCollapseAll aria-hidden />
-                        Collapse all
-                      </Button>
-                    </span>
-                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -852,16 +845,46 @@ export default function AutoRun({
           )}
 
           {shown === "runs" && (
-            <PastRuns
-              pbiId={pbi.id}
-              onReview={setReviewing}
-              onReplay={replayCase}
-              filter={runsFilter}
-              onFilterChange={setRunsFilter}
-            />
+            // The same two columns as Test cases, around the same panel.
+            <div className={TWO_COLUMNS}>
+              <div className="min-w-0 @min-[69rem]:order-last">{setupPanel}</div>
+              <div className="min-w-0">
+                <PastRuns
+                  pbiId={pbi.id}
+                  onReview={setReviewing}
+                  onReplay={replayCase}
+                  filter={runsFilter}
+                  onFilterChange={setRunsFilter}
+                />
+              </div>
+            </div>
           )}
         </div>
       </div>
+
+      {/* Expand all / Collapse all, stuck bottom left like the other screens'
+          own (view controls live bottom-left, actions bottom-right). One
+          button: Collapse all while any card is open, Expand all when none
+          is. Portalled so it pins to the window, not the screen fade. */}
+      {shown === "cases" &&
+        rows.length > 0 &&
+        createPortal(
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
+            <Button
+              size="sm"
+              variant="ghost"
+              className="rounded-full text-text hover:bg-surface-2 hover:text-text"
+              onClick={anyOpen ? collapseAll : () => expandAll(shownIdx.map((i) => rows[i].id))}
+            >
+              {anyOpen ? <IconCollapseAll aria-hidden /> : <IconExpandAll aria-hidden />}
+              {anyOpen ? "Collapse all" : "Expand all"}
+            </Button>
+          </div>,
+          document.body,
+        )}
 
       {orderingOpen && (
         <ExecutionOrderDialog
@@ -959,7 +982,7 @@ export default function AutoRun({
 
       {waitingReset && replaying == null && (
         // Only Continue or Stop ends the pause: the run waits for one.
-        <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-lg p-4">
+        <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-2xl p-4">
           <ResetNeededPanel
             reset={waitingReset}
             remaining={waitingReset.remaining}

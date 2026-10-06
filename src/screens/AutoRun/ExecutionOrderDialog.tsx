@@ -7,6 +7,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type PlanView } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { IconCancel, IconConfirm, IconUndo } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import { logUi } from "../../lib/uiLog";
@@ -101,7 +102,7 @@ export default function ExecutionOrderDialog({
     <Modal
       onClose={() => !busy && onClose()}
       labelledBy={titleId}
-      className="flex max-h-[85vh] w-[640px] max-w-full flex-col gap-3 p-4"
+      className={`${MODAL_LARGE} flex flex-col gap-3 p-4`}
     >
       <h2 id={titleId} className="text-sm font-semibold text-text">Execution order</h2>
       <p className="text-xs text-muted">

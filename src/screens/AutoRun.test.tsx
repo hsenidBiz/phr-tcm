@@ -1323,8 +1323,12 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   expect(await screen.findByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
   const summary = within(setupPanel()).getByRole("list", { name: "Setup summary" });
   expect(await within(summary).findByText("https://qa.example.com/")).toBeInTheDocument();
-  // A value cut short with an ellipsis can still be read in full on hover.
-  expect(within(summary).getByText("https://qa.example.com/")).toHaveAttribute("title", "https://qa.example.com/");
+  // The address is shown whole - never cut short with an ellipsis, and not
+  // left to a hover tooltip. It breaks inside the URL if it must wrap.
+  const address = within(summary).getByText("https://qa.example.com/");
+  expect(address).not.toHaveClass("truncate");
+  expect(address).not.toHaveAttribute("title");
+  expect(address).toHaveClass("break-all");
   expect(within(summary).getByText("Built-in")).toBeInTheDocument();
   expect(within(summary).getByText("1 account on this machine")).toBeInTheDocument();
   expect(await within(summary).findByText("QA HR")).toBeInTheDocument();
@@ -1581,9 +1585,10 @@ test("Test cases opens with a readiness strip that replaces the old header line"
 
   const strip = await screen.findByRole("group", { name: "Readiness" });
   expect(within(strip).getByText("QA - qa.example.com")).toBeInTheDocument();
-  expect(within(strip).getByText("Built-in")).toBeInTheDocument();
-  expect(within(strip).getByText("1 account")).toBeInTheDocument();
-  expect(await within(strip).findByText("1 area")).toBeInTheDocument();
+  // What is in place is the Setup panel's to say, not the strip's.
+  expect(within(strip).queryByText("Built-in")).not.toBeInTheDocument();
+  expect(within(strip).queryByText("1 account")).not.toBeInTheDocument();
+  expect(within(strip).queryByText(/area/)).not.toBeInTheDocument();
   // The script uploads cv.txt, which the Test files folder does not hold.
   expect(await within(strip).findByText("1 test file missing")).toBeInTheDocument();
   // The old line's "Project <name>" is gone.
@@ -1601,14 +1606,24 @@ test("a file the scripts upload that is in the Test files folder is not missing"
   });
   renderAutoRun(null);
   const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(await within(strip).findByText("1 test file")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("Test files").closest("li")).toHaveTextContent("1 file"));
   expect(within(strip).queryByText(/missing/)).not.toBeInTheDocument();
+  expect(within(strip).queryByText(/test file/)).not.toBeInTheDocument();
 });
 
 test("Open setup in the strip opens the Setup panel's rows and moves focus to it", async () => {
-  mockReady();
+  // A script uploads a file the folder lacks: something to attend to, so the
+  // strip offers Open setup, while the panel itself starts shut.
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201 ? uploadScript(201, "cv.txt") : null;
+    }
+    if (cmd === "test_files_list") return [];
+    return undefined;
+  });
   renderAutoRun(null);
   const strip = await screen.findByRole("group", { name: "Readiness" });
+  await within(strip).findByText("1 test file missing");
   expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
   fireEvent.click(within(strip).getByRole("button", { name: "Open setup" }));
   const hide = await within(setupPanel()).findByRole("button", { name: "Hide setup details" });
@@ -1618,12 +1633,13 @@ test("Open setup in the strip opens the Setup panel's rows and moves focus to it
   await waitFor(() => expect(hide).toHaveFocus());
 });
 
-test("the strip and the Setup panel belong to Test cases alone", async () => {
+test("the strip belongs to Test cases alone; the Setup panel is on both tabs", async () => {
   mockReady();
   renderAutoRun("Past runs");
   await screen.findByRole("tabpanel", { name: /^Past runs/ });
   expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Setup" })).not.toBeInTheDocument();
+  // The panel sits beside the runs too; the strip is Test cases' alone.
+  expect(screen.getByRole("region", { name: "Setup" })).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /^Setup/ })).not.toBeInTheDocument();
 });
 

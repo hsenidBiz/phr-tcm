@@ -12,6 +12,7 @@ import { useId, useState } from "react";
 import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { MODAL_LARGE } from "./modalWidths";
 import { IconAddFiles, IconBrowse, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 
@@ -149,7 +150,7 @@ export default function TestFilesDialog({
   const asking = clashes[0];
 
   return (
-    <Modal onClose={onClose} labelledBy={headingId} className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3 p-5">
+    <Modal onClose={onClose} labelledBy={headingId} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
       <h2 id={headingId} className="text-sm font-semibold text-text">
         Test files
       </h2>
