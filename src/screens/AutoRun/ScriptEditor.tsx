@@ -159,9 +159,8 @@ export default function ScriptEditor({
       // Carried through, less any removed here (the save checks them
       // again).
       ...(preconditions.length ? { preconditions: preconditions.map(({ p }) => p) } : {}),
-      // The setup is not edited here, only shown; a save that left it out
-      // would remove it, so it is carried through as saved.
-      ...(existing.data?.setup ? { setup: existing.data.setup } : {}),
+      // No `setup`: only the assistant writes one, and Rust keeps the one
+      // stored for the case whatever a save sends.
       ...(changes.length ? { changes } : {}),
       ...(needsUnchanged.length ? { needs_unchanged: needsUnchanged } : {}),
     });

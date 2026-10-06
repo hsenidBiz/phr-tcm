@@ -515,10 +515,10 @@ test("the changed-while-looking refusal is shown and the view is read again", as
   );
 });
 
-test("saving from the editor carries the script's setup through", async () => {
+test("saving from the editor sends no setup: Rust keeps the stored one", async () => {
   const { saved } = mountSetup([setupView("approved")]);
   await screen.findByRole("region", { name: "Setup" });
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toHaveLength(1));
-  expect((saved[0] as { setup: unknown }).setup).toEqual({ fixture: "Draft cycle" });
+  expect(saved[0]).not.toHaveProperty("setup");
 });

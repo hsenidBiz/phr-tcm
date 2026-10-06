@@ -7,8 +7,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
+import { logUi } from "../../lib/uiLog";
 import ApiTemplates from "./index";
 
+vi.mock("../../lib/uiLog", () => ({ logUi: vi.fn() }));
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
 afterEach(() => {
@@ -204,4 +206,28 @@ test("keeping a fixture in the dialog removes nothing", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Keep it" }));
   expect(calls.some((c) => c.cmd === "api_fixture_remove")).toBe(false);
   expect(screen.getByRole("listitem", { name: "Alpha" })).toBeInTheDocument();
+});
+
+test("a raw failure of the call shows a plain sentence and goes to the log, never the screen", async () => {
+  mount([{ fixture: fixture("draft-cycle", "Draft cycle"), runs: [OK_RUN] }], () => {
+    throw new Error("TypeError: channel closed at 0x7ff");
+  });
+  await openTab();
+  const row = await screen.findByRole("listitem", { name: "Draft cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Rebuild Draft cycle" }));
+  expect(await within(row).findByRole("alert")).toHaveTextContent(
+    "Could not run the fixture. Try again, or see Settings → Logs.",
+  );
+  expect(row).not.toHaveTextContent("channel closed");
+  expect(logUi).toHaveBeenCalledWith(expect.stringContaining("channel closed"));
+});
+
+test("two identical warnings both show", async () => {
+  mount([{ fixture: fixture("draft-cycle", "Draft cycle"), runs: [OK_RUN] }], () =>
+    report({ warnings: ["same warning", "same warning"] }),
+  );
+  await openTab();
+  const row = await screen.findByRole("listitem", { name: "Draft cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Rebuild Draft cycle" }));
+  await waitFor(() => expect(within(row).getAllByText("same warning")).toHaveLength(2));
 });

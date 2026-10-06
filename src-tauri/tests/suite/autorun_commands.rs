@@ -291,3 +291,62 @@ fn a_save_or_an_import_with_no_organization_or_project_is_refused_and_writes_not
 fn err_names_an_address(s: &str) -> bool {
     s.contains("://") || s.contains("dev.azure.com")
 }
+
+/// A script of case 7 with `setup` as given, through the editor's own save.
+fn with_setup(setup: Option<&str>) -> CaseScript {
+    let mut v = serde_json::json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+    ] });
+    if let Some(f) = setup {
+        v["setup"] = serde_json::json!({ "fixture": f });
+    }
+    serde_json::from_value(v).unwrap()
+}
+
+/// Puts fixtures on disk as the store reads them, so a script may name one.
+/// Written as files: saving through the store would need its templates too,
+/// which this test is not about.
+fn put_fixtures(root: &std::path::Path, ids: &[&str]) {
+    let dir = v2_lib::api_templates::fixture_store::fixtures_dir(root, "acme", "Web");
+    std::fs::create_dir_all(&dir).unwrap();
+    for id in ids {
+        let f = serde_json::json!({ "id": id, "name": id, "account": "hr.admin", "steps": [] });
+        std::fs::write(dir.join(format!("{id}.json")), f.to_string()).unwrap();
+    }
+}
+
+fn stored_setup(root: &std::path::Path) -> Option<String> {
+    load_script(root, 7).unwrap().unwrap().setup.map(|s| s.fixture)
+}
+
+#[test]
+fn an_editor_save_with_a_different_setup_keeps_the_stored_one() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    put_fixtures(&root, &["draft-cycle", "another-fixture"]);
+    v2_lib::autorun::store::save_scripts_atomically(&root, &[with_setup(Some("draft-cycle"))]).unwrap();
+    save_script_from_editor(&root, "acme", "Web", with_setup(Some("another-fixture"))).unwrap();
+    assert_eq!(stored_setup(&root).as_deref(), Some("draft-cycle"));
+}
+
+#[test]
+fn an_editor_save_with_no_setup_keeps_the_stored_one() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    put_fixtures(&root, &["draft-cycle", "another-fixture"]);
+    v2_lib::autorun::store::save_scripts_atomically(&root, &[with_setup(Some("draft-cycle"))]).unwrap();
+    save_script_from_editor(&root, "acme", "Web", with_setup(None)).unwrap();
+    assert_eq!(stored_setup(&root).as_deref(), Some("draft-cycle"));
+}
+
+#[test]
+fn an_editor_save_on_a_script_with_no_setup_stays_without_one() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    // Nothing stored yet, then a stored script that has none: a setup the
+    // editor sends is ignored both times.
+    save_script_from_editor(&root, "acme", "Web", with_setup(Some("sneaked-in"))).unwrap();
+    assert_eq!(stored_setup(&root), None);
+    save_script_from_editor(&root, "acme", "Web", with_setup(Some("sneaked-in"))).unwrap();
+    assert_eq!(stored_setup(&root), None);
+}

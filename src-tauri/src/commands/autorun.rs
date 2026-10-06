@@ -709,6 +709,11 @@ pub fn save_script_from_editor(
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
+    // Only the assistant writes a script's setup. Whatever the editor sent,
+    // the setup stored for this case stays as it is (none when nothing is
+    // stored), so the webview can never change a fixture and a stale editor
+    // can never write an old setup back over an approval.
+    script.setup = store::load_script(root, script.case_id)?.and_then(|stored| stored.setup);
     // The project's rules - no address while that is switched off, only
     // recorded areas - the same ones the import and the assistant's save
     // apply.

@@ -6,6 +6,7 @@ import { IconRefresh, IconRemove, IconRun } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/history";
 import { unwrapStr } from "../../lib/ipc";
+import { logUi } from "../../lib/uiLog";
 import RemoveFixture from "./RemoveFixture";
 import { stampDate } from "./TemplateRow";
 
@@ -33,6 +34,16 @@ function LastRun({ run }: { run: FixtureRun | undefined }) {
       last run {d ? relativeTime(d.toISOString()) : run.at}, {run.ok ? "succeeded" : "failed"}
     </span>
   );
+}
+
+/** Said when a run fails in a way the command gave no sentence for. */
+export const COULD_NOT_RUN = "Could not run the fixture. Try again, or see Settings → Logs.";
+
+/** A raw rejection (the call itself failed, not a refusal of the command)
+ * is logged and never shown. */
+function rawFailure(e: unknown): string {
+  logUi(`fixture run: ${e instanceof Error ? e.message : String(e)}`);
+  return COULD_NOT_RUN;
 }
 
 /** What the last press of Run or Rebuild said, kept in the row until the
@@ -72,13 +83,18 @@ export default function FixturesTab({
     setRunningId(id);
     let result: Said;
     try {
-      const report = await unwrapStr(commands.apiFixtureRun(org, project, id));
-      result = {
-        failed: report.ok ? null : (report.failed ?? "The fixture did not finish."),
-        warnings: report.warnings,
-      };
+      const r = await commands.apiFixtureRun(org, project, id);
+      if (r.status === "error") {
+        // The command's own sentence.
+        result = { failed: r.error, warnings: [] };
+      } else {
+        result = {
+          failed: r.data.ok ? null : (r.data.failed ?? "The fixture did not finish."),
+          warnings: r.data.warnings,
+        };
+      }
     } catch (e) {
-      result = { failed: e instanceof Error ? e.message : String(e), warnings: [] };
+      result = { failed: rawFailure(e), warnings: [] };
     }
     setSaid((prev) => ({ ...prev, [id]: result }));
     setRunningId(null);
@@ -149,8 +165,8 @@ export default function FixturesTab({
                     {result.failed}
                   </p>
                 )}
-                {result?.warnings.map((w) => (
-                  <p key={w} className="text-xs text-warning">
+                {result?.warnings.map((w, i) => (
+                  <p key={`${i}-${w}`} className="text-xs text-warning">
                     {w}
                   </p>
                 ))}
