@@ -6,8 +6,11 @@
 //! (`route_event`). Each tab keeps its own events, dialogs, page log,
 //! network record and save guard (`Tab`). A tab the page opens (a popup, a
 //! `target=_blank` link) is attached paused and given the same setup as the
-//! first before it runs (`on_attached`). Calls go to the current tab, which
-//! is always `main`, the tab the run started in.
+//! first before it runs (`on_attached`). Calls go to the current tab:
+//! `main`, the tab the run started in, until a script switches
+//! (`switch_tab`, `open_tab`). A script names the tabs it uses
+//! (`expect_tab`), and every tab but `main` is closed when a case ends
+//! (`close_other_tabs`).
 //!
 //! Three things the first version did not do, each of which showed up as a
 //! frozen screen rather than an error:
@@ -112,6 +115,51 @@ pub enum CdpError {
     Protocol { method: String, message: String },
     /// The socket itself failed.
     Transport(String),
+    /// A tab rule was not met (`there is no tab report`): the browser is
+    /// fine, the script named a tab it cannot use. The sentence is the
+    /// whole failure.
+    Tab(String),
+}
+
+/// The tab a run starts in.
+pub const MAIN_TAB: &str = "main";
+
+/// Said by a step that names a tab that is not open.
+pub fn no_tab(name: &str) -> String {
+    format!("there is no tab {name}")
+}
+
+/// Said when a tab is given a name another open tab already has.
+pub fn tab_taken(name: &str) -> String {
+    format!("there is already a tab {name}")
+}
+
+/// Said by `close_tab` or `expect_tab_closed` naming `main`.
+pub const MAIN_CANNOT_CLOSE: &str = "main cannot be closed";
+
+/// A wait as whole seconds when it is whole (`10`), else to one place
+/// (`1.5`).
+pub fn whole_seconds(ms: u64) -> String {
+    if ms % 1000 == 0 {
+        format!("{}", ms / 1000)
+    } else {
+        format!("{:.1}", ms as f64 / 1000.0)
+    }
+}
+
+/// Said by `expect_tab` when no new tab came.
+pub fn no_new_tab(within: Duration) -> String {
+    format!("no new tab opened within {} seconds", whole_seconds(within.as_millis() as u64))
+}
+
+/// Said by `expect_tab` when the new tab is somewhere else.
+pub fn tab_address_lacks(text: &str) -> String {
+    format!("the new tab's address does not contain \"{text}\"")
+}
+
+/// Said by `expect_tab_closed` when the tab is still open.
+pub fn tab_did_not_close(name: &str, within: Duration) -> String {
+    format!("the \"{name}\" tab did not close within {} seconds", whole_seconds(within.as_millis() as u64))
 }
 
 impl CdpError {
@@ -141,6 +189,7 @@ impl std::fmt::Display for CdpError {
             CdpError::Closed => write!(f, "the browser closed before answering"),
             CdpError::Protocol { method, message } => write!(f, "{method} was refused: {message}"),
             CdpError::Transport(e) => write!(f, "the browser's DevTools socket failed: {e}"),
+            CdpError::Tab(sentence) => write!(f, "{sentence}"),
         }
     }
 }
@@ -194,6 +243,15 @@ pub struct Tab {
     /// Where it is, without its query, fragment, user name or password:
     /// safe to log.
     pub url_without_query: String,
+    /// Where it is, whole: matched by `expect_tab`'s `url_contains`, and
+    /// never logged or kept anywhere else.
+    url: String,
+    /// When this connection heard it opened: `expect_tab` claims only a
+    /// tab opened since the previous step began.
+    opened_at: Instant,
+    /// Every frame it has shown, by id: a download names the frame that
+    /// started it, and so the tab it belongs to. Bounded.
+    frames: HashSet<String>,
     events: VecDeque<Event>,
     dialogs: Vec<String>,
     /// What the page did, for a failure to explain itself (`page_log`).
@@ -252,11 +310,22 @@ const PARK_LIMIT: Duration = Duration::from_secs(2);
 /// How many documents and requests a tab remembers the loader of.
 const MAX_LOADERS: usize = 64;
 const MAX_REQUEST_LOADERS: usize = 512;
+/// How many frames a tab remembers, to place a download.
+const MAX_FRAMES: usize = 256;
+/// How many named tabs that closed by themselves are remembered.
+const MAX_CLOSED_NAMES: usize = 16;
+/// How often a wait for a tab (`expect_tab`, `open_tab`) looks again.
+const TAB_LOOK: Duration = Duration::from_millis(100);
+/// How long the end of a case waits for the browser to close one tab.
+const CLOSE_LIMIT: Duration = Duration::from_secs(2);
+/// How many network marks are remembered (`net_mark`).
+const MAX_NET_MARKS: usize = 16;
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
     /// by one.
     fn observe_documents(&mut self, ev: &Event) {
+        self.note_frame(ev);
         match ev.method.as_str() {
             "Page.frameNavigated" => {
                 let frame = &ev.params["frame"];
@@ -296,6 +365,35 @@ impl Tab {
             }
             _ => {}
         }
+    }
+
+    /// A frame this tab shows, and where its top-level frame is now.
+    fn note_frame(&mut self, ev: &Event) {
+        let frame = match ev.method.as_str() {
+            "Page.frameNavigated" => {
+                let f = &ev.params["frame"];
+                if f.get("parentId").is_none() {
+                    if let Some(url) = f["url"].as_str() {
+                        self.url_without_query = address_of(url);
+                        self.url = url.to_string();
+                    }
+                }
+                f["id"].as_str()
+            }
+            "Page.frameAttached" => ev.params["frameId"].as_str(),
+            _ => None,
+        };
+        if let Some(id) = frame {
+            if self.frames.len() < MAX_FRAMES || self.frames.contains(id) {
+                self.frames.insert(id.to_string());
+            }
+        }
+    }
+
+    /// Does this tab show the frame `id`? Its top-level frame's id is its
+    /// target's.
+    fn shows_frame(&self, id: &str) -> bool {
+        !id.is_empty() && (self.target_id == id || self.frames.contains(id))
     }
 
     /// A document announced: remembered, made the top-level one if it is,
@@ -383,6 +481,9 @@ impl Tab {
             target_id,
             name,
             url_without_query: address_of(url),
+            url: url.to_string(),
+            opened_at: Instant::now(),
+            frames: HashSet::new(),
             events: VecDeque::new(),
             dialogs: vec![],
             page_log: Default::default(),
@@ -482,8 +583,24 @@ pub struct Cdp<T: Transport = WsTransport> {
     tabs: Vec<Tab>,
     /// `main`'s session. Once that tab is gone, every call is `Closed`.
     main: String,
-    /// The tab `call` goes to. Always `main` for now.
+    /// The tab `call` goes to (`switch_tab`).
     current: String,
+    /// The name of the current tab when it closed by itself (a print
+    /// preview): every call then fails with `there is no tab <name>`, never
+    /// waits, until the script switches to another tab.
+    gone_current: Option<String>,
+    /// Named tabs that closed by themselves and no `expect_tab_closed` has
+    /// claimed yet, oldest first. Bounded.
+    closed_by_page: VecDeque<String>,
+    /// When the previous step and this one began (`step_began`): a tab
+    /// opened since the previous one began is one `expect_tab` may claim.
+    step_marks: (Option<Instant>, Option<Instant>),
+    /// When this connection was made: with no step begun, `expect_tab`
+    /// claims a tab opened since then.
+    created: Instant,
+    /// Each network mark handed out on the whole browser (`net_mark`), with
+    /// every tab's own mark at that moment, newest last. Bounded.
+    net_marks: std::sync::Mutex<(u64, VecDeque<(u64, HashMap<String, u64>)>)>,
     /// Driving the whole browser over its own socket (`connect`), so a tab
     /// the page opens is attached, paused until it is set up.
     whole_browser: bool,
@@ -606,6 +723,11 @@ impl<T: Transport> Cdp<T> {
             tabs: vec![Tab::new(String::new(), String::new(), Some("main".to_string()), "")],
             main: String::new(),
             current: String::new(),
+            gone_current: None,
+            closed_by_page: VecDeque::new(),
+            step_marks: (None, None),
+            created: Instant::now(),
+            net_marks: std::sync::Mutex::new((0, VecDeque::new())),
             whole_browser: false,
             deadline: None,
             armed: None,
@@ -938,15 +1060,21 @@ impl<T: Transport> Cdp<T> {
         Ok(())
     }
 
-    /// Every download the current tab started so far, in start order.
+    /// Every download the current tab started so far, in start order: its
+    /// own, and those of a tab no script named or one that has closed (a
+    /// popup that only downloaded). Another named tab's are that tab's.
     /// Empty unless `enable_downloads` ran.
     pub fn downloads(&self) -> Vec<DownloadEntry> {
         let Some(f) = self.downloads.as_ref() else {
             return Vec::new();
         };
+        let elsewhere = |owner: &String| {
+            *owner != self.current
+                && self.tabs.iter().any(|t| t.session_id == *owner && t.name.is_some())
+        };
         f.entries
             .iter()
-            .filter(|e| f.owners.get(&e.guid).map_or(true, |o| *o == self.current))
+            .filter(|e| !f.owners.get(&e.guid).is_some_and(elsewhere))
             .cloned()
             .collect()
     }
@@ -1342,20 +1470,294 @@ impl<T: Transport> Cdp<T> {
         Ok(())
     }
 
-    /// A tab is gone: its state goes with it, except a stopped save not yet
-    /// reported. Once `main` is gone every call is `Closed`, as when the
-    /// browser itself closes.
+    /// A tab closed by itself (detached or crashed): its state goes with
+    /// it, except a stopped save not yet reported. Once `main` is gone every
+    /// call is `Closed`, as when the browser itself closes. A named tab is
+    /// remembered for `expect_tab_closed`; the current one stays current, so
+    /// the next call says `there is no tab <name>` rather than acting in
+    /// another tab the script never chose.
     fn drop_tab(&mut self, session: &str) {
-        let Some(i) = self.tabs.iter().position(|t| t.session_id == session) else {
+        let Some(tab) = self.forget_tab(session) else {
             return;
         };
-        let tab = self.tabs.remove(i);
-        if let Some(b) = tab.guard.and_then(|g| g.blocked) {
+        let Some(name) = tab.name.filter(|_| session != self.main) else {
+            return;
+        };
+        if self.closed_by_page.len() >= MAX_CLOSED_NAMES {
+            self.closed_by_page.pop_front();
+        }
+        self.closed_by_page.push_back(name.clone());
+        if self.current == session {
+            self.gone_current = Some(name);
+        }
+    }
+
+    /// Take a tab out of the list. A stopped save not yet reported is kept.
+    fn forget_tab(&mut self, session: &str) -> Option<Tab> {
+        let i = self.tabs.iter().position(|t| t.session_id == session)?;
+        let mut tab = self.tabs.remove(i);
+        if let Some(b) = tab.guard.as_mut().and_then(|g| g.blocked.take()) {
             self.blocked_elsewhere.get_or_insert(b);
         }
         self.setup.retain(|_, (s, _)| s != session);
-        if self.current == session && session != self.main {
-            self.current = self.main.clone();
+        Some(tab)
+    }
+
+    /// Make the tab with this session current.
+    fn make_current(&mut self, session: String) {
+        self.current = session;
+        self.gone_current = None;
+    }
+
+    /// The error a call to a session no tab owns any more gets: the current
+    /// tab that closed by itself is `there is no tab <name>`; anything else
+    /// is the browser gone.
+    fn gone(&self, session: &str) -> CdpError {
+        match &self.gone_current {
+            Some(name) if session == self.current && session != self.main => CdpError::Tab(no_tab(name)),
+            _ => CdpError::Closed,
+        }
+    }
+
+    fn tab_named(&self, name: &str) -> Option<&Tab> {
+        self.tabs.iter().find(|t| t.name.as_deref() == Some(name))
+    }
+
+    /// A step began. A tab opened since the step before it began may be
+    /// claimed by `expect_tab`.
+    pub fn step_began(&mut self) {
+        self.step_marks = (self.step_marks.1, Some(Instant::now()));
+    }
+
+    /// The current tab's name: `main`, a name a script gave, or the name of
+    /// the current tab that closed by itself.
+    pub fn tab_name(&self) -> String {
+        if let Some(name) = &self.gone_current {
+            return name.clone();
+        }
+        self.current().and_then(|t| t.name.clone()).unwrap_or_else(|| MAIN_TAB.to_string())
+    }
+
+    /// The current tab's name, when that tab closed by itself.
+    pub fn missing_tab(&self) -> Option<String> {
+        self.gone_current.clone()
+    }
+
+    /// Make the tab called `name` current and bring it to the front.
+    pub async fn switch_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        let Some(tab) = self.tab_named(name) else {
+            return Err(CdpError::Tab(no_tab(name)));
+        };
+        let (session, target) = (tab.session_id.clone(), tab.target_id.clone());
+        self.make_current(session);
+        if self.whole_browser && !target.is_empty() {
+            let limit = self.limit_now();
+            match self.call_on(None, "Target.activateTarget", serde_json::json!({ "targetId": target }), limit).await {
+                Ok(_) => {}
+                // Only the front of the screen is lost: the steps still act
+                // in this tab.
+                Err(CdpError::Protocol { message, .. }) => {
+                    crate::applog::warn(format!("Auto Run could not bring the \"{name}\" tab to the front: {message}"));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    /// Close the tab called `name`. `main` is never closed. When it was the
+    /// current tab, `main` is current now, and the answer says so (`true`).
+    pub async fn close_tab(&mut self, name: &str) -> Result<bool, CdpError> {
+        if name == MAIN_TAB {
+            return Err(CdpError::Tab(MAIN_CANNOT_CLOSE.to_string()));
+        }
+        let Some(tab) = self.tab_named(name) else {
+            return Err(CdpError::Tab(no_tab(name)));
+        };
+        let (session, target) = (tab.session_id.clone(), tab.target_id.clone());
+        let limit = self.limit_now();
+        self.call_on(None, "Target.closeTarget", serde_json::json!({ "targetId": target }), limit).await?;
+        self.forget_tab(&session);
+        let was_current = self.current == session;
+        if was_current {
+            let main = self.main.clone();
+            self.make_current(main);
+        }
+        Ok(was_current)
+    }
+
+    /// Wait up to `within` for the newest tab nobody has named that opened
+    /// since the previous step began (or this one, for a first step), and
+    /// call it `name`. With `url_contains`, its address must contain that
+    /// text, looked at until the wait ends. Answers its address without the
+    /// query. A tab opened earlier is never claimed.
+    pub async fn expect_tab(
+        &mut self,
+        name: &str,
+        url_contains: Option<&str>,
+        within: Duration,
+    ) -> Result<String, CdpError> {
+        if self.tab_named(name).is_some() {
+            return Err(CdpError::Tab(tab_taken(name)));
+        }
+        let since = self.step_marks.0.or(self.step_marks.1).unwrap_or(self.created);
+        let until = Instant::now() + within;
+        loop {
+            let newest = self
+                .tabs
+                .iter_mut()
+                .filter(|t| t.name.is_none() && t.opened_at >= since)
+                .max_by_key(|t| t.opened_at);
+            let mut elsewhere = false;
+            if let Some(t) = newest {
+                match url_contains {
+                    Some(text) if !t.url.contains(text) => elsewhere = true,
+                    _ => {
+                        t.name = Some(name.to_string());
+                        return Ok(t.url_without_query.clone());
+                    }
+                }
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(CdpError::Tab(match (elsewhere, url_contains) {
+                    (true, Some(text)) => tab_address_lacks(text),
+                    _ => no_new_tab(within),
+                }));
+            }
+            self.pump(left.min(TAB_LOOK)).await;
+        }
+    }
+
+    /// Wait up to `within` for the tab called `name` to close by itself. A
+    /// tab that already did since it was named passes at once. When it was
+    /// the current tab, `main` is current now.
+    pub async fn expect_tab_closed(&mut self, name: &str, within: Duration) -> Result<(), CdpError> {
+        if name == MAIN_TAB {
+            return Err(CdpError::Tab(MAIN_CANNOT_CLOSE.to_string()));
+        }
+        let until = Instant::now() + within;
+        loop {
+            if let Some(i) = self.closed_by_page.iter().position(|n| n == name) {
+                self.closed_by_page.remove(i);
+                if self.gone_current.as_deref() == Some(name) {
+                    let main = self.main.clone();
+                    self.make_current(main);
+                }
+                return Ok(());
+            }
+            if self.tab_named(name).is_none() {
+                return Err(CdpError::Tab(no_tab(name)));
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(CdpError::Tab(tab_did_not_close(name, within)));
+            }
+            self.pump(left.min(TAB_LOOK)).await;
+        }
+    }
+
+    /// Open a new tab called `name`, blank, in `main`'s browser context, and
+    /// make it current. It is attached and set up like any tab the page
+    /// opens (`on_attached`) - guarded first while the run is guarded - and
+    /// only then is it handed back, so the caller's navigation is its first
+    /// real request.
+    pub async fn open_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        if name == MAIN_TAB || self.tab_named(name).is_some() {
+            return Err(CdpError::Tab(tab_taken(name)));
+        }
+        let main_target = self.tabs.iter().find(|t| t.session_id == self.main).map(|t| t.target_id.clone());
+        let mut params = serde_json::json!({ "url": "about:blank" });
+        if let Some(target) = main_target.filter(|t| !t.is_empty()) {
+            let limit = self.limit_now();
+            match self.call_on(None, "Target.getTargetInfo", serde_json::json!({ "targetId": target }), limit).await {
+                Ok(info) => {
+                    if let Some(context) = info["targetInfo"]["browserContextId"].as_str() {
+                        params["browserContextId"] = serde_json::json!(context);
+                    }
+                }
+                // The default context is main's when nothing says otherwise.
+                Err(CdpError::Protocol { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let limit = self.limit_now();
+        let made = self.call_on(None, "Target.createTarget", params, limit).await?;
+        let target = made["targetId"].as_str().unwrap_or("").to_string();
+        let until = Instant::now() + limit;
+        loop {
+            if let Some(t) = self.tabs.iter_mut().find(|t| !target.is_empty() && t.target_id == target) {
+                // Held while its guard is asked for; one whose guard was
+                // refused stays held, and the case fails with that.
+                let refused = t.guard.as_ref().is_some_and(|g| g.blocked.is_some());
+                if !t.held || refused {
+                    t.name = Some(name.to_string());
+                    let session = t.session_id.clone();
+                    self.make_current(session);
+                    return Ok(());
+                }
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(CdpError::Timeout { what: "Target.createTarget".to_string(), ms: limit.as_millis() as u64 });
+            }
+            self.pump(left.min(TAB_LOOK)).await;
+        }
+    }
+
+    /// The end of a case: every tab but `main` is closed, `main` is current
+    /// again, and no tab is remembered as named or closed. Best effort, and
+    /// quick: a browser that does not answer at once is not waited on (it
+    /// is closed anyway, or the next case's first call says so).
+    pub async fn close_other_tabs(&mut self) {
+        let others: Vec<(String, String)> = self
+            .tabs
+            .iter()
+            .filter(|t| t.session_id != self.main)
+            .map(|t| (t.session_id.clone(), t.target_id.clone()))
+            .collect();
+        for (session, target) in others {
+            let answer = if self.whole_browser {
+                self.call_on(None, "Target.closeTarget", serde_json::json!({ "targetId": target }), CLOSE_LIMIT).await
+            } else {
+                Ok(serde_json::Value::Null)
+            };
+            self.forget_tab(&session);
+            match answer {
+                Ok(_) | Err(CdpError::Protocol { .. }) => {}
+                Err(e) => {
+                    crate::applog::warn(format!("Auto Run could not close a tab at the end of the case: {e}"));
+                    break;
+                }
+            }
+        }
+        // Whatever was not asked is let go too: none of it carries over.
+        let main = self.main.clone();
+        let others: Vec<String> = self.tabs.iter().filter(|t| t.session_id != main).map(|t| t.session_id.clone()).collect();
+        for s in others {
+            self.forget_tab(&s);
+        }
+        self.make_current(main);
+        self.closed_by_page.clear();
+        self.step_marks = (None, None);
+    }
+
+    /// Every download so far, from every tab, in start order.
+    pub fn all_downloads(&self) -> Vec<DownloadEntry> {
+        self.downloads.as_ref().map(|f| f.entries.clone()).unwrap_or_default()
+    }
+
+    /// The tab (by session) a download event belongs to: the one whose
+    /// session it carries; else the one showing the frame that started it;
+    /// else the current tab.
+    fn download_owner(&self, session: Option<&str>, ev: &Event) -> String {
+        if let Some(t) = session.and_then(|s| self.tabs.iter().find(|t| t.session_id == s)) {
+            return t.session_id.clone();
+        }
+        let frame = ev.params["frameId"].as_str().unwrap_or("");
+        match self.tabs.iter().find(|t| t.shows_frame(frame)) {
+            Some(t) => t.session_id.clone(),
+            None => self.current.clone(),
         }
     }
 
@@ -1397,12 +1799,16 @@ impl<T: Transport> Cdp<T> {
     ) -> Result<serde_json::Value, CdpError> {
         let session = self.current.clone();
         if !self.has_tab(&session) {
-            return Err(CdpError::Closed);
+            return Err(self.gone(&session));
         }
         let seeding = method == "Page.addScriptToEvaluateOnNewDocument";
         let unseeding = method == "Page.removeScriptToEvaluateOnNewDocument";
         let seed = if seeding || unseeding { Some(params.clone()) } else { None };
-        let answer = self.call_on(Some(session), method, params, limit).await;
+        let answer = match self.call_on(Some(session.clone()), method, params, limit).await {
+            // The current tab closed while it was asked.
+            Err(CdpError::Closed) if !self.has_tab(&session) => Err(self.gone(&session)),
+            other => other,
+        };
         if let Some(seed) = seed {
             if seeding {
                 if let Ok(r) = &answer {
@@ -1538,10 +1944,7 @@ impl<T: Transport> Cdp<T> {
         }
         // Read the moment it arrives, like a paused request: a download
         // that starts and ends during one click is still followed.
-        let owner = match (session.is_some(), at) {
-            (true, Some(i)) => self.tabs[i].session_id.clone(),
-            _ => self.main.clone(),
-        };
+        let owner = self.download_owner(session.as_deref(), &ev);
         if self.follow_download(&ev, &owner) {
             return Ok(());
         }
@@ -1549,11 +1952,6 @@ impl<T: Transport> Cdp<T> {
             return Ok(());
         };
         let tab = &mut self.tabs[i];
-        if ev.method == "Page.frameNavigated" && ev.params["frame"].get("parentId").is_none() {
-            if let Some(url) = ev.params["frame"]["url"].as_str() {
-                tab.url_without_query = address_of(url);
-            }
-        }
         tab.observe_documents(&ev);
         let parked = ev.method == "Network.requestWillBeSent" && !tab.parked.is_empty();
         // The record sees every event first and never claims one, so the
@@ -1579,7 +1977,7 @@ impl<T: Transport> Cdp<T> {
     /// buffered, or the next to arrive within `limit`.
     pub async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
         let Some(i) = self.current_index() else {
-            return Err(CdpError::Closed);
+            return Err(self.gone(&self.current));
         };
         if let Some(p) = self.tabs[i].events.iter().position(|e| e.method == method) {
             return Ok(self.tabs[i].events.remove(p).expect("position was just found"));
@@ -1610,7 +2008,7 @@ impl<T: Transport> Cdp<T> {
                         let i = at.expect("checked above");
                         self.tabs[i].observe_documents(&ev);
                         self.tabs[i].net_record.observe(&ev);
-                        let owner = if session.is_some() { self.tabs[i].session_id.clone() } else { self.main.clone() };
+                        let owner = self.download_owner(session.as_deref(), &ev);
                         self.follow_download(&ev, &owner);
                         return Ok(ev);
                     }
@@ -1621,7 +2019,7 @@ impl<T: Transport> Cdp<T> {
             }
             self.resolve_parked().await?;
             if self.current_index().is_none() {
-                return Err(CdpError::Closed);
+                return Err(self.gone(&self.current));
             }
         }
     }
@@ -1654,15 +2052,38 @@ impl<T: Transport> Cdp<T> {
 
     /// Where the current tab's network record stands now
     /// (`NetRecord::mark`).
+    ///
+    /// On the whole browser the mark covers every tab, so a step that moves
+    /// to another tab still sees only what that tab started after the mark.
     pub fn net_mark(&self) -> u64 {
-        self.current().map(|t| t.net_record.mark()).unwrap_or(0)
+        if !self.whole_browser {
+            return self.current().map(|t| t.net_record.mark()).unwrap_or(0);
+        }
+        let each: HashMap<String, u64> = self.tabs.iter().map(|t| (t.session_id.clone(), t.net_record.mark())).collect();
+        let mut marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        marks.0 += 1;
+        let id = marks.0;
+        if marks.1.len() >= MAX_NET_MARKS {
+            marks.1.pop_front();
+        }
+        marks.1.push_back((id, each));
+        id
     }
 
     /// The requests the current tab started since `mark`, oldest first
     /// (`NetRecord::since`). Empty unless `page_log::watch` switched the
     /// Network domain on.
     pub fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
-        self.current().map(|t| t.net_record.since(mark)).unwrap_or_default()
+        let Some(t) = self.current() else {
+            return Vec::new();
+        };
+        if !self.whole_browser {
+            return t.net_record.since(mark);
+        }
+        // A tab opened after the mark: all it did came after it.
+        let marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        let from = marks.1.iter().find(|(id, _)| *id == mark).and_then(|(_, each)| each.get(&t.session_id).copied());
+        t.net_record.since(from.unwrap_or(0))
     }
 
     /// Run an expression in the page and return the raw DevTools result.
@@ -1803,6 +2224,56 @@ pub trait Driver {
     fn downloads(&self) -> Vec<DownloadEntry> {
         Vec::new()
     }
+    /// See `Cdp::all_downloads`. A driver with one tab has only its own.
+    fn all_downloads(&self) -> Vec<DownloadEntry> {
+        self.downloads()
+    }
+
+    // Tabs. A driver with one tab of its own (a test's fake) is always in
+    // `main`, and opens, finds and closes no other.
+
+    /// See `Cdp::step_began`.
+    fn step_began(&mut self) {}
+    /// See `Cdp::tab_name`.
+    fn tab_name(&self) -> String {
+        MAIN_TAB.to_string()
+    }
+    /// See `Cdp::missing_tab`.
+    fn missing_tab(&self) -> Option<String> {
+        None
+    }
+    /// See `Cdp::expect_tab`.
+    fn expect_tab(
+        &mut self,
+        _name: &str,
+        _url_contains: Option<&str>,
+        within: Duration,
+    ) -> impl Future<Output = Result<String, CdpError>> {
+        async move { Err(CdpError::Tab(no_new_tab(within))) }
+    }
+    /// See `Cdp::open_tab`.
+    fn open_tab(&mut self, _name: &str) -> impl Future<Output = Result<(), CdpError>> {
+        async { Err(CdpError::Tab("this browser cannot open another tab".to_string())) }
+    }
+    /// See `Cdp::switch_tab`.
+    fn switch_tab(&mut self, name: &str) -> impl Future<Output = Result<(), CdpError>> {
+        let answer = if name == MAIN_TAB { Ok(()) } else { Err(CdpError::Tab(no_tab(name))) };
+        async move { answer }
+    }
+    /// See `Cdp::close_tab`.
+    fn close_tab(&mut self, name: &str) -> impl Future<Output = Result<bool, CdpError>> {
+        let answer = if name == MAIN_TAB { MAIN_CANNOT_CLOSE.to_string() } else { no_tab(name) };
+        async move { Err(CdpError::Tab(answer)) }
+    }
+    /// See `Cdp::expect_tab_closed`.
+    fn expect_tab_closed(&mut self, name: &str, _within: Duration) -> impl Future<Output = Result<(), CdpError>> {
+        let answer = if name == MAIN_TAB { MAIN_CANNOT_CLOSE.to_string() } else { no_tab(name) };
+        async move { Err(CdpError::Tab(answer)) }
+    }
+    /// See `Cdp::close_other_tabs`.
+    fn close_other_tabs(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -1865,5 +2336,35 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn downloads(&self) -> Vec<DownloadEntry> {
         Cdp::downloads(self)
+    }
+    fn all_downloads(&self) -> Vec<DownloadEntry> {
+        Cdp::all_downloads(self)
+    }
+    fn step_began(&mut self) {
+        Cdp::step_began(self)
+    }
+    fn tab_name(&self) -> String {
+        Cdp::tab_name(self)
+    }
+    fn missing_tab(&self) -> Option<String> {
+        Cdp::missing_tab(self)
+    }
+    async fn expect_tab(&mut self, name: &str, url_contains: Option<&str>, within: Duration) -> Result<String, CdpError> {
+        Cdp::expect_tab(self, name, url_contains, within).await
+    }
+    async fn open_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        Cdp::open_tab(self, name).await
+    }
+    async fn switch_tab(&mut self, name: &str) -> Result<(), CdpError> {
+        Cdp::switch_tab(self, name).await
+    }
+    async fn close_tab(&mut self, name: &str) -> Result<bool, CdpError> {
+        Cdp::close_tab(self, name).await
+    }
+    async fn expect_tab_closed(&mut self, name: &str, within: Duration) -> Result<(), CdpError> {
+        Cdp::expect_tab_closed(self, name, within).await
+    }
+    async fn close_other_tabs(&mut self) {
+        Cdp::close_other_tabs(self).await
     }
 }

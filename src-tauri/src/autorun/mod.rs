@@ -197,6 +197,11 @@ pub struct StepRecord {
     /// names only, never a path (unattended runs only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub downloads: Vec<String>,
+    /// The tab the step ran in, when that was not `main` (see
+    /// `runner::InRun::tab`). Left out for a step in `main`, so a run file
+    /// from before tabs reads the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
 }
 
 /// One file in a run's download folder, as Past runs and the review list

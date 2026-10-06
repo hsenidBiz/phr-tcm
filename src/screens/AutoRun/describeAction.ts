@@ -380,6 +380,16 @@ function describeKnown(a: Action): Sentence {
       const named = str(a.name).includes("*") ? `named like "${a.name}"` : `named "${a.name}"`;
       return [words(`Check a file ${named} downloads${upTo(a.within_ms)}${downloadDetails(a)}`)];
     }
+    case "expect_tab":
+      return [words(`Wait for a new tab and call it "${str(a.name)}"`)];
+    case "open_tab":
+      return [words(`Open a new tab "${str(a.name)}" at ${pathOnly(str(a.url))}`)];
+    case "switch_tab":
+      return [words(`Switch to the "${str(a.name)}" tab`)];
+    case "close_tab":
+      return [words(`Close the "${str(a.name)}" tab`)];
+    case "expect_tab_closed":
+      return [words(`Check the "${str(a.name)}" tab closes`)];
     default: {
       // A new action kind fails the type check here until it is described;
       // one the app does not know (a typo in the JSON) is unreadable.

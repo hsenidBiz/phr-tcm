@@ -1387,7 +1387,36 @@ export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account
  */
 ({ kind: "expect_download"; name: string; within_ms?: number | null; sheet?: string | null; headers?: HeadersSpec | null; 
 /**  `None` when left out; an empty list is refused, not ignored. */
-cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
+cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Wait for a tab the page opened since the previous step began (a
+ *  `target=_blank` link, `window.open`), within `within_ms`
+ *  (`TAB_WAIT_MS` when left out), and call it `name`. With
+ *  `url_contains`, its address must contain that text. It does not
+ *  switch to it: `switch_tab` does.
+ */
+({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; value?: never } | 
+/**
+ *  Open a new tab called `name` at `url`, in the same signed-in
+ *  session, and switch to it. `url` follows `navigate`'s rules.
+ */
+({ kind: "open_tab"; name: string; url: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Make the tab called `name` the current tab, and bring it to the
+ *  front. Every later action acts in it.
+ */
+({ kind: "switch_tab"; name: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Close the tab called `name`. If it was the current tab, `main` is
+ *  current again. `main` is never closed.
+ */
+({ kind: "close_tab"; name: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  The page closes the tab called `name` itself (a print preview that
+ *  closes after printing), within `within_ms` (`TAB_WAIT_MS` when left
+ *  out).
+ */
+({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
 
 export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "check_text"; value: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; cells?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; within_ms?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; name?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; sheet?: never; status?: never; then?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
 /**
@@ -1470,7 +1499,36 @@ export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?:
  */
 ({ kind: "expect_download"; name: string; within_ms?: number | null; sheet?: string | null; headers?: HeadersSpec | null; 
 /**  `None` when left out; an empty list is refused, not ignored. */
-cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
+cells?: CellSpec[] | null; contains_text?: string[] | null }) & { account?: never; contains?: never; equals?: never; expect?: never; file?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never } | 
+/**
+ *  Wait for a tab the page opened since the previous step began (a
+ *  `target=_blank` link, `window.open`), within `within_ms`
+ *  (`TAB_WAIT_MS` when left out), and call it `name`. With
+ *  `url_contains`, its address must contain that text. It does not
+ *  switch to it: `switch_tab` does.
+ */
+({ kind: "expect_tab"; name: string; url_contains?: string | null; within_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; value?: never } | 
+/**
+ *  Open a new tab called `name` at `url`, in the same signed-in
+ *  session, and switch to it. `url` follows `navigate`'s rules.
+ */
+({ kind: "open_tab"; name: string; url: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Make the tab called `name` the current tab, and bring it to the
+ *  front. Every later action acts in it.
+ */
+({ kind: "switch_tab"; name: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  Close the tab called `name`. If it was the current tab, `main` is
+ *  current again. `main` is never closed.
+ */
+({ kind: "close_tab"; name: string }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never; within_ms?: never } | 
+/**
+ *  The page closes the tab called `name` itself (a print preview that
+ *  closes after printing), within `within_ms` (`TAB_WAIT_MS` when left
+ *  out).
+ */
+({ kind: "expect_tab_closed"; name: string; within_ms?: number | null }) & { account?: never; cells?: never; contains?: never; contains_text?: never; equals?: never; expect?: never; file?: never; headers?: never; json?: never; key?: never; method?: never; path?: never; query?: never; selector?: never; sheet?: never; status?: never; then?: never; timeout_ms?: never; url?: never; url_contains?: never; value?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -4266,6 +4324,12 @@ export type StepRecord_Deserialize = {
 	 *  names only, never a path (unattended runs only).
 	 */
 	downloads?: string[],
+	/**
+	 *  The tab the step ran in, when that was not `main` (see
+	 *  `runner::InRun::tab`). Left out for a step in `main`, so a run file
+	 *  from before tabs reads the same.
+	 */
+	tab?: string | null,
 };
 
 export type StepRecord_Serialize = {
@@ -4279,6 +4343,12 @@ export type StepRecord_Serialize = {
 	 *  names only, never a path (unattended runs only).
 	 */
 	downloads?: string[],
+	/**
+	 *  The tab the step ran in, when that was not `main` (see
+	 *  `runner::InRun::tab`). Left out for a step in `main`, so a run file
+	 *  from before tabs reads the same.
+	 */
+	tab?: string | null,
 };
 
 /**

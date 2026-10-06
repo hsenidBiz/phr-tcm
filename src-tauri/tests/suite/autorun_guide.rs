@@ -50,6 +50,11 @@ fn the_guide_names_every_action_the_executor_can_run() {
             contains_text: None,
             stray: Default::default(),
         },
+        Action::ExpectTab { name: "r".into(), url_contains: None, within_ms: None },
+        Action::OpenTab { name: "r".into(), url: "/x".into() },
+        Action::SwitchTab { name: "r".into() },
+        Action::CloseTab { name: "r".into() },
+        Action::ExpectTabClosed { name: "r".into(), within_ms: None },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -682,4 +687,42 @@ fn the_guide_teaches_setups_and_shared_fixtures() {
         assert!(flat.contains(needle), "{needle} not in: {flat}");
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// The guide teaches the five tab actions and the spec's three scenarios,
+/// one example each, and every example is a script the runner accepts.
+#[test]
+fn the_guide_teaches_tabs_with_one_example_per_scenario() {
+    let g = autorun_guide().replace("\r\n", "\n");
+    let start = g.find("## Tabs").expect("no Tabs section");
+    let end = g[start + 1..].find("\n## ").map_or(g.len(), |i| start + 1 + i);
+    let tabs = &g[start..end];
+    for words in [
+        "The tab a case starts in is `main`",
+        "`main` cannot be closed",
+        "there is no tab <name>",
+        "no new tab opened within <n> seconds",
+        "the new tab's address does not contain \"<text>\"",
+        "a tab opened: <address>",
+        "every tab but `main` is closed",
+        "A replay to step N opens\nthe tabs again",
+        "**Follow a new tab.**",
+        "**A second tab on the same record.**",
+        "**One tab ends the session, the other reacts.**",
+        "`expire_session`",
+    ] {
+        assert!(tabs.contains(words), "the Tabs section does not say {words:?}");
+    }
+    // Each example line is an action the runner accepts.
+    let mut kinds = std::collections::BTreeSet::new();
+    for line in tabs.lines().filter(|l| l.trim_start().starts_with("{ \"kind\"")) {
+        let json = line.trim().trim_end_matches(',');
+        let a: Action = serde_json::from_str(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+        assert!(a.validate().is_ok(), "{json}: {:?}", a.validate());
+        kinds.insert(a.kind());
+    }
+    for k in ["expect_tab", "open_tab", "switch_tab", "close_tab", "expect_tab_closed", "expire_session"] {
+        assert!(kinds.contains(k), "no example uses {k}: {kinds:?}");
+    }
+    assert!(!tabs.contains('\u{2013}') && !tabs.contains('\u{2014}'), "a dash crept in");
 }

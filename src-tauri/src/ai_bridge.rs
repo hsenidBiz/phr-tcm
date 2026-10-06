@@ -1712,6 +1712,12 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::ReturnToArea => String::new(),
         Action::PressKey { key } => key.trim().to_string(),
         Action::ExpectDownload { name, .. } => name.trim().to_string(),
+        // A tab's name; an opened tab's path, never its host or query.
+        Action::ExpectTab { name, .. }
+        | Action::SwitchTab { name }
+        | Action::CloseTab { name }
+        | Action::ExpectTabClosed { name, .. } => name.clone(),
+        Action::OpenTab { name, url } => format!("{name} {}", crate::browser::actions::path_only(url)),
         // Never a query string: a fragment or a path can carry a token there.
         Action::ExpectResponse { url_contains: address, .. } | Action::ApiRequest { path: address, .. } => {
             crate::autorun::report::without_query(address.trim()).to_string()
@@ -1766,7 +1772,11 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // browser to a local file is never something a rehearsal should do -
     // nor is one guarded inside a `when_visible`.
     let to_a_file = |a: &&crate::browser::actions::Action| {
-        matches!(a, crate::browser::actions::Action::Navigate { url } if url.trim().to_ascii_lowercase().starts_with("file:"))
+        matches!(
+            a,
+            crate::browser::actions::Action::Navigate { url } | crate::browser::actions::Action::OpenTab { url, .. }
+                if url.trim().to_ascii_lowercase().starts_with("file:")
+        )
     };
     if action.each().iter().any(to_a_file) {
         return (400, "a tried navigate goes to http or https only".to_string());

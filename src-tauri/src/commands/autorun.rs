@@ -38,6 +38,9 @@ pub(crate) struct Session {
     /// into, emptied once it closes. `None` when downloads could not be
     /// switched on.
     pub(crate) downloads_root: Option<PathBuf>,
+    /// The case this browser's tabs belong to (`runner::tabs_for_case`):
+    /// a step of another case closes every tab but `main` first.
+    pub(crate) tabs_case: Option<i32>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -179,6 +182,7 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
         lease: crate::autorun::lease::Held::supervised(),
         guarded_case: None,
         downloads_root,
+        tabs_case: None,
     });
     // A tab the page opens waits, paused, until this connection reads that
     // it opened and sets it up: read between commands too, or a popup a
@@ -286,6 +290,8 @@ pub async fn auto_run_step(
     let step = crate::autorun::setup::resolve_step(&root, &organization, &project, case_id, &step)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    // Another case's tabs do not carry over into this one.
+    crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: `return_to_area` builds the
     // case's route from its saved script, and only when the step has one.
@@ -377,6 +383,9 @@ pub(crate) async fn replay_supervised(
     }
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     let account_before = session.account.clone();
+    // The replay starts the case afresh, closing every tab but `main`
+    // first (`replay_to_checked`): the tabs left are this case's.
+    session.tabs_case = Some(case_id);
     // A case's setup runs in a browser of its own, the one last chosen.
     let mut setup_browsers = crate::commands::autorun_replay::RealBrowsers::new(
         crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
@@ -465,6 +474,12 @@ pub async fn auto_run_check_preconditions(
     db_read_access: bool,
 ) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
     let root = root(&app)?;
+    // A watched case starts here: the last case's tabs are closed, even
+    // when it is the same case started again.
+    if let Some(session) = SESSION.lock().await.as_mut() {
+        session.cdp.close_other_tabs().await;
+        session.tabs_case = Some(case_id);
+    }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut checked = crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
         crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access)

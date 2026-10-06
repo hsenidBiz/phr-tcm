@@ -690,3 +690,33 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     let json = serde_json::to_value(signed_in_event(&none, &admin).unwrap()).unwrap();
     assert_eq!(json, json!({ "opened": true, "account": "admin" }));
 }
+
+// ---- tabs -------------------------------------------------------------------
+
+/// A replay starts the case afresh: a tab left from before is closed first,
+/// and the tabs steps 1 to N-1 opened are opened again by running them.
+#[tokio::test]
+async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1"), { "kind": "expect_tab", "name": "report" }] },
+        { "step_number": 2, "actions": [{ "kind": "switch_tab", "name": "report" }, click("#s2")] },
+        { "step_number": 3, "actions": [click("#s3")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (mut d, app) = app();
+    d.tabs.open.push("left-over".into());
+    d.tabs.current = "left-over".into();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    // A click opens a tab, as the case's link does.
+    d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None }, "{:?}", log(&app));
+    assert_eq!(d.tabs.closed_others, 1, "the tabs from before were not closed first");
+    assert_eq!(d.tabs.open, ["report"], "the case's own tab was not opened again");
+    assert_eq!(d.tab_name(), "report", "the replay leaves the browser where step 2 left it");
+    // The sign-in ran in main, not in the tab left from before.
+    let first_call = d.tabs.calls.first().map(|(t, _)| t.clone());
+    assert_eq!(first_call.as_deref(), Some("main"));
+}

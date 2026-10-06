@@ -107,7 +107,7 @@ fn network_glitch(action: &Action, out: &ActionOutcome) -> bool {
     match action {
         Action::ExpectResponse { .. } => api_glitch(&out.detail),
         Action::ApiRequest { .. } => api_glitch(&out.detail) || fetch_failed(&out.detail),
-        Action::Navigate { .. } => {
+        Action::Navigate { .. } | Action::OpenTab { .. } => {
             // `<url> would not load: <errorText>`: an address has no spaces,
             // so the first such phrase is the runner's.
             out.detail.find(WOULD_NOT_LOAD).is_some_and(|at| net_error(&out.detail[at + WOULD_NOT_LOAD.len()..]))

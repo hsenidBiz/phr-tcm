@@ -380,6 +380,7 @@ async fn keep_looking<D: Driver>(
 fn blame(e: CdpError) -> Blocked {
     match e {
         CdpError::Protocol { message, .. } => Blocked::Page(format!("{PAGE_REFUSED}{message}")),
+        CdpError::Tab(sentence) => Blocked::Page(sentence),
         other => Blocked::Harness(other.to_string()),
     }
 }

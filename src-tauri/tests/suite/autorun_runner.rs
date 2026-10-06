@@ -586,3 +586,193 @@ async fn a_watched_download_wait_is_capped_whatever_within_ms_says() {
     assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
     assert_eq!(out[0].detail, "no download started within 0.3 s");
 }
+
+// ---- Tabs ------------------------------------------------------------------
+
+/// A page whose `check_text` holds for the words `yes` and nothing else,
+/// and which can take a picture.
+fn yes_page() -> ScriptedDriver {
+    ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" => {
+            let arg = params["arguments"][0]["value"].as_str().unwrap_or("");
+            Ok(json!({ "result": { "value": arg == "yes" } }))
+        }
+        "Page.captureScreenshot" => Ok(json!({ "data": "/9j/4AAQ" })),
+        _ => Ok(json!({})),
+    })
+}
+
+fn tab_step(actions: serde_json::Value) -> StepScript {
+    StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None }
+}
+
+/// Runs one step the way a run does, and hands back what it learned.
+async fn run_tab_step(
+    d: &mut ScriptedDriver,
+    s: &StepScript,
+) -> (Vec<v2_lib::browser::actions::ActionOutcome>, Option<String>) {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    let dir = tempfile::tempdir().unwrap();
+    let mut acc: Option<String> = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut run = InRun::default();
+    let out = run_step_in_run(
+        d,
+        dir.path(),
+        "Acme",
+        "Web",
+        s,
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap();
+    (out, run.tab)
+}
+
+#[tokio::test]
+async fn a_step_acts_in_the_tab_it_switched_to_and_says_which() {
+    let mut d = yes_page();
+    d.tabs.unnamed = 1;
+    let s = tab_step(json!([
+        { "kind": "expect_tab", "name": "report" },
+        { "kind": "switch_tab", "name": "report" },
+        { "kind": "check_text", "value": "yes" }
+    ]));
+    let (out, tab) = run_tab_step(&mut d, &s).await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert!(d.tabs.called_in("report").iter().any(|m| m == "Runtime.callFunctionOn"), "{:?}", d.tabs.calls);
+    assert!(!d.tabs.called_in("main").iter().any(|m| m == "Runtime.callFunctionOn"), "{:?}", d.tabs.calls);
+    assert_eq!(tab.as_deref(), Some("report"));
+    assert_eq!(d.tabs.steps_begun, 1, "the step did not say it began");
+}
+
+#[tokio::test]
+async fn a_step_that_stays_in_main_names_no_tab_and_one_that_returns_to_main_still_does() {
+    let mut d = yes_page();
+    let (_, tab) = run_tab_step(&mut d, &tab_step(json!([{ "kind": "check_text", "value": "yes" }]))).await;
+    assert_eq!(tab, None);
+    d.tabs.unnamed = 1;
+    let s = tab_step(json!([
+        { "kind": "expect_tab", "name": "report" },
+        { "kind": "switch_tab", "name": "report" },
+        { "kind": "check_text", "value": "yes" },
+        { "kind": "close_tab", "name": "report" }
+    ]));
+    let (out, tab) = run_tab_step(&mut d, &s).await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[3].detail, "closed the \"report\" tab; main is the current tab now");
+    assert_eq!(tab.as_deref(), Some("report"));
+}
+
+/// Review Focus 5: a failure's picture is of the tab the step is in.
+#[tokio::test]
+async fn a_failure_in_another_tab_is_pictured_in_that_tab() {
+    let mut d = yes_page();
+    d.tabs.unnamed = 1;
+    let s = tab_step(json!([
+        { "kind": "expect_tab", "name": "report" },
+        { "kind": "switch_tab", "name": "report" },
+        { "kind": "check_text", "value": "no" }
+    ]));
+    let (out, _) = run_tab_step(&mut d, &s).await;
+    assert!(!out[2].ok);
+    assert!(out[2].screenshot.is_some(), "{out:?}");
+    assert!(d.tabs.called_in("report").iter().any(|m| m == "Page.captureScreenshot"), "{:?}", d.tabs.calls);
+    assert!(!d.tabs.called_in("main").iter().any(|m| m == "Page.captureScreenshot"));
+}
+
+/// Review Focus 3: a print preview that closes itself while it is the
+/// current tab. The next action fails with its name at once, with no
+/// picture and not as the browser having stopped; the tab actions still
+/// run, and the step goes on in `main`.
+#[tokio::test]
+async fn a_tab_that_closes_itself_fails_the_next_action_with_its_name() {
+    let mut d = yes_page();
+    d.tabs.unnamed = 1;
+    d.tabs.closes_on = Some(("Runtime.callFunctionOn".into(), "preview".into()));
+    let s = tab_step(json!([
+        { "kind": "expect_tab", "name": "preview" },
+        { "kind": "switch_tab", "name": "preview" },
+        { "kind": "check_text", "value": "yes" },
+        { "kind": "check_text", "value": "yes" },
+        { "kind": "expect_tab_closed", "name": "preview" },
+        { "kind": "check_text", "value": "yes" }
+    ]));
+    let (out, tab) = run_tab_step(&mut d, &s).await;
+    assert!(out[2].ok, "{out:?}");
+    assert!(!out[3].ok && !out[3].harness, "{out:?}");
+    assert_eq!(out[3].detail, "there is no tab preview");
+    assert!(out[3].screenshot.is_none());
+    assert!(out[4].ok, "{out:?}");
+    assert!(out[5].ok, "{out:?}");
+    assert_eq!(d.tabs.calls.last().map(|(t, _)| t.as_str()), Some("main"));
+    assert_eq!(tab.as_deref(), Some("preview"));
+}
+
+#[tokio::test]
+async fn a_tab_no_step_expects_does_not_fail_the_step() {
+    let mut d = yes_page();
+    d.tabs.opens_on = Some("Runtime.callFunctionOn".into());
+    let (out, tab) = run_tab_step(&mut d, &tab_step(json!([{ "kind": "check_text", "value": "yes" }]))).await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(d.tabs.unnamed, 1);
+    assert_eq!(tab, None);
+}
+
+#[tokio::test]
+async fn a_tab_action_fails_with_the_spec_sentences() {
+    let mut d = yes_page();
+    let s = tab_step(json!([
+        { "kind": "expect_tab", "name": "report", "within_ms": 10000 },
+        { "kind": "switch_tab", "name": "report" },
+        { "kind": "close_tab", "name": "report" },
+        { "kind": "expect_tab_closed", "name": "report" }
+    ]));
+    let (out, _) = run_tab_step(&mut d, &s).await;
+    let said: Vec<&str> = out.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(
+        said,
+        ["no new tab opened within 10 seconds", "there is no tab report", "there is no tab report", "there is no tab report"]
+    );
+    assert!(out.iter().all(|o| !o.ok && !o.harness));
+}
+
+/// `open_tab` opens a page by address, which a project that refuses
+/// `navigate` refuses the same way.
+#[tokio::test]
+async fn open_tab_is_refused_where_navigate_is() {
+    use v2_lib::autorun::nav::{no_address, save_nav, NavFile};
+    let dir = tempfile::tempdir().unwrap();
+    save_nav(dir.path(), "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
+    let mut d = yes_page();
+    let mut acc: Option<String> = None;
+    let s = tab_step(json!([{ "kind": "open_tab", "name": "second", "url": "/hr/home" }]));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &s, &quick(), &mut acc).await.unwrap();
+    assert_eq!(out[0].detail, no_address(1));
+    assert!(d.tabs.open.is_empty());
+}
+
+/// The supervised browser: a step of another case closes the last case's
+/// tabs first; a step of the same case keeps them.
+#[tokio::test]
+async fn a_supervised_step_of_another_case_closes_the_last_cases_tabs() {
+    use v2_lib::autorun::runner::tabs_for_case;
+    let mut d = yes_page();
+    let mut case = None;
+    tabs_for_case(&mut d, &mut case, 7).await;
+    assert_eq!(d.tabs.closed_others, 1);
+    d.tabs.open.push("report".into());
+    tabs_for_case(&mut d, &mut case, 7).await;
+    assert_eq!(d.tabs.closed_others, 1);
+    assert_eq!(d.tabs.open, ["report"]);
+    tabs_for_case(&mut d, &mut case, 8).await;
+    assert_eq!(d.tabs.closed_others, 2);
+    assert!(d.tabs.open.is_empty());
+    assert_eq!(case, Some(8));
+}

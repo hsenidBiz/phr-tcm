@@ -89,6 +89,15 @@ describe("a sentence for every action kind", () => {
       { kind: "expect_download", name: "errors*.csv", within_ms: 30000, contains_text: ["Row 3"] },
       'Check a file named like "errors*.csv" downloads (up to 30 s), containing "Row 3"',
     ],
+    [{ kind: "expect_tab", name: "report" }, 'Wait for a new tab and call it "report"'],
+    [
+      { kind: "open_tab", name: "second", url: "https://hr.example.com/hr/employee/42?token=abc#top" },
+      'Open a new tab "second" at /hr/employee/42',
+    ],
+    [{ kind: "open_tab", name: "second", url: "/hr/home" }, 'Open a new tab "second" at /hr/home'],
+    [{ kind: "switch_tab", name: "report" }, 'Switch to the "report" tab'],
+    [{ kind: "close_tab", name: "report" }, 'Close the "report" tab'],
+    [{ kind: "expect_tab_closed", name: "preview" }, 'Check the "preview" tab closes'],
   ];
 
   test.each(cases)("%j", (action, sentence) => {
@@ -102,7 +111,8 @@ describe("a sentence for every action kind", () => {
         "navigate", "click", "fill", "wait_for", "check_text", "check_url", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
-        "press_key", "expect_focused", "expect_download",
+        "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
+        "expect_tab_closed",
       ].sort(),
     );
   });

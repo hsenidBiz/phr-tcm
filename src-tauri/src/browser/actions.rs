@@ -5,7 +5,7 @@
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
-use super::cdp::{browser_silent, CdpError, Driver};
+use super::cdp::{browser_silent, no_tab, tab_taken, CdpError, Driver, MAIN_CANNOT_CLOSE, MAIN_TAB};
 use super::expect::{self, Check};
 use super::input::{self, Blocked};
 use super::locator::{resolve_explained, Target};
@@ -172,6 +172,79 @@ pub enum Action {
         #[specta(skip)]
         stray: Stray,
     },
+    /// Wait for a tab the page opened since the previous step began (a
+    /// `target=_blank` link, `window.open`), within `within_ms`
+    /// (`TAB_WAIT_MS` when left out), and call it `name`. With
+    /// `url_contains`, its address must contain that text. It does not
+    /// switch to it: `switch_tab` does.
+    ExpectTab {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url_contains: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
+    /// Open a new tab called `name` at `url`, in the same signed-in
+    /// session, and switch to it. `url` follows `navigate`'s rules.
+    OpenTab { name: String, url: String },
+    /// Make the tab called `name` the current tab, and bring it to the
+    /// front. Every later action acts in it.
+    SwitchTab { name: String },
+    /// Close the tab called `name`. If it was the current tab, `main` is
+    /// current again. `main` is never closed.
+    CloseTab { name: String },
+    /// The page closes the tab called `name` itself (a print preview that
+    /// closes after printing), within `within_ms` (`TAB_WAIT_MS` when left
+    /// out).
+    ExpectTabClosed {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
+}
+
+/// How long `expect_tab` and `expect_tab_closed` wait when they name no
+/// `within_ms`.
+pub const TAB_WAIT_MS: u32 = 10_000;
+/// The longest `expect_tab` and `expect_tab_closed` may wait.
+pub const TAB_WAIT_MAX_MS: u32 = 60_000;
+
+/// The rule every tab name follows.
+pub const TAB_NAME_RULE: &str = "a tab name is 1 to 30 letters, digits, - or _";
+
+/// Is this a name a script may give a tab?
+pub fn valid_tab_name(name: &str) -> bool {
+    (1..=30).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn check_tab_name(kind: &str, name: &str) -> Result<(), String> {
+    if valid_tab_name(name) {
+        return Ok(());
+    }
+    let shown: String = name.chars().take(40).collect();
+    Err(format!("{kind}: {TAB_NAME_RULE}, not \"{shown}\""))
+}
+
+fn check_tab_wait(kind: &str, within_ms: &Option<u32>) -> Result<(), String> {
+    match within_ms {
+        Some(0) => Err(WITHIN_MS_ZERO.to_string()),
+        Some(ms) if *ms > TAB_WAIT_MAX_MS => Err(format!("{kind} waits at most {TAB_WAIT_MAX_MS} ms, not {ms}")),
+        _ => Ok(()),
+    }
+}
+
+/// A script's address, as a sentence may say it: its path only, with no
+/// host, query or fragment.
+pub fn path_only(url: &str) -> String {
+    let url = url.trim();
+    let cut = url.split(['?', '#']).next().unwrap_or("");
+    match cut.find("://") {
+        Some(i) => {
+            let rest = &cut[i + 3..];
+            rest.find('/').map_or_else(|| "/".to_string(), |j| rest[j..].to_string())
+        }
+        None => cut.to_string(),
+    }
 }
 
 /// An `expect_download`'s first row: `{ "exact": [...] }`, exactly these in
@@ -365,7 +438,10 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
         }
         // Both move the whole case - out of its session, or back to its
         // area - which is never a tidy-up that may or may not happen.
-        if matches!(a, Action::ExpireSession | Action::ReturnToArea) {
+        if matches!(
+            a,
+            Action::ExpireSession | Action::ReturnToArea | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
+        ) {
             return Err(format!(
                 "when_visible \"then\" cannot hold {} - write it as an action of its own",
                 a.kind()
@@ -511,6 +587,11 @@ pub const DIALOG_NOTE: &str = " (the page showed ";
 /// A harness failure, said plainly: the app under test did nothing wrong,
 /// the browser connection did.
 pub(crate) fn harness(e: CdpError) -> ActionOutcome {
+    // A tab rule is the script's, not the browser's: its sentence is the
+    // whole failure, and a picture can still be taken.
+    if let CdpError::Tab(sentence) = e {
+        return ActionOutcome::failed(sentence);
+    }
     let mut out = ActionOutcome::failed(format!("{BROWSER_SILENT}: {e}"));
     out.harness = true;
     out
@@ -620,9 +701,7 @@ impl Action {
     /// execute, so nothing invalid reaches the page.
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Action::Navigate { url } if !is_navigable(url) => {
-                Err(format!("navigate needs an http, https or file address, not {url:?}"))
-            }
+            Action::Navigate { url } if !is_navigable(url) => Err(not_an_address("navigate", url)),
             Action::Navigate { .. } => Ok(()),
             Action::Click { selector }
             | Action::Fill { selector, .. }
@@ -711,7 +790,55 @@ impl Action {
             Action::ExpectDownload { name, within_ms, sheet, headers, cells, contains_text, stray } => {
                 check_download(name, within_ms, sheet, headers, cells, contains_text, stray)
             }
+            Action::ExpectTab { name, url_contains, within_ms } => {
+                check_tab_name("expect_tab", name)?;
+                if name == MAIN_TAB {
+                    return Err(tab_taken(name));
+                }
+                if url_contains.as_deref().is_some_and(|u| u.trim().is_empty()) {
+                    return Err("expect_tab has an empty url_contains - leave it out to take the new tab wherever it is".to_string());
+                }
+                check_tab_wait("expect_tab", within_ms)
+            }
+            Action::OpenTab { name, url } => {
+                check_tab_name("open_tab", name)?;
+                if name == MAIN_TAB {
+                    return Err(tab_taken(name));
+                }
+                if !is_navigable(url) {
+                    return Err(not_an_address("open_tab", url));
+                }
+                Ok(())
+            }
+            Action::SwitchTab { name } => check_tab_name("switch_tab", name),
+            Action::CloseTab { name } => {
+                check_tab_name("close_tab", name)?;
+                if name == MAIN_TAB {
+                    return Err(MAIN_CANNOT_CLOSE.to_string());
+                }
+                Ok(())
+            }
+            Action::ExpectTabClosed { name, within_ms } => {
+                check_tab_name("expect_tab_closed", name)?;
+                if name == MAIN_TAB {
+                    return Err(MAIN_CANNOT_CLOSE.to_string());
+                }
+                check_tab_wait("expect_tab_closed", within_ms)
+            }
         }
+    }
+
+    /// One of the five tab actions: the ones that still run when the
+    /// current tab has closed by itself, because they do not act in it.
+    pub fn is_tab_action(&self) -> bool {
+        matches!(
+            self,
+            Action::ExpectTab { .. }
+                | Action::OpenTab { .. }
+                | Action::SwitchTab { .. }
+                | Action::CloseTab { .. }
+                | Action::ExpectTabClosed { .. }
+        )
     }
 
     /// The script's own word for this action: `"click"`, `"when_visible"`.
@@ -747,8 +874,16 @@ impl Action {
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
                 | Action::ExpectDownload { .. }
+                | Action::ExpectTab { .. }
+                | Action::ExpectTabClosed { .. }
         )
     }
+}
+
+/// What `navigate`, and `open_tab` after it, say about an address that is
+/// not one a browser can be sent to.
+fn not_an_address(kind: &str, url: &str) -> String {
+    format!("{kind} needs an http, https or file address, not {url:?}")
 }
 
 /// `this` is the element about to be touched.
@@ -821,11 +956,10 @@ async fn absolute<D: Driver>(d: &mut D, url: &str) -> Result<String, ActionOutco
     Ok(resolved)
 }
 
-async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Policy) -> ActionOutcome {
-    let url = match absolute(d, url).await {
-        Ok(u) => u,
-        Err(out) => return out,
-    };
+/// A script's address made absolute and checked against `policy`: where
+/// a `navigate` or an `open_tab` may go, or the outcome that says why not.
+async fn reachable<D: Driver>(d: &mut D, url: &str, policy: &Policy) -> Result<String, ActionOutcome> {
+    let url = absolute(d, url).await?;
     if !policy.allows(&url) {
         // `origin_of` returning `None` here (rather than an origin outside
         // the list) means the address itself cannot be trusted to go
@@ -837,8 +971,16 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Pol
             ),
             None => format!("this address is not one that can be checked against {ALLOWED_ORIGINS} - it does not read as a usable http, https or file address"),
         };
-        return ActionOutcome::failed(detail);
+        return Err(ActionOutcome::failed(detail));
     }
+    Ok(url)
+}
+
+async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Policy) -> ActionOutcome {
+    let url = match reachable(d, url, policy).await {
+        Ok(u) => u,
+        Err(out) => return out,
+    };
     let url = url.as_str();
     // Older lifecycle events would satisfy the wait below before this
     // page has even started.
@@ -1039,7 +1181,50 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         // Only the runner knows where the step began, and so which
         // download is the step's.
         Action::ExpectDownload { .. } => ActionOutcome::failed("expect_download is carried out by the runner"),
+        Action::ExpectTab { name, url_contains, within_ms } => {
+            let within = Duration::from_millis(u64::from(within_ms.unwrap_or(TAB_WAIT_MS)));
+            match d.expect_tab(name, url_contains.as_deref().map(str::trim), within).await {
+                Ok(address) => ActionOutcome::passed(format!("a new tab opened at {}; it is called \"{name}\"", path_only(&address))),
+                Err(e) => failed_by(e),
+            }
+        }
+        Action::OpenTab { name, url } => open_tab(d, name, url.trim(), timing, policy).await,
+        Action::SwitchTab { name } => match d.switch_tab(name).await {
+            Ok(()) => ActionOutcome::passed(format!("switched to the \"{name}\" tab")),
+            Err(e) => failed_by(e),
+        },
+        Action::CloseTab { name } => match d.close_tab(name).await {
+            Ok(true) => ActionOutcome::passed(format!("closed the \"{name}\" tab; {MAIN_TAB} is the current tab now")),
+            Ok(false) => ActionOutcome::passed(format!("closed the \"{name}\" tab")),
+            Err(e) => failed_by(e),
+        },
+        Action::ExpectTabClosed { name, within_ms } => {
+            let within = Duration::from_millis(u64::from(within_ms.unwrap_or(TAB_WAIT_MS)));
+            match d.expect_tab_closed(name, within).await {
+                Ok(()) => ActionOutcome::passed(format!("the \"{name}\" tab closed")),
+                Err(e) => failed_by(e),
+            }
+        }
     }
+}
+
+/// `open_tab`: the address is made absolute in the tab the step is in and
+/// held to `navigate`'s rules first, so a refused one opens nothing. Then a
+/// blank tab is opened and set up (guarded first in a no-save case), made
+/// current, and sent there the way `navigate` sends a page.
+async fn open_tab<D: Driver>(d: &mut D, name: &str, url: &str, timing: &Timing, policy: &Policy) -> ActionOutcome {
+    let url = match reachable(d, url, policy).await {
+        Ok(u) => u,
+        Err(out) => return out,
+    };
+    if let Err(e) = d.open_tab(name).await {
+        return failed_by(e);
+    }
+    let loaded = navigate(d, &url, timing, policy).await;
+    if !loaded.ok {
+        return loaded;
+    }
+    ActionOutcome::passed(format!("opened the \"{name}\" tab at {}", path_only(&url)))
 }
 
 /// What a reload that never finished loading says, after the address.
@@ -1422,6 +1607,15 @@ fn append_dialogs<D: Driver>(d: &mut D, out: &mut ActionOutcome) {
     }
 }
 
+/// An action that acts in the current tab, when that tab has closed by
+/// itself: `there is no tab <name>`, at once. The tab actions still run.
+pub fn in_missing_tab<D: Driver>(d: &D, action: &Action) -> Option<ActionOutcome> {
+    if action.is_tab_action() {
+        return None;
+    }
+    d.missing_tab().map(|name| ActionOutcome::failed(no_tab(&name)))
+}
+
 /// Run one action with the standard waits.
 pub async fn execute<D: Driver>(d: &mut D, action: &Action) -> ActionOutcome {
     execute_with(d, action, &Timing::default()).await
@@ -1439,6 +1633,9 @@ pub async fn execute_in<D: Driver>(
 ) -> ActionOutcome {
     if let Err(why) = action.validate() {
         return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
+    }
+    if let Some(gone) = in_missing_tab(d, action) {
+        return gone;
     }
     let mut out = run(d, action, timing, policy).await;
     append_dialogs(d, &mut out);

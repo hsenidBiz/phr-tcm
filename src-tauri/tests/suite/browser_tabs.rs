@@ -21,6 +21,10 @@ const MAIN: &str = "S-main";
 /// - `withhold`: its answer goes to `withheld`, for the test to hand over
 ///   later;
 /// - `before_reply`: these frames arrive just ahead of its answer, once.
+/// - `after_reply`: these frames arrive just after its answer, once.
+///
+/// `Target.createTarget` answers with the target `T-new`, and
+/// `Target.getTargetInfo` says main is in the browser context `C-1`.
 struct FakeBrowser {
     incoming: VecDeque<String>,
     sent: Vec<Value>,
@@ -28,6 +32,7 @@ struct FakeBrowser {
     withhold: Vec<String>,
     withheld: Vec<String>,
     before_reply: Vec<(String, Value)>,
+    after_reply: Vec<(String, Value)>,
 }
 
 impl FakeBrowser {
@@ -39,6 +44,7 @@ impl FakeBrowser {
             withhold: vec![],
             withheld: vec![],
             before_reply: vec![],
+            after_reply: vec![],
         }
     }
 }
@@ -62,6 +68,10 @@ impl Transport for FakeBrowser {
             json!({ "id": id, "error": { "code": -32000, "message": "refused by the test" } })
         } else if method == "Target.attachToTarget" {
             json!({ "id": id, "result": { "sessionId": MAIN } })
+        } else if method == "Target.createTarget" {
+            json!({ "id": id, "result": { "targetId": "T-new" } })
+        } else if method == "Target.getTargetInfo" {
+            json!({ "id": id, "result": { "targetInfo": { "targetId": v["params"]["targetId"], "browserContextId": "C-1" } } })
         } else {
             json!({ "id": id, "result": {} })
         };
@@ -73,6 +83,10 @@ impl Transport for FakeBrowser {
             self.withheld.push(reply.to_string());
         } else {
             self.incoming.push_back(reply.to_string());
+        }
+        while let Some(i) = self.after_reply.iter().position(|(n, _)| names(n, &method, &session)) {
+            let (_, frame) = self.after_reply.remove(i);
+            self.incoming.push_back(frame.to_string());
         }
         Ok(())
     }
@@ -679,4 +693,522 @@ async fn a_sign_in_form_post_goes_through_even_unplaced() {
     settle(&mut cdp).await;
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
+}
+
+// ---------------------------------------------------------------------------
+// The tab actions: naming, opening, switching, closing and waiting for tabs.
+// ---------------------------------------------------------------------------
+
+use v2_lib::browser::actions::{execute, execute_in, Action, Policy};
+
+fn detached(session: &str) -> Value {
+    json!({ "method": "Target.detachedFromTarget", "params": { "sessionId": session } })
+}
+
+/// A popup the page opened during this step, read at once.
+async fn popup(cdp: &mut Cdp<FakeBrowser>, session: &str, target: &str, url: &str) {
+    feed(cdp, [attached(session, target, "page", url, false)]);
+    settle(cdp).await;
+}
+
+/// `main` and a popup called `name`, the step that opened it begun.
+async fn with_named(name: &str) -> Cdp<FakeBrowser> {
+    let mut cdp = browser().await;
+    cdp.step_began();
+    popup(&mut cdp, "S-pop", "T-pop", "https://hr.example/report/7?token=hunter2").await;
+    cdp.expect_tab(name, None, Duration::from_millis(500)).await.expect("the popup was not named");
+    cdp
+}
+
+fn tab_failure(e: Result<impl std::fmt::Debug, CdpError>) -> String {
+    match e {
+        Err(CdpError::Tab(sentence)) => sentence,
+        other => panic!("not a tab rule's failure: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn expect_tab_names_the_newest_tab_opened_since_the_previous_step_began() {
+    let mut cdp = browser().await;
+    // Open before the run: never claimed.
+    popup(&mut cdp, "S-old", "T-old", "https://hr.example/old").await;
+    cdp.step_began();
+    popup(&mut cdp, "S-one", "T-one", "https://hr.example/one").await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    popup(&mut cdp, "S-two", "T-two", "https://hr.example/two?id=9").await;
+    cdp.step_began();
+
+    let address = cdp.expect_tab("report", None, Duration::from_millis(500)).await.unwrap();
+    assert_eq!(address, "https://hr.example/two", "the newest, with no query");
+    let named =
+        |cdp: &Cdp<FakeBrowser>, s: &str| cdp.tabs().iter().find(|t| t.session_id == s).and_then(|t| t.name.clone());
+    assert_eq!(named(&cdp, "S-two").as_deref(), Some("report"));
+    cdp.expect_tab("other", None, Duration::from_millis(500)).await.unwrap();
+    assert_eq!(named(&cdp, "S-one").as_deref(), Some("other"));
+    // The tab opened before the run is left alone.
+    let none = cdp.expect_tab("third", None, Duration::from_millis(300)).await;
+    assert_eq!(tab_failure(none), "no new tab opened within 0.3 seconds");
+    assert_eq!(named(&cdp, "S-old"), None);
+    // Naming it did not switch to it.
+    assert_eq!(cdp.tab_name(), "main");
+}
+
+#[tokio::test]
+async fn a_tab_opened_during_an_earlier_step_is_never_claimed() {
+    let mut cdp = browser().await;
+    cdp.step_began();
+    popup(&mut cdp, "S-pop", "T-pop", "https://hr.example/pop").await;
+    cdp.step_began();
+    cdp.step_began();
+    let none = cdp.expect_tab("late", None, Duration::from_millis(1000)).await;
+    assert_eq!(tab_failure(none), "no new tab opened within 1 seconds");
+}
+
+#[tokio::test]
+async fn expect_tab_says_each_of_its_failures_in_the_spec_words() {
+    let mut cdp = browser().await;
+    cdp.step_began();
+    popup(&mut cdp, "S-pop", "T-pop", "https://hr.example/pop?report=1").await;
+    let elsewhere = cdp.expect_tab("report", Some("/reports/"), Duration::from_millis(300)).await;
+    assert_eq!(tab_failure(elsewhere), "the new tab's address does not contain \"/reports/\"");
+    assert_eq!(cdp.tabs()[1].name, None, "a tab somewhere else is not named");
+    cdp.expect_tab("report", None, Duration::from_millis(300)).await.unwrap();
+    let taken = cdp.expect_tab("report", None, Duration::from_millis(300)).await;
+    assert_eq!(tab_failure(taken), "there is already a tab report");
+    let main = cdp.expect_tab("main", None, Duration::from_millis(300)).await;
+    assert_eq!(tab_failure(main), "there is already a tab main");
+}
+
+/// A popup is attached blank and then goes to its own address: the wait
+/// looks at where it is now.
+#[tokio::test]
+async fn expect_tab_matches_the_address_a_popup_goes_to() {
+    let mut cdp = browser().await;
+    cdp.step_began();
+    popup(&mut cdp, "S-pop", "T-pop", "about:blank").await;
+    feed(
+        &mut cdp,
+        [on(
+            "S-pop",
+            "Page.frameNavigated",
+            json!({ "frame": { "id": "T-pop", "loaderId": "L1", "url": "https://hr.example/reports/7?token=hunter2" } }),
+        )],
+    );
+    let address = cdp.expect_tab("report", Some("/reports/"), Duration::from_millis(500)).await.unwrap();
+    assert_eq!(address, "https://hr.example/reports/7");
+
+    cdp.step_began();
+    popup(&mut cdp, "S-b", "T-b", "https://hr.example/b?x=1").await;
+    let out = execute(&mut cdp, &Action::ExpectTab { name: "b".into(), url_contains: None, within_ms: Some(500) }).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "a new tab opened at /b; it is called \"b\"");
+}
+
+#[tokio::test]
+async fn steps_act_in_the_current_tab_and_switch_tab_brings_it_to_the_front() {
+    let mut cdp = with_named("report").await;
+    let out = execute(&mut cdp, &Action::SwitchTab { name: "report".into() }).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "switched to the \"report\" tab");
+    let front = sent(&cdp).iter().find(|f| f["method"] == "Target.activateTarget").expect("not brought to the front");
+    assert!(front.get("sessionId").is_none());
+    assert_eq!(front["params"]["targetId"], "T-pop");
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], "S-pop");
+    assert_eq!(cdp.tab_name(), "report");
+
+    let none = execute(&mut cdp, &Action::SwitchTab { name: "nowhere".into() }).await;
+    assert!(!none.ok && !none.harness, "{none:?}");
+    assert_eq!(none.detail, "there is no tab nowhere");
+
+    execute(&mut cdp, &Action::SwitchTab { name: "main".into() }).await;
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], MAIN);
+}
+
+/// Review Focus 2.
+#[tokio::test]
+async fn closing_the_current_tab_makes_main_current_and_nothing_waits_on_it() {
+    let mut cdp = with_named("report").await;
+    cdp.switch_tab("report").await.unwrap();
+    let out = execute(&mut cdp, &Action::CloseTab { name: "report".into() }).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "closed the \"report\" tab; main is the current tab now");
+    let closed = sent(&cdp).iter().find(|f| f["method"] == "Target.closeTarget").expect("never closed");
+    assert_eq!(closed["params"]["targetId"], "T-pop");
+    assert_eq!(cdp.tabs().len(), 1);
+    assert_eq!(cdp.tab_name(), "main");
+    // The browser's own word that it went is harmless now.
+    feed(&mut cdp, [detached("S-pop")]);
+    let answered =
+        tokio::time::timeout(Duration::from_secs(2), cdp.call("Runtime.evaluate", json!({ "expression": "1" }))).await;
+    assert!(matches!(answered, Ok(Ok(_))), "{answered:?}");
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], MAIN);
+    assert_eq!(cdp.missing_tab(), None);
+
+    let again = execute(&mut cdp, &Action::CloseTab { name: "report".into() }).await;
+    assert_eq!(again.detail, "there is no tab report");
+    assert_eq!(tab_failure(cdp.close_tab("main").await), "main cannot be closed");
+}
+
+#[tokio::test]
+async fn closing_a_tab_that_is_not_current_leaves_the_current_tab_alone() {
+    let mut cdp = with_named("report").await;
+    let out = execute(&mut cdp, &Action::CloseTab { name: "report".into() }).await;
+    assert_eq!(out.detail, "closed the \"report\" tab");
+    assert_eq!(cdp.tab_name(), "main");
+}
+
+/// Review Focus 3: a print preview that closes itself while it is current.
+#[tokio::test]
+async fn a_current_tab_that_closes_itself_fails_the_next_call_with_its_name() {
+    let mut cdp = with_named("preview").await;
+    cdp.switch_tab("preview").await.unwrap();
+    feed(&mut cdp, [detached("S-pop")]);
+    settle(&mut cdp).await;
+
+    let call =
+        tokio::time::timeout(Duration::from_secs(2), cdp.call("Runtime.evaluate", json!({ "expression": "1" }))).await;
+    assert_eq!(call.expect("the call waited on a closed tab"), Err(CdpError::Tab("there is no tab preview".into())));
+    let event =
+        tokio::time::timeout(Duration::from_secs(2), cdp.wait_event("Page.loadEventFired", Duration::from_secs(1))).await;
+    assert_eq!(event.expect("the wait hung"), Err(CdpError::Tab("there is no tab preview".into())));
+    assert_eq!(cdp.missing_tab().as_deref(), Some("preview"));
+    assert_eq!(cdp.tab_name(), "preview");
+
+    // An action that acts in the page says so plainly, not as the browser
+    // having stopped answering.
+    let out = execute(&mut cdp, &Action::CheckUrl { contains: "x".into() }).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert_eq!(out.detail, "there is no tab preview");
+
+    // The tab actions still run: its closing is what the case checks.
+    let closed = execute(&mut cdp, &Action::ExpectTabClosed { name: "preview".into(), within_ms: Some(500) }).await;
+    assert!(closed.ok, "{closed:?}");
+    assert_eq!(closed.detail, "the \"preview\" tab closed");
+    assert_eq!(cdp.tab_name(), "main");
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], MAIN);
+}
+
+/// A call in flight when the current tab closes ends with its name too.
+#[tokio::test]
+async fn a_call_in_flight_when_the_current_tab_closes_ends_with_its_name() {
+    let mut cdp = with_named("preview").await;
+    cdp.switch_tab("preview").await.unwrap();
+    cdp.transport_mut().withhold.push("Runtime.evaluate@S-pop".to_string());
+    cdp.transport_mut().after_reply.push(("Runtime.evaluate@S-pop".to_string(), detached("S-pop")));
+    let call =
+        tokio::time::timeout(Duration::from_secs(2), cdp.call("Runtime.evaluate", json!({ "expression": "1" }))).await;
+    assert_eq!(call.expect("the call hung"), Err(CdpError::Tab("there is no tab preview".into())));
+}
+
+#[tokio::test]
+async fn a_current_tab_that_closes_itself_can_be_left_with_switch_tab() {
+    let mut cdp = with_named("preview").await;
+    cdp.switch_tab("preview").await.unwrap();
+    feed(&mut cdp, [detached("S-pop")]);
+    settle(&mut cdp).await;
+    let gone = execute(&mut cdp, &Action::SwitchTab { name: "preview".into() }).await;
+    assert_eq!(gone.detail, "there is no tab preview");
+    assert!(execute(&mut cdp, &Action::SwitchTab { name: "main".into() }).await.ok);
+    assert_eq!(cdp.missing_tab(), None);
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], MAIN);
+}
+
+#[tokio::test]
+async fn expect_tab_closed_waits_for_the_page_to_close_it_and_says_when_it_did_not() {
+    let mut cdp = with_named("preview").await;
+    let open = cdp.expect_tab_closed("preview", Duration::from_millis(300)).await;
+    assert_eq!(tab_failure(open), "the \"preview\" tab did not close within 0.3 seconds");
+    feed(&mut cdp, [detached("S-pop")]);
+    cdp.expect_tab_closed("preview", Duration::from_millis(500)).await.unwrap();
+    // Claimed once: the name is free again, and no such tab is open.
+    let again = cdp.expect_tab_closed("preview", Duration::from_millis(100)).await;
+    assert_eq!(tab_failure(again), "there is no tab preview");
+    assert_eq!(tab_failure(cdp.expect_tab_closed("main", Duration::from_millis(100)).await), "main cannot be closed");
+    assert_eq!(
+        tab_failure(cdp.expect_tab_closed("nowhere", Duration::from_millis(100)).await),
+        "there is no tab nowhere"
+    );
+    let ten = execute(&mut cdp, &Action::ExpectTabClosed { name: "nowhere".into(), within_ms: None }).await;
+    assert_eq!(ten.detail, "there is no tab nowhere");
+}
+
+/// `open_tab` makes a blank tab in main's browser context, which is set up
+/// (guarded first) before anything is sent there, then sends it to the
+/// address. A save from it is stopped like main's.
+#[tokio::test]
+async fn open_tab_sets_the_new_tab_up_and_guards_it_before_it_goes_anywhere() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    let new_tab = attached("S-new", "T-new", "page", "about:blank", true);
+    cdp.transport_mut().after_reply.push(("Target.createTarget".to_string(), new_tab));
+    let out = execute(
+        &mut cdp,
+        &Action::OpenTab { name: "second".into(), url: "https://hr.example/hr/employee/42?token=hunter2".into() },
+    )
+    .await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "opened the \"second\" tab at /hr/employee/42");
+
+    let made = sent(&cdp).iter().find(|f| f["method"] == "Target.createTarget").expect("no tab was made");
+    assert!(made.get("sessionId").is_none());
+    assert_eq!(made["params"], json!({ "url": "about:blank", "browserContextId": "C-1" }));
+    let setup = sent_on(&cdp, "S-new");
+    let at = |m: &str| setup.iter().position(|s| s == m).unwrap_or_else(|| panic!("{m} was never sent: {setup:?}"));
+    assert!(at("Fetch.enable") < at("Runtime.runIfWaitingForDebugger"), "{setup:?}");
+    assert!(at("Runtime.runIfWaitingForDebugger") < at("Page.navigate"), "{setup:?}");
+    let went = sent(&cdp).iter().find(|f| f["method"] == "Page.navigate").unwrap();
+    assert_eq!(went["sessionId"], "S-new");
+    assert_eq!(cdp.tab_name(), "second");
+
+    feed(&mut cdp, [paused("S-new", "r1", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SAVE_STOPPED));
+}
+
+#[tokio::test]
+async fn open_tab_keeps_navigates_rules_and_refusals() {
+    let mut cdp = browser().await;
+    let policy = Policy::only(vec!["https://hr.example".into()]);
+    let out = execute_in(
+        &mut cdp,
+        &Action::OpenTab { name: "second".into(), url: "https://elsewhere.example/x".into() },
+        &Default::default(),
+        &policy,
+    )
+    .await;
+    assert!(!out.ok);
+    assert_eq!(
+        out.detail,
+        "https://elsewhere.example is not one of this project's allowed origins - add it to the sign-in recipe if the test really goes there"
+    );
+    assert!(!sent(&cdp).iter().any(|f| f["method"] == "Target.createTarget"), "a refused address opened a tab");
+
+    let bad = execute(&mut cdp, &Action::OpenTab { name: "second".into(), url: "javascript:alert(1)".into() }).await;
+    assert_eq!(bad.detail, "this action cannot run: open_tab needs an http, https or file address, not \"javascript:alert(1)\"");
+
+    assert_eq!(tab_failure(cdp.open_tab("main").await), "there is already a tab main");
+}
+
+/// Review Focus 5: a download a named tab started is that tab's; one whose
+/// frame no tab shows is the current tab's.
+#[tokio::test]
+async fn a_download_belongs_to_the_tab_whose_frame_started_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cdp = with_named("report").await;
+    cdp.enable_downloads(dir.path()).await.unwrap();
+    feed(
+        &mut cdp,
+        [
+            json!({ "method": "Browser.downloadWillBegin", "params": { "guid": "g-pop", "suggestedFilename": "report.csv", "frameId": "T-pop" } }),
+            json!({ "method": "Browser.downloadWillBegin", "params": { "guid": "g-main", "suggestedFilename": "main.csv", "frameId": "T-main" } }),
+        ],
+    );
+    settle(&mut cdp).await;
+    let names = |d: Vec<v2_lib::browser::downloads::DownloadEntry>| d.into_iter().map(|e| e.name).collect::<Vec<_>>();
+    assert_eq!(names(cdp.downloads()), ["main.csv"], "the report tab's download was taken for main's");
+    cdp.switch_tab("report").await.unwrap();
+    assert_eq!(names(cdp.downloads()), ["report.csv"]);
+    assert_eq!(names(cdp.all_downloads()), ["report.csv", "main.csv"]);
+    // A frame no tab is known to show: the current tab's.
+    feed(
+        &mut cdp,
+        [json!({ "method": "Browser.downloadWillBegin", "params": { "guid": "g-x", "suggestedFilename": "x.csv", "frameId": "F-unknown" } })],
+    );
+    settle(&mut cdp).await;
+    assert_eq!(names(cdp.downloads()), ["report.csv", "x.csv"]);
+}
+
+/// Review Focus 5: the page log and the network record a step reads are
+/// the current tab's, and a mark taken in `main` still dates a request in
+/// the tab the step moved to.
+#[tokio::test]
+async fn the_page_log_and_the_network_record_follow_the_current_tab() {
+    let mut cdp = with_named("report").await;
+    let request = |s: &str, id: &str, path: &str| {
+        on(
+            s,
+            "Network.requestWillBeSent",
+            json!({ "requestId": id, "timestamp": 1.0, "request": { "method": "GET", "url": format!("https://hr.example{path}") } }),
+        )
+    };
+    feed(&mut cdp, [request("S-pop", "n0", "/api/before")]);
+    settle(&mut cdp).await;
+    let mark = cdp.net_mark();
+    feed(
+        &mut cdp,
+        [
+            request("S-pop", "n1", "/api/after"),
+            on("S-pop", "Network.loadingFailed", json!({ "requestId": "n1", "timestamp": 2.0, "errorText": "net::ERR_FAILED" })),
+        ],
+    );
+    settle(&mut cdp).await;
+    assert!(cdp.page_log().is_empty(), "the report tab's failure reached main's log");
+    cdp.switch_tab("report").await.unwrap();
+    assert!(cdp.page_log().iter().any(|l| l.contains("/api/after")), "{:?}", cdp.page_log());
+    let since: Vec<String> = cdp.net_since(mark).into_iter().map(|e| e.path_query).collect();
+    assert_eq!(since.len(), 1, "{since:?}");
+    assert!(since[0].contains("/api/after"), "{since:?}");
+}
+
+/// Review Focus 4: the end of a case closes every tab but `main`, named or
+/// not, and starts the next case's tabs afresh.
+#[tokio::test]
+async fn the_end_of_a_case_closes_every_tab_but_main() {
+    let mut cdp = with_named("report").await;
+    popup(&mut cdp, "S-other", "T-other", "https://hr.example/other").await;
+    cdp.switch_tab("report").await.unwrap();
+    cdp.close_other_tabs().await;
+    let closed: Vec<&Value> = sent(&cdp).iter().filter(|f| f["method"] == "Target.closeTarget").collect();
+    assert_eq!(closed.len(), 2, "{closed:?}");
+    assert_eq!(cdp.tabs().len(), 1);
+    assert_eq!(cdp.tab_name(), "main");
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(sent(&cdp).last().unwrap()["sessionId"], MAIN);
+    // The next case claims nothing from this one.
+    let none = cdp.expect_tab("report", None, Duration::from_millis(200)).await;
+    assert_eq!(tab_failure(none), "no new tab opened within 0.2 seconds");
+}
+
+#[tokio::test]
+async fn a_tab_no_step_expects_is_logged_and_left_open() {
+    let _log = crate::serial::log_tail();
+    let mut cdp = browser().await;
+    cdp.step_began();
+    popup(&mut cdp, "S-ad", "T-ad", "https://hr.example/whats-new?campaign=x").await;
+    let lines: Vec<String> = v2_lib::applog::recent(200).into_iter().map(|l| l.message).collect();
+    assert!(lines.iter().any(|l| l == "a tab opened: https://hr.example/whats-new"), "{lines:?}");
+    let out = execute(&mut cdp, &Action::SwitchTab { name: "main".into() }).await;
+    assert!(out.ok);
+    assert_eq!(cdp.tabs().len(), 2, "the tab was closed");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+// ---------------------------------------------------------------------------
+// What a script may say about tabs, before any browser is involved.
+// ---------------------------------------------------------------------------
+
+fn tab_action(v: Value) -> Action {
+    serde_json::from_value(v).expect("an action")
+}
+
+#[test]
+fn the_tab_actions_read_from_a_script_validate_and_write_back_as_they_were() {
+    for v in [
+        json!({ "kind": "expect_tab", "name": "report" }),
+        json!({ "kind": "expect_tab", "name": "report-2_b", "url_contains": "/reports/", "within_ms": 20000 }),
+        json!({ "kind": "open_tab", "name": "second", "url": "/hr/employee/42" }),
+        json!({ "kind": "open_tab", "name": "second", "url": "https://hr.example/hr/home" }),
+        json!({ "kind": "switch_tab", "name": "main" }),
+        json!({ "kind": "close_tab", "name": "report" }),
+        json!({ "kind": "expect_tab_closed", "name": "preview" }),
+        json!({ "kind": "expect_tab_closed", "name": "preview", "within_ms": 5000 }),
+    ] {
+        let a = tab_action(v.clone());
+        assert!(a.validate().is_ok(), "{v}: {:?}", a.validate());
+        assert_eq!(serde_json::to_value(&a).unwrap(), v);
+    }
+}
+
+#[test]
+fn a_tab_name_is_1_to_30_letters_digits_dashes_or_underscores() {
+    let rule = |kind: &str, name: &str| {
+        tab_action(json!({ "kind": kind, "name": name, "url": "/x" })).validate().unwrap_err()
+    };
+    for kind in ["expect_tab", "open_tab", "switch_tab", "close_tab", "expect_tab_closed"] {
+        let long = "x".repeat(31);
+        for bad in ["", "has space", "dot.ted", "ünï", long.as_str()] {
+            let why = rule(kind, bad);
+            assert!(why.starts_with(&format!("{kind}: a tab name is 1 to 30 letters, digits, - or _")), "{why}");
+        }
+        let ok = tab_action(json!({ "kind": kind, "name": "a".repeat(30), "url": "/x" })).validate();
+        assert!(ok.is_ok(), "{kind}: {ok:?}");
+    }
+}
+
+#[test]
+fn main_cannot_be_closed_or_named_again() {
+    let why = |v: Value| tab_action(v).validate().unwrap_err();
+    assert_eq!(why(json!({ "kind": "close_tab", "name": "main" })), "main cannot be closed");
+    assert_eq!(why(json!({ "kind": "expect_tab_closed", "name": "main" })), "main cannot be closed");
+    assert_eq!(why(json!({ "kind": "expect_tab", "name": "main" })), "there is already a tab main");
+    assert_eq!(why(json!({ "kind": "open_tab", "name": "main", "url": "/x" })), "there is already a tab main");
+}
+
+#[test]
+fn the_tab_waits_are_bounded_and_open_tab_takes_only_an_address() {
+    let why = |v: Value| tab_action(v).validate().unwrap_err();
+    assert_eq!(why(json!({ "kind": "expect_tab", "name": "r", "within_ms": 0 })), "within_ms must be more than 0");
+    assert_eq!(
+        why(json!({ "kind": "expect_tab_closed", "name": "r", "within_ms": 60001 })),
+        "expect_tab_closed waits at most 60000 ms, not 60001"
+    );
+    assert!(why(json!({ "kind": "expect_tab", "name": "r", "url_contains": " " })).contains("empty url_contains"));
+    assert_eq!(
+        why(json!({ "kind": "open_tab", "name": "r", "url": "data:text/html,x" })),
+        "open_tab needs an http, https or file address, not \"data:text/html,x\""
+    );
+}
+
+#[test]
+fn expect_tab_and_expect_tab_closed_are_checks_and_the_rest_are_actions() {
+    assert!(tab_action(json!({ "kind": "expect_tab", "name": "r" })).is_check());
+    assert!(tab_action(json!({ "kind": "expect_tab_closed", "name": "r" })).is_check());
+    for v in [
+        json!({ "kind": "open_tab", "name": "r", "url": "/x" }),
+        json!({ "kind": "switch_tab", "name": "r" }),
+        json!({ "kind": "close_tab", "name": "r" }),
+    ] {
+        assert!(!tab_action(v.clone()).is_check(), "{v}");
+    }
+}
+
+#[test]
+fn a_guard_never_moves_between_tabs_and_a_recipe_holds_no_tab_action() {
+    let guarded = |inner: Value| {
+        tab_action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "then": [inner] })).validate()
+    };
+    for inner in [
+        json!({ "kind": "open_tab", "name": "r", "url": "/x" }),
+        json!({ "kind": "switch_tab", "name": "r" }),
+        json!({ "kind": "close_tab", "name": "r" }),
+        json!({ "kind": "expect_tab", "name": "r" }),
+        json!({ "kind": "expect_tab_closed", "name": "r" }),
+    ] {
+        let why = guarded(inner.clone()).unwrap_err();
+        assert!(why.contains(inner["kind"].as_str().unwrap()), "{why}");
+    }
+    for k in ["expect_tab", "open_tab", "switch_tab", "close_tab", "expect_tab_closed"] {
+        let r: Result<v2_lib::autorun::recipe::SignInRecipe, _> = serde_json::from_value(json!({
+            "start_url": "https://hr.example.internal/login",
+            "steps": [ { "kind": k, "name": "r", "url": "/x" } ],
+            "signed_in": { "css": "#marker" }
+        }));
+        let refused = match r {
+            Err(e) => e.to_string(),
+            Ok(recipe) => recipe.validate().unwrap_err(),
+        };
+        assert!(refused.contains(&format!("a sign-in recipe cannot contain {k} - it belongs in a case script")), "{refused}");
+    }
+}
+
+#[test]
+fn a_tab_action_is_said_without_a_host_or_a_query() {
+    use v2_lib::autorun::report::action_words;
+    let open = tab_action(json!({ "kind": "open_tab", "name": "second", "url": "https://hr.example/hr/e/42?token=hunter2" }));
+    assert_eq!(action_words(&open), "open a new tab \"second\" at /hr/e/42");
+    assert_eq!(action_words(&tab_action(json!({ "kind": "expect_tab", "name": "r" }))), "wait for a new tab and call it \"r\"");
+    assert_eq!(action_words(&tab_action(json!({ "kind": "switch_tab", "name": "r" }))), "switch to the \"r\" tab");
+    assert_eq!(action_words(&tab_action(json!({ "kind": "close_tab", "name": "r" }))), "close the \"r\" tab");
+    assert_eq!(action_words(&tab_action(json!({ "kind": "expect_tab_closed", "name": "r" }))), "check the \"r\" tab closes");
+    let tried = v2_lib::ai_bridge::describe_try(&open, true);
+    assert_eq!(tried, "AI tried open_tab second /hr/e/42 in the supervised browser: ok");
+    assert_eq!(
+        v2_lib::autorun::patterns::action_target(&tab_action(json!({ "kind": "switch_tab", "name": "r" }))).as_deref(),
+        Some("the \"r\" tab")
+    );
 }

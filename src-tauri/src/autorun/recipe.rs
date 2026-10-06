@@ -235,6 +235,10 @@ fn check(action: &Action) -> Result<(), String> {
     if let Some(k @ ("expire_session" | "return_to_area")) = kind.as_deref() {
         return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
     }
+    // Every case signs in in its first tab, `main`: tabs are a case's own.
+    if let Some(k @ ("expect_tab" | "open_tab" | "switch_tab" | "close_tab" | "expect_tab_closed")) = kind.as_deref() {
+        return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
+    }
     // `{{username}}`/`{{password}}` are filled in only for a fill's own
     // VALUE (see `fill_in`); anywhere else - a navigate url, a locator, an
     // expectation, even a fill's own selector - the placeholder is left

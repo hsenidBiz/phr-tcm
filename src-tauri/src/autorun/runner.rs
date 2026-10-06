@@ -13,9 +13,9 @@ use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
 use super::{store, StepScript};
 use crate::browser::actions::{
-    execute_in, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN, WHEN_VISIBLE_MS,
+    execute_in, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN, WHEN_VISIBLE_MS,
 };
-use crate::browser::cdp::Driver;
+use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
 use crate::browser::downloads::{DownloadEntry, DownloadState};
@@ -174,6 +174,11 @@ pub struct InRun<'a> {
     /// whatever its `within_ms` says: `WATCHED_DOWNLOAD_WAIT_MS` when `None`.
     /// A test sets a shorter one.
     pub watched_cap_ms: Option<u32>,
+    /// Learned back: the tab the step ran in, when that was not `main` -
+    /// the tab it ended in, or else the last other tab one of its actions
+    /// (other than a tab action) acted in. `None` for a step that stayed in
+    /// `main`.
+    pub tab: Option<String>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -219,9 +224,14 @@ pub async fn run_step_in_run<D: Driver>(
     if step.actions.iter().any(|a| matches!(a, Action::ExpectResponse { .. } | Action::ExpectDownload { .. })) {
         api_checks::settle(d, timing).await;
     }
+    // A tab opened from now on, or during the step before, is one this
+    // step's `expect_tab` may claim.
+    d.step_began();
     let mark = d.net_mark();
     let began = Instant::now();
     run.began = Some(began);
+    run.tab = None;
+    let mut ran_in: Option<String> = None;
     let here =
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
@@ -238,6 +248,18 @@ pub async fn run_step_in_run<D: Driver>(
             stopped.screenshot = picture(d, root).await;
             out.push(stopped);
             blocked = Some(AFTER_SAVE_BLOCKED);
+            continue;
+        }
+        // The tab an action acted in. A tab action acts on the tabs, not in
+        // the current one, so it does not count.
+        let in_tab = d.tab_name();
+        if in_tab != MAIN_TAB && !action.is_tab_action() {
+            ran_in = Some(in_tab);
+        }
+        // The current tab closed by itself: an action that acts in it says
+        // so at once, and the tab actions still run.
+        if let Some(gone) = in_missing_tab(d, action) {
+            out.push(gone);
             continue;
         }
         let mut outcome = match action {
@@ -333,7 +355,20 @@ pub async fn run_step_in_run<D: Driver>(
         }
         out.push(outcome);
     }
+    let ended_in = d.tab_name();
+    run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
     Ok(out)
+}
+
+/// The supervised browser keeps one set of tabs across the cases a person
+/// runs in it: a step of another case than the last one (`case`) is a new
+/// case, so every tab but `main` is closed first. `tabs_case` is the case
+/// the browser's tabs belong to.
+pub async fn tabs_for_case<D: Driver>(d: &mut D, tabs_case: &mut Option<i32>, case: i32) {
+    if *tabs_case != Some(case) {
+        d.close_other_tabs().await;
+    }
+    *tabs_case = Some(case);
 }
 
 /// What a plain action needs from the step it is in.
@@ -357,7 +392,7 @@ async fn plain<D: Driver>(
     match action {
         // A script saved before the switch was turned off. The runner's
         // own trip home never comes through here.
-        Action::Navigate { .. } if !here.direct_urls => {
+        Action::Navigate { .. } | Action::OpenTab { .. } if !here.direct_urls => {
             (ActionOutcome::failed(nav::no_address(here.step)), Some(AFTER_REFUSED_ADDRESS))
         }
         Action::Upload { selector, file } => {
