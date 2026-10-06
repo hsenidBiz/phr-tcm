@@ -323,7 +323,8 @@ export const apiTemplates: Screen = {
       name: "Clean up test-made drafts",
       does:
         "Opens the Clean up window, to delete the drafts fixtures and setups made once you no longer need them. " +
-        "Only drafts the tests recorded making are ever listed: nothing you or anyone else made by hand can appear there.",
+        "Only drafts the tests recorded making are ever listed: nothing you or anyone else made by hand can appear there. " +
+        "Each line names the delete template that will remove it.",
     },
     {
       id: "fixture",

@@ -45,6 +45,7 @@ const line = (id: string, name: string, deletable: boolean, kind = "cycle") => (
   },
   deletable,
   note: deletable ? null : `no proven delete template for ${kind}`,
+  ...(deletable ? { template: "Delete a cycle" } : {}),
 });
 
 type Call = { cmd: string; args: Record<string, unknown> };
@@ -114,12 +115,14 @@ test("each line shows its kind, name, id, age and fixture; a line with no delete
   expect(row).toHaveTextContent("id 274");
   expect(row).toHaveTextContent("9 days old");
   expect(row).toHaveTextContent("made by draft-cycle");
+  expect(row).toHaveTextContent("deleted by Delete a cycle");
 
   const ticked = screen.getByRole("checkbox", { name: "Delete cycle AUTOTEST cycle" });
   await waitFor(() => expect(ticked).toHaveAttribute("aria-checked", "true"));
 
   const other = screen.getByRole("listitem", { name: "suite AUTOTEST suite" });
   expect(other).toHaveTextContent("no proven delete template for suite");
+  expect(other).not.toHaveTextContent("deleted by");
   const box = within(other).getByRole("checkbox", { name: "Delete suite AUTOTEST suite" });
   expect(box).toHaveAttribute("aria-checked", "false");
   expect(box).toHaveAttribute("aria-disabled", "true");

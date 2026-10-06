@@ -450,6 +450,70 @@ async fn kind_and_id_together_name_what_is_deleted() {
     assert_eq!(status_of(r.root.path(), &env, "suite", "42"), "present");
 }
 
+/// A delete template for cycles with its own title and form field, so a
+/// run's request shows which of several it used.
+fn titled_delete(id: &str, title: &str, field: &str, at: &str, env: &str) -> ApiTemplate {
+    let mut t = proven(delete_draft(id, Some("cycle")), at, Some(env));
+    t.title = title.into();
+    t.steps[0].form = Some(BTreeMap::from([(field.to_string(), "{{id}}".to_string())]));
+    t
+}
+
+/// Each deletable line names the most recently proven delete template for
+/// its kind; a line that cannot be deleted names none.
+#[test]
+fn the_preview_names_the_most_recently_proven_delete_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = active(dir.path());
+    for t in [
+        titled_delete("old-cycle", "Delete a cycle (old)", "Id", "2026-10-01 09:00:00", &env.name),
+        titled_delete("new-cycle", "Delete a cycle (new)", "Id", "2026-10-02 09:00:00", &env.name),
+        {
+            let mut t = proven(delete_draft("remove-suite", Some("suite")), "2026-10-01 09:00:00", Some(&env.name));
+            t.title = String::new();
+            t
+        },
+    ] {
+        store::save(dir.path(), ORG, PROJECT, &t).unwrap();
+    }
+    seed(
+        dir.path(),
+        &[
+            entry(&env.id, "cycle", "1", "AUTOTEST cycle", 9 * DAY, "present"),
+            entry(&env.id, "suite", "2", "AUTOTEST suite", 9 * DAY, "present"),
+            entry(&env.id, "plan", "3", "AUTOTEST plan", 9 * DAY, "present"),
+        ],
+    );
+    let lines = preview(dir.path(), ORG, PROJECT, &query(dir.path(), "AUTOTEST", 7), now()).unwrap();
+    let got: Vec<Option<&str>> = lines.iter().map(|l| l.template.as_deref()).collect();
+    assert_eq!(got, vec![Some("Delete a cycle (new)"), Some("remove-suite"), None]);
+    assert!(!lines[2].deletable);
+}
+
+/// The template the preview names is the one the run sends with.
+#[tokio::test]
+async fn the_preview_and_the_run_use_the_same_delete_template() {
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let (mut r, _env) = cleanup_rig(vec![answer(200, json!({ "success": true }))], &[("31", "AUTOTEST one", 9)]);
+    let env = active(r.root.path());
+    store::save(
+        r.root.path(),
+        ORG,
+        PROJECT,
+        &titled_delete("newer-cycle", "Delete a cycle (newer)", "CycleId", "2026-10-03 09:00:00", &env.name),
+    )
+    .unwrap();
+    let q = query(r.root.path(), "AUTOTEST", 7);
+    let lines = preview(r.root.path(), ORG, PROJECT, &q, now()).unwrap();
+    assert_eq!(lines[0].template.as_deref(), Some("Delete a cycle (newer)"));
+
+    clean(&mut r, &q, &["31"], &AtomicBool::new(false), &mut vec![], None).await.unwrap();
+    let sent = &r.fetched()[0][0]["body"]["fields"];
+    assert_eq!(sent["CycleId"], json!("31"), "the run sent through the template the preview named: {sent}");
+    assert!(sent.get("Id").is_none());
+}
+
 /// A rig whose root holds a proven delete template for cycles and the
 /// record `entries` (each in the active environment).
 fn cleanup_rig(responses: Vec<Value>, entries: &[(&str, &str, i64)]) -> (Rig, String) {
