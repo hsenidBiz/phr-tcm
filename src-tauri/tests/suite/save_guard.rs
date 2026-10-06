@@ -311,18 +311,22 @@ async fn an_unguarded_client_continues_a_paused_request_rather_than_leave_it() {
 async fn a_held_guard_lets_a_sign_in_save_through_and_records_nothing() {
     let mut cdp = guarded(&[]).await;
     cdp.hold_saves(true);
+    // The hold takes effect once the browser has answered a command sent
+    // after it was asked for (see browser_tabs for why).
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     cdp.transport_mut().incoming.extend([
         paused("r1", "POST", "https://hr.example/Account/SubmitLogin"),
-        r#"{"id":3,"result":{}}"#.to_string(),
+        r#"{"id":4,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(cdp.take_save_blocked(), None);
     cdp.hold_saves(false);
-    // The continue for r1 took id 4, so this call is 5.
+    // The continue for r1 took id 5, so this call is 6.
     cdp.transport_mut().incoming.extend([
         paused("r2", "POST", "https://hr.example/api/Save"),
-        r#"{"id":5,"result":{}}"#.to_string(),
+        r#"{"id":6,"result":{}}"#.to_string(),
     ]);
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");

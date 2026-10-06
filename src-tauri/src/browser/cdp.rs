@@ -319,8 +319,17 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// The run's guard words while it guards saves: a tab the page opens is
     /// guarded with them before it runs.
     armed: Option<Vec<String>>,
-    /// The run's `hold_saves`, for a tab opened during a sign-in.
+    /// The run's `hold_saves`, for a tab opened during a sign-in. True only
+    /// once the hold has taken effect (`hold_marker`).
     hold: bool,
+    /// A hold asked for (`hold_saves(true)`) that has not taken effect yet.
+    hold_pending: bool,
+    /// The first command sent since the hold was asked for. The hold takes
+    /// effect only once its answer (or a later one) is read: the browser
+    /// writes every event it sent before that command arrived ahead of the
+    /// answer, so a request it paused before then is still judged by the
+    /// guard, however late it is read.
+    hold_marker: Option<u64>,
     /// A stopped save from a tab that has since closed, not yet reported.
     blocked_elsewhere: Option<String>,
     /// Frames sent without waiting (answers to paused requests, a new tab's
@@ -427,6 +436,8 @@ impl<T: Transport> Cdp<T> {
             deadline: None,
             armed: None,
             hold: false,
+            hold_pending: false,
+            hold_marker: None,
             blocked_elsewhere: None,
             unsent_answers: VecDeque::new(),
             downloads: None,
@@ -538,6 +549,8 @@ impl<T: Transport> Cdp<T> {
     pub async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
         let before = (self.armed.replace(patterns.to_vec()), self.hold);
         self.hold = false;
+        self.hold_pending = false;
+        self.hold_marker = None;
         let mut asked: Vec<String> = Vec::new();
         // First every tab open now, so each takes the new words; then any
         // tab that came without a guard while those were asked.
@@ -636,12 +649,42 @@ impl<T: Transport> Cdp<T> {
     /// switching interception off: a sign-in is the runner's own, and what
     /// it sends is not the script's draft. Every tab, and a tab opened
     /// meanwhile.
+    ///
+    /// A request is judged as it was when the browser paused it, not when
+    /// its pause is read: a save the page sent as it was left (a beacon on
+    /// pagehide) can be read after the sign-in has arrived and asked for
+    /// the hold, and it must still be stopped. So the hold takes effect
+    /// only once the browser has answered a command sent after it was asked
+    /// for (`hold_marker`); every request paused before that is read first,
+    /// and is refused. Ending the hold takes effect at once.
     pub fn hold_saves(&mut self, hold: bool) {
+        if hold {
+            if !self.hold && !self.hold_pending {
+                self.hold_pending = true;
+                self.hold_marker = None;
+            }
+            return;
+        }
+        self.hold_pending = false;
+        self.hold_marker = None;
+        self.set_hold(false);
+    }
+
+    fn set_hold(&mut self, hold: bool) {
         self.hold = hold;
         for t in &mut self.tabs {
             if let Some(g) = t.guard.as_mut() {
                 g.hold = hold;
             }
+        }
+    }
+
+    /// A command's answer was read: a hold waiting on it takes effect.
+    fn note_reply(&mut self, id: u64) {
+        if self.hold_marker.is_some_and(|m| id >= m) {
+            self.hold_pending = false;
+            self.hold_marker = None;
+            self.set_hold(true);
         }
     }
 
@@ -970,6 +1013,7 @@ impl<T: Transport> Cdp<T> {
     /// refused page log, dialog handler or lifecycle events only loses
     /// that, and is logged.
     async fn on_setup_reply(&mut self, id: u64, answer: Result<serde_json::Value, String>) -> Result<(), CdpError> {
+        self.note_reply(id);
         let Some((session, step)) = self.setup.remove(&id) else {
             return Ok(());
         };
@@ -1095,6 +1139,9 @@ impl<T: Transport> Cdp<T> {
         self.send_unsent_answers().await?;
         let id = self.next_id;
         self.next_id += 1;
+        if self.hold_pending && self.hold_marker.is_none() {
+            self.hold_marker = Some(id);
+        }
         self.transport
             .send(frame_in(id, method, params, session.as_deref().unwrap_or("")))
             .await
@@ -1115,6 +1162,7 @@ impl<T: Transport> Cdp<T> {
             let raw = self.next_frame().await?;
             match classify(&raw) {
                 Incoming::Reply { id: got, answer } if got == id => {
+                    self.note_reply(got);
                     return answer.map_err(|message| CdpError::Protocol { method: method.to_string(), message });
                 }
                 // A new tab's setup, or a reply to a call that already

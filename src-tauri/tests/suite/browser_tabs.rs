@@ -540,3 +540,33 @@ async fn main_detaching_closes_the_connection() {
     assert_eq!(cdp.call("Runtime.evaluate", json!({})).await, Err(CdpError::Closed));
     assert!(matches!(cdp.wait_event("Page.loadEventFired", Duration::from_millis(50)).await, Err(CdpError::Closed)));
 }
+
+/// The draft page's pagehide beacon is paused before the sign-in asks for
+/// the hold, but its pause is read after. It is judged as it was when the
+/// browser paused it: refused. The hold takes effect only once the browser
+/// has answered a command sent after it was asked for.
+#[tokio::test]
+async fn a_save_paused_before_the_hold_is_refused_even_when_read_after_it() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.hold_saves(true);
+    // Read with no command since the hold: still guarded.
+    feed(&mut cdp, [paused(MAIN, "r0", "POST", "https://hr.example/api/SaveDraft")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r0").unwrap()["method"], "Fetch.failRequest");
+    // Read ahead of the answer to the first command since the hold.
+    let beacon = paused(MAIN, "r1", "POST", "https://hr.example/api/SaveDraft?token=hunter2");
+    cdp.transport_mut().before_reply.push(("Runtime.evaluate@S-main".to_string(), beacon));
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest", "the beacon was let through");
+    assert!(cdp.take_save_blocked().is_some_and(|b| b.contains("POST /api/SaveDraft")));
+    // From then on the hold is on: the sign-in's own requests go through.
+    feed(&mut cdp, [paused(MAIN, "r2", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
+    // Ending the hold takes effect at once.
+    cdp.hold_saves(false);
+    feed(&mut cdp, [paused(MAIN, "r3", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r3").unwrap()["method"], "Fetch.failRequest");
+}
