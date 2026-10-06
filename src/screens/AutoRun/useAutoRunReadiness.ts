@@ -4,14 +4,14 @@
 // Every input separates "not known yet" from "none": `undefined` (the site)
 // or `null` (the rest) means the answer has not come, or could not be read.
 // Neither is ever counted as missing, so a slow or failed read can never
-// send the screen to Setup by itself - a failed read shows its own error on
-// its Setup row instead.
+// open the Setup panel by itself - a failed read shows its own error on its
+// Setup row instead.
 
 import { useMemo } from "react";
 import type { CaseScript } from "../../bindings";
 
-/** The screen's three tabs. */
-export type AutoRunTab = "cases" | "runs" | "setup";
+/** The screen's two tabs. Setup is a panel on the Test cases tab. */
+export type AutoRunTab = "cases" | "runs";
 
 export function useAutoRunReadiness(input: {
   /** Where a run goes. `undefined` while unknown; `null` or "" is none. */

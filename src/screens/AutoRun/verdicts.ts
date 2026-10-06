@@ -72,6 +72,22 @@ export function lastResults(
   }[],
 ): Map<number, ResultBucket> {
   const out = new Map<number, ResultBucket>();
+  for (const [id, { record }] of lastRecords(runs)) out.set(id, resultBucket(record));
+  return out;
+}
+
+/**
+ * Each case's record in the newest run that reached it, with that run: the
+ * rule `lastResults` reads its buckets from, so a case card's last-run
+ * downloads and its last result always come from the same run.
+ */
+export function lastRecords<
+  R extends {
+    started_at: string;
+    cases: readonly { case_id: number; verdict: string; proposed?: string | null }[];
+  },
+>(runs: readonly R[]): Map<number, { run: R; record: R["cases"][number] }> {
+  const out = new Map<number, { run: R; record: R["cases"][number] }>();
   const at = new Map<number, number>();
   for (const run of runs) {
     const started = Number(run.started_at);
@@ -81,7 +97,7 @@ export function lastResults(
       const seen = at.get(c.case_id);
       if (seen !== undefined && seen > when) continue;
       at.set(c.case_id, when);
-      out.set(c.case_id, resultBucket(c));
+      out.set(c.case_id, { run, record: c });
     }
   }
   return out;
