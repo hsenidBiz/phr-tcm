@@ -19,6 +19,7 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import { unwrapStr } from "../../lib/ipc";
 import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import SetupSection from "./SetupSection";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
@@ -81,8 +82,9 @@ export default function ScriptEditor({
   // null = untouched, so the saved script's area shows until the person picks.
   const [pickedArea, setPickedArea] = useState<string | null>(null);
   const named = pickedArea ?? existing.data?.area?.trim() ?? "";
-  // A script may name an area in another case than it was recorded in.
-  const match = recorded.find((a) => a.area.trim().toLowerCase() === named.toLowerCase());
+  // A script may name an area in another case, or with other spaces, than
+  // it was recorded in: matched as runs match it.
+  const match = recorded.find((a) => sameAreaName(a.area, named));
   const area = match?.area ?? named;
   const areaKnown = match !== undefined;
   // null = untouched, so the saved script's account shows until the person picks.

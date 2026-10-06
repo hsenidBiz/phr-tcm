@@ -33,6 +33,13 @@ const MAX_QUOTED_CHARS: usize = 200;
 const MAX_ROWS: u32 = 1_048_576;
 const MAX_COLS: u32 = 16_384;
 
+/// The most cells a sheet may span, rows times columns of the part of it
+/// that holds something, for its headers and cells to be checked.
+pub const MAX_SHEET_CELLS: u64 = 1_000_000;
+
+/// Said when a sheet spans more than `MAX_SHEET_CELLS`.
+pub const SHEET_TOO_LARGE: &str = "the spreadsheet is too large to check (over 1,000,000 cells)";
+
 /// One `expect_download`'s checks on the file, once it has been found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadCheck {
@@ -295,42 +302,106 @@ fn read_workbook(path: &Path, shown_name: &str, kind: Kind, sheet: Option<&str>)
             open_workbook(path).map_err(|e: calamine::XlsError| not_a_sheet(shown_name, &e.to_string()))?;
         return read_book(book, shown_name, sheet);
     }
-    let book: Xlsx<_> =
+    let mut book: Xlsx<_> =
         open_workbook(path).map_err(|e: calamine::XlsxError| not_a_sheet(shown_name, &e.to_string()))?;
-    read_book(book, shown_name, sheet)
+    read_xlsx_sheet(&mut book, shown_name, sheet)
 }
 
+/// The sheet `sheet` names (ignoring case and the spaces around it), or the
+/// first.
+fn choose_sheet(names: &[String], shown_name: &str, sheet: Option<&str>) -> Result<String, String> {
+    match sheet.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(want) => names.iter().find(|n| n.trim().to_lowercase() == want.to_lowercase()).cloned().ok_or_else(|| {
+            format!("sheet \"{want}\" is not in \"{shown_name}\" (it has: {})", clip(&names.join(", ")))
+        }),
+        None => names.first().cloned().ok_or_else(|| not_a_sheet(shown_name, "it has no sheets")),
+    }
+}
+
+/// Whether the cells from `start` to `end` (zero-based row and column,
+/// both included) are few enough to read: rows times columns at most
+/// `MAX_SHEET_CELLS`. `Err` is `SHEET_TOO_LARGE`.
+pub fn sheet_size_gate(start: (u32, u32), end: (u32, u32)) -> Result<(), String> {
+    let rows = u64::from(end.0.saturating_sub(start.0)) + 1;
+    let cols = u64::from(end.1.saturating_sub(start.1)) + 1;
+    if rows.saturating_mul(cols) > MAX_SHEET_CELLS {
+        return Err(SHEET_TOO_LARGE.to_string());
+    }
+    Ok(())
+}
+
+/// An xls sheet: calamine has the whole workbook in memory once it is open,
+/// but the grid is laid out from it only when its used range is within
+/// `sheet_size_gate`.
 fn read_book<R, B>(mut book: B, shown_name: &str, sheet: Option<&str>) -> Result<Grid, String>
 where
     R: std::io::Read + std::io::Seek,
     B: Reader<R>,
     B::Error: std::fmt::Display,
 {
-    let names = book.sheet_names();
-    let chosen = match sheet.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(want) => names.iter().find(|n| n.trim().to_lowercase() == want.to_lowercase()).cloned().ok_or_else(|| {
-            format!("sheet \"{want}\" is not in \"{shown_name}\" (it has: {})", clip(&names.join(", ")))
-        })?,
-        None => names.first().cloned().ok_or_else(|| not_a_sheet(shown_name, "it has no sheets"))?,
-    };
+    let chosen = choose_sheet(&book.sheet_names(), shown_name, sheet)?;
     let range = book.worksheet_range(&chosen).map_err(|e| not_a_sheet(shown_name, &e.to_string()))?;
-    // The range starts at the first cell holding something, which need not
-    // be A1; the grid is laid out from A1 so a reference means what it says.
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    if let (Some((r0, c0)), Some((r1, c1))) = (range.start(), range.end()) {
-        for r in r0..=r1 {
-            let mut row = vec![String::new(); c0 as usize];
-            for c in c0..=c1 {
-                row.push(range.get_value((r, c)).map(shown).unwrap_or_default());
-            }
-            let at = r as usize;
-            if rows.len() <= at {
-                rows.resize(at + 1, Vec::new());
-            }
-            rows[at] = row;
+    let (Some(start), Some(end)) = (range.start(), range.end()) else {
+        return Ok(Grid { rows: Vec::new() });
+    };
+    sheet_size_gate(start, end)?;
+    let cells = range.used_cells().map(|(r, c, v)| ((start.0 + r as u32, start.1 + c as u32), shown(v)));
+    Ok(lay_out(cells, start, end))
+}
+
+/// An xlsx sheet, read cell by cell rather than as calamine's range, which
+/// sets aside room for every cell between the first and the last one
+/// holding something - a sheet whose used part is huge (or claims to be)
+/// is refused before that happens. What it declares is not what decides:
+/// a sheet saying it spans A1:XFD1048576 and holding a few cells is
+/// measured by the cells it holds.
+fn read_xlsx_sheet<RS: std::io::Read + std::io::Seek>(
+    book: &mut Xlsx<RS>,
+    shown_name: &str,
+    sheet: Option<&str>,
+) -> Result<Grid, String> {
+    let chosen = choose_sheet(&book.sheet_names(), shown_name, sheet)?;
+    let mut reader = match book.worksheet_cells_reader(&chosen) {
+        Ok(reader) => reader,
+        // A chart sheet holds no cells, as calamine's own range reads it.
+        Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(Grid { rows: Vec::new() }),
+        Err(e) => return Err(not_a_sheet(shown_name, &e.to_string())),
+    };
+    let mut cells: Vec<((u32, u32), String)> = Vec::new();
+    let mut used: Option<((u32, u32), (u32, u32))> = None;
+    while let Some(cell) = reader.next_cell().map_err(|e| not_a_sheet(shown_name, &e.to_string()))? {
+        if matches!(cell.get_value(), calamine::DataRef::Empty) {
+            continue;
+        }
+        let (r, c) = cell.get_position();
+        let (start, end) = match used {
+            None => ((r, c), (r, c)),
+            Some((s, e)) => ((s.0.min(r), s.1.min(c)), (e.0.max(r), e.1.max(c))),
+        };
+        // The used part only grows: once it is too large, it stays so.
+        sheet_size_gate(start, end)?;
+        used = Some((start, end));
+        cells.push(((r, c), shown(&Data::from(cell.get_value().clone()))));
+    }
+    let Some((start, end)) = used else {
+        return Ok(Grid { rows: Vec::new() });
+    };
+    Ok(lay_out(cells.into_iter(), start, end))
+}
+
+/// The grid from A1, so a reference means what it says, of the cells
+/// within `start` to `end`: the rows above the first are empty, and each
+/// row in the used part has a cell up to the last column.
+fn lay_out(cells: impl Iterator<Item = ((u32, u32), String)>, start: (u32, u32), end: (u32, u32)) -> Grid {
+    let width = end.1 as usize + 1;
+    let mut rows: Vec<Vec<String>> = vec![Vec::new(); start.0 as usize];
+    rows.extend((start.0..=end.0).map(|_| vec![String::new(); width]));
+    for ((r, c), text) in cells {
+        if let Some(slot) = rows.get_mut(r as usize).and_then(|row| row.get_mut(c as usize)) {
+            *slot = text;
         }
     }
-    Ok(Grid { rows })
+    Grid { rows }
 }
 
 /// A cell's text as a spreadsheet shows it, as near as a reader without

@@ -8,7 +8,7 @@
 
 use v2_lib::autorun::store::{
     clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
-    load_shot, new_run_id, supervised_downloads_dir,
+    load_shot, new_run_id, supervised_downloads_dir, sweep_orphan_downloads,
     safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
     SaveScriptsError,
 };
@@ -950,6 +950,83 @@ fn clear_runs_also_removes_every_runs_downloads() {
     assert!(!downloads_dir(root, "run-1").exists());
     assert!(!downloads_dir(root, "run-2").exists());
     assert!(!root.join("downloads").join("stray.csv").exists());
+}
+
+/// A run with nothing in it, saved under `id`.
+fn saved_run(root: &std::path::Path, id: &str) {
+    let run = LocalRun {
+        id: id.to_string(),
+        pbi_id: 42,
+        started_at: "1786000000000".to_string(),
+        cases: vec![],
+        mode: String::new(),
+        published: None,
+        environment: None,
+        resets: vec![],
+    };
+    save_run(root, &run).unwrap();
+}
+
+/// A download folder for `id` holding one file.
+fn downloads_for(root: &std::path::Path, id: &str) -> std::path::PathBuf {
+    let folder = downloads_dir(root, id);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Template.xlsx"), "x").unwrap();
+    folder
+}
+
+/// A run whose file is removed some other way than Clear loses its
+/// downloads on the next sweep; a run still there keeps its own.
+#[test]
+fn a_deleted_runs_downloads_go_with_it() {
+    let _tail = crate::serial::log_tail();
+    let dir = TempDir::new();
+    let root = dir.path();
+    saved_run(root, "run-1");
+    saved_run(root, "run-2");
+    let gone = downloads_for(root, "run-1");
+    let kept = downloads_for(root, "run-2");
+    std::fs::remove_file(root.join("runs").join("run-1.json")).unwrap();
+
+    assert_eq!(sweep_orphan_downloads(root), 1);
+    assert!(!gone.exists(), "the deleted run's downloads stayed");
+    assert_eq!(std::fs::read_to_string(kept.join("Template.xlsx")).unwrap(), "x");
+    assert_eq!(list_runs(root).len(), 1);
+}
+
+/// Folders no run names are swept, the supervised browser's folder is
+/// never touched (it has its own sweep), and a folder nested in an orphan
+/// keeps it, as Clear keeps one.
+#[test]
+fn orphan_downloads_are_swept_and_the_supervised_folder_is_untouched() {
+    let _tail = crate::serial::log_tail();
+    let dir = TempDir::new();
+    let root = dir.path();
+    saved_run(root, "run-5");
+    let own = downloads_for(root, "run-5");
+    let orphan = downloads_for(root, "run-9");
+    let unnamed = downloads_for(root, "../escape");
+    let nested = downloads_for(root, "run-8");
+    std::fs::create_dir_all(nested.join("inner")).unwrap();
+    std::fs::write(nested.join("inner").join("keep.txt"), "stay").unwrap();
+    let supervised = supervised_downloads_dir(root);
+    std::fs::create_dir_all(&supervised).unwrap();
+    std::fs::write(supervised.join("open.csv"), "in use").unwrap();
+    std::fs::write(root.join("downloads").join("stray.csv"), "z").unwrap();
+
+    assert_eq!(sweep_orphan_downloads(root), 2, "run-9 and the unnamed-run folder");
+    assert!(!orphan.exists());
+    assert!(!unnamed.exists());
+    assert!(own.join("Template.xlsx").exists(), "a run that is there keeps its downloads");
+    assert_eq!(std::fs::read_to_string(supervised.join("open.csv")).unwrap(), "in use");
+    assert!(!nested.join("Template.xlsx").exists());
+    assert_eq!(std::fs::read_to_string(nested.join("inner").join("keep.txt")).unwrap(), "stay");
+    assert!(root.join("downloads").join("stray.csv").exists(), "only folders are a run's");
+
+    // Nothing left to sweep, and a root with no downloads at all is fine.
+    assert_eq!(sweep_orphan_downloads(root), 0);
+    let empty = TempDir::new();
+    assert_eq!(sweep_orphan_downloads(empty.path()), 0);
 }
 
 /// The same rule as `shots/`: only files go, and a folder nested deeper

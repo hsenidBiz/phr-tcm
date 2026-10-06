@@ -599,6 +599,24 @@ test("an area name that is already recorded asks Replace before recording over i
   ]);
 });
 
+test("an area name with a non-breaking space is the area already recorded", async () => {
+  const started: unknown[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [CYCLE_SETUP, MANAGE_CYCLE] };
+    if (cmd === "auto_run_record_start") {
+      started.push(args);
+      return null;
+    }
+  });
+  await screen.findByText("Manage Cycle");
+  await openRecordForm();
+  await pickModule("PMS");
+  fireEvent.change(screen.getByRole("textbox", { name: "Area name" }), { target: { value: "Manage\u00a0Cycle" } });
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  expect(await screen.findByText("Replace Manage Cycle?")).toBeInTheDocument();
+  expect(started).toEqual([]);
+});
+
 test("a name another module holds is refused in the form, and nothing starts", async () => {
   const started: unknown[] = [];
   mount((cmd, args) => {

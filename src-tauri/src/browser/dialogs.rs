@@ -207,7 +207,10 @@ pub async fn judge<D: Driver>(d: &mut D, id: u32, want: &Expectation<'_>, timing
         }
     }
     if let Some(text) = want.contains {
-        if !message.to_lowercase().contains(&text.to_lowercase()) {
+        // Case ignored, and every run of whitespace one space on both
+        // sides: a message's non-breaking space is a space.
+        let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        if !collapse(message).contains(&collapse(text)) {
             return ActionOutcome::failed(said_without(message, text));
         }
     }

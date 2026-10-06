@@ -457,3 +457,30 @@ async fn a_run_keeps_the_dialog_on_the_step_and_fails_on_an_unexpected_one_when_
     let saved = serde_json::to_value(&run.cases[0].steps[0]).unwrap();
     assert!(saved.get("dialog").is_none(), "{saved}");
 }
+
+/// A non-breaking space, a figure space, a narrow non-breaking space and a
+/// tab: what a page or a pasted name may hold where a space is meant.
+const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
+
+/// A dialog's `contains` treats any Unicode space as a space, in the
+/// message and in the script.
+#[tokio::test]
+async fn a_dialog_contains_treats_a_unicode_space_as_a_space() {
+    for sp in ODD_SPACES {
+        let mut d = opens("confirm", &format!("Delete{sp}this{sp}{sp}cycle?"));
+        let s = step(1, json!([
+            { "kind": "click", "selector": "#go" },
+            { "kind": "expect_dialog", "contains": "delete this cycle", "answer": "dismiss" }
+        ]));
+        let (out, _) = run(&mut d, &s, false).await;
+        assert!(out[1].ok, "{sp:?}: {out:?}");
+
+        let mut d = opens("confirm", "Delete this cycle?");
+        let s = step(1, json!([
+            { "kind": "click", "selector": "#go" },
+            { "kind": "expect_dialog", "contains": format!("this{sp}cycle"), "answer": "dismiss" }
+        ]));
+        let (out, _) = run(&mut d, &s, false).await;
+        assert!(out[1].ok, "{sp:?}: {out:?}");
+    }
+}

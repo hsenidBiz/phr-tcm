@@ -483,3 +483,25 @@ async fn something_that_is_not_a_table_says_so() {
     let out = execute_with(&mut d, &action(json!({ "kind": "expect_row_count", "table": { "css": "#nope" }, "at_least": 1, "timeout_ms": 30 })), &quick()).await;
     assert_eq!(out.detail, "waited 30ms: #nope is not on the page");
 }
+
+/// A non-breaking space, a figure space, a narrow non-breaking space and a
+/// tab: what a page or a pasted name may hold where a space is meant.
+const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
+
+/// A column name and a cell's text with any Unicode space match the same
+/// with a space, whichever side holds it.
+#[test]
+fn table_headers_and_cells_treat_a_unicode_space_as_a_space() {
+    for sp in ODD_SPACES {
+        let odd = |s: &str| s.replace(' ', sp);
+        // The page's side holds the odd space.
+        let read = table(&[&odd("Employee Name"), "Status"], &[&[&odd("Ann  Lee"), "Active"]]);
+        assert_eq!(read.column("employee name"), Ok(0), "{sp:?}");
+        assert_eq!(find_row(&read, &cells(&[("Employee Name", "Ann Lee")]), true), Ok(Some(0)), "{sp:?}");
+        // The script's side holds it.
+        let read = table(&["Employee Name", "Status"], &[&["Ann Lee", "Active"]]);
+        assert_eq!(read.column(&odd(" Employee Name ")), Ok(0), "{sp:?}");
+        assert_eq!(find_row(&read, &cells(&[(&odd("Employee Name"), &odd("ann lee"))]), true), Ok(Some(0)), "{sp:?}");
+        assert_eq!(find_row(&read, &cells(&[("Employee Name", &odd("n L"))]), false), Ok(Some(0)), "{sp:?}");
+    }
+}

@@ -368,3 +368,35 @@ async fn a_replay_to_a_step_goes_to_the_named_area_and_back() {
     assert!(at("click Common Configurator") < at("check yes") && at("check yes") < at("click Leave"), "{seen:?}");
     assert!(!seen.contains(&"click #s2".to_string()), "{seen:?}");
 }
+
+/// A non-breaking space, a figure space, a narrow non-breaking space and a
+/// tab: what a page or a pasted name may hold where a space is meant.
+const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
+
+/// An area name with any Unicode space finds the area recorded with a
+/// space: the script's `area`, a `return_to_area`'s, and the routes the
+/// run reads for them.
+#[test]
+fn an_area_name_treats_a_unicode_space_as_a_space() {
+    let nav_file = NavFile { direct_urls: false, modules: vec![leave(), configurator()], save_words: vec![] };
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    for sp in ODD_SPACES {
+        let named = format!("{sp}Common{sp}Configurator{sp}");
+        assert_eq!(nav::module_key(&named), nav::module_key("Common Configurator"), "{sp:?}");
+        assert_eq!(nav::find_area(&nav_file, &named).map(|a| a.name()), Some("Common Configurator"), "{sp:?}");
+
+        let mut s = script(9, json!([ { "step_number": 1, "actions": [
+            { "kind": "return_to_area", "area": named },
+            { "kind": "return_to_area", "area": "Common Configurator" }
+        ] } ]));
+        s.area = Some(named.clone());
+        check_areas(&nav_file, &[s.clone()]).unwrap_or_else(|why| panic!("{sp:?}: {why}"));
+        let actions: Vec<&Action> = s.steps.iter().flat_map(|st| st.actions.iter()).collect();
+        assert_eq!(named_areas(actions.iter().copied()).len(), 1, "{sp:?}: one area, named twice");
+
+        let routes = area_routes(dir.path(), ORG, PROJECT, &[named.as_str()]);
+        let route = routes[&nav::module_key("Common Configurator")].as_ref().unwrap_or_else(|why| panic!("{sp:?}: {why}"));
+        assert_eq!(route.path.name(), "Common Configurator");
+    }
+}

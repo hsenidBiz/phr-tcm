@@ -3918,26 +3918,31 @@ export type RelinkOutcome = {
 
 /**
  *  A replay's end with the sentence that says it, as the person's command
- *  answers: the pane shows `sentence` as it is.
+ *  answers: the pane shows `sentence` as it is, and `tabs` beside the
+ *  steps the replay ran outside `main`.
  */
 export type ReplayAnswer = ReplayAnswer_Serialize | ReplayAnswer_Deserialize;
 
 /**
  *  A replay's end with the sentence that says it, as the person's command
- *  answers: the pane shows `sentence` as it is.
+ *  answers: the pane shows `sentence` as it is, and `tabs` beside the
+ *  steps the replay ran outside `main`.
  */
 export type ReplayAnswer_Deserialize = {
 	end: ReplayEnd_Deserialize,
 	sentence: string,
+	tabs: ReplayedTab[],
 };
 
 /**
  *  A replay's end with the sentence that says it, as the person's command
- *  answers: the pane shows `sentence` as it is.
+ *  answers: the pane shows `sentence` as it is, and `tabs` beside the
+ *  steps the replay ran outside `main`.
  */
 export type ReplayAnswer_Serialize = {
 	end: ReplayEnd_Serialize,
 	sentence: string,
+	tabs: ReplayedTab[],
 };
 
 /**
@@ -4062,6 +4067,16 @@ export type ReplayProgress = {
 	steps: number,
 	/**  Meaningful for "done". */
 	proposed: string,
+};
+
+/**
+ *  A step the replay ran outside `main`: the tab it ran in, as a live
+ *  step's `tab` says it (`InRun::tab`). A step that stayed in `main` has
+ *  none.
+ */
+export type ReplayedTab = {
+	step: number,
+	tab: string,
 };
 
 export type RepoRef = {

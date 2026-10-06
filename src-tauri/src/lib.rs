@@ -505,6 +505,10 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 autorun::store::set_root(dir.join("autorun"));
+                // Downloads whose run is gone, swept here, before any run can
+                // be started and saving into a folder its file does not
+                // name yet.
+                autorun::store::sweep_orphan_downloads(&dir.join("autorun"));
             }
             applog::info(format!(
                 "Test Case Manager {} started (set up {} ms after launch)",

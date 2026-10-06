@@ -475,7 +475,9 @@ number), and the words the case's expected result names.
 
 A passed check says `downloaded "<name>" (<size>)` and what it found; a
 failure says what the file held instead, or that no download started
-within the time. The content of a file over 50 MB is not read.
+within the time. The content of a file over 50 MB is not read, and a sheet
+whose filled part spans over 1,000,000 cells (rows times columns) is
+refused with `the spreadsheet is too large to check (over 1,000,000 cells)`.
 
 Tried on its own with `try_autorun_action`, an `expect_download` is a
 step of its own: it sees only a download that starts while it waits, so

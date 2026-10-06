@@ -367,8 +367,9 @@ pub async fn auto_run_replay_to_step(
 ) -> Result<crate::autorun::replay_to::ReplayAnswer, String> {
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
-    // case's guard.
-    replay_supervised(&app, &organization, &project, req, true).await.map(Into::into)
+    // case's guard. The tabs its steps ran in go to the pane beside them.
+    let (end, tabs) = replay_supervised(&app, &organization, &project, req, true).await?;
+    Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs))
 }
 
 /// A replay to a step in the supervised browser, for the person's button
@@ -377,24 +378,25 @@ pub async fn auto_run_replay_to_step(
 /// browser open is used, else the one last chosen is opened. `may_lift` is
 /// `guard_for_case`'s: true for the person, false for the assistant, whose
 /// replay may switch the no-save guard on but never lifts one held for
-/// another case. `Err` is a browser that would not open.
+/// another case. With the end come the tabs its steps ran in outside
+/// `main` (`replay_to_traced`). `Err` is a browser that would not open.
 pub(crate) async fn replay_supervised(
     app: &tauri::AppHandle,
     organization: &str,
     project: &str,
     req: crate::autorun::replay_to::ReplayRequest,
     may_lift: bool,
-) -> Result<crate::autorun::replay_to::ReplayEnd, String> {
+) -> Result<(crate::autorun::replay_to::ReplayEnd, Vec<crate::autorun::replay_to::ReplayedTab>), String> {
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd};
     use tauri_specta::Event;
     let _one = match OneReplay::claim() {
         Ok(one) => one,
-        Err(why) => return Ok(ReplayEnd::Refused(why)),
+        Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new())),
     };
     let root = root(app)?;
     // Refused before anything opens.
     if let Err(why) = replay_to::check(&root, organization, project, &req) {
-        return Ok(ReplayEnd::Refused(why));
+        return Ok((ReplayEnd::Refused(why), Vec::new()));
     }
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -402,7 +404,7 @@ pub(crate) async fn replay_supervised(
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
-        return Ok(stopped);
+        return Ok((stopped, Vec::new()));
     }
     let had_browser = slot.is_some();
     open_if_none(app, &mut slot).await?;
@@ -421,7 +423,8 @@ pub(crate) async fn replay_supervised(
         crate::browser::launch::Browser::from_name(&store::last_browser(&root)),
         false,
     );
-    let end = replay_to::replay_to_checked(
+    let mut tabs = Vec::new();
+    let end = replay_to::replay_to_traced(
         &mut session.cdp,
         &mut setup_browsers,
         &root,
@@ -438,6 +441,7 @@ pub(crate) async fn replay_supervised(
         |k, of| {
             let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
         },
+        &mut tabs,
     )
     .await;
     if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
@@ -457,7 +461,7 @@ pub(crate) async fn replay_supervised(
     };
     let by = if may_lift { "" } else { " for the assistant" };
     crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}{by}: {how}"));
-    Ok(end)
+    Ok((end, tabs))
 }
 
 /// The replay's stop control: the replay going, if any, ends at its next

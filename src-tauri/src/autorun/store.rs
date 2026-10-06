@@ -564,6 +564,53 @@ fn sweep_downloads(root: &Path, problems: &mut Vec<String>) {
     }
 }
 
+/// Remove the download folders whose run is gone - its file removed some
+/// other way than Clear (by hand, or a run that ended before its file was
+/// first saved) - the same way Clear sweeps one: the files directly in it,
+/// then the folder once it is empty. A folder whose run file is there
+/// stays, and so does the supervised browser's (it has its own sweep), a
+/// link, and anything that is not a folder. Returns how many folders went.
+///
+/// Called as the app starts, before any run can be saving into one. What
+/// could not be removed is logged as a count, never a path.
+pub fn sweep_orphan_downloads(root: &Path) -> usize {
+    let dir = all_downloads_dir(root);
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && !is_link(&m)) {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return 0 };
+    let mut problems = Vec::new();
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
+            continue;
+        }
+        let path = entry.path();
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && !is_link(&m)) {
+            continue;
+        }
+        let has_run = safe_run_id(&name) && runs_dir(root).join(format!("{name}.json")).is_file();
+        if has_run {
+            continue;
+        }
+        sweep_files(&path, None, &mut problems);
+        if std::fs::remove_dir(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        crate::applog::info(format!("auto-run: removed {removed} download folder(s) whose run is gone"));
+    }
+    if !problems.is_empty() {
+        crate::applog::warn(format!(
+            "auto-run: {} download file(s) whose run is gone could not be removed",
+            problems.len()
+        ));
+    }
+    removed
+}
+
 /// Where a run's report page is written - beside the shots it links.
 pub fn reports_dir(root: &Path) -> PathBuf {
     root.join("reports")
