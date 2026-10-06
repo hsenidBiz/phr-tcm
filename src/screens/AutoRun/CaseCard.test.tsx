@@ -5,7 +5,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CaseScript } from "../../bindings";
 import CaseCard, { scriptFacts, scriptFiles } from "./CaseCard";
@@ -68,12 +68,13 @@ function renderCard(props: Partial<Parameters<typeof CaseCard>[0]> = {}) {
     onAskClear: vi.fn(),
     onClearDone: vi.fn(),
   };
-  render(
+  const rendered = render(
     <QueryClientProvider client={qc}>
       <ul>
         <CaseCard
           c={CASE}
           org="acme"
+          project="Web"
           script={FULL}
           result="Failed"
           selected={false}
@@ -85,7 +86,7 @@ function renderCard(props: Partial<Parameters<typeof CaseCard>[0]> = {}) {
       </ul>
     </QueryClientProvider>,
   );
-  return handlers;
+  return Object.assign(handlers, { unmount: rendered.unmount });
 }
 
 test("a collapsed card shows the checkbox, the id, the title and the result, and no action buttons", () => {
@@ -208,4 +209,52 @@ test("the search matches the id with or without #, and the title, ignoring case"
   expect(matchesSearch(c, "LOGIN - locked")).toBe(true);
   expect(matchesSearch(c, "#99")).toBe(false);
   expect(matchesSearch(c, "expired")).toBe(false);
+});
+
+/** A setup view as the editor's command answers it. */
+const view = (approval: string) => ({
+  fixture_name: "Draft cycle",
+  account: "hr.admin",
+  steps: ["Create cycle: name=A"],
+  creates: ["cycle A"],
+  approval,
+  approved_at: approval === "approved" ? "2026-10-06 09:00:00" : null,
+  fingerprint: "f1",
+});
+
+test("a collapsed card with a setup does not read its approval", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    return cmd === "auto_run_setup_view" ? view("changed") : null;
+  });
+  const withSetup = { ...BARE, setup: { fixture: "Draft cycle" } } as CaseScript;
+  renderCard({ open: false, script: withSetup });
+  // A collapsed card reads nothing.
+  expect(calls).not.toContain("auto_run_setup_view");
+});
+
+test("the setup line follows the approval: approved, not approved, changed since approved", async () => {
+  const withSetup = { ...BARE, setup: { fixture: "Draft cycle" } } as CaseScript;
+  for (const [approval, words] of [
+    ["approved", "approved"],
+    ["none", "not approved"],
+    ["changed", "changed since approved"],
+  ] as const) {
+    mockIPC((cmd) => (cmd === "auto_run_setup_view" ? view(approval) : null));
+    const { unmount } = renderCard({ open: true, script: withSetup });
+    await waitFor(() => expect(screen.getByText("Setup:", { exact: false }).closest("p")).toHaveTextContent(`Setup: Draft cycle ${words}`));
+    unmount();
+  }
+});
+
+test("a script with no setup shows no setup line and does not ask", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    return null;
+  });
+  renderCard({ open: true, script: BARE });
+  expect(screen.queryByText("Setup:", { exact: false })).not.toBeInTheDocument();
+  expect(calls).not.toContain("auto_run_setup_view");
 });

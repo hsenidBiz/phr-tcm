@@ -7,6 +7,7 @@
 // downloads, and then the Script and Run buttons, or Add script for a case
 // that has none.
 
+import { useQuery } from "@tanstack/react-query";
 import { useId } from "react";
 import type { Action, CaseScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -15,6 +16,7 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import { IconAdd, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import RunDownloads from "./RunDownloads";
+import { approvalWords, loadSetupView, setupViewKey } from "./setupApproval";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import { bucketTone, type ResultBucket } from "./verdicts";
 
@@ -72,6 +74,7 @@ function SectionLabel({ children }: { children: string }) {
 export default function CaseCard({
   c,
   org,
+  project,
   script,
   result,
   selected,
@@ -87,6 +90,8 @@ export default function CaseCard({
 }: {
   c: { id: number; title: string; steps: { action: string; expected: string; shared?: number | null }[] };
   org: string;
+  /** The project the setup's approval is read for. */
+  project: string;
   /** The saved script, or null/undefined for a case with none. */
   script: CaseScript | null | undefined;
   result: ResultBucket;
@@ -110,6 +115,14 @@ export default function CaseCard({
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
   const facts = script ? scriptFacts(script) : [];
+  // Where the setup's approval stands is read only when a card with a setup
+  // opens: a list of many cases reads none until one is looked at.
+  const setup = useQuery({
+    queryKey: setupViewKey(org, project, c.id),
+    queryFn: () => loadSetupView(org, project, c.id),
+    enabled: open && Boolean(script?.setup) && Boolean(org && project),
+    retry: false,
+  });
 
   return (
     <li className="rounded-md border border-border bg-surface text-sm">
@@ -171,6 +184,12 @@ export default function CaseCard({
                     </div>
                   ))}
                 </dl>
+                {script.setup && setup.data && (
+                  <p className="text-xs text-text">
+                    <span className="text-muted">Setup: </span>
+                    {setup.data.fixture_name} <span className="text-muted">{approvalWords(setup.data.approval)}</span>
+                  </p>
+                )}
                 {defect && (
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     <SuspectedDefectBadge caseId={c.id} defect={defect} onClear={onAskClear} />
