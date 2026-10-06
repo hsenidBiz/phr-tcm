@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::api_templates::runner::RUN_LIMIT;
 use v2_lib::api_templates::{store, ApiTemplate, Proven};
 use v2_lib::autorun::cleanup::{
-    delete_template_for, no_delete_template, not_active, preview, run_cleanup_within, CleanupProgress, CleanupQuery,
+    delete_template_for, no_delete_template, not_active, preview, run_cleanup_within, CleanupPick, CleanupProgress,
+    CleanupQuery,
     NOTHING_TO_DELETE, NOT_IN_PREVIEW, NO_SUCH_ENVIRONMENT, OLDER_THAN_MIN, PREFIX_NEEDED, PROVE_REFUSAL,
 };
 use v2_lib::autorun::test_made::{self, TestMade};
@@ -188,17 +189,157 @@ fn a_kind_with_no_proven_delete_template_is_not_deletable() {
 }
 
 /// Of several proven delete templates for a kind, the most recently proven
-/// one; a proof that names no environment counts in any.
+/// one that names the chosen environment; a proof that names none does not
+/// count, nor does one of the wrong shape.
 #[test]
 fn the_newest_proven_delete_template_is_the_one_used() {
     let older = proven(delete_draft("older", Some("cycle")), "2026-10-01 09:00:00", Some("Default"));
-    let newer = proven(delete_draft("newer", Some("cycle")), "2026-10-03 09:00:00", None);
+    let newer = proven(delete_draft("newer", Some("cycle")), "2026-10-02 09:00:00", Some("default"));
+    let unnamed = proven(delete_draft("unnamed", Some("cycle")), "2026-10-04 09:00:00", None);
     let other = proven(delete_draft("other", Some("cycle")), "2026-10-05 09:00:00", Some("Staging"));
-    let all = [older.clone(), newer, other];
-    assert_eq!(delete_template_for(&all, "cycle", "Default").map(|t| t.id.as_str()), Some("newer"));
+    let all = [older.clone(), newer, unnamed.clone(), other];
+    assert_eq!(delete_template_for(&all, "cycle", "Default").map(|t| t.id.as_str()), Some("newer"), "names ignore case");
     assert_eq!(delete_template_for(&all, "cycle", "Staging").map(|t| t.id.as_str()), Some("other"));
-    assert_eq!(delete_template_for(&all[..1], "cycle", "default").map(|t| t.id.as_str()), Some("older"), "names ignore case");
+    assert_eq!(delete_template_for(&all[..1], "cycle", "Default").map(|t| t.id.as_str()), Some("older"));
     assert_eq!(delete_template_for(&all, "suite", "Default"), None);
+    assert_eq!(delete_template_for(&[unnamed], "cycle", "Default"), None, "a proof naming no environment");
+    let wide = proven(with_target(delete_draft("wide", Some("cycle"))), "2026-10-06 09:00:00", Some("Default"));
+    assert_eq!(delete_template_for(&[wide], "cycle", "Default"), None, "an old file of the wrong shape");
+}
+
+/// `t` with a second param, `target`, that its step also sends.
+fn with_target(mut t: ApiTemplate) -> ApiTemplate {
+    t.params.push(serde_json::from_value(json!({ "name": "target", "type": "string", "required": true })).unwrap());
+    t.steps[0].form.as_mut().unwrap().insert("Target".into(), "{{target}}".into());
+    t
+}
+
+/// Review Focus 1 of the fix round: a delete template takes exactly one
+/// value, `id` (required, no default), and a step uses it.
+#[test]
+fn a_delete_template_takes_exactly_one_value_id() {
+    use v2_lib::api_templates::{check, DELETE_SHAPE};
+    assert_eq!(DELETE_SHAPE, "a delete template takes exactly one value, id, and deletes only that record");
+    assert_eq!(check(&delete_draft("remove-cycle", Some("cycle"))), Vec::<String>::new(), "the valid shape");
+
+    let refused = |t: &ApiTemplate| check(t).contains(&DELETE_SHAPE.to_string());
+    assert!(refused(&with_target(delete_draft("x", Some("cycle")))), "an extra param");
+
+    let mut optional = delete_draft("x", Some("cycle"));
+    optional.params.push(
+        serde_json::from_value(json!({ "name": "scope", "type": "string", "required": false, "default": "all" })).unwrap(),
+    );
+    assert!(refused(&optional), "an optional param with a default");
+
+    let mut id_default = delete_draft("x", Some("cycle"));
+    id_default.params[0] = serde_json::from_value(json!({ "name": "id", "type": "string", "required": false, "default": "1" })).unwrap();
+    assert!(refused(&id_default), "an id with a default");
+
+    let mut unused = delete_draft("x", Some("cycle"));
+    unused.steps[0].form = Some(BTreeMap::from([("Id".to_string(), "7".to_string())]));
+    assert!(refused(&unused), "an id no step sends");
+}
+
+/// The same rule at cleanup, for a file saved before it: preflight refuses
+/// it in Cleanup mode, the preview does not offer it, and nothing is sent.
+#[tokio::test]
+async fn a_saved_delete_template_with_another_value_is_refused_at_cleanup() {
+    use v2_lib::api_templates::runner::{preflight, Mode, RunRequest};
+    use v2_lib::api_templates::DELETE_SHAPE;
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let (mut r, env) = cleanup_rig(vec![], &[("81", "AUTOTEST cycle", 9)]);
+    let name = active(r.root.path()).name;
+    let wide = proven(with_target(delete_draft("remove-cycle", Some("cycle"))), "2026-10-02 09:00:00", Some(&name));
+    store::save(r.root.path(), ORG, PROJECT, &wide).unwrap();
+
+    let mut values = serde_json::Map::new();
+    values.insert("id".into(), json!("81"));
+    values.insert("target".into(), json!("anything"));
+    let req = RunRequest {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        account: "admin".into(),
+        values,
+        mode: Mode::Cleanup,
+        template: wide,
+    };
+    let problems = preflight(r.root.path(), &req, None).unwrap_err();
+    assert!(problems.contains(&DELETE_SHAPE.to_string()), "{problems:?}");
+
+    let q = q_for(&r);
+    let lines = preview(r.root.path(), ORG, PROJECT, &q, now()).unwrap();
+    assert_eq!(lines[0].note.as_deref(), Some("no proven delete template for cycle"));
+    let got = clean(&mut r, &q, &["81"], &AtomicBool::new(false), &mut vec![], None).await;
+    assert_eq!(got, Err(NOTHING_TO_DELETE.to_string()));
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty(), "nothing sent");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "81"), "present");
+}
+
+/// Review Focus 4 of the fix round: entries in the preview whose only delete
+/// template was proven before environments existed are not deletable.
+#[test]
+fn a_proof_that_names_no_environment_does_not_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = active(dir.path());
+    store::save(dir.path(), ORG, PROJECT, &proven(delete_draft("remove-cycle", Some("cycle")), "2026-10-01 09:00:00", None))
+        .unwrap();
+    seed(dir.path(), &[entry(&env.id, "cycle", "1", "AUTOTEST cycle", 9 * DAY, "present")]);
+    let lines = preview(dir.path(), ORG, PROJECT, &query(dir.path(), "AUTOTEST", 7), now()).unwrap();
+    assert!(!lines[0].deletable);
+    assert_eq!(lines[0].note.as_deref(), Some("no proven delete template for cycle"));
+}
+
+/// Review Focus 3 of the fix round: a cleanup states the query it was
+/// previewed with; any other is refused.
+#[test]
+fn a_cleanup_must_state_the_query_it_previewed() {
+    use v2_lib::autorun::cleanup::{previewed, remember_preview, PREVIEW_FIRST};
+    let _root = crate::serial::autorun();
+    let a = CleanupQuery { environment: "env-aaaa0001".into(), prefix: "AUTOTEST".into(), older_than_days: 7 };
+    remember_preview(ORG, PROJECT, &a);
+    assert_eq!(previewed(ORG, PROJECT, &a), Ok(()));
+    let same = CleanupQuery { prefix: "  autotest ".into(), ..a.clone() };
+    assert_eq!(previewed(ORG, PROJECT, &same), Ok(()), "trimmed, case ignored");
+    for b in [
+        CleanupQuery { prefix: "QA".into(), ..a.clone() },
+        CleanupQuery { older_than_days: 8, ..a.clone() },
+        CleanupQuery { environment: "env-aaaa0002".into(), ..a.clone() },
+    ] {
+        assert_eq!(previewed(ORG, PROJECT, &b), Err(PREVIEW_FIRST.to_string()), "{b:?}");
+    }
+    assert_eq!(previewed("Other", PROJECT, &a), Err(PREVIEW_FIRST.to_string()));
+    assert_eq!(previewed(ORG, "Other", &a), Err(PREVIEW_FIRST.to_string()));
+    assert_eq!(PREVIEW_FIRST, "preview the drafts to clean up first");
+}
+
+/// Review Focus 2 of the fix round: cycle 42 and suite 42 in one preview;
+/// ticking cycle 42 deletes only cycle 42.
+#[tokio::test]
+async fn kind_and_id_together_name_what_is_deleted() {
+    let _act = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
+    let (mut r, env) = cleanup_rig(vec![answer(200, json!({ "success": true }))], &[("42", "AUTOTEST cycle", 9)]);
+    let name = active(r.root.path()).name;
+    let suites = proven(delete_draft("remove-suite", Some("suite")), "2026-10-01 09:00:00", Some(&name));
+    store::save(r.root.path(), ORG, PROJECT, &suites).unwrap();
+    let mut made = test_made::list(r.root.path());
+    made.push(entry(&env, "suite", "42", "AUTOTEST suite", 9 * DAY, "present"));
+    seed(r.root.path(), &made);
+    let q = q_for(&r);
+    assert!(preview(r.root.path(), ORG, PROJECT, &q, now()).unwrap().iter().all(|l| l.deletable));
+
+    // A pair not in the preview is refused, though its id is there.
+    let got = clean(&mut r, &q, &["goal:42"], &AtomicBool::new(false), &mut vec![], None).await;
+    assert_eq!(got, Err(NOT_IN_PREVIEW.to_string()));
+
+    let report = clean(&mut r, &q, &["cycle:42"], &AtomicBool::new(false), &mut vec![], None).await.unwrap();
+    assert_eq!(report.results.len(), 1);
+    assert_eq!((report.results[0].kind.as_str(), report.results[0].id.as_str()), ("cycle", "42"));
+    assert_eq!(deleted_ids(&r), vec![json!("42")]);
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "42"), "deleted");
+    assert_eq!(status_of(r.root.path(), &env, "suite", "42"), "present");
 }
 
 /// A rig whose root holds a proven delete template for cycles and the
@@ -222,7 +363,14 @@ async fn clean(
     heard: &mut Vec<CleanupProgress>,
     stop_after: Option<u32>,
 ) -> Result<v2_lib::autorun::cleanup::CleanupReport, String> {
-    let chosen: Vec<String> = chosen.iter().map(|s| s.to_string()).collect();
+    // `kind:id`, or a bare id for a cycle.
+    let chosen: Vec<CleanupPick> = chosen
+        .iter()
+        .map(|s| match s.split_once(':') {
+            Some((kind, id)) => CleanupPick { kind: kind.into(), id: id.into() },
+            None => CleanupPick { kind: "cycle".into(), id: s.to_string() },
+        })
+        .collect();
     run_cleanup_within(
         &mut r.browsers,
         r.root.path(),
@@ -274,8 +422,8 @@ async fn the_run_deletes_in_order_and_records_each() {
     assert_eq!(
         heard,
         vec![
-            CleanupProgress { done: 1, total: 2, id: "11".into(), outcome: "deleted".into() },
-            CleanupProgress { done: 2, total: 2, id: "12".into(), outcome: "deleted".into() },
+            CleanupProgress { done: 1, total: 2, kind: "cycle".into(), id: "11".into(), outcome: "deleted".into() },
+            CleanupProgress { done: 2, total: 2, kind: "cycle".into(), id: "12".into(), outcome: "deleted".into() },
         ]
     );
     assert!(!report.stopped);
@@ -314,7 +462,7 @@ async fn a_failed_delete_is_recorded_with_its_reason() {
     assert!(!why.contains("hr.example.internal"), "no host: {why}");
     assert_eq!(status_of(r.root.path(), &env, "cycle", "21"), format!("delete failed: {why}"));
     assert_eq!(status_of(r.root.path(), &env, "cycle", "22"), "deleted");
-    assert_eq!(heard[1], CleanupProgress { done: 2, total: 2, id: "22".into(), outcome: "deleted".into() });
+    assert_eq!(heard[1], CleanupProgress { done: 2, total: 2, kind: "cycle".into(), id: "22".into(), outcome: "deleted".into() });
     assert_eq!(report.results.iter().map(|x| x.ok).collect::<Vec<_>>(), vec![false, true]);
 
     let lines = preview(r.root.path(), ORG, PROJECT, &q, now()).unwrap();
@@ -375,12 +523,12 @@ async fn ids_outside_the_preview_are_refused_and_nothing_runs() {
     let q = q_for(&r);
     let cancel = AtomicBool::new(false);
 
-    for chosen in [vec!["51", "999"], vec!["52"], vec!["53"]] {
+    for chosen in [vec!["51", "999"], vec!["52"], vec!["53"], vec!["suite:51"]] {
         let got = clean(&mut r, &q, &chosen, &cancel, &mut vec![], None).await;
         assert_eq!(got, Err(NOT_IN_PREVIEW.to_string()), "{chosen:?}");
     }
     // In the preview, but no delete template for suites.
-    let got = clean(&mut r, &q, &["54"], &cancel, &mut vec![], None).await;
+    let got = clean(&mut r, &q, &["suite:54"], &cancel, &mut vec![], None).await;
     assert_eq!(got, Err(NOTHING_TO_DELETE.to_string()));
 
     // Another environment, saved but not active.
@@ -454,6 +602,33 @@ mod proving {
         }
         assert_eq!(PROVE_REFUSAL, "a delete template is only proven on a draft the tests made");
         assert_eq!(store::load(dir.path(), ORG, PROJECT, "remove-cycle").unwrap(), None, "nothing saved");
+    }
+
+    /// A delete template with a second value is refused at prove, even on a
+    /// present entry, and nothing is sent.
+    #[tokio::test]
+    async fn a_delete_template_with_another_value_is_refused_at_prove() {
+        use v2_lib::api_templates::DELETE_SHAPE;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let dir = tempfile::tempdir().unwrap();
+        v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+        v2_lib::autorun::recipe::save_recipe(dir.path(), ORG, PROJECT, &crate::common::recipe()).unwrap();
+        v2_lib::autorun::accounts::save_accounts(dir.path(), &[crate::common::account()]).unwrap();
+        let env = active(dir.path()).id;
+        seed(dir.path(), &[entry(&env, "cycle", "91", "AUTOTEST cycle", DAY, "present")]);
+        let body = json!({
+            "template": super::with_target(delete_draft("remove-cycle", Some("cycle"))),
+            "account": "admin",
+            "values": { "id": "91", "target": "anything" },
+        })
+        .to_string();
+        let (status, out) = api_template_prove(&ctx(), &body, never_opened, no_db, &quick()).await;
+        assert_eq!(status, 400);
+        assert!(out.lines().any(|l| l == DELETE_SHAPE), "{out}");
+        assert_eq!(status_of(dir.path(), &env, "cycle", "91"), "present");
+        assert_eq!(store::load(dir.path(), ORG, PROJECT, "remove-cycle").unwrap(), None);
     }
 
     /// On a present entry the proof runs, is saved, and marks the entry it

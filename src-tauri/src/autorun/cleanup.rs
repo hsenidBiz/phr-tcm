@@ -25,7 +25,7 @@
 use crate::api_templates::runner::{
     account_lease, open_session, preflight, run_in_session, Mode, RunRequest, RETRY_PAUSES, RUN_LIMIT,
 };
-use crate::api_templates::{store as template_store, ApiTemplate, Effect, ParamType};
+use crate::api_templates::{delete_shape_ok, store as template_store, ApiTemplate, Effect, ParamType};
 use crate::applog;
 use crate::autorun::replay::Browsers;
 use crate::autorun::test_made::{self, TestMade, DELETED, PRESENT};
@@ -56,6 +56,10 @@ pub const NOTHING_TO_DELETE: &str = "none of the chosen drafts has a proven dele
 /// Said when a delete template is proven on an id that is not a `present`
 /// entry of its kind in the active environment.
 pub const PROVE_REFUSAL: &str = "a delete template is only proven on a draft the tests made";
+
+/// Said when a cleanup is asked for with anything but the query of the
+/// last preview.
+pub const PREVIEW_FIRST: &str = "preview the drafts to clean up first";
 
 /// Said when the active environment could not be read.
 const ENVIRONMENT_UNREADABLE: &str = "the environments could not be read - see Settings, Logs";
@@ -90,11 +94,51 @@ pub struct CleanupQuery {
     pub older_than_days: i32,
 }
 
+/// One draft a person ticked: its kind and its id, together, since two
+/// kinds may share an id.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Serialize, specta::Type)]
+pub struct CleanupPick {
+    pub kind: String,
+    pub id: String,
+}
+
+impl CleanupPick {
+    fn is(&self, e: &TestMade) -> bool {
+        self.kind == e.kind && self.id == e.id
+    }
+}
+
+/// The last preview's query, by project. A cleanup must state the same one
+/// (`previewed`), so it deletes from what the person saw.
+static LAST_PREVIEW: std::sync::Mutex<Option<(String, String, CleanupQuery)>> = std::sync::Mutex::new(None);
+
+/// Remembers `query` as what the person last previewed in `org`/`project`.
+pub fn remember_preview(org: &str, project: &str, query: &CleanupQuery) {
+    *LAST_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((org.to_string(), project.to_string(), query.clone()));
+}
+
+/// `Ok` when `query` is the one last previewed in `org`/`project`: the
+/// same environment, the same prefix (trimmed, case ignored) and the same
+/// days. Otherwise `PREVIEW_FIRST`.
+pub fn previewed(org: &str, project: &str, query: &CleanupQuery) -> Result<(), String> {
+    let same = |a: &CleanupQuery| {
+        a.environment == query.environment
+            && a.prefix.trim().to_lowercase() == query.prefix.trim().to_lowercase()
+            && a.older_than_days == query.older_than_days
+    };
+    match &*LAST_PREVIEW.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some((o, p, q)) if o == org && p == project && same(q) => Ok(()),
+        _ => Err(PREVIEW_FIRST.to_string()),
+    }
+}
+
 /// One delete's progress, as the dialog hears it.
 #[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct CleanupProgress {
     pub done: u32,
     pub total: u32,
+    pub kind: String,
     pub id: String,
     /// `deleted`, or the sentence the delete failed with.
     pub outcome: String,
@@ -122,16 +166,17 @@ pub struct CleanupReport {
 }
 
 /// The newest proven delete template for `kind` in the environment called
-/// `env_name`. A proof that names its environment must name this one; an
-/// older proof that names none counts anywhere. A delete template with no
-/// kind never matches.
+/// `env_name`. Its proof must name that environment (case ignored): one
+/// that names none, from before environments, does not count. A delete
+/// template with no kind, or of any shape but the one `id`
+/// (`delete_shape_ok`, for a file saved before that rule), never matches.
 pub fn delete_template_for<'a>(templates: &'a [ApiTemplate], kind: &str, env_name: &str) -> Option<&'a ApiTemplate> {
     templates
         .iter()
-        .filter(|t| t.effect == Effect::Delete)
+        .filter(|t| t.effect == Effect::Delete && delete_shape_ok(t))
         .filter(|t| t.deletes_kind.as_deref().map(str::trim).is_some_and(|k| !k.is_empty() && k == kind.trim()))
         .filter_map(|t| t.proven.as_ref().map(|p| (t, p)))
-        .filter(|(_, p)| p.environment.as_deref().is_none_or(|e| e.trim().eq_ignore_ascii_case(env_name.trim())))
+        .filter(|(_, p)| p.environment.as_deref().is_some_and(|e| e.trim().eq_ignore_ascii_case(env_name.trim())))
         // `at` is "YYYY-MM-DD HH:MM:SS", so text order is time order.
         .max_by(|(_, a), (_, b)| a.at.cmp(&b.at))
         .map(|(t, _)| t)
@@ -261,19 +306,21 @@ impl<F: FnMut(CleanupProgress)> Tally<'_, F> {
         (self.on_progress)(CleanupProgress {
             done: self.report.results.len() as u32,
             total: self.total,
+            kind: entry.kind.clone(),
             id: entry.id.clone(),
             outcome: said,
         });
     }
 }
 
-/// Deletes the entries of `ids` that `query`'s preview shows as deletable,
+/// Deletes the entries `picks` names, by kind and id, that `query`'s
+/// preview shows as deletable,
 /// at `now`, one at a time. See the module comment. The caller holds the
 /// one-at-a-time template slot, so no template run, fixture run or
 /// environment switch comes between the deletes.
 ///
 /// Refused whole, before anything is deleted, when `query`'s environment
-/// is not the active one, or when an id is not in the preview. Each delete
+/// is not the active one, or when a pick is not in the preview. Each delete
 /// sets its entry `deleted` or `delete failed: <the runner's sentence>`
 /// and calls `on_progress`. `cancel` is heard between deletes: the rest
 /// stay as they were.
@@ -284,13 +331,13 @@ pub async fn run_cleanup<B: Browsers>(
     org: &str,
     project: &str,
     query: &CleanupQuery,
-    ids: &[String],
+    picks: &[CleanupPick],
     timing: &Timing,
     cancel: &AtomicBool,
     on_progress: impl FnMut(CleanupProgress),
 ) -> Result<CleanupReport, String> {
     let now = chrono::Utc::now();
-    run_cleanup_within(browsers, root, org, project, query, ids, timing, RUN_LIMIT, &RETRY_PAUSES, now, cancel, on_progress)
+    run_cleanup_within(browsers, root, org, project, query, picks, timing, RUN_LIMIT, &RETRY_PAUSES, now, cancel, on_progress)
         .await
 }
 
@@ -303,7 +350,7 @@ pub async fn run_cleanup_within<B: Browsers>(
     org: &str,
     project: &str,
     query: &CleanupQuery,
-    ids: &[String],
+    picks: &[CleanupPick],
     timing: &Timing,
     limit: Duration,
     retry_pauses: &[Duration],
@@ -323,12 +370,12 @@ pub async fn run_cleanup_within<B: Browsers>(
             .unwrap_or_default();
         return Err(not_active(&name));
     }
-    if ids.iter().any(|id| !lines.iter().any(|(l, _)| &l.entry.id == id)) {
+    if picks.iter().any(|p| !lines.iter().any(|(l, _)| p.is(&l.entry))) {
         return Err(NOT_IN_PREVIEW.to_string());
     }
     let chosen: Vec<(TestMade, ApiTemplate)> = lines
         .into_iter()
-        .filter(|(l, _)| ids.contains(&l.entry.id))
+        .filter(|(l, _)| picks.iter().any(|p| p.is(&l.entry)))
         .filter_map(|(l, t)| t.map(|t| (l.entry, t)))
         .collect();
     if chosen.is_empty() {
@@ -343,20 +390,31 @@ pub async fn run_cleanup_within<B: Browsers>(
     };
     applog::info(format!("clean up: {} drafts to delete in {}", chosen.len(), active.name));
 
-    // Each delete template signs in as its own proven account: the entries
-    // go in groups, one per account, in the order each account first comes.
-    // A cleanup of one kind - the usual one - is one group, one browser and
-    // one sign-in.
-    let mut groups: Vec<(String, Vec<(TestMade, ApiTemplate)>)> = Vec::new();
+    // Every check a delete makes before anything is sent - the template's
+    // shape, its `id`, the recipe and the account - for each entry first:
+    // one that fails is recorded as failed and never reaches a browser.
+    let mut sendable = Vec::new();
     for (entry, t) in chosen {
-        let account = t.proven.as_ref().map(|p| p.account.clone()).unwrap_or_default();
-        match groups.iter_mut().find(|(a, _)| *a == account) {
-            Some((_, items)) => items.push((entry, t)),
-            None => groups.push((account, vec![(entry, t)])),
+        match preflight(root, &request(org, project, &t, &entry), None) {
+            Ok(()) => sendable.push((entry, t)),
+            Err(problems) => tally.done(&entry, Err(problems.join("; "))),
         }
     }
 
-    'groups: for (account, items) in groups {
+    // Each delete template signs in as its own proven account, on its own
+    // anti-forgery page: the entries go in groups, one per account and
+    // template, in the order each first comes. A cleanup of one kind - the
+    // usual one - is one group, one browser and one sign-in.
+    let mut groups: Vec<((String, String), Vec<(TestMade, ApiTemplate)>)> = Vec::new();
+    for (entry, t) in sendable {
+        let key = (t.proven.as_ref().map(|p| p.account.clone()).unwrap_or_default(), t.id.clone());
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, items)) => items.push((entry, t)),
+            None => groups.push((key, vec![(entry, t)])),
+        }
+    }
+
+    'groups: for ((account, _), items) in groups {
         if stopped() {
             tally.report.stopped = true;
             break;
@@ -398,17 +456,8 @@ pub async fn run_cleanup_within<B: Browsers>(
                         break 'groups;
                     }
                     let req = request(org, project, t, entry);
-                    let outcome = match preflight(root, &req, None) {
-                        Err(problems) => Err(problems.join("; ")),
-                        Ok(()) => {
-                            let report = run_in_session(&mut d, root, &req, timing, &session, limit, retry_pauses).await;
-                            if report.ok {
-                                Ok(())
-                            } else {
-                                Err(report.message())
-                            }
-                        }
-                    };
+                    let report = run_in_session(&mut d, root, &req, timing, &session, limit, retry_pauses).await;
+                    let outcome = if report.ok { Ok(()) } else { Err(report.message()) };
                     tally.done(entry, outcome);
                 }
             }

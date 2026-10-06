@@ -416,6 +416,23 @@ fn is_valid_date(s: &str) -> bool {
 /// Said when a delete template does not name the kind it deletes.
 pub const DELETES_KIND_NEEDED: &str = "a delete template must say which kind it deletes";
 
+/// Said when a delete template takes anything but the one record id.
+pub const DELETE_SHAPE: &str = "a delete template takes exactly one value, id, and deletes only that record";
+
+/// Whether a delete template has the only shape it may have: exactly one
+/// param, a required `id` with no default, which at least one step uses.
+/// Every other placeholder `check` already limits to the params and the
+/// step's earlier captures, so with `id` the only param nothing but the
+/// record given - and what the steps capture on the way, a fresh token
+/// say - can reach a request. Clean up hands `{{id}}` a record of the
+/// test-made drafts; a template with a second value could be pointed at
+/// anything.
+pub fn delete_shape_ok(t: &ApiTemplate) -> bool {
+    let one_id = matches!(t.params.as_slice(), [p] if p.name == "id" && p.required && p.default.is_none());
+    let uses_id = t.steps.iter().any(|s| step_placeholder_names(s).iter().any(|n| n == "id"));
+    one_id && uses_id
+}
+
 /// Every problem with this template, in template order (top-level `id`
 /// first, then each step in order, then `outputs`, then `proven`). Empty
 /// means the draft is fit to run.
@@ -431,6 +448,9 @@ pub fn check(t: &ApiTemplate) -> Vec<String> {
 
     if t.effect == Effect::Delete && t.deletes_kind.as_deref().map(str::trim).unwrap_or("").is_empty() {
         problems.push(DELETES_KIND_NEEDED.to_string());
+    }
+    if t.effect == Effect::Delete && !delete_shape_ok(t) {
+        problems.push(DELETE_SHAPE.to_string());
     }
 
     // Names visible to a placeholder: every declared param, plus every

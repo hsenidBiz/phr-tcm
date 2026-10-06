@@ -153,15 +153,20 @@ test("results come in as each delete ends, and Stop calls the command", async ()
     organization: "acme",
     project: "proj",
     environment: "env-aaaa0001",
-    ids: ["274", "275"],
+    prefix: "AUTOTEST",
+    olderThanDays: 7,
+    entries: [
+      { kind: "cycle", id: "274" },
+      { kind: "cycle", id: "275" },
+    ],
   }));
 
-  await act(() => emit("autorun-cleanup-progress", { done: 1, total: 2, id: "274", outcome: "deleted" }));
+  await act(() => emit("autorun-cleanup-progress", { done: 1, total: 2, kind: "cycle", id: "274", outcome: "deleted" }));
   const results = await screen.findByRole("list", { name: "Results" });
   expect(results).toHaveTextContent("cycle AUTOTEST a: deleted");
 
   await act(() =>
-    emit("autorun-cleanup-progress", { done: 2, total: 2, id: "275", outcome: "failed at Delete: expected status 200, got 500" }),
+    emit("autorun-cleanup-progress", { done: 2, total: 2, kind: "cycle", id: "275", outcome: "failed at Delete: expected status 200, got 500" }),
   );
   await waitFor(() => expect(results).toHaveTextContent("cycle AUTOTEST b: failed at Delete: expected status 200, got 500"));
 
@@ -170,6 +175,27 @@ test("results come in as each delete ends, and Stop calls the command", async ()
 
   await act(async () => finish({ results: [], total: 2, stopped: true }));
   expect(await screen.findByRole("button", { name: "Close" })).toBeInTheDocument();
+});
+
+test("a tick is the kind and id together: cycle 42 and suite 42 tick apart, and only the ticked pair is sent", async () => {
+  const { calls } = mount(
+    [line("42", "AUTOTEST cycle", true), line("42", "AUTOTEST suite", true, "suite")],
+    () => new Promise(() => undefined),
+  );
+  const suite = await screen.findByRole("checkbox", { name: "Delete suite AUTOTEST suite" });
+  const cycle = screen.getByRole("checkbox", { name: "Delete cycle AUTOTEST cycle" });
+  await waitFor(() => expect(suite).toHaveAttribute("aria-checked", "true"));
+  fireEvent.click(suite);
+  expect(suite).toHaveAttribute("aria-checked", "false");
+  expect(cycle).toHaveAttribute("aria-checked", "true");
+
+  fireEvent.click(screen.getByRole("button", { name: "Delete 1 drafts" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "auto_run_cleanup_run")?.args.entries).toEqual([{ kind: "cycle", id: "42" }]),
+  );
+  await act(() => emit("autorun-cleanup-progress", { done: 1, total: 1, kind: "cycle", id: "42", outcome: "deleted" }));
+  expect(await screen.findByRole("list", { name: "Results" })).toHaveTextContent("cycle AUTOTEST cycle: deleted");
 });
 
 test("an empty preview says so and offers nothing to delete", async () => {

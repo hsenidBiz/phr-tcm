@@ -240,6 +240,9 @@ pub fn preflight(root: &Path, req: &RunRequest, existing: Option<&ApiTemplate>) 
     if matches!(req.mode, Mode::Run) && t.effect == Effect::Delete {
         problems.push(deletes_refusal(&t.id));
     }
+    // `check` above already refuses a delete template of any other shape
+    // than one `id` (`DELETE_SHAPE`), in every mode: a draft at prove, and
+    // a saved file - one written before the rule - at cleanup.
     if matches!(req.mode, Mode::Cleanup) && t.effect != Effect::Delete {
         problems.push(format!("template {} does not delete, so Clean up does not run it", t.id));
     }

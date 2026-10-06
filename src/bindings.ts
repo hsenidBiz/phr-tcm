@@ -1197,18 +1197,20 @@ export const commands = {
 	/**
 	 *  The record entries Clean up test-made drafts would offer: those of
 	 *  `environment` named with `prefix` and at least `older_than_days` old,
-	 *  each with whether a proven delete template can delete it. Only the
-	 *  webview calls this: there is no bridge route and no MCP tool for it.
+	 *  each with whether a proven delete template can delete it. Remembered,
+	 *  so a cleanup must state the same query. Only the webview calls this:
+	 *  there is no bridge route and no MCP tool for it.
 	 */
 	autoRunCleanupPreview: (organization: string, project: string, environment: string, prefix: string, olderThanDays: number) => typedError<CleanupLine_Serialize[], string>(__TAURI_INVOKE("auto_run_cleanup_preview", { organization, project, environment, prefix, olderThanDays })),
 	/**
-	 *  Deletes the ticked drafts (`ids`) of the last preview of `environment`,
-	 *  one at a time, streaming `AutorunCleanupProgress`. Holds the
-	 *  one-at-a-time template slot, so it never overlaps a template or fixture
-	 *  run. Only the webview calls this: there is no bridge route and no MCP
-	 *  tool for it.
+	 *  Deletes the ticked drafts (`entries`, each a kind and an id) of the
+	 *  preview it states (`environment`, `prefix`, `older_than_days`), which
+	 *  must be the last one made; one at a time, streaming
+	 *  `AutorunCleanupProgress`. Holds the one-at-a-time template slot, so it
+	 *  never overlaps a template or fixture run. Only the webview calls this:
+	 *  there is no bridge route and no MCP tool for it.
 	 */
-	autoRunCleanupRun: (organization: string, project: string, environment: string, ids: string[]) => typedError<CleanupReport, string>(__TAURI_INVOKE("auto_run_cleanup_run", { organization, project, environment, ids })),
+	autoRunCleanupRun: (organization: string, project: string, environment: string, prefix: string, olderThanDays: number, entries: CleanupPick[]) => typedError<CleanupReport, string>(__TAURI_INVOKE("auto_run_cleanup_run", { organization, project, environment, prefix, olderThanDays, entries })),
 	/**
 	 *  Stops the cleanup going, between its deletes. Only the webview calls
 	 *  this.
@@ -1685,12 +1687,14 @@ export type AutoApproveOutcome = {
 
 /**
  *  Emitted after each delete of a Clean up of test-made drafts, so the
- *  dialog shows each result as it comes. `outcome` is `deleted`, or the
- *  sentence the delete failed with.
+ *  dialog shows each result as it comes: the draft's kind and id (two
+ *  kinds may share an id), and `outcome`, `deleted` or the sentence the
+ *  delete failed with.
  */
 export type AutorunCleanupProgress = {
 	done: number,
 	total: number,
+	kind: string,
 	id: string,
 	outcome: string,
 };
@@ -2207,6 +2211,15 @@ export type CleanupLine_Serialize = {
 	deletable: boolean,
 	/**  Why it cannot be ticked, when it cannot. */
 	note: string | null,
+};
+
+/**
+ *  One draft a person ticked: its kind and its id, together, since two
+ *  kinds may share an id.
+ */
+export type CleanupPick = {
+	kind: string,
+	id: string,
 };
 
 /**  What a cleanup did, in the order it did it. */

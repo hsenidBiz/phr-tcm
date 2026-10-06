@@ -31,7 +31,10 @@ fn template(id: &str, effect: &str, proven: bool) -> ApiTemplate {
         "outputs": ["cycleId", "cycleName"]
     });
     if effect == "delete" {
+        // A delete template's one shape: a required `id`, sent by its step.
         v["deletes_kind"] = json!("cycle");
+        v["params"] = json!([{ "name": "id", "type": "string", "required": true }]);
+        v["steps"][0]["form"] = json!({ "Id": "{{id}}" });
     }
     let mut t: ApiTemplate = serde_json::from_value(v).unwrap();
     if proven {
@@ -998,8 +1001,13 @@ mod running {
         let mut t = add_suite();
         t.effect = v2_lib::api_templates::Effect::Delete;
         t.deletes_kind = Some("suite".into());
+        // A delete template's one shape: a required `id`, sent by its step.
+        t.params = vec![serde_json::from_value(json!({ "name": "id", "type": "string", "required": true })).unwrap()];
+        t.steps[0].form = Some(BTreeMap::from([("SuiteId".to_string(), "{{id}}".to_string())]));
+        t.steps[0].capture.clear();
+        t.outputs.clear();
         let mut values = serde_json::Map::new();
-        values.insert("cycleId".into(), json!(274));
+        values.insert("id".into(), json!("274"));
         let req = |mode| RunRequest {
             org: ORG.into(),
             project: PROJECT.into(),

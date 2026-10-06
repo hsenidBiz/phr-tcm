@@ -35,7 +35,13 @@ function age(createdAt: string): string {
 }
 
 /** One result as it came in. */
-type Result = { id: string; outcome: string };
+type Result = { kind: string; id: string; outcome: string };
+
+/** A draft's tick key: its kind and its id together, since two kinds may
+ * share an id. */
+function pickKey(e: { kind: string; id: string }): string {
+  return JSON.stringify([e.kind, e.id]);
+}
 
 type Phase = "choose" | "confirm" | "running" | "done";
 
@@ -46,8 +52,10 @@ type Phase = "choose" | "confirm" | "running" | "done";
  * templates, one at a time, watching each result come in.
  *
  * Only what Rust previews can be deleted, and Rust checks the preview again
- * when the deletes start: the webview only ever sends the ids ticked. A
- * line with no proven delete template for its kind cannot be ticked.
+ * when the deletes start: the webview only ever sends the query it
+ * previewed and the drafts ticked, each by kind and id (two kinds may share
+ * an id). A line with no proven delete template for its kind cannot be
+ * ticked.
  */
 export default function CleanupDialog({
   org,
@@ -73,15 +81,13 @@ export default function CleanupDialog({
   const list = envs.data?.environments ?? [];
   const chosen = list.find((e) => e.id === envId) ?? list.find((e) => e.id === envs.data?.active);
   const chosenPrefix = prefix ?? chosen?.test_prefix ?? "";
-  const days = Number(olderThan);
+  const asNumber = Number(olderThan);
+  const days = Number.isInteger(asNumber) ? asNumber : 0;
   const isActive = Boolean(chosen && chosen.id === envs.data?.active);
 
   const preview = useQuery({
-    queryKey: [CLEANUP_KEY, org, project, chosen?.id, chosenPrefix, olderThan],
-    queryFn: () =>
-      unwrapStr(
-        commands.autoRunCleanupPreview(org, project, chosen!.id, chosenPrefix, Number.isInteger(days) ? days : 0),
-      ),
+    queryKey: [CLEANUP_KEY, org, project, chosen?.id, chosenPrefix, days],
+    queryFn: () => unwrapStr(commands.autoRunCleanupPreview(org, project, chosen!.id, chosenPrefix, days)),
     enabled: Boolean(org && project && chosen),
     retry: false,
   });
@@ -89,27 +95,30 @@ export default function CleanupDialog({
 
   // Every deletable line starts ticked, each time the preview changes.
   useEffect(() => {
-    if (preview.data) setTicked(new Set(preview.data.filter((l) => l.deletable).map((l) => l.entry.id)));
+    if (preview.data) setTicked(new Set(preview.data.filter((l) => l.deletable).map((l) => pickKey(l.entry))));
   }, [preview.data]);
 
   // Each delete's result, as it comes.
   useEffect(() => {
     const un = events.autorunCleanupProgress.listen((e) => {
       if (!listening.current) return;
-      setResults((prev) => [...prev, { id: e.payload.id, outcome: e.payload.outcome }]);
+      const { kind, id, outcome } = e.payload;
+      setResults((prev) => [...prev, { kind, id, outcome }]);
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
   }, []);
 
-  const chosenIds = lines.filter((l) => l.deletable && ticked.has(l.entry.id)).map((l) => l.entry.id);
+  const picks = lines
+    .filter((l) => l.deletable && ticked.has(pickKey(l.entry)))
+    .map((l) => ({ kind: l.entry.kind, id: l.entry.id }));
 
-  const toggle = (id: string, on: boolean) =>
+  const toggle = (key: string, on: boolean) =>
     setTicked((prev) => {
       const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
+      if (on) next.add(key);
+      else next.delete(key);
       return next;
     });
 
@@ -121,7 +130,7 @@ export default function CleanupDialog({
     setPhase("running");
     listening.current = true;
     try {
-      const r = await commands.autoRunCleanupRun(org, project, chosen.id, chosenIds);
+      const r = await commands.autoRunCleanupRun(org, project, chosen.id, chosenPrefix, days, picks);
       if (r.status === "error") setFailed(r.error);
     } catch (e) {
       logUi(`clean up: ${e instanceof Error ? e.message : String(e)}`);
@@ -143,7 +152,7 @@ export default function CleanupDialog({
   };
 
   const busy = phase === "running";
-  const lineOf = (id: string) => lines.find((l) => l.entry.id === id);
+  const lineOf = (r: Result) => lines.find((l) => l.entry.kind === r.kind && l.entry.id === r.id);
 
   return (
     <Modal
@@ -233,9 +242,9 @@ export default function CleanupDialog({
                 >
                   <Checkbox
                     ariaLabel={`Delete ${e.kind} ${e.name}`}
-                    checked={l.deletable && ticked.has(e.id)}
+                    checked={l.deletable && ticked.has(pickKey(e))}
                     disabled={!l.deletable || busy}
-                    onCheckedChange={(on) => toggle(e.id, on)}
+                    onCheckedChange={(on) => toggle(pickKey(e), on)}
                     className="mt-0.5"
                   />
                   <div className="min-w-0 flex-1 space-y-0.5">
@@ -263,11 +272,11 @@ export default function CleanupDialog({
           {results.length > 0 && (
             <ul aria-label="Results" className="space-y-0.5 text-xs">
               {results.map((r, i) => {
-                const line = lineOf(r.id);
+                const line = lineOf(r);
                 const ok = r.outcome === "deleted";
                 return (
-                  <li key={`${r.id}-${i}`} className={cn(ok ? "text-success" : "text-danger")}>
-                    {`${line ? `${line.entry.kind} ${line.entry.name}` : r.id}: ${ok ? "deleted" : r.outcome}`}
+                  <li key={`${r.kind}:${r.id}-${i}`} className={cn(ok ? "text-success" : "text-danger")}>
+                    {`${line ? `${line.entry.kind} ${line.entry.name}` : `${r.kind} ${r.id}`}: ${ok ? "deleted" : r.outcome}`}
                   </li>
                 );
               })}
@@ -279,7 +288,7 @@ export default function CleanupDialog({
 
       {phase === "confirm" && chosen ? (
         <div className="space-y-2 rounded-md border border-border bg-surface px-3 py-2">
-          <p className="text-sm text-text">{confirmSentence(chosenIds.length, chosen.name)}</p>
+          <p className="text-sm text-text">{confirmSentence(picks.length, chosen.name)}</p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setPhase("choose")}>
               <IconCancel aria-hidden />
@@ -307,11 +316,11 @@ export default function CleanupDialog({
               <Button
                 size="sm"
                 variant="danger"
-                disabled={chosenIds.length === 0 || !isActive}
+                disabled={picks.length === 0 || !isActive}
                 onClick={() => setPhase("confirm")}
               >
                 <IconRemove aria-hidden />
-                {`Delete ${chosenIds.length} drafts`}
+                {`Delete ${picks.length} drafts`}
               </Button>
             </>
           )}
