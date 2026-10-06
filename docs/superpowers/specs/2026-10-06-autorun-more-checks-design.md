@@ -18,6 +18,8 @@ Design agreed with the owner on 2026-10-06. It covers backlog items 14 to 17.
 
 Every new field is serialised only when set, so old scripts and old run files load unchanged. Every sentence below is used verbatim. The readable script view (`describeAction.ts`) gets a sentence for each new action.
 
+A failure sentence below that can have a cause carries it at its end, as `: <reason>` (ruled 2026-10-07).
+
 ## 1. Browser dialogs
 
 ### Today
@@ -132,7 +134,14 @@ A script can set `page_errors: "fail" | "flag"`. It is absent by default, which 
   - `the PDF has no page <p>`
   - `the PDF's text could not be read`, for an encrypted file, a scanned image with no text, or a damaged file. The detail is written to the app log.
 - **Using the block.** A `pdf` block is allowed only when the download's name pattern ends in `.pdf`, otherwise `pdf checks need a name ending in .pdf`. It joins the existing headers, cell and text checks, which are for spreadsheets, CSV and text files.
-- **Limits.** Files over 50 MB are refused with `the PDF is larger than 50 MB`, so memory stays bounded.
+- **Limits.** Files over 50 MB are refused with `the PDF is larger than 50 MB`. Memory is bounded only by that 50 MB input: compressed streams inside a PDF can expand beyond it. This is a known limit.
+- **Read time.** Reading a downloaded file's content takes at most 60 seconds. Past that, the step fails with `"<name>" took longer than 60 seconds to read`, naming the file only. The run's Stop ends the wait at once. The abandoned read is left to finish on its own.
+
+Rulings made during the build (2026-10-07):
+- **One page.** The page-count sentence is singular for one page: `the PDF has 1 page, not 3`.
+- **`-1` in a failure.** A failed `on_page` with `-1` names the real page number: `page 2 of the PDF does not contain "<text>"`.
+- **Page breaks.** The top-level `contains` matches across page breaks: the pages are joined with one space before it is checked.
+- **Owner passwords.** A PDF locked only with an owner password, against changes, opens with no password and is read. Only a PDF that needs a password to open counts as unreadable.
 
 ## 5. Drag to reorder, and key combinations
 
