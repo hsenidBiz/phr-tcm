@@ -63,7 +63,7 @@ export const apiTemplates: Screen = {
       group: "templates",
       locate: { text: "portal.example.test" },
       name: "Runs against",
-      does: "The site templates run on: the site address of the active environment, set on the Auto Run tab's **Setup**.",
+      does: "The site templates run on: the site address of the active environment, set in the Setup panel on the Auto Run tab.",
     },
     {
       id: "writes-switch",
@@ -304,7 +304,7 @@ export const apiTemplates: Screen = {
       title: "Get your first templates",
       steps: [
         "Turn on **Enable Advanced Features** in Settings, under General.",
-        "Set up the site address and your accounts on the Auto Run tab's **Setup**.",
+        "Set up the site address and your accounts in the Setup panel on the Auto Run tab.",
         "On the AI Bridge tab, connect your assistant and switch **API templates** on.",
         "Ask the assistant to build a template for the data you need. It proves the template on your site, and it appears here once it worked.",
       ],

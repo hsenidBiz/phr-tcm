@@ -1,7 +1,8 @@
 // Auto Run: the app drives a real browser through a test case's steps from
 // a script, with a person watching (one case or a selection) or unattended,
 // and keeps the results on this computer until they are reviewed and sent.
-// Three tabs: Test cases, Past runs and Setup.
+// Two tabs, Test cases and Past runs, with the Setup panel beside the
+// cases. A case's Script and Run buttons are on its card once it is open.
 //
 // Locates come from screens/AutoRun/index.tsx, ScriptEditor.tsx,
 // RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
@@ -27,13 +28,23 @@ const SITE = "auto-run-site-address";
 const ACCOUNTS = "auto-run-accounts";
 
 const NAV: Step = { nav: "Auto Run" };
-const READY: Step = { waitFor: { role: "button", name: "Run #5001" } };
+const READY: Step = { waitFor: { role: "checkbox", name: "Select #5001" } };
+/** Opens a case's card, where its Script and Run buttons are. */
+const OPEN_CARD = (id: number): Step[] => [
+  { click: { role: "button", name: `Show details for #${id}` } },
+  { waitFor: { role: "button", name: `Hide details for #${id}` } },
+];
 const PICK_TWO: Step[] = [
   { click: { role: "checkbox", name: "Select #5001" } },
   { click: { role: "checkbox", name: "Select #5004" } },
 ];
 const TO_RUNS: Step[] = [NAV, READY, { click: { role: "tab", nameRe: "^Past runs" } }, { waitFor: { role: "button", name: "Clear results" } }];
-const TO_SETUP: Step[] = [NAV, READY, { click: { role: "tab", nameRe: "^Setup" } }, { waitFor: { role: "button", name: "Edit site address" } }];
+const TO_SETUP: Step[] = [
+  NAV,
+  READY,
+  { click: { role: "button", name: "Show setup details" } },
+  { waitFor: { role: "button", name: "Edit site address" } },
+];
 
 export const autoRun: Screen = {
   id: "auto-run",
@@ -44,11 +55,15 @@ export const autoRun: Screen = {
     "Results stay on this computer until you review a run and send it to Azure DevOps. " +
     "Auto Run is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears in the sidebar under Run Tests.",
   shots: [
-    { id: CASES, route: [NAV, READY], alt: "Auto Run on its Test cases tab: the cases with their scripts, last results and Run buttons" },
+    {
+      id: CASES,
+      route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
+      alt: "Auto Run on its Test cases tab: the search, the result filters, the cases with their last results, two of them open, and the Setup panel beside them",
+    },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
     {
       id: SCRIPT,
-      route: [NAV, READY, { click: { role: "button", name: "Edit script for #5003" } }, { waitFor: { role: "textbox", name: "Action script JSON" } }],
+      route: [NAV, READY, ...OPEN_CARD(5003), { click: { role: "button", name: "Edit script for #5003" } }, { waitFor: { role: "textbox", name: "Action script JSON" } }],
       alt: "The script of a case with a precondition, beside the case's own steps",
     },
     {
@@ -56,6 +71,7 @@ export const autoRun: Screen = {
       route: [
         NAV,
         READY,
+        ...OPEN_CARD(5004),
         { click: { role: "button", name: "Run #5004" } },
         { click: { role: "button", name: "Open browser" } },
         { waitFor: { role: "button", name: "Sign in again" } },
@@ -76,7 +92,7 @@ export const autoRun: Screen = {
       route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept every proposal" } }],
       alt: "Reviewing an unattended run before sending it to Azure DevOps",
     },
-    { id: SETUP, route: TO_SETUP, alt: "The Setup tab: site address, sign-in, accounts, areas, test files and save words" },
+    { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: site address, sign-in, accounts, areas, test files and save words" },
     {
       id: SITE,
       route: [...TO_SETUP, { click: { role: "button", name: "Edit site address" } }, { waitFor: { role: "textbox", name: "Start address" } }],
@@ -104,7 +120,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "tab", nameRe: "^Test cases" },
       name: "Test cases",
-      does: "The Product Backlog Item's test cases, with how many there are. Auto Run opens here when the setup is complete, and on **Setup** when something a run needs is missing.",
+      does: "The Product Backlog Item's test cases, with how many there are, and the Setup panel beside them. Auto Run always opens here.",
     },
     {
       id: "tab-runs",
@@ -115,12 +131,23 @@ export const autoRun: Screen = {
       does: "Every run saved on this computer, with how many there are.",
     },
     {
-      id: "tab-setup",
+      id: "setup-summary",
       shot: CASES,
       group: "setup",
-      locate: { role: "tab", nameRe: "^Setup" },
+      locate: { role: "list", name: "Setup summary" },
       name: "Setup",
-      does: "What a run needs before it can start. A warning sign on the tab means something is missing.",
+      does:
+        "What a run needs before it can start, one line each: the site address, the sign-in, the accounts, the areas, the test files and the database. " +
+        "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**.",
+    },
+    {
+      id: "setup-details",
+      shot: CASES,
+      group: "setup",
+      locate: { role: "button", name: "Show setup details" },
+      name: "Show setup details",
+      does: "Opens the panel's full rows, each with the button that changes it. **Hide setup details** goes back to the summary.",
     },
     {
       id: "readiness",
@@ -138,7 +165,33 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "button", name: "Open setup" },
       name: "Open setup",
-      does: "Goes to the **Setup** tab.",
+      does: "Opens the Setup panel's full rows and moves to them.",
+    },
+    {
+      id: "search",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "textbox", name: "Search test cases" },
+      name: "Search",
+      does:
+        "Shows only the cases whose id or title holds what you type, with or without the **#** before an id. It works together with the result filters. " +
+        "Press [[Escape]] or the clear button to show every case again.",
+    },
+    {
+      id: "expand-all",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "button", name: "Expand all" },
+      name: "Expand all",
+      does: "Opens every case the list shows, to read their scripts at once.",
+    },
+    {
+      id: "collapse-all",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "button", name: "Collapse all" },
+      name: "Collapse all",
+      does: "Closes every open case, the ones the search or a filter hides too.",
     },
     {
       id: "group-by-title",
@@ -154,7 +207,7 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "checkbox", name: "Select all shown" },
       name: "Select all shown",
-      does: "Selects every case the list shows that has a script. Cases without a script cannot be selected.",
+      does: "Selects every case the list shows, after the search and the filters, that has a script. Cases without a script cannot be selected.",
     },
     {
       id: "last-result-filter",
@@ -186,13 +239,32 @@ export const autoRun: Screen = {
       does: "Adds the case to the selection. Only a case with a script has this box.",
     },
     {
+      id: "case-details",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "button", name: "Hide details for #5002" },
+      name: "Show details",
+      does:
+        "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
+        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
+        "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Run.",
+    },
+    {
+      id: "card-steps",
+      shot: CASES,
+      group: "cases",
+      locate: { role: "list", name: "Script steps of #5002" },
+      name: "Steps",
+      does: "The script's steps, numbered, each with the case's own words for it and how many actions it takes. Read only: change them with **Script**.",
+    },
+    {
       id: "suspected-defect",
       shot: CASES,
       group: "cases",
       locate: { text: "Suspected defect" },
       name: "Suspected defect",
       does:
-        "An assistant looked at a failure and found the script was right and the site did not do what the case expects. Hover it to read at which step and why. " +
+        "An assistant looked at a failure and found the script was right and the site did not do what the case expects. The open case says at which step and why. " +
         "Worth checking by hand, and worth a bug if it holds.",
     },
     {
@@ -207,7 +279,7 @@ export const autoRun: Screen = {
       id: "edit-script",
       shot: CASES,
       group: "scripts",
-      locate: { role: "button", name: "Edit script for #5001" },
+      locate: { role: "button", name: "Edit script for #5002" },
       name: "Script",
       does: "Opens the case's script. On a case without one, the button reads **Add script**.",
     },
@@ -223,7 +295,7 @@ export const autoRun: Screen = {
       id: "run-one",
       shot: CASES,
       group: "watch",
-      locate: { role: "button", name: "Run #5001" },
+      locate: { role: "button", name: "Run #5002" },
       name: "Run",
       does: "Runs this one case while you watch. Only a case with a script has it.",
     },
@@ -291,7 +363,7 @@ export const autoRun: Screen = {
       name: "Must not save",
       does:
         "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
-        "The save words on the **Setup** tab decide what counts as a save. Only you can turn it off, here.",
+        "The save words in the Setup panel decide what counts as a save. Only you can turn it off, here.",
     },
     {
       id: "script-json",
@@ -724,7 +796,7 @@ export const autoRun: Screen = {
     {
       title: "Set up for the first run",
       steps: [
-        "Pick the Product Backlog Item, open **Auto Run** and go to **Setup**.",
+        "Pick the Product Backlog Item and open **Auto Run**. The Setup panel is beside the cases, and opens by itself when something a run needs is missing; otherwise press **Show setup details**.",
         "Press **Edit** beside **Site address**, type the address of the site you test, and save.",
         "Press **Edit** beside **Accounts** and add your test accounts with the keys your team's scripts use, or add the ones the assistant proposed.",
         "Press **Edit** beside **Areas** and record the areas of the site your cases start in.",
@@ -734,14 +806,14 @@ export const autoRun: Screen = {
     {
       title: "Write or import scripts",
       steps: [
-        "On **Test cases**, press **Add script** on a case, write its actions, check that **Checks** covers every step, and press **Save script**.",
+        "On **Test cases**, open a case and press **Add script**, write its actions, check that **Checks** covers every step, and press **Save script**.",
         "Or let an assistant write the scripts for the whole Product Backlog Item, then press **More**, **Import scripts** and pick its file.",
       ],
     },
     {
       title: "Run one case while you watch",
       steps: [
-        "Press **Run** on the case.",
+        "Open the case with the arrow beside it, or by clicking its title, and press **Run**.",
         "Pick the browser and press **Open browser**. The app signs in as the script's account.",
         "Press **Run step 1**, watch the browser, then the next step, and so on.",
         "Choose **Passed**, **Failed** or **Blocked**, add a note if you want, and press **Save result**.",
