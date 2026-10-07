@@ -544,3 +544,19 @@ fn a_project_with_no_areas_exports_with_no_menu_clicks_placed_by_module() {
     let why = preview_of(&fx, 152).reason.unwrap();
     assert!(why.contains("no areas recorded") && why.contains("Module"), "{why}");
 }
+
+#[test]
+fn an_area_not_placed_yet_comes_with_a_suggestion_from_its_name() {
+    let fx = Fx::new();
+    fx.good(160, "One sixty");
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[160], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    // "Definition Wizard" is placed already; only "Unplaced" is guessed.
+    assert_eq!(p.suggested.len(), 1, "{:?}", p.suggested);
+    assert_eq!(
+        p.suggested.get("Unplaced"),
+        Some(&Placement { side: "admin".into(), module: "performance".into(), feature: "unplaced".into() })
+    );
+    // A guess is never saved by the preview.
+    let saved = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    assert!(!saved.areas.contains_key("Unplaced"));
+}

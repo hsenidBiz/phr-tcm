@@ -61,7 +61,10 @@ export default function PlaywrightExportDialog({
   const { prefs } = useFieldRefs(org, project);
   const [clone, setClone] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
-  /** The area rows and account picks being edited; seeded once from the saved map. */
+  /**
+   * The area rows and account picks being edited; seeded from the saved map,
+   * with a suggestion for each area not placed yet (unsaved until confirmed).
+   */
   const [areas, setAreas] = useState<Record<string, Placement> | null>(null);
   const [users, setUsers] = useState<Record<string, string> | null>(null);
   /** Exportable cases the person unticked; everything else exportable is ticked. */
@@ -77,7 +80,7 @@ export default function PlaywrightExportDialog({
     const p = await unwrapStr(commands.pwExportPreview(org, project, caseIds, modules));
     setPreview(p);
     if (reseed) {
-      setAreas({ ...(p.map.areas ?? {}) });
+      setAreas({ ...(p.suggested ?? {}), ...(p.map.areas ?? {}) });
       setUsers({ ...(p.map.accounts?.[p.environment] ?? {}) });
     }
   }, [org, project, caseIds, modules]);

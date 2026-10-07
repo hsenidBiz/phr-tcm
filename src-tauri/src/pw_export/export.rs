@@ -44,6 +44,9 @@ pub struct Preview {
     pub areas: Vec<String>,
     pub accounts: Vec<String>,
     pub map: ExportMap,
+    /// A first guess for each of `areas` not placed yet, from its name
+    /// (`Placement::suggest`); the person confirms it by saving.
+    pub suggested: BTreeMap<String, Placement>,
     pub cases: Vec<PreviewCase>,
 }
 
@@ -126,6 +129,14 @@ fn bare_return_to_area(script: &CaseScript) -> bool {
         .iter()
         .flat_map(|s| s.actions.iter().flat_map(|a| a.each()))
         .any(|a| matches!(a, Action::ReturnToArea { .. }) && a.area_named().is_none())
+}
+
+/// Where an area (or Module) is placed: its own entry, else one spelled
+/// the same but for case and outer spaces.
+fn placed<'m>(map: &'m ExportMap, name: &str) -> Option<&'m Placement> {
+    map.areas
+        .get(name)
+        .or_else(|| map.areas.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case(name.trim())).map(|(_, v)| v))
 }
 
 /// The names the dialog places: the recorded areas, or - in a project with
@@ -238,9 +249,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
     if route.is_none() && bare_return_to_area(&script) {
         return fail(pc, runner::NO_AREA_IN_RUN.into());
     }
-    let placement = ctx.map.areas.get(&area_name).cloned().or_else(|| {
-        ctx.map.areas.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case(&area_name)).map(|(_, v)| v.clone())
-    });
+    let placement = placed(&ctx.map, &area_name).cloned();
     let Some(placement) = placement else {
         return fail(pc, format!("area \"{area_name}\" is not placed yet - choose where it goes in the clone"));
     };
@@ -349,6 +358,14 @@ pub fn preview_with(
         clone_ok: ctx.clone.is_ok(),
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
+        suggested: placement_keys(&ctx, case_ids)
+            .into_iter()
+            .filter(|a| placed(&ctx.map, a).is_none())
+            .map(|a| {
+                let p = Placement::suggest(&a);
+                (a, p)
+            })
+            .collect(),
         areas: placement_keys(&ctx, case_ids),
         accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
         map: ctx.map.clone(),

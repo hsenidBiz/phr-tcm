@@ -22,6 +22,7 @@ const PREVIEW = {
   areas: ["Definition Wizard"],
   accounts: ["hr.admin"],
   map: { areas: {}, accounts: { other: { x: "Y" } } },
+  suggested: {},
   cases: [
     { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null },
     { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null },
@@ -182,4 +183,28 @@ test("a failed refresh after a write keeps the summary and is shown separately",
   fireEvent.click(screen.getByRole("button", { name: "Export" }));
   expect(await screen.findByText("a/b.md")).toBeInTheDocument();
   expect(await screen.findByText(/could not be refreshed: preview broke/)).toBeInTheDocument();
+});
+
+test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", async () => {
+  const suggested = {
+    ...PREVIEW,
+    areas: ["Definition Wizard", "Goal Setting"],
+    map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} },
+    suggested: { "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" } },
+  };
+  const { calls } = mount({}, suggested);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  // The saved row keeps what is saved; the unplaced one shows the guess.
+  expect(screen.getByLabelText("Feature for Definition Wizard")).toHaveValue("wizard");
+  expect(screen.getByLabelText("Module for Goal Setting")).toHaveValue("performance");
+  expect(screen.getByLabelText("Feature for Goal Setting")).toHaveValue("goal-setting");
+  // A guess is not a mapping until the person saves it.
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { areas: unknown }).areas).toEqual({
+    "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" },
+    "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" },
+  });
 });
