@@ -1,0 +1,59 @@
+// spec: suites/sl/admin/performance/definition-wizard/test-cases/definition-wizard.md
+// seed: suites/_generated/seed.spec.ts
+
+import { test, expect } from '@playwright/test';
+
+test.describe('Definition Wizard', () => {
+  test('Proficiency Levels - Pasting newlines into Level name is sanitized', async ({ page }) => {
+    let cur = page;
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/hr\/home\/index/);
+    if (await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#sidebar-toggle-menu:not(.active)').filter({ visible: true }).first().waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      await cur.locator('#sidebar-toggle-menu').filter({ visible: true }).first().click();
+    }
+    await cur.locator('a[href*=\'DefinitionWizard\']').filter({ visible: true }).first().click();
+
+    // 1. Open "Performance Management", go to "Setup & Configuration" and select "Definition Wizard".
+    // Not checked: The run's recorded Definition Wizard area does this navigation before step 1, so the script starts past it.
+
+    // 2. If the landing page shows, make sure the "Goals / KPIs" and "Competencies" cards are both selected and click "Continue to Configuration".
+    await cur.locator('#btnContinue-button').first().waitFor({ state: 'attached', timeout: 20000 });
+    if (await cur.locator('#phr-goals-card:not(.is-active)').filter({ visible: true }).first().waitFor({ timeout: 1000 }).then(() => true, () => false)) {
+      await cur.locator('#phr-goals-card').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#phr-competencies-card:not(.is-active)').filter({ visible: true }).first().waitFor({ timeout: 1000 }).then(() => true, () => false)) {
+      await cur.locator('#phr-competencies-card').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#btnContinue-button').filter({ visible: true }).first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {
+      await cur.locator('#btnContinue-button').filter({ visible: true }).first().click();
+    }
+    await expect(cur.locator('#phr-rating-methods-step').filter({ visible: true }).getByRole('heading', { name: 'Rating Methods', exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: 20000 });
+
+    // 3. Make sure at least one rating method is listed and click "Save & Continue".
+    await expect(cur.locator('#phr-methods-list [data-role=\'method-name\']').filter({ visible: true }).nth(0)).toBeVisible({ timeout: 15000 });
+    await cur.locator('#btnRatingMethodsContinue-button').filter({ visible: true }).first().click();
+    await expect(cur.locator('#phr-proficiency-levels-step').filter({ visible: true }).getByRole('heading', { name: 'Proficiency Levels', exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: 20000 });
+    await expect(cur.locator('#phr-shell-progress-bar .phr-progress-title').filter({ visible: true }).first()).toContainText('Step 2 of 6');
+
+    // 4. On the "Performance-based" card, click "Activate", then click "Activate" in the "Activate Template" dialog.
+    await cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().click();
+    await cur.getByRole('dialog', { name: 'Activate Template' }).filter({ visible: true }).getByRole('button', { name: 'Activate', exact: true }).filter({ visible: true }).first().click();
+    await expect(cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first()).toHaveText('Active');
+
+    // 5. Click "Add Level". Copy the two lines Senior and Expert from a text editor and paste them into the "Level name" field of the new row.
+    // Not checked: A clipboard paste cannot be driven - the script commits the two-line text with fill instead - and the case does not say what the one-line text reads, so whether it shows on one line is left for a person.
+    await cur.locator('#btnProficiencyAddLevel-button').filter({ visible: true }).first().click();
+    await cur.locator('#phr-proficiency-custom-panel input.phr-textbox-input[placeholder=\'Level name\']').filter({ visible: true }).first().fill('Senior\nExpert');
+
+    // 6. Click the "Confirm edit" check icon, then click "Use Custom Levels".
+    await cur.locator('#phr-proficiency-custom-panel').filter({ visible: true }).getByRole('button', { name: 'Confirm edit', exact: true }).filter({ visible: true }).first().click();
+    await cur.locator('#phr-proficiency-custom-panel').filter({ visible: true }).getByRole('button', { name: 'Use Custom Levels' }).filter({ visible: true }).first().click();
+    await expect(cur.locator('#phr-proficiency-preview-status').filter({ visible: true }).first()).toHaveText('Custom scale');
+    await expect(cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-number\']').filter({ visible: true }).first()).toHaveText('1');
+    await expect(cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-name\']').filter({ visible: true }).first()).toContainText('Senior');
+    await expect(cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile').filter({ visible: true })).toHaveCount(6);
+  });
+});

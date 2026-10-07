@@ -2,4 +2,5 @@
 
 pub mod clone;
 pub mod mapping;
+pub mod translate;
 pub mod ts;

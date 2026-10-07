@@ -1,0 +1,250 @@
+{
+  "case_id": 135560,
+  "title": "Proficiency Levels - Pasting newlines into Level name is sanitized",
+  "account": "automation",
+  "area": "Definition Wizard",
+  "steps": [
+    {
+      "step_number": 1,
+      "actions": [],
+      "unchecked": "The run's recorded Definition Wizard area does this navigation before step 1, so the script starts past it."
+    },
+    {
+      "step_number": 2,
+      "actions": [
+        {
+          "kind": "wait_for",
+          "selector": {
+            "css": "#btnContinue-button",
+            "visible": false
+          },
+          "timeout_ms": 20000
+        },
+        {
+          "kind": "when_visible",
+          "selector": {
+            "css": "#phr-goals-card:not(.is-active)"
+          },
+          "within_ms": 1000,
+          "then": [
+            {
+              "kind": "click",
+              "selector": {
+                "css": "#phr-goals-card"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "when_visible",
+          "selector": {
+            "css": "#phr-competencies-card:not(.is-active)"
+          },
+          "within_ms": 1000,
+          "then": [
+            {
+              "kind": "click",
+              "selector": {
+                "css": "#phr-competencies-card"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "when_visible",
+          "selector": {
+            "css": "#btnContinue-button"
+          },
+          "within_ms": 2000,
+          "then": [
+            {
+              "kind": "click",
+              "selector": {
+                "css": "#btnContinue-button"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "expect_visible",
+          "selector": [
+            {
+              "css": "#phr-rating-methods-step"
+            },
+            {
+              "role": "heading",
+              "name": "Rating Methods",
+              "exact": true
+            }
+          ],
+          "timeout_ms": 20000
+        }
+      ]
+    },
+    {
+      "step_number": 3,
+      "actions": [
+        {
+          "kind": "expect_visible",
+          "selector": {
+            "css": "#phr-methods-list [data-role='method-name']",
+            "nth": 0
+          },
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": {
+            "css": "#btnRatingMethodsContinue-button"
+          }
+        },
+        {
+          "kind": "expect_visible",
+          "selector": [
+            {
+              "css": "#phr-proficiency-levels-step"
+            },
+            {
+              "role": "heading",
+              "name": "Proficiency Levels",
+              "exact": true
+            }
+          ],
+          "timeout_ms": 20000
+        },
+        {
+          "kind": "expect_contains_text",
+          "selector": {
+            "css": "#phr-shell-progress-bar .phr-progress-title"
+          },
+          "value": "Step 2 of 6"
+        }
+      ]
+    },
+    {
+      "step_number": 4,
+      "actions": [
+        {
+          "kind": "click",
+          "selector": {
+            "css": ".phr-dw-prof-tpl-item[data-template-id='1'] [data-role='template-apply-button'] button"
+          }
+        },
+        {
+          "kind": "click",
+          "selector": [
+            {
+              "role": "dialog",
+              "name": "Activate Template"
+            },
+            {
+              "role": "button",
+              "name": "Activate",
+              "exact": true
+            }
+          ]
+        },
+        {
+          "kind": "expect_text",
+          "selector": {
+            "css": ".phr-dw-prof-tpl-item[data-template-id='1'] [data-role='template-apply-button'] button"
+          },
+          "equals": "Active"
+        }
+      ]
+    },
+    {
+      "step_number": 5,
+      "actions": [
+        {
+          "kind": "click",
+          "selector": {
+            "css": "#btnProficiencyAddLevel-button"
+          }
+        },
+        {
+          "kind": "fill",
+          "selector": {
+            "css": "#phr-proficiency-custom-panel input.phr-textbox-input[placeholder='Level name']"
+          },
+          "value": "Senior\nExpert"
+        }
+      ],
+      "unchecked": "A clipboard paste cannot be driven - the script commits the two-line text with fill instead - and the case does not say what the one-line text reads, so whether it shows on one line is left for a person."
+    },
+    {
+      "step_number": 6,
+      "actions": [
+        {
+          "kind": "click",
+          "selector": [
+            {
+              "css": "#phr-proficiency-custom-panel"
+            },
+            {
+              "role": "button",
+              "name": "Confirm edit",
+              "exact": true
+            }
+          ]
+        },
+        {
+          "kind": "click",
+          "selector": [
+            {
+              "css": "#phr-proficiency-custom-panel"
+            },
+            {
+              "role": "button",
+              "name": "Use Custom Levels"
+            }
+          ]
+        },
+        {
+          "kind": "expect_text",
+          "selector": {
+            "css": "#phr-proficiency-preview-status"
+          },
+          "equals": "Custom scale"
+        },
+        {
+          "kind": "expect_text",
+          "selector": {
+            "css": "#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role='tile-number']"
+          },
+          "equals": "1"
+        },
+        {
+          "kind": "expect_contains_text",
+          "selector": {
+            "css": "#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role='tile-name']"
+          },
+          "value": "Senior"
+        },
+        {
+          "kind": "expect_count",
+          "selector": {
+            "css": "#phr-proficiency-preview-tiles .phr-dw-scale-tile"
+          },
+          "equals": 6
+        }
+      ]
+    }
+  ],
+  "preconditions": [
+    {
+      "flow": "pms-definition-wizard",
+      "stage": "rating-methods",
+      "value": 1,
+      "why": "The case clicks Save & Continue on Rating Methods, which needs at least one rating method on the wizard setup."
+    }
+  ],
+  "changes": [
+    "proficiency scale saved"
+  ],
+  "needs_unchanged": [
+    "competencies switched off",
+    "profile assigned"
+  ],
+  "saved_at": "2026-10-06T03:44:16Z"
+}
