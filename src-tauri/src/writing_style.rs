@@ -52,11 +52,50 @@ pub fn refusal(style: &WritingStyle) -> Option<&'static str> {
     None
 }
 
-/// What `dir` holds, or `None` when the file is missing, unreadable or the
-/// wrong shape.
+/// The largest `writing-style.json` that is read at all, checked on the
+/// file's size before a byte of it is read. Larger than the text's own
+/// limit because the file is JSON: escaping can make a 64 KB text up to six
+/// times longer on disk (a control character is written `\u001f`). The
+/// text inside is then held to `MAX_BYTES` itself.
+pub const MAX_FILE_BYTES: u64 = MAX_BYTES as u64 * 6 + 1024;
+
+/// What `dir` holds, or `None` when the file is missing, unreadable, the
+/// wrong shape, or larger than a save accepts. Every case but a missing
+/// file is logged, by what went wrong or its size: never the path or the
+/// text.
 pub fn load(dir: &Path) -> Option<WritingStyle> {
-    let raw = std::fs::read_to_string(dir.join(FILE)).ok()?;
+    let path = dir.join(FILE);
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            crate::applog::warn(format!("the saved writing style could not be read, so it is not used: {e}"));
+            return None;
+        }
+    };
+    if !meta.is_file() {
+        crate::applog::warn("the saved writing style is not a file, so it is not used");
+        return None;
+    }
+    if meta.len() > MAX_FILE_BYTES {
+        crate::applog::warn(format!("the saved writing style file is {} bytes, over the limit, so it is not used", meta.len()));
+        return None;
+    }
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            crate::applog::warn(format!("the saved writing style could not be read, so it is not used: {e}"));
+            return None;
+        }
+    };
     match serde_json::from_str::<WritingStyle>(&raw) {
+        Ok(s) if s.text.len() > MAX_BYTES => {
+            crate::applog::warn(format!(
+                "the saved writing style is {} bytes, over the 64 KB limit, so it is not used",
+                s.text.len()
+            ));
+            None
+        }
         Ok(s) => Some(s),
         Err(e) => {
             crate::applog::warn(format!("the saved writing style could not be read, so it is not used: {e}"));
@@ -104,17 +143,72 @@ pub fn active_text(dir: &Path) -> Option<String> {
     load(dir).filter(|s| s.enabled && !s.text.trim().is_empty()).map(|s| s.text)
 }
 
-/// A Markdown file's text for the editor (Upload .md): only `.md` and
-/// `.markdown`, no larger than a save accepts. Errors name no path.
-pub fn read_markdown(path: &Path) -> Result<String, String> {
+/// The one sentence for a file Upload .md will not read: the wrong kind of
+/// name, or not a regular file. It names no path.
+pub const NOT_MARKDOWN: &str = "choose a Markdown file (.md or .markdown)";
+
+/// Windows device names, which open a device rather than a file whatever
+/// extension follows them (`nul.md`, `com1.markdown`).
+const DEVICE_NAMES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1",
+    "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Whether `path`'s name is one Upload .md may read: a `.md` or
+/// `.markdown` name, no `:` after the drive prefix (an alternate data
+/// stream, `notes.md:hidden`), and no device name before the extension.
+pub fn markdown_name_allowed(path: &Path) -> bool {
+    let whole = path.to_string_lossy();
+    let bytes = whole.as_bytes();
+    let after_drive = if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        &whole[2..]
+    } else {
+        &whole[..]
+    };
+    if after_drive.contains(':') {
+        return false;
+    }
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
     let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
     if !matches!(ext.as_deref(), Some("md") | Some("markdown")) {
-        return Err("choose a .md or .markdown file".to_string());
+        return false;
     }
-    let bytes = std::fs::read(path).map_err(|e| {
+    // Windows reads `con.notes.md` and `con .md` as the device too: what
+    // counts is the name up to the first dot, trailing spaces dropped.
+    let stem = name.split('.').next().unwrap_or("").trim_end();
+    !DEVICE_NAMES.contains(&stem)
+}
+
+/// A Markdown file's text for the editor (Upload .md): only a regular
+/// `.md` or `.markdown` file (never a link, a folder, a device or a data
+/// stream), no larger than a save accepts, its size checked before it is
+/// read. Errors name no path.
+pub fn read_markdown(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    if !markdown_name_allowed(path) {
+        return Err(NOT_MARKDOWN.to_string());
+    }
+    let unreadable = |e: std::io::Error| {
         crate::applog::warn(format!("reading a writing style file failed: {e}"));
         "the file could not be read. Settings → Logs has the details.".to_string()
-    })?;
+    };
+    let meta = std::fs::symlink_metadata(path).map_err(unreadable)?;
+    if !meta.file_type().is_file() {
+        return Err(NOT_MARKDOWN.to_string());
+    }
+    if meta.len() > MAX_BYTES as u64 {
+        return Err(TOO_LARGE.to_string());
+    }
+    // Read no more than one byte past the limit, so a file that grew since
+    // its size was checked is still never loaded whole.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(unreadable)?
+        .take(MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(unreadable)?;
     if bytes.len() > MAX_BYTES {
         return Err(TOO_LARGE.to_string());
     }

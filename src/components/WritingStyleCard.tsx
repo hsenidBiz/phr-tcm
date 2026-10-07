@@ -12,9 +12,11 @@ import { WRITING_STYLE_QUERY } from "../lib/writingStyle";
 
 /** The AI Bridge tab's Writing style card: the person's own rules for how
  * test cases are designed, which the writing guide carries instead of its
- * standard granularity and edge-case sections while the switch is on. The
- * switch and the text are one draft: Save keeps both, Discard changes
- * goes back to what is saved. */
+ * standard granularity and edge-case sections while the switch is on.
+ *
+ * The switch saves at once, like the tab's other switches, while the text
+ * is as saved. Once the text has unsaved edits the switch joins them in
+ * the draft: Save keeps both, Discard changes goes back to what is saved. */
 export function WritingStyleCard() {
   const qc = useQueryClient();
   const saved = useQuery({ queryKey: WRITING_STYLE_QUERY, queryFn: () => commands.writingStyleGet() });
@@ -22,8 +24,10 @@ export function WritingStyleCard() {
   const [draft, setDraft] = useState<WritingStyle | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const base = typeof saved.data?.text === "string" ? saved.data : null;
-  const shown = draft ?? base;
   const dirty = draft !== null && base !== null && (draft.enabled !== base.enabled || draft.text !== base.text);
+  const textEdited = draft !== null && base !== null && draft.text !== base.text;
+  // The switch waiting on Save, because the text has edits to go with it.
+  const switchWaits = textEdited && draft.enabled !== base.enabled;
 
   const edit = (next: Partial<WritingStyle>) => {
     if (!shown) return;
@@ -41,6 +45,20 @@ export function WritingStyleCard() {
     },
     onError: (e) => setProblem(e.message),
   });
+
+  // While a switch-only save is on its way, the switch shows where it is going.
+  const shown = draft ?? (save.isPending && save.variables ? save.variables : base);
+
+  const flip = (on: boolean) => {
+    if (!base) return;
+    if (textEdited) {
+      edit({ enabled: on });
+      return;
+    }
+    setDraft(null);
+    setProblem(null);
+    save.mutate({ enabled: on, text: base.text });
+  };
 
   const discard = () => {
     setDraft(null);
@@ -76,9 +94,11 @@ export function WritingStyleCard() {
             <Switch
               ariaLabel="Use my writing style"
               checked={shown.enabled}
-              onCheckedChange={(on) => edit({ enabled: on })}
+              disabled={save.isPending}
+              onCheckedChange={flip}
             />
           </div>
+          {switchWaits && <p className="text-xs text-muted">Save to apply the switch with your edits.</p>}
           <Textarea
             aria-label="Writing style"
             rows={16}

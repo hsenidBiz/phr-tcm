@@ -4382,7 +4382,7 @@ impl Modules {
 
 /// The writing guide's standard granularity section, used while the
 /// person's own writing style is off.
-const GRANULARITY: &str = "\
+pub const GRANULARITY: &str = "\
         ## Granularity - quality over quantity\n\
         Similar checks belong in ONE case, not several. Checking a\n\
         notification's title and checking its body is one case with two\n\
@@ -4395,7 +4395,7 @@ const GRANULARITY: &str = "\
 
 /// The writing guide's standard edge-case section, used while the
 /// person's own writing style is off.
-const EDGE_CASES: &str = "\
+pub const EDGE_CASES: &str = "\
         ## Edge cases worth writing\n\
         A set that only walks the happy path is not finished. For each\n\
         feature, add the edge cases a tester can run from the application\n\
@@ -4428,7 +4428,7 @@ const EDGE_CASES: &str = "\
 /// the format and import rules above it.
 fn custom_style_section(text: &str) -> String {
     format!(
-        "## Writing style (set on this machine)\n{}\n\n\
+        "## Team test design style (set on this machine)\n{}\n\n\
         If anything here conflicts with the Format section or the import rules, \
         the Format section and the import rules win.\n\n",
         text.trim()

@@ -3765,27 +3765,117 @@ const CONFLICT_LINE: &str =
 
 const STEP_1_5: &str = "1.5. If the writing style above adds steps (for example a scenario list to approve before drafting, or a summary or review at the end), follow them at the point it says.";
 
+/// The guide as main builds it, made independently of the off path: the
+/// guide with a style switched on, with the style's section swapped back
+/// for the standard `GRANULARITY` text, the 1.5 line taken out, and the
+/// standard `EDGE_CASES` text put back before the Module values.
+async fn standard_guide_built_from_its_sections() -> String {
+    use v2_lib::ai_bridge::{EDGE_CASES, GRANULARITY};
+    let dir = StyleDir::new();
+    let text = "## Probe\nA style that exists only to be swapped out.";
+    dir.save(true, text);
+    let on = guide_now().await;
+    drop(dir);
+    let section = format!("## Team test design style (set on this machine)\n{text}\n\n{CONFLICT_LINE}\n\n");
+    assert_eq!(on.matches(&section).count(), 1, "{on}");
+    assert_eq!(on.matches(&format!("{STEP_1_5}\n")).count(), 1, "{on}");
+    let modules = "## Allowed Module values (live)";
+    assert_eq!(on.matches(modules).count(), 1, "{on}");
+    on.replace(&section, GRANULARITY)
+        .replace(&format!("{STEP_1_5}\n"), "")
+        .replace(modules, &format!("{EDGE_CASES}{modules}"))
+}
+
 #[tokio::test]
 async fn with_no_style_or_a_disabled_one_the_guide_is_exactly_the_standard_one() {
     let _lock = crate::serial::writing_style();
-    style::set_dir(None);
-    let standard = guide_now().await;
+    let standard = standard_guide_built_from_its_sections().await;
     assert!(standard.contains("## Granularity - quality over quantity"), "{standard}");
     assert!(standard.contains("## Edge cases worth writing"), "{standard}");
     assert!(!standard.contains("(set on this machine)"), "{standard}");
     assert!(!standard.contains("1.5."), "{standard}");
 
-    // A dir with no file yet: still the standard guide.
+    // No style at all (the --mcp proxy, or setup never ran).
+    style::set_dir(None);
+    assert_eq!(guide_now().await, standard, "no style dir");
+
+    // A dir with no file yet.
     let dir = StyleDir::new();
     assert_eq!(guide_now().await, standard, "a missing file");
 
-    // The starting style is off: still the standard guide.
+    // The starting style, which is off.
     style::get_or_create(dir.0.path());
     assert_eq!(guide_now().await, standard, "the starting style");
 
-    // Text saved but switched off: still the standard guide.
+    // Text saved but switched off.
     dir.save(false, "## Mine\nWrite one case per screen.");
     assert_eq!(guide_now().await, standard, "a disabled style");
+}
+
+/// A file that cannot be parsed is not used: the guide is the standard one.
+#[tokio::test]
+async fn a_corrupt_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    for body in ["{ not json", "", "[]", r#"{"enabled":true}"#, r#"{"enabled":"yes","text":"Mine"}"#] {
+        std::fs::write(dir.0.path().join(style::FILE), body).unwrap();
+        assert_eq!(guide_now().await, standard, "body {body:?}");
+    }
+}
+
+/// A file written by a later version, with fields this one does not know,
+/// still applies its style.
+#[tokio::test]
+async fn a_style_file_with_extra_future_fields_still_applies() {
+    let _lock = crate::serial::writing_style();
+    let dir = StyleDir::new();
+    let body = serde_json::json!({
+        "enabled": true,
+        "text": "## Future rules\nOne case per screen.",
+        "version": 2,
+        "history": [{ "at": "2027-01-01" }],
+    });
+    std::fs::write(dir.0.path().join(style::FILE), body.to_string()).unwrap();
+    let g = guide_now().await;
+    assert!(g.contains("## Team test design style (set on this machine)\n## Future rules\nOne case per screen."), "{g}");
+    assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
+}
+
+/// A file over the limit is ignored before it is used, switched on or not:
+/// a text over 64 KB, and a file too large to read at all.
+#[tokio::test]
+async fn an_oversized_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    let path = dir.0.path().join(style::FILE);
+
+    let over = serde_json::json!({ "enabled": true, "text": "a".repeat(style::MAX_BYTES + 1) });
+    std::fs::write(&path, over.to_string()).unwrap();
+    assert_eq!(guide_now().await, standard, "a text over 64 KB");
+
+    // Valid JSON, switched on, a short text - padded past the file limit
+    // with whitespace, so only the size check can refuse it.
+    let short = serde_json::json!({ "enabled": true, "text": "## Short" }).to_string();
+    let padded = format!("{short}{}", " ".repeat(style::MAX_FILE_BYTES as usize));
+    std::fs::write(&path, padded).unwrap();
+    assert_eq!(guide_now().await, standard, "a file over the file limit");
+
+    // Just under it, the same style applies - the limit is what refused it.
+    let fits = format!("{short}{}", " ".repeat(style::MAX_FILE_BYTES as usize - short.len()));
+    std::fs::write(&path, fits).unwrap();
+    assert!(guide_now().await.contains("## Short"));
+}
+
+/// A folder where the file should be is not a style: the standard guide.
+#[tokio::test]
+async fn a_folder_in_place_of_the_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    std::fs::create_dir(dir.0.path().join(style::FILE)).unwrap();
+    assert_eq!(guide_now().await, standard);
 }
 
 #[tokio::test]
@@ -3796,7 +3886,7 @@ async fn an_enabled_style_replaces_the_granularity_and_edge_case_sections() {
     let g = guide_now().await;
     let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    assert!(g.contains("## Writing style (set on this machine)\n## House rules\nWrite one case per screen"), "{g}");
+    assert!(g.contains("## Team test design style (set on this machine)\n## House rules\nWrite one case per screen"), "{g}");
     assert!(flat.contains(CONFLICT_LINE), "{g}");
     assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
     assert!(!g.contains("## Edge cases worth writing"), "{g}");
@@ -3812,7 +3902,7 @@ async fn an_enabled_style_replaces_the_granularity_and_edge_case_sections() {
     // The style sits where the granularity section was: after Format, before
     // the standard case-text style rules.
     let format = g.find("## Format").unwrap();
-    let custom = g.find("## Writing style (set on this machine)").unwrap();
+    let custom = g.find("## Team test design style (set on this machine)").unwrap();
     let tester = g.find("## Writing style - sound like a tester").unwrap();
     assert!(format < custom && custom < tester);
 

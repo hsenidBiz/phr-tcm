@@ -1298,7 +1298,52 @@ test("typing enables Save and Discard, and Discard goes back to the saved style"
   expect(discard).toBeDisabled();
 });
 
-test("Save sends the switch and the text together", async () => {
+/// With the text as saved, the switch saves at once, like the tab's other
+/// switches - no Save needed.
+test("the switch alone saves at once with the saved text", async () => {
+  const saves: unknown[] = [];
+  styleMocks((cmd, args) => {
+    if (cmd === "writing_style_save") {
+      saves.push((args as { style: unknown }).style);
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  await within(card).findByRole("textbox", { name: "Writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  fireEvent.click(sw);
+
+  await waitFor(() => expect(saves).toEqual([{ ...SAVED_STYLE, enabled: true }]));
+  await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+  expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled();
+  expect(within(card).getByRole("button", { name: /Discard changes/ })).toBeDisabled();
+  expect(within(card).queryByText("Save to apply the switch with your edits.")).not.toBeInTheDocument();
+
+  // And off again, the same way.
+  await waitFor(() => expect(sw).toBeEnabled());
+  fireEvent.click(sw);
+  await waitFor(() => expect(saves).toEqual([{ ...SAVED_STYLE, enabled: true }, SAVED_STYLE]));
+  await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "false"));
+});
+
+/// A switch-only save that Rust refuses puts the switch back and says why.
+test("a refused switch save puts the switch back and shows the sentence", async () => {
+  styleMocks((cmd) => {
+    if (cmd === "writing_style_save") throw "the writing style is empty";
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  await within(card).findByRole("textbox", { name: "Writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  fireEvent.click(sw);
+  expect(await within(card).findByRole("alert")).toHaveTextContent("the writing style is empty");
+  expect(sw).toHaveAttribute("aria-checked", "false");
+});
+
+/// With unsaved text edits, the switch joins the draft and waits for Save,
+/// and the card says so.
+test("with text edits, the switch waits for Save and Save sends both", async () => {
   const saves: unknown[] = [];
   styleMocks((cmd, args) => {
     if (cmd === "writing_style_save") {
@@ -1310,15 +1355,34 @@ test("Save sends the switch and the text together", async () => {
   render(<Toaster />);
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
-  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
   fireEvent.change(box, { target: { value: "## Mine" } });
-  fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
+  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  fireEvent.click(sw);
+  expect(sw).toHaveAttribute("aria-checked", "true");
+  expect(saves).toEqual([]);
+  expect(within(card).getByText("Save to apply the switch with your edits.")).toBeInTheDocument();
 
+  fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
   await waitFor(() => expect(saves).toEqual([{ enabled: true, text: "## Mine" }]));
   expect(await screen.findByText("Writing style saved.")).toBeInTheDocument();
   // Saved: nothing left to save or discard, and the box keeps the new text.
   await waitFor(() => expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled());
   expect(box).toHaveValue("## Mine");
+  expect(within(card).queryByText("Save to apply the switch with your edits.")).not.toBeInTheDocument();
+});
+
+test("Discard changes puts back a switch that was waiting with text edits", async () => {
+  styleMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  fireEvent.change(box, { target: { value: "## Mine" } });
+  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  fireEvent.click(sw);
+  fireEvent.click(within(card).getByRole("button", { name: /Discard changes/ }));
+  expect(sw).toHaveAttribute("aria-checked", "false");
+  expect(box).toHaveValue(SAVED_STYLE.text);
+  expect(within(card).queryByText("Save to apply the switch with your edits.")).not.toBeInTheDocument();
 });
 
 test("a refused save shows Rust's sentence and keeps the edit", async () => {
@@ -1328,8 +1392,8 @@ test("a refused save shows Rust's sentence and keeps the edit", async () => {
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
-  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
   fireEvent.change(box, { target: { value: "   " } });
+  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
   fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
 
   expect(await within(card).findByRole("alert")).toHaveTextContent("the writing style is empty");

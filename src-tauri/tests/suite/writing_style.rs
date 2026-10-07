@@ -3,7 +3,8 @@
 //! guide carries it is pinned in ai_bridge.rs.
 
 use v2_lib::writing_style::{
-    get_or_create, load, refusal, save, WritingStyle, DEFAULT_RISK_TIERED, EMPTY, FILE, MAX_BYTES, TOO_LARGE,
+    get_or_create, load, refusal, save, WritingStyle, DEFAULT_RISK_TIERED, EMPTY, FILE, MAX_BYTES, MAX_FILE_BYTES,
+    NOT_MARKDOWN, TOO_LARGE,
 };
 
 fn dir() -> tempfile::TempDir {
@@ -137,15 +138,112 @@ fn upload_reads_only_markdown_files_within_the_limit() {
 
     let txt = d.path().join("policy.txt");
     std::fs::write(&txt, "text").unwrap();
-    assert_eq!(read_markdown(&txt), Err("choose a .md or .markdown file".to_string()));
+    assert_eq!(read_markdown(&txt), Err(NOT_MARKDOWN.to_string()));
+    assert_eq!(NOT_MARKDOWN, "choose a Markdown file (.md or .markdown)");
 
     let big = d.path().join("big.md");
     std::fs::write(&big, "a".repeat(MAX_BYTES + 1)).unwrap();
     assert_eq!(read_markdown(&big), Err(TOO_LARGE.to_string()));
+    let at_limit = d.path().join("at-limit.md");
+    std::fs::write(&at_limit, "a".repeat(MAX_BYTES)).unwrap();
+    assert_eq!(read_markdown(&at_limit).unwrap().len(), MAX_BYTES);
 
     let missing = d.path().join("gone.md");
     let err = read_markdown(&missing).unwrap_err();
     assert!(!err.contains("gone.md") && !err.contains(&*d.path().to_string_lossy()), "{err}");
+}
+
+/// Upload .md reads only a regular file: a folder named like Markdown is
+/// refused with the one sentence, which names no path.
+#[test]
+fn upload_refuses_anything_but_a_regular_file() {
+    use v2_lib::writing_style::read_markdown;
+    let d = dir();
+    let folder = d.path().join("notes.md");
+    std::fs::create_dir(&folder).unwrap();
+    assert_eq!(read_markdown(&folder), Err(NOT_MARKDOWN.to_string()));
+}
+
+/// A link is not followed, even to a real Markdown file. Creating a symlink
+/// on Windows needs a privilege most accounts lack, so the check runs where
+/// one can be made.
+#[test]
+fn upload_refuses_a_symbolic_link() {
+    use v2_lib::writing_style::read_markdown;
+    let d = dir();
+    let target = d.path().join("real.md");
+    std::fs::write(&target, "## Real").unwrap();
+    let link = d.path().join("link.md");
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+    #[cfg(not(windows))]
+    let made = std::os::unix::fs::symlink(&target, &link).is_ok();
+    if made {
+        assert_eq!(read_markdown(&link), Err(NOT_MARKDOWN.to_string()));
+    }
+    assert_eq!(read_markdown(&target).unwrap(), "## Real");
+}
+
+/// Names Upload .md refuses before touching the disk: alternate data
+/// streams and Windows device names, whatever the extension.
+#[test]
+fn upload_refuses_data_streams_and_device_names() {
+    use std::path::Path;
+    use v2_lib::writing_style::{markdown_name_allowed, read_markdown};
+    for ok in [r"C:\docs\policy.md", r"C:\docs\policy.MARKDOWN", "policy.md", r"D:\console\contract.md", r"C:\docs\com10.md", r"C:\docs\nullable.md"] {
+        assert!(markdown_name_allowed(Path::new(ok)), "{ok}");
+    }
+    for refused in [
+        r"C:\docs\policy.md:hidden",
+        r"C:\docs\policy.md:hidden.md",
+        r"C:\docs\policy:stream.md",
+        r"C:\docs\con.md",
+        r"C:\docs\NUL.markdown",
+        r"C:\docs\prn.md",
+        r"C:\docs\aux.md",
+        r"C:\docs\com1.md",
+        r"C:\docs\COM9.md",
+        r"C:\docs\lpt1.md",
+        r"C:\docs\lpt9.markdown",
+        r"C:\docs\con.notes.md",
+        r"C:\docs\con .md",
+        r"C:\docs\policy.txt",
+        r"C:\docs\policy",
+    ] {
+        assert!(!markdown_name_allowed(Path::new(refused)), "{refused}");
+        assert_eq!(read_markdown(Path::new(refused)), Err(NOT_MARKDOWN.to_string()), "{refused}");
+    }
+}
+
+/// The saved file is read only when it is a file within the limit; what
+/// goes wrong is logged by its kind or size, never by the path or the text.
+#[test]
+fn an_unreadable_or_oversized_saved_file_is_logged_without_its_path() {
+    let _log = crate::serial::log_tail();
+    let d = dir();
+    let path = d.path().join(FILE);
+
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(load(d.path()), None);
+    std::fs::remove_dir(&path).unwrap();
+
+    let secret = "WORDS-THAT-STAY-OUT-OF-THE-LOG";
+    let text = format!("{secret}{}", "a".repeat(MAX_BYTES));
+    std::fs::write(&path, serde_json::json!({ "enabled": true, "text": text }).to_string()).unwrap();
+    assert_eq!(load(d.path()), None);
+
+    std::fs::write(&path, " ".repeat(MAX_FILE_BYTES as usize + 1)).unwrap();
+    assert_eq!(load(d.path()), None);
+
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let ours: Vec<&String> = lines.iter().filter(|l| l.contains("saved writing style")).collect();
+    assert!(ours.iter().any(|l| l.contains("not a file")), "{ours:?}");
+    assert!(ours.iter().any(|l| l.contains(&format!("{} bytes", text.len()))), "{ours:?}");
+    assert!(ours.iter().any(|l| l.contains(&format!("{} bytes", MAX_FILE_BYTES + 1))), "{ours:?}");
+    let dir_text = d.path().to_string_lossy();
+    for l in &ours {
+        assert!(!l.contains(&*dir_text) && !l.contains(FILE) && !l.contains(secret), "{l}");
+    }
 }
 
 /// The guide carries the text, but the log never does: only that it changed
