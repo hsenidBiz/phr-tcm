@@ -27,6 +27,29 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1",
+    date: "2026-10-08",
+    items: [
+      "The AI Bridge tab has a Writing style card: write or upload your own test design rules for the assistant and update them whenever your policy changes, without waiting for a new version. Turn them on with Use custom writing style.",
+      "Auto Run scripts can do much more: reload the page, press keys and key combinations, drag to reorder a list, answer browser dialogs, work across several tabs, visit another recorded area and come back, and check the focus, tables and grids.",
+      "Auto Run can check downloaded files: their name, and the headers, cells or text of spreadsheets, CSV, text and PDF files. A run's downloads show in Past runs, the review and the report, with an Open button.",
+      "An Auto Run script can fail or flag a case when the page has a script error or a server error.",
+      "A failed or blocked Auto Run case can be replayed to the step where it stopped, from the run review or Past runs.",
+      "Auto Run scripts can name shared state a case changes or needs. Auto Run then suggests an execution order, shows where the environment must be reset, and pauses a run there until you choose Continue or Stop. It keeps its own execution order for each PBI.",
+      "API Templates has a Fixtures tab. A fixture runs saved templates in order to make a draft the same way every time, and an Auto Run script can get a fresh draft of its own from a fixture before each run, once you approve its setup.",
+      "Clean up drafts lists the drafts your test runs made, by name prefix and age, names the delete template for each, and deletes only the ones you tick, after you confirm. Each environment has a test name prefix, AUTOTEST unless you change it.",
+      "A case marked Must not save is guarded more closely: a save sent as a sign-in leaves the page, or from a tab the page opens, is stopped.",
+      "Auto Run uses the full window. Its cases can be searched by id or title and opened to show their script, steps and files, scripts read as plain sentences with Edit script for the detail, and setup sits beside the list as a short summary.",
+      "In Auto Run's Accounts, the logins the assistant proposes can be searched and ticked all at once.",
+      "On Import Test Cases, specs can only be Markdown (.md) files or Azure DevOps wiki links.",
+      "In the queue, Remove all is now Clear queue, renaming happens from the selection bar when cases are ticked, and Export JSON is in View Test Cases.",
+      "Text in buttons, pills and badges sits in the middle of its box, and several buttons have shorter names.",
+      "A long stage line on API Templates wraps below the template's title instead of squeezing it.",
+      "The app opens faster.",
+      "Security updates and small reliability fixes.",
+    ],
+  },
+  {
     version: "2.1.1-beta.16",
     date: "2026-10-07",
     items: [
