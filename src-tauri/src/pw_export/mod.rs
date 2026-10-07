@@ -2,5 +2,6 @@
 
 pub mod clone;
 pub mod mapping;
+pub mod test_case;
 pub mod translate;
 pub mod ts;
