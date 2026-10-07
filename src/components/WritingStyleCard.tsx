@@ -90,9 +90,9 @@ export function WritingStyleCard() {
       {shown && (
         <>
           <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 p-2">
-            <span className="text-xs font-medium text-muted">Use my writing style</span>
+            <span className="text-xs font-medium text-muted">Use custom writing style</span>
             <Switch
-              ariaLabel="Use my writing style"
+              ariaLabel="Use custom writing style"
               checked={shown.enabled}
               disabled={save.isPending}
               onCheckedChange={flip}

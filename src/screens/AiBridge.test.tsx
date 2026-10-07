@@ -1268,7 +1268,7 @@ test("the writing style card renders the saved style", async () => {
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
   expect(box).toHaveValue(SAVED_STYLE.text);
-  expect(within(card).getByRole("switch", { name: "Use my writing style" })).toHaveAttribute("aria-checked", "false");
+  expect(within(card).getByRole("switch", { name: "Use custom writing style" })).toHaveAttribute("aria-checked", "false");
   expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled();
   expect(within(card).getByRole("button", { name: /Discard changes/ })).toBeDisabled();
   expect(card).toHaveTextContent(
@@ -1311,7 +1311,7 @@ test("the switch alone saves at once with the saved text", async () => {
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const card = await styleCard();
   await within(card).findByRole("textbox", { name: "Writing style" });
-  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use custom writing style" });
   fireEvent.click(sw);
 
   await waitFor(() => expect(saves).toEqual([{ ...SAVED_STYLE, enabled: true }]));
@@ -1335,7 +1335,7 @@ test("a refused switch save puts the switch back and shows the sentence", async 
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   const card = await styleCard();
   await within(card).findByRole("textbox", { name: "Writing style" });
-  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use custom writing style" });
   fireEvent.click(sw);
   expect(await within(card).findByRole("alert")).toHaveTextContent("the writing style is empty");
   expect(sw).toHaveAttribute("aria-checked", "false");
@@ -1356,7 +1356,7 @@ test("with text edits, the switch waits for Save and Save sends both", async () 
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
   fireEvent.change(box, { target: { value: "## Mine" } });
-  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use custom writing style" });
   fireEvent.click(sw);
   expect(sw).toHaveAttribute("aria-checked", "true");
   expect(saves).toEqual([]);
@@ -1377,7 +1377,7 @@ test("Discard changes puts back a switch that was waiting with text edits", asyn
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
   fireEvent.change(box, { target: { value: "## Mine" } });
-  const sw = within(card).getByRole("switch", { name: "Use my writing style" });
+  const sw = within(card).getByRole("switch", { name: "Use custom writing style" });
   fireEvent.click(sw);
   fireEvent.click(within(card).getByRole("button", { name: /Discard changes/ }));
   expect(sw).toHaveAttribute("aria-checked", "false");
@@ -1393,7 +1393,7 @@ test("a refused save shows Rust's sentence and keeps the edit", async () => {
   const card = await styleCard();
   const box = await within(card).findByRole("textbox", { name: "Writing style" });
   fireEvent.change(box, { target: { value: "   " } });
-  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
+  fireEvent.click(within(card).getByRole("switch", { name: "Use custom writing style" }));
   fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
 
   expect(await within(card).findByRole("alert")).toHaveTextContent("the writing style is empty");
