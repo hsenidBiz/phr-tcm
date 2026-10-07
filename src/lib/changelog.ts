@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.15",
+    date: "2026-10-07",
+    items: [
+      "The AI Bridge tab has a Writing style card: write or upload your own test design rules for the assistant, and update them whenever your policy changes, without waiting for a new version. Your first style is the risk-tiered rules, switched on if you were using that trial.",
+    ],
+  },
+  {
     version: "2.1.1-beta.14",
     date: "2026-10-07",
     items: [
