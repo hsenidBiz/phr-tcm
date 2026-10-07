@@ -33,9 +33,9 @@ the board's test count.
 - JSON is the import and export format. Export JSON writes the same file
   you import, so an AI assistant edits the same shape you read. A kept id
   updates a work item. A blank id creates a new case.
-- Queue cases before writing: View in browser opens an HTML report, Export
-  JSON saves the queue, Remove all clears the queue, and each row has a
-  remove action.
+- Queue cases before writing: View in browser opens an HTML report, Remove
+  all clears the queue, and each row has a remove action. To keep or share
+  the cases, hand around the JSON file itself.
 - Edit queued cases in place. Every queued row opens the same form as the
   case editor and saves back into the queue. A kept id still updates the
   work item on submit.

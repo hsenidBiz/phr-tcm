@@ -515,8 +515,8 @@ export default function ImportFile({
       if (r.status === "error") {
         toast.warning(
           `Imported, but a local copy could not be saved: ${r.error}. ` +
-            `Without that file the app can't remember the ids a submit creates - ` +
-            `use Export JSON after submitting so you keep them.`,
+            `Without that file the app can't remember the ids a submit creates, ` +
+            `so after submitting, use View Test Cases → Export JSON to keep a copy with the ids.`,
           { duration: 15000 },
         );
         return;
