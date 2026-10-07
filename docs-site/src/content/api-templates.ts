@@ -69,7 +69,7 @@ export const apiTemplates: Screen = {
       id: CLEANUP,
       route: [
         ...TO_FIXTURES,
-        { click: { role: "button", name: "Clean up test-made drafts" } },
+        { click: { role: "button", name: "Clean up drafts" } },
         { waitFor: { role: "list", name: "Drafts to clean up" } },
       ],
       alt: "Clean up test-made drafts: the environment, the name prefix and the age, and the drafts that match, two of them ticked",
@@ -139,7 +139,7 @@ export const apiTemplates: Screen = {
       does: "The templates, grouped by the module of the application they belong to, with how many there are.",
       tips: [
         "A delete template marked **needs a kind** was saved before Clean up existed. Clean up cannot use it until your assistant proves it again and names the kind of thing it deletes.",
-        "A delete template is only ever run by **Clean up test-made drafts**, on a draft the tests made. Nothing else runs it.",
+        "A delete template is only ever run by **Clean up drafts**, on a draft the tests made. Nothing else runs it.",
       ],
     },
     {
@@ -319,8 +319,8 @@ export const apiTemplates: Screen = {
       id: "clean-up",
       shot: FIXTURES,
       group: "fixtures",
-      locate: { role: "button", name: "Clean up test-made drafts" },
-      name: "Clean up test-made drafts",
+      locate: { role: "button", name: "Clean up drafts" },
+      name: "Clean up drafts",
       does:
         "Opens the Clean up window, to delete the drafts fixtures and setups made once you no longer need them. " +
         "Only drafts the tests recorded making are ever listed: nothing you or anyone else made by hand can appear there. " +
@@ -479,7 +479,7 @@ export const apiTemplates: Screen = {
     {
       title: "Clean up the drafts the tests made",
       steps: [
-        "Open the **Fixtures** tab and press **Clean up test-made drafts**.",
+        "Open the **Fixtures** tab and press **Clean up drafts**.",
         "Check the environment, the name prefix and how many days old a draft must be.",
         "Untick any draft you want to keep, then press **Delete N drafts** and confirm.",
         "Watch each result come in. Press **Stop** to end it early.",

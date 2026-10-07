@@ -349,8 +349,8 @@ test("Remove asks first, names the template and its effect, then removes it", as
     "It is removed from this machine with its run history. There is no undo; the assistant can prove it again.",
   );
 
-  // Keep it: nothing is removed.
-  fireEvent.click(within(dialog).getByRole("button", { name: "Keep it" }));
+  // Keep: nothing is removed.
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(calls.filter((c) => c.cmd === "api_templates_remove")).toHaveLength(0);
 
@@ -376,7 +376,7 @@ test("the remove dialog names the effect of an edit and a delete template", asyn
   const publish = await screen.findByRole("listitem", { name: "Publish a performance cycle" });
   fireEvent.click(within(publish).getByRole("button", { name: "Remove Publish a performance cycle" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("This template edits data.");
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep it" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
   const goal = screen.getByRole("listitem", { name: "Remove a goal" });

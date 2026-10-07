@@ -251,7 +251,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                   </Button>
                   <Button size="sm" variant="outline" disabled={busy} onClick={() => confirmRemove(env.id)}>
                     <IconRemove aria-hidden />
-                    Confirm remove
+                    Remove
                   </Button>
                 </div>
               )}

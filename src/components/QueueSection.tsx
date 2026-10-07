@@ -1929,7 +1929,7 @@ export default function QueueSection({
                       }}
                     >
                       <IconBack aria-hidden />
-                      Stop — take me back
+                      Go back
                     </Button>
                     <Button
                       variant="danger"

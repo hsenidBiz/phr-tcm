@@ -697,7 +697,7 @@ export default function AiBridge() {
             }}
           >
             <IconConfirm aria-hidden />
-            Turn all back on
+            Turn all on
           </Button>
         )}
       </section>
@@ -846,7 +846,7 @@ export default function AiBridge() {
                         </Button>
                         <Button size="sm" variant="outline" disabled={removeBusy} onClick={() => void removeDb(d)}>
                           <IconRemove aria-hidden />
-                          Confirm remove
+                          Remove
                         </Button>
                       </div>
                     )}

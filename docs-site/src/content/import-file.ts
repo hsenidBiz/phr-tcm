@@ -628,8 +628,8 @@ export const importFile: Screen = {
       id: "stop-back",
       shot: REVIEW,
       group: "upload",
-      locate: { role: "button", nameRe: "^Stop . take me back$" },
-      name: "Stop, take me back",
+      locate: { role: "button", name: "Go back" },
+      name: "Go back",
       does:
         "Leaves the review so you can fix the queue: remove the duplicate, or import a file that includes the existing case's id so it is updated instead.",
     },
@@ -699,7 +699,7 @@ export const importFile: Screen = {
   ],
   tips: [
     "Only a case id updates a work item. A title that matches an existing case is a warning, never an update.",
-    "While a file is watched, a line under **Import JSON** names it and how many cases it added. **Stop** stops following that file (**Remove all** there stops every one) and asks whether to keep the cases it added or remove them too. Cases you typed by hand are never removed.",
+    "While a file is watched, a line under **Import JSON** names it and how many cases it added. **Stop** stops following that file (**Stop all** there stops every one) and asks whether to keep the cases it added or remove them too. Cases you typed by hand are never removed.",
     "Under each watched file, **Attach spec…** adds specification documents (Markdown files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page. Nothing else can be a spec: any other file or link is refused with the reason.",
     "**General comments**, under the watched files, holds notes about the whole set, such as a question you asked a developer. They are saved into the file.",
     "When a watched file changes, a panel says what was added, changed or removed, and the rows it touched are outlined in the queue. **Show details** lists each change; the x closes the panel.",

@@ -155,7 +155,7 @@ export default function RunReview(props: {
       return next;
     });
 
-  /** Which cases the list shows. Only the LIST: Accept every proposal,
+  /** Which cases the list shows. Only the LIST: Accept all,
    * Save and Send always act on the whole run. */
   const [filter, setFilter] = useState<ResultFilter>("All");
   /** The cases the filter matched WHEN IT WAS PICKED, by id; `null` under
@@ -432,7 +432,7 @@ export default function RunReview(props: {
                               className="text-muted underline hover:text-accent"
                               onClick={() => openShot(s.screenshot!)}
                             >
-                              Picture
+                              Screenshot
                             </button>
                           )}
                         </div>
@@ -441,7 +441,7 @@ export default function RunReview(props: {
                             key={i}
                             className={cn("mt-1 flex items-center gap-2", o.ok ? "text-muted" : "text-danger")}
                           >
-                            {/* Its own element, separate from the Picture button below - a
+                            {/* Its own element, separate from the Screenshot button below - a
                                 sibling button inside the same node would fold into this
                                 text's own content and break an exact-text lookup on it. */}
                             <span>{o.detail}</span>
@@ -451,7 +451,7 @@ export default function RunReview(props: {
                                 className="text-muted underline hover:text-accent"
                                 onClick={() => openShot(o.screenshot!)}
                               >
-                                Picture
+                                Screenshot
                               </button>
                             )}
                           </p>
@@ -525,7 +525,7 @@ export default function RunReview(props: {
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-2">
             {/* The count and the one action that changes it in bulk sit
-                together: "Accept every proposal" is about the tally on its
+                together: "Accept all" is about the tally on its
                 left, not a separate step of its own. */}
             <div className="flex items-center gap-3">
               <p className="text-xs text-muted">
@@ -533,7 +533,7 @@ export default function RunReview(props: {
               </p>
               {!readOnly && (
                 <Button size="sm" variant="outline" onClick={acceptAll}>
-                  Accept every proposal
+                  Accept all
                 </Button>
               )}
             </div>
@@ -542,7 +542,7 @@ export default function RunReview(props: {
                 hidden. */}
             {!readOnly && filter !== "All" && (
               <p className="order-last w-full text-xs text-faint">
-                The filter only changes what is listed. Accept every proposal, Save review and Send act
+                The filter only changes what is listed. Accept all, Save review and Send act
                 on every case in this run.
               </p>
             )}

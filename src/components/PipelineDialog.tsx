@@ -514,7 +514,7 @@ function RunNode({
                 onClick={() => openExternal(b.web_url)}
               >
                 <ExternalLink size={11} />
-                <span className="label-trim">Open run in Azure DevOps</span>
+                <span className="label-trim">Open in Azure DevOps</span>
               </button>
             )}
           </>

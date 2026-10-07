@@ -1189,7 +1189,7 @@ test("the PBI stops glowing once a mixed upload has succeeded", async () => {
   }
 });
 
-/// Backing out at the duplicate gate ("Stop - take me back") is also a way
+/// Backing out at the duplicate gate ("Go back") is also a way
 /// of abandoning the armed confirmation, not just Back - it must disarm
 /// the same way.
 test("stopping at the duplicate gate also stops the glow", async () => {
@@ -1214,7 +1214,7 @@ test("stopping at the duplicate gate also stops the glow", async () => {
     await waitFor(() => expect(glows[glows.length - 1]).toBe(true));
     expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop — take me back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
     await waitFor(() => expect(glows[glows.length - 1]).toBe(false));
   } finally {
     window.removeEventListener("tcm-pbi-glow", onGlow);

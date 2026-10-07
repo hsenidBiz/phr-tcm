@@ -390,7 +390,7 @@ export default function ApiTemplates({
               cleanupSlot={
                 <Button size="sm" variant="outline" onClick={() => setCleaningUp(true)}>
                   <IconRemove aria-hidden />
-                  Clean up test-made drafts
+                  Clean up drafts
                 </Button>
               }
             />

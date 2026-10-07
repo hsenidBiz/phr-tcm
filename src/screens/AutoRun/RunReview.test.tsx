@@ -1,4 +1,4 @@
-// Reviewing a run: nothing is preselected, "Accept every proposal" only
+// Reviewing a run: nothing is preselected, "Accept all" only
 // fills what nobody has decided yet, and saving writes the whole run with
 // just verdict/note replaced - proposed/reason/steps must survive byte for
 // byte. A sent run is read only.
@@ -151,7 +151,7 @@ test("accept every proposal fills only the unset ones that have a proposal", asy
   await screen.findByText(/proposed: failed/i);
 
   fireEvent.click(within(caseCard(202)).getByRole("button", { name: "Blocked" }));
-  fireEvent.click(screen.getByRole("button", { name: "Accept every proposal" }));
+  fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
 
   expect(within(caseCard(201)).getByRole("button", { name: "Failed" })).toHaveAttribute(
     "aria-pressed",
@@ -230,7 +230,7 @@ test("the steps unfold, the sign-in is named, and a picture can be opened", asyn
   expect(within(card).getByText('button "Save" not found')).toBeInTheDocument();
   expect(within(card).getByText("not run: an earlier step of this case failed")).toBeInTheDocument();
 
-  fireEvent.click(within(card).getByRole("button", { name: "Picture" }));
+  fireEvent.click(within(card).getByRole("button", { name: "Screenshot" }));
 
   // The preview is its own Modal, portaled to document.body alongside the
   // review dialog rather than nested inside this case's card - the same
@@ -651,10 +651,10 @@ test("Send to Azure DevOps is the primary button and Save review the outline one
   expect(save.className).toContain("border-border");
 });
 
-test("Accept every proposal sits in the footer beside the confirmed count", async () => {
+test("Accept all sits in the footer beside the confirmed count", async () => {
   renderReview(RUN);
   const count = await screen.findByText("0 of 3 confirmed");
-  const accept = screen.getByRole("button", { name: "Accept every proposal" });
+  const accept = screen.getByRole("button", { name: "Accept all" });
   expect(count.parentElement).toContainElement(accept);
   // ...and the footer is below every case, not a row of its own above them.
   const lastCard = caseCard(203);
@@ -719,7 +719,7 @@ test("a confirmed verdict overrides the proposal, and the counts follow it", asy
   expect(screen.getAllByRole("listitem", { name: /^Case #/ })).toHaveLength(1);
 });
 
-test("Accept every proposal and Save act on every case, whatever the filter shows", async () => {
+test("Accept all and Save act on every case, whatever the filter shows", async () => {
   let saved: { run: typeof RUN } | null = null;
   renderReview(RUN, {
     extra: (cmd, args) => {
@@ -732,7 +732,7 @@ test("Accept every proposal and Save act on every case, whatever the filter show
   // Only #201 (proposed Failed) is listed...
   fireEvent.click(filterButton(/^Failed/));
   expect(screen.getByText(/the filter only changes what is listed/i)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Accept every proposal" }));
+  fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
   // ...but #202's proposal was accepted too.
   expect(screen.getByText("2 of 3 confirmed")).toBeInTheDocument();
 

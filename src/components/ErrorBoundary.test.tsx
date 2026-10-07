@@ -32,7 +32,7 @@ test("a render crash shows a fallback and is written to the app log", () => {
 
   expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong in the app");
   expect(screen.getByText("reviewRows[i] is undefined")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reload the app" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
   expect(logged).toHaveLength(1);
   expect(logged[0]).toContain("render crash: reviewRows[i] is undefined");
   expect(logged[0]).toContain("component stack:");

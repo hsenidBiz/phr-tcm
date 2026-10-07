@@ -364,7 +364,7 @@ export default function AreasDialog({
           </span>
           <Button size="sm" variant="outline" onClick={cancelLeftOpen}>
             <IconCancel aria-hidden />
-            Cancel that recording
+            Cancel recording
           </Button>
         </div>
       )}
@@ -429,7 +429,7 @@ export default function AreasDialog({
                           <span className="text-muted">Remove the area {m.area}?</span>
                           <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                             <IconCancel aria-hidden />
-                            Keep it
+                            Keep
                           </Button>
                           <Button
                             size="sm"
@@ -574,7 +574,7 @@ export default function AreasDialog({
               }
             >
               <IconCancel aria-hidden />
-              Keep it
+              Keep
             </Button>
             <Button size="sm" onClick={() => record(phase.module, phase.area)}>
               <IconRecord aria-hidden />
@@ -643,7 +643,7 @@ export default function AreasDialog({
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setPhase({ kind: "list" })}>
               <IconBack aria-hidden />
-              Back to the list
+              Back
             </Button>
             <Button size="sm" disabled={!who} onClick={() => record(phase.module, phase.area)}>
               <IconRecord aria-hidden />
