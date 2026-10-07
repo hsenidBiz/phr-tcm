@@ -21,7 +21,7 @@ pub fn pw_export_preview(
     case_ids: Vec<i32>,
 ) -> Result<Preview, String> {
     let root = super::autorun::root(&app)?;
-    Ok(export::preview_with(&root, &organization, &project, &case_ids, &clone_path()))
+    export::preview_with(&root, &organization, &project, &case_ids, &clone_path())
 }
 
 /// Keeps the area placements and account choices. One bad placement refuses
@@ -53,7 +53,12 @@ pub async fn pw_export_write(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    if case_ids.is_empty() {
+        return Ok(ExportResult { files: vec![], cases: vec![], missing_navigation: vec![] });
+    }
     let root = super::autorun::root(&app)?;
+    // Refuse an unexportable selection before any request is made.
+    export::ensure_exportable(&root, &organization, &project, &case_ids, &clone_path())?;
     let token = crate::state::get_fresh_token(&app).await.map_err(|e| e.user_text())?;
     let client = crate::ado::AdoClient::new(token);
     let cases = client

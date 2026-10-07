@@ -181,7 +181,7 @@ fn preview_lists_each_reason() {
     fx.run("h", "3", 18, "Passed");
 
     let ids = [10, 11, 12, 13, 14, 15, 16, 17, 18];
-    let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path());
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path()).unwrap();
     assert!(p.clone_ok, "{:?}", p.clone_problem);
     assert_eq!(p.user_keys, vec!["REPO_KEY"]);
     assert!(p.areas.contains(&"Definition Wizard".to_string()));
@@ -198,7 +198,7 @@ fn preview_lists_each_reason() {
     assert!(by[&14].add_user_command.is_none());
     assert!(reason(15).contains("MISSING_KEY"), "{}", reason(15));
     let cmd = by[&15].add_user_command.clone().unwrap();
-    assert_eq!(cmd, "npm run users -- add MISSING_KEY --username hr.other --password <password> --apply");
+    assert_eq!(cmd, "npm run users -- add \"MISSING_KEY\" --username \"hr.other\" --password <password> --apply");
     assert!(!cmd.contains(REAL_PASSWORD));
     assert!(!reason(16).is_empty() && !by[&16].exportable);
     assert!(reason(18).contains("Nowhere"), "{}", reason(18));
@@ -359,4 +359,107 @@ fn directories_created_for_a_failed_write_are_removed() {
     fs::create_dir_all(fx.clone.path().join("suites/_generated/ninety-one.spec.ts.tcm-export-tmp")).unwrap();
     assert!(export(&fx, &[91], &docs(&[(91, "Ninety one")])).is_err());
     assert!(!fx.exists("suites/sl"), "created dirs left behind");
+}
+
+fn preview_of(fx: &Fx, id: i32) -> v2_lib::pw_export::export::PreviewCase {
+    preview_with(fx.root.path(), ORG, PROJECT, &[id], &fx.clone_path()).unwrap().cases.remove(0)
+}
+
+#[test]
+fn a_return_to_area_name_resolves_like_auto_run_in_preview_and_write() {
+    let fx = Fx::new();
+    fx.script(
+        100,
+        "Hundred",
+        "admin",
+        "Definition Wizard",
+        json!([{ "kind": "return_to_area", "area": "  definition   wizard " }]),
+    );
+    fx.run("r100", "5", 100, "Passed");
+    let pc = preview_of(&fx, 100);
+    // Only an exact-after-normalisation match may pass; whichever way
+    // find_area rules, the preview and the write must agree.
+    let wrote = export(&fx, &[100], &docs(&[(100, "Hundred")]));
+    assert_eq!(pc.exportable, wrote.is_ok(), "{:?} vs {:?}", pc.reason, wrote.as_ref().err());
+    fx.script(
+        101,
+        "Hundred one",
+        "admin",
+        "Definition Wizard",
+        json!([{ "kind": "return_to_area", "area": "DEFINITION WIZARD" }]),
+    );
+    fx.run("r101", "5", 101, "Passed");
+    let pc = preview_of(&fx, 101);
+    assert!(pc.exportable, "{:?}", pc.reason);
+    assert!(export(&fx, &[101], &docs(&[(101, "Hundred one")])).is_ok());
+    fx.script(102, "x", "admin", "Definition Wizard", json!([{ "kind": "return_to_area", "area": "Nope" }]));
+    fx.run("r102", "5", 102, "Passed");
+    assert!(preview_of(&fx, 102).reason.unwrap().contains("Nope"));
+}
+
+#[test]
+fn an_untranslatable_sign_in_step_shows_in_the_preview() {
+    let fx = Fx::new();
+    let mut rc = recipe::builtin_recipe();
+    rc.start_url = "https://app.example/login".into();
+    rc.after_sign_in = serde_json::from_value(json!([
+        { "kind": "expect_row_count", "table": "table.grid", "at_least": 1 }
+    ]))
+    .unwrap();
+    recipe::save_recipe(fx.root.path(), ORG, PROJECT, &rc).unwrap();
+    fx.good(110, "One ten");
+    let pc = preview_of(&fx, 110);
+    assert!(!pc.exportable && pc.reason.is_some(), "{:?}", pc);
+    assert!(export(&fx, &[110], &docs(&[(110, "One ten")])).is_err());
+}
+
+#[test]
+fn an_index_entry_that_leaves_the_folder_is_refused() {
+    let fx = Fx::new();
+    write(
+        fx.clone.path().join("suites/_generated/index.json"),
+        "{
+  \"123\": \"../../evil.spec.ts\"
+}
+",
+    );
+    fx.good(123, "One two three");
+    let pc = preview_of(&fx, 123);
+    assert!(!pc.exportable && pc.reason.unwrap().contains("../../evil.spec.ts"));
+    assert!(export(&fx, &[123], &docs(&[(123, "One two three")])).is_err());
+    assert!(!fx.clone.path().join("evil.spec.ts").exists());
+    assert!(!fx.clone.path().parent().unwrap().join("evil.spec.ts").exists());
+    assert!(!fx.exists("suites/sl"));
+}
+
+#[test]
+fn two_cases_resolving_to_one_file_are_refused_and_fresh_names_avoid_the_index() {
+    let fx = Fx::new();
+    write(
+        fx.clone.path().join("suites/_generated/index.json"),
+        "{
+  \"130\": \"shared.spec.ts\",
+  \"131\": \"shared.spec.ts\",
+  \"9\": \"fresh.spec.ts\"
+}
+",
+    );
+    fx.good(130, "A");
+    fx.good(131, "B");
+    let e = export(&fx, &[130, 131], &docs(&[(130, "A"), (131, "B")])).unwrap_err();
+    assert!(e.contains("130") && e.contains("131"), "{e}");
+    assert!(!fx.exists("suites/sl"));
+    // "fresh" is only in the index (no file on disk): a new case must not take it.
+    fx.good(132, "Fresh");
+    let r = export(&fx, &[132], &docs(&[(132, "Fresh")])).unwrap();
+    assert_eq!(r.cases, vec![(132, "fresh-2.spec.ts".to_string())]);
+}
+
+#[test]
+fn an_unreadable_accounts_file_is_an_error_not_a_clone_problem() {
+    let fx = Fx::new();
+    let env_id = v2_lib::environments::active_id(fx.root.path()).unwrap();
+    write(v2_lib::autorun::accounts::accounts_path_for(fx.root.path(), &env_id), "not json");
+    let e = preview_with(fx.root.path(), ORG, PROJECT, &[1], &fx.clone_path());
+    assert!(e.is_err());
 }

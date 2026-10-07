@@ -96,7 +96,23 @@ struct Ready {
     placement: Placement,
     user_key: String,
     area_clicks: Vec<Target>,
+    /// Every area a `return_to_area` names, under the script's own spelling.
+    by_name: BTreeMap<String, Vec<Target>>,
     origins: Vec<String>,
+}
+
+/// An index.json file name is used only if it is a bare `*.spec.ts` name.
+fn bare_spec_name(f: &str) -> bool {
+    !f.is_empty()
+        && f.ends_with(".spec.ts")
+        && f != ".spec.ts"
+        && !f.contains(['/', '\\', ':'])
+        && !f.contains("..")
+        && !Path::new(f).is_absolute()
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\\\""))
 }
 
 fn title_case(kebab: &str) -> String {
@@ -199,6 +215,11 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
         Ok(r) => r,
         Err(problem) => return fail(pc, problem.clone()),
     };
+    if let Some((_, f)) = repo.index.iter().find(|(k, _)| *k == id.to_string()) {
+        if !bare_spec_name(f) {
+            return fail(pc, format!("index.json maps case {id} to \"{f}\", which is not a plain .spec.ts file name"));
+        }
+    }
     if !repo.user_keys.contains(&user_key) {
         let username = ctx
             .accounts
@@ -207,7 +228,11 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
             .map(|(_, u)| u.clone())
             .unwrap_or_else(|| "<username>".to_string());
         pc.add_user_command =
-            Some(format!("npm run users -- add {user_key} --username {username} --password <password> --apply"));
+            Some(format!(
+                "npm run users -- add {} --username {} --password <password> --apply",
+                shell_quote(&user_key),
+                shell_quote(&username)
+            ));
         return fail(pc, format!("repo user \"{user_key}\" is not in the clone's users.json"));
     }
 
@@ -219,38 +244,50 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
     if let Err(e) = translate::check(&script, &origins) {
         return fail(pc, e.0);
     }
+    // The same names Auto Run resolves (nav::find_area), under the script's spelling.
+    let mut by_name: BTreeMap<String, Vec<Target>> = BTreeMap::new();
+    for step in &script.steps {
+        for a in step.actions.iter().flat_map(|a| a.each()) {
+            if let Some(n) = a.area_named() {
+                match nav::find_area(&ctx.nav, n) {
+                    Some(m) => {
+                        by_name.insert(n.to_string(), m.clicks.clone());
+                    }
+                    None => return fail(pc, format!("return_to_area names the area \"{n}\", which is not recorded in Auto Run")),
+                }
+            }
+        }
+    }
+    // Run the real translation so the preview agrees with the write. The
+    // paths and step texts only reach comments.
+    let trial = translate::raw_spec(&RawSpecInput {
+        script: &script,
+        md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature),
+        feature_title: title_case(&placement.feature),
+        after_sign_in: &recipe.after_sign_in,
+        area_clicks: &area.clicks,
+        area_clicks_by_name: &by_name,
+        step_texts: &BTreeMap::new(),
+        origins: &origins,
+    });
+    if let Err(e) = trial {
+        return fail(pc, e.0);
+    }
 
     pc.exportable = true;
-    let ready = Ready { script, placement, user_key, area_clicks: area.clicks.clone(), origins };
+    let ready = Ready { script, placement, user_key, area_clicks: area.clicks.clone(), by_name, origins };
     (pc, Some(ready))
 }
 
-pub fn preview_with(root: &Path, org: &str, project: &str, case_ids: &[i32], clone_path: &str) -> Preview {
-    let ctx = match Ctx::load(root, org, project, clone_path) {
-        Ok(c) => c,
-        Err(e) => {
-            return Preview {
-                clone_ok: false,
-                clone_problem: Some(e.clone()),
-                user_keys: vec![],
-                areas: vec![],
-                accounts: vec![],
-                map: ExportMap::default(),
-                cases: case_ids
-                    .iter()
-                    .map(|&id| PreviewCase {
-                        case_id: id,
-                        title: String::new(),
-                        exportable: false,
-                        reason: Some(e.clone()),
-                        seg: None,
-                        user_key: None,
-                        add_user_command: None,
-                    })
-                    .collect(),
-            }
-        }
-    };
+pub fn preview_with(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+) -> Result<Preview, String> {
+    // A failure here is not the clone's: it is the caller's error.
+    let ctx = Ctx::load(root, org, project, clone_path)?;
     let cases = case_ids
         .iter()
         .map(|&id| {
@@ -258,7 +295,7 @@ pub fn preview_with(root: &Path, org: &str, project: &str, case_ids: &[i32], clo
             evaluate(&ctx, id, script).0
         })
         .collect();
-    Preview {
+    Ok(Preview {
         clone_ok: ctx.clone.is_ok(),
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
@@ -266,7 +303,35 @@ pub fn preview_with(root: &Path, org: &str, project: &str, case_ids: &[i32], clo
         accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
         map: ctx.map.clone(),
         cases,
+    })
+}
+
+/// Every selected case, or the first reason one cannot be exported. Reads
+/// only local files, so a caller can refuse before any network call.
+fn eligible(ctx: &Ctx, root: &Path, case_ids: &[i32]) -> Result<Vec<(i32, Ready)>, String> {
+    let mut ready: Vec<(i32, Ready)> = Vec::new();
+    for &id in case_ids {
+        if ready.iter().any(|(i, _)| *i == id) {
+            continue;
+        }
+        let script = store::load_script(root, id)?;
+        match evaluate(ctx, id, script) {
+            (_, Some(r)) => ready.push((id, r)),
+            (pc, None) => {
+                return Err(format!(
+                    "case {id} cannot be exported: {}. Nothing was written.",
+                    pc.reason.unwrap_or_default()
+                ))
+            }
+        }
     }
+    Ok(ready)
+}
+
+pub fn ensure_exportable(root: &Path, org: &str, project: &str, case_ids: &[i32], clone_path: &str) -> Result<(), String> {
+    let ctx = Ctx::load(root, org, project, clone_path)?;
+    ctx.clone.as_ref().map_err(|e| e.clone())?;
+    eligible(&ctx, root, case_ids).map(|_| ())
 }
 
 struct Out {
@@ -286,28 +351,11 @@ pub fn write_with(
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
 
     // Refuse everything unless every case is exportable.
-    let mut ready: Vec<(i32, Ready)> = Vec::new();
-    for &id in case_ids {
-        if ready.iter().any(|(i, _)| *i == id) {
-            continue;
-        }
-        let script = store::load_script(root, id)?;
-        match evaluate(&ctx, id, script) {
-            (_, Some(r)) => ready.push((id, r)),
-            (pc, None) => {
-                return Err(format!(
-                    "case {id} cannot be exported: {}. Nothing was written.",
-                    pc.reason.unwrap_or_default()
-                ))
-            }
-        }
-    }
+    let ready = eligible(&ctx, root, case_ids)?;
     if let Some((id, _)) = ready.iter().find(|(id, _)| !docs.contains_key(id)) {
         return Err(format!("case {id} could not be read from Azure DevOps. Nothing was written."));
     }
 
-    let by_name: BTreeMap<String, Vec<Target>> =
-        ctx.nav.modules.iter().map(|m| (m.name().to_string(), m.clicks.clone())).collect();
     let recipe = ctx.recipe.as_ref().ok_or("no sign-in recipe for this project")?;
 
     let mut md_files: BTreeMap<String, String> = BTreeMap::new();
@@ -315,6 +363,7 @@ pub fn write_with(
     let mut cases: Vec<(i32, String)> = Vec::new();
     let mut missing_navigation: Vec<String> = Vec::new();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
+    let mut chosen_by: BTreeMap<String, i32> = BTreeMap::new();
     let mut index = repo.index.clone();
 
     for (id, r) in &ready {
@@ -353,7 +402,11 @@ pub fn write_with(
             Some((_, f)) => f.clone(),
             None => {
                 let base = kebab_name(&r.script.title, id);
-                let taken = |n: &str| repo.generated_files.iter().any(|g| g == n) || chosen.contains(n);
+                let taken = |n: &str| {
+                    repo.generated_files.iter().any(|g| g == n)
+                        || repo.index.iter().any(|(_, f)| f == n)
+                        || chosen.contains(n)
+                };
                 let mut name = format!("{base}.spec.ts");
                 let mut n = 2;
                 while taken(&name) {
@@ -363,6 +416,11 @@ pub fn write_with(
                 name
             }
         };
+        if let Some(other) = chosen_by.insert(file.clone(), id) {
+            if other != id {
+                return Err(format!("cases {other} and {id} would both be written to {file}. Nothing was written."));
+            }
+        }
         chosen.insert(file.clone());
 
         let step_texts: BTreeMap<i32, String> =
@@ -373,7 +431,7 @@ pub fn write_with(
             feature_title,
             after_sign_in: &recipe.after_sign_in,
             area_clicks: &r.area_clicks,
-            area_clicks_by_name: &by_name,
+            area_clicks_by_name: &r.by_name,
             step_texts: &step_texts,
             origins: &r.origins,
         })
@@ -457,10 +515,23 @@ fn commit(root: &Path, outs: &[Out]) -> Result<(), String> {
         temps.push((tmp, target));
     }
 
+    // A locked or read-only target fails here, before anything is replaced.
+    for (_, target) in &temps {
+        if target.is_file() {
+            if let Err(e) = std::fs::OpenOptions::new().write(true).open(target) {
+                cleanup(&temps, &mut created);
+                return Err(format!("could not write {}: {e}. Nothing was changed.", target.display()));
+            }
+        }
+    }
+
     for (i, (tmp, target)) in temps.iter().enumerate() {
         if let Err(e) = std::fs::rename(tmp, target) {
             cleanup(&temps[i..], &mut created);
-            return Err(format!("could not replace {}: {e}", target.display()));
+            return Err(format!(
+                "could not replace {}: {e}. Files before it may already have been replaced.",
+                target.display()
+            ));
         }
     }
     Ok(())
