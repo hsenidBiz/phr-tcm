@@ -215,8 +215,12 @@ export default function TemplateRow({
         </button>
         {/* The line to scan: what it is, what it does, where it sits in its
             flow, and when it last ran. Its parameters and proof are one
-            click away, in the details. */}
-        <span className="min-w-0 flex-1 text-sm font-medium break-words text-text">{t.title}</span>
+            click away, in the details. The title keeps a readable width
+            (min-w-[16rem]): with min-w-0 alone, a long stage line beside it
+            squeezed it into a column of word fragments, because the row
+            never wrapped while everything still fitted. Now the badges,
+            the stage and the last run wrap to a second line first. */}
+        <span className="min-w-[16rem] flex-1 basis-64 text-sm font-medium break-words text-text">{t.title}</span>
         {/* Before the effect and the last run, so a run of the version an
             import replaced is never read as this one's proof. */}
         {!t.proven && (
@@ -232,7 +236,7 @@ export default function TemplateRow({
           </Badge>
         )}
         {stage && (
-          <span className={cn("text-xs", stage.missing ? "text-warning" : "text-muted")}>
+          <span className={cn("min-w-0 break-words text-xs", stage.missing ? "text-warning" : "text-muted")}>
             {`Stage: ${stage.stage}${stage.missing ? " (no longer saved)" : ""}`}
           </span>
         )}

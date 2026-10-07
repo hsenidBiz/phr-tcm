@@ -231,6 +231,18 @@ test("a row shows its effect badge and last run, and keeps its parameters and pr
   expect(del.className).toContain("bg-danger/15");
 });
 
+// jsdom does no layout, so this pins the class that keeps the title from
+// being squeezed into a column of word fragments by a long stage line.
+test("a row's title keeps a readable width, so the items beside it wrap instead", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  const title = within(row).getByText("Create a draft performance cycle");
+  expect(title.className).toContain("min-w-[16rem]");
+  expect(title.className).toContain("break-words");
+});
+
 test("expanding a row shows params, steps, sources, evidence and runs, read-only", async () => {
   mockOverview(OVERVIEW);
   renderScreen();
