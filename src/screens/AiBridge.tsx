@@ -454,7 +454,7 @@ export default function AiBridge() {
                 )}
                 onClick={() => saveScope(s)}
               >
-                {s === "project" ? "This repository" : "Machine-wide"}
+                <span className="label-trim">{s === "project" ? "This repository" : "Machine-wide"}</span>
               </button>
             ))}
           </div>

@@ -107,7 +107,7 @@ export default function TagField({
                 fixed ? "bg-surface-2 text-muted" : "bg-accent-soft text-accent",
               )}
             >
-              {t}
+              <span className="label-trim">{t}</span>
               {!fixed && (
                 <button
                   aria-label={`Remove ${t}`}

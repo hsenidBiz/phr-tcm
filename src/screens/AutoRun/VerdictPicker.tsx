@@ -45,7 +45,7 @@ export default function VerdictPicker({
             )}
             onClick={() => onPick(v)}
           >
-            {v}
+            <span className="label-trim">{v}</span>
           </button>
         );
       })}

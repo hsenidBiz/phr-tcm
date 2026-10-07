@@ -89,7 +89,7 @@ export default function SaveWordsDialog({
         <ul aria-label="Built-in save words" className="flex flex-wrap gap-1.5">
           {builtIn.map((w) => (
             <li key={w} className="id-mono rounded border border-border px-1.5 py-0.5 text-xs text-muted">
-              {w}
+              <span className="label-trim">{w}</span>
             </li>
           ))}
         </ul>

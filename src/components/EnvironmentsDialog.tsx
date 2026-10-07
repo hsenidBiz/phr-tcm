@@ -209,12 +209,12 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                     <span className="text-sm font-medium text-text">{env.name}</span>
                     {env.id === active && (
                       <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-fill">
-                        Active
+                        <span className="label-trim">Active</span>
                       </span>
                     )}
                     {env.test_environment && (
                       <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-warning">
-                        Test environment
+                        <span className="label-trim">Test environment</span>
                       </span>
                     )}
                   </div>

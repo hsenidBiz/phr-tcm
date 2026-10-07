@@ -111,12 +111,6 @@ function Card({
               <button
                 key={l.pr_id}
                 className={cn(
-                  // No pill-label here, unlike the other pills: this one is
-                  // a flex row holding an icon and a dot as well as text,
-                  // and those are already centred. pill-label shifts the
-                  // whole content box, so it would fix the label by putting
-                  // the icons 2px low. The text span carries the nudge
-                  // instead - see pill-label-ink below.
                   "flex max-w-32 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                   l.status === "active"
                     ? "bg-accent-soft text-accent"
@@ -129,7 +123,7 @@ function Card({
                 }}
               >
                 <GitPullRequest size={10} className="shrink-0" />
-                <span className="pill-label-ink truncate">{l.repo}</span>
+                <span className="label-trim truncate">{l.repo}</span>
                 {/* The status mark is geometry, not a glyph. As text, "●"
                     carries its ink about 1.5px below the repo name's at
                     this size and "✓" about half that - they sit low next
@@ -604,7 +598,7 @@ export default function WorkBoard({
                 className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
                 onClick={() => toggleCol(col)}
               >
-                <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
+                <span className="label-trim absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
                   Open
                 </span>
               </button>
@@ -654,12 +648,7 @@ export default function WorkBoard({
                 className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
                 onClick={() => toggleCol(col)}
               >
-                {/* Symmetric padding + the caps-only ink shift, not a
-                    hand-tuned pt/pb pair: the old pt-[3px] pb-px was a
-                    1px nudge where caps ink needs 1.5px (measured
-                    -0.66px high), and its 1px bottom padding read as
-                    "missing" in an inspector. Same button height. */}
-                <span className="pill-label-ink">Hide</span>
+                <span className="label-trim">Hide</span>
               </button>
             </h3>
             {items.map((item) => (

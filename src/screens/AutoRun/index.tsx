@@ -595,13 +595,15 @@ export default function AutoRun({
                 onClick={() => setTab(id)}
                 onKeyDown={(e) => onTabKey(e, TABS.findIndex((t) => t.id === id))}
               >
-                {label}
-                {count != null && (
-                  <>
-                    {" "}
-                    <span className="text-xs text-faint">{count}</span>
-                  </>
-                )}
+                <span className="label-trim">
+                  {label}
+                  {count != null && (
+                    <>
+                      {" "}
+                      <span className="text-xs text-faint">{count}</span>
+                    </>
+                  )}
+                </span>
               </button>
             );
           })}

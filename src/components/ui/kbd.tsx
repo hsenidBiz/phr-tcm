@@ -57,7 +57,7 @@ export function Kbd({ keys, className }: { keys: string; className?: string }) {
     <KbdGroup role="img" aria-label={parts.map((k) => spoken(k, mac)).join(" + ")} className={className}>
       {parts.map((k, i) => (
         <XiodKey key={i} aria-hidden="true">
-          {glyph(k, mac)}
+          <span className="label-trim">{glyph(k, mac)}</span>
         </XiodKey>
       ))}
     </KbdGroup>

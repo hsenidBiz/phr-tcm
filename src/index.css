@@ -766,72 +766,43 @@ table {
   }
 }
 
-/* Small label pills - repo names, Draft, Conflicts, environments, states.
-   Their text reads as riding high, and it is not an illusion: CSS centres
-   the FONT's em box, and the em box reserves descender space that words
-   like "demo-web" or "Draft" never spend. Measured on the PR panel's repo
-   pill by counting ink rows in a 4x screenshot, not by eye or by font
-   maths: the glyphs sat 7 device pixels - 1.75 CSS px on a 17.3px pill -
-   above centre, which is about a tenth of the box.
+/* Labels in boxes - buttons, pills, badges, tabs, chips, key caps - are
+   centred by their letters, not by the font's box.
 
-   The correction is a 2px downward nudge, done by moving padding from the
-   bottom to the top so the pill's HEIGHT does not change and it still
-   lines up with its neighbours. Whole pixels because glyph baselines snap
-   to them; half a pixel here moves nothing.
+   CSS centres a label's LINE BOX in its box, and the line box is the
+   font's ascent and descent plus half the leading on each side. Where the
+   capitals land inside it depends on the font's metrics (the bundled Fira
+   Sans: ascent 935, descent 265, cap height 689 per 1000), on the font size
+   and on the screen's scale, because Blink rounds the ascent and the
+   descent to whole device pixels separately. So the same label rode high
+   in one pill and low in the next, at one scale and not another, and the
+   old cure - a hand-tuned pixel nudge per pill size - was right at the
+   scale it was tuned at and wrong at the next.
 
-   It lives in ONE place on purpose. The board rail's vertical Open button
-   is the cautionary tale: correct pixel tuning, spelled out at the call
-   site, and nothing to stop the next pill being tuned differently or not
-   at all. Pills that use this must NOT also set py-*; this owns the
-   vertical padding.
+   `text-box: trim-both cap alphabetic` makes the label's own box run from
+   the top of its capitals to its baseline, so whatever centres that box
+   centres the letters. `min-height: 1lh` with `align-content: center` then
+   gives the box back exactly the height its one line took before, with
+   the trimmed letters in the middle: nothing around a label moves.
 
-   A label that does carry a descender ("gyp") ends up a hair low. That is
-   the right trade - descenders are rare in these labels, and the
-   alternative is per-string tuning, which cannot be consistent.
+   Put it on the element that holds the text itself, as a block - a flex
+   item, or a block inside a button or pill (it is display: block here; a
+   utility can still override that). On an inline element it does nothing
+   for centring. Button and Badge wrap their text in it themselves
+   (ui/labelText.tsx), so their call sites need nothing. Descenders (g, p,
+   y) hang below the baseline into the space under it, as a descender
+   should; with leading-none that space is shorter than a descender, so do
+   not clip such a label (no overflow-hidden / truncate on it).
 
-   Scope: the 10px label pills only, replacing their py-0.5. Deliberately
-   NOT generalised to the 12px controls - the same measurement there gave
-   contradictory answers between methods, and an unverified nudge on a
-   control nobody complained about is how a "fix" becomes a regression.
-   If a second size is ever wanted, measure it the same way first and add
-   a variant here rather than tuning a number at a call site.
-
-   RECALIBRATED after a field report ("more space on top than bottom",
-   cap-tops level with a centred dot): the original 2px shift OVERSHOT
-   and flipped the error - text that once rode ~1px high sat ~1px low.
-   Re-measured with canvas ink metrics (actualBoundingBoxAscent/Descent
-   against a baseline probe inside the text's own inline context, not a
-   screenshot): with the bundled Fira Sans at 10px, uncorrected ink sits
-   1.0px high on a mixed-case badge and 1.5px high on a caps-only chip
-   label. 3px/1px centres the badge's ink to 0.00px measured. Fira Sans
-   ships via @fontsource (top of this file), so these metrics are the
-   same on every machine - do not retune against a fallback font.
-
-   Not for a pill that also holds an icon: this shifts the whole content
-   box, so a correctly-centred glyph would go down with the text. Use
-   `pill-label-ink` on the text span instead - see below. */
-.pill-label {
-  padding-top: 3px;
-  padding-bottom: 1px;
-}
-
-/* The same correction for a pill whose text sits BESIDE an icon - the
-   board card's PR chip, which carries a pull-request glyph and a status
-   mark as well as the repository name.
-
-   Padding is the wrong lever there: it would move the icons, which are
-   already centred, down with the text. This nudges the text span alone,
-   as a relative offset so nothing about the layout changes - the chip's
-   height, the gaps and the icons all stay exactly where they were.
-
-   1.5px, not a whole pixel: repo labels are caps-and-digits, whose ink
-   rides higher (1.5px measured) than the mixed-case badge's 1.0px, and
-   Chromium positions at subpixels - the same measurement that sized the
-   padding above reads exactly 0.00px against the chip's status dot at
-   1.5px, 0.5px high at 1px, and 0.5px low at the old 2px. */
-.pill-label-ink {
-  position: relative;
-  top: 1.5px;
+   Measure, do not eyeball: scripts/measure-text-centre.mjs counts the ink
+   rows of each label at 1x and 1.5x. */
+@layer components {
+  .label-trim {
+    display: block;
+    text-box: trim-both cap alphabetic;
+    min-height: 1lh;
+    align-content: center;
+  }
 }
 
 /* Long-list rows: the browser skips layout and paint for rows outside the

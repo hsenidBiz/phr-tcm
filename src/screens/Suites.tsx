@@ -340,7 +340,7 @@ export default function Suites({
         onClick();
       }}
     >
-      {text}
+      <span className="label-trim">{text}</span>
     </span>
   );
 

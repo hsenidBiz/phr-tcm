@@ -53,7 +53,7 @@ function Pill({
       )}
       onClick={onClick}
     >
-      {filter}
+      <span className="label-trim">{filter}</span>
       {count !== undefined && (
         <span
           aria-hidden
@@ -62,7 +62,7 @@ function Pill({
             on ? "bg-on-status/20" : tone.badge,
           )}
         >
-          {count}
+          <span className="label-trim">{count}</span>
         </span>
       )}
     </button>

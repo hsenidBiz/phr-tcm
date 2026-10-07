@@ -29,7 +29,7 @@ export default function BridgeStatusBadge() {
       )}
     >
       <span aria-hidden className="status-glow size-2 rounded-full bg-current" />
-      {up ? "Running" : "Not running"}
+      <span className="label-trim">{up ? "Running" : "Not running"}</span>
     </span>
   );
 }

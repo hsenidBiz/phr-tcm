@@ -738,7 +738,7 @@ export default function Settings({ org, project }: { org: string; project: strin
                     setRateLevel(l.id);
                   }}
                 >
-                  {l.label}
+                  <span className="label-trim">{l.label}</span>
                 </button>
               ))}
             </div>
@@ -808,7 +808,7 @@ export default function Settings({ org, project }: { org: string; project: strin
                 // would leave the layout waiting on it.
                 onClick={() => rightPanel !== p && tiles.flip(() => setRightPanel(p))}
               >
-                {p === "changelog" ? "Changelog" : "Logs"}
+                <span className="label-trim">{p === "changelog" ? "Changelog" : "Logs"}</span>
               </button>
             ))}
           </div>

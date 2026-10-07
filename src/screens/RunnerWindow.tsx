@@ -914,7 +914,7 @@ export default function RunnerWindow() {
         )}
         {caseFilter && (
           <span className="rounded bg-accent-soft px-1.5 text-[11px] text-accent">
-            {caseFilter.size} selected
+            <span className="label-trim">{caseFilter.size} selected</span>
           </span>
         )}
         {/* WHERE the tester is, not how much is marked - "1/53" opening
@@ -967,7 +967,7 @@ export default function RunnerWindow() {
                     outcomeBadge[currentPoint.last_outcome.toLowerCase()] ?? "bg-surface-2 text-muted",
                   )}
                 >
-                  Last: {outcomeLabel(currentPoint.last_outcome)}
+                  <span className="label-trim">Last: {outcomeLabel(currentPoint.last_outcome)}</span>
                 </span>
               )}
               {(history.data?.find((h) => h.test_case_id === current.id)?.outcomes.length ?? 0) >
@@ -1033,7 +1033,7 @@ export default function RunnerWindow() {
                             patch(current.id, { stepOutcomes: next });
                           }}
                         >
-                          {o === "Passed" ? "Pass" : "Fail"}
+                          <span className="label-trim">{o === "Passed" ? "Pass" : "Fail"}</span>
                         </button>
                       ))}
                     </div>
@@ -1136,7 +1136,7 @@ export default function RunnerWindow() {
                         key={i}
                         className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
                       >
-                        {a.file_name}
+                        <span className="label-trim">{a.file_name}</span>
                         <button
                           aria-label={`Remove ${a.file_name}`}
                           className="hover:text-danger"

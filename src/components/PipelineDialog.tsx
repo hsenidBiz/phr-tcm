@@ -208,7 +208,7 @@ export function LogDialog({
         <h3 className="min-w-0 flex-1 break-words text-sm font-semibold text-text">{title}</h3>
         {live && (
           <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
-            running
+            <span className="label-trim">running</span>
           </span>
         )}
         <button
@@ -258,7 +258,7 @@ export function LogDialog({
           onClick={copy}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          {copied ? "Copied" : "Copy log"}
+          <span className="label-trim">{copied ? "Copied" : "Copy log"}</span>
         </button>
       </div>
     </Modal>
@@ -434,12 +434,12 @@ function RunNode({
               tone(b.status, b.result),
             )}
           >
-            {label(b.result || b.status)}
+            <span className="label-trim">{label(b.result || b.status)}</span>
           </span>
           <span className="truncate font-medium text-text">{b.name}</span>
           <span className="id-mono shrink-0 text-xs text-faint">{b.number}</span>
-          <span className="pill-label shrink-0 rounded bg-surface-2 px-1.5 text-[10px] text-muted">
-            {b.is_validation ? "PR validation" : "CI after merge"}
+          <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+            <span className="label-trim">{b.is_validation ? "PR validation" : "CI after merge"}</span>
           </span>
         </button>
 
@@ -486,7 +486,7 @@ function RunNode({
                           tone(d.status),
                         )}
                       >
-                        {d.environment}
+                        <span className="label-trim">{d.environment}</span>
                       </span>
                       <span className="text-faint">{label(d.status)}</span>
                       {d.on && (
@@ -514,7 +514,7 @@ function RunNode({
                 onClick={() => openExternal(b.web_url)}
               >
                 <ExternalLink size={11} />
-                Open run in Azure DevOps
+                <span className="label-trim">Open run in Azure DevOps</span>
               </button>
             )}
           </>
@@ -616,7 +616,7 @@ export default function PipelineDialog({
             )}
             onClick={() => setFailuresOnly((f) => !f)}
           >
-            Failures only
+            <span className="label-trim">Failures only</span>
           </button>
         </div>
       )}

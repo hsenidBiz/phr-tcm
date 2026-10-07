@@ -220,16 +220,16 @@ export default function Sidebar<T extends string = Section>({
               aria-hidden
               className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
             >
-              {badge > 99 ? "99+" : badge}
+              <span className="label-trim">{badge > 99 ? "99+" : badge}</span>
             </span>
           )}
-          <span className={labelCls} style={labelDelay}>
+          <span className={cn(labelCls, note && "flex items-baseline")} style={labelDelay}>
             {label}
             {note && (
               // Inside the collapsing span, so the pill folds away with
               // the label instead of needing its own animation plumbing.
-              <span className="ml-2 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
-                {note}
+              <span className="ml-2 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium leading-[1.2] text-warning">
+                <span className="label-trim">{note}</span>
               </span>
             )}
           </span>

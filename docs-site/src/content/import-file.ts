@@ -600,7 +600,9 @@ export const importFile: Screen = {
       id: "rename-apply",
       shot: RENAME,
       group: "many-at-once",
-      locate: { css: '[role="dialog"] button:text-matches("^Rename [0-9]+$")' },
+      // The button's text sits in its centring span, so match the button by
+      // what it reads as a whole, not by a text node of its own.
+      locate: { css: `xpath=//*[@role="dialog"]//button[starts-with(normalize-space(.), "Rename ")]` },
       name: "Rename",
       does: "Renames the titles shown in the preview. Afterwards **Undo rename** puts them back.",
     },

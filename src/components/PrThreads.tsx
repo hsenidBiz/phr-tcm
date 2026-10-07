@@ -80,11 +80,11 @@ function Thread({
         </span>
         <span
           className={cn(
-            "pill-label shrink-0 rounded-full px-2 text-[10px] font-medium",
+            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
             resolved ? "bg-surface-2 text-muted" : "bg-warning/15 text-warning",
           )}
         >
-          {statusLabel(thread.status)}
+          <span className="label-trim">{statusLabel(thread.status)}</span>
         </span>
       </div>
 
@@ -125,7 +125,7 @@ function Thread({
             onClick={() => onSetStatus("active")}
           >
             <RotateCcw size={11} />
-            Reactivate
+            <span className="label-trim">Reactivate</span>
           </button>
         ) : (
           <button
@@ -134,7 +134,7 @@ function Thread({
             onClick={() => onSetStatus("fixed")}
           >
             <Check size={11} />
-            Resolve
+            <span className="label-trim">Resolve</span>
           </button>
         )}
       </div>

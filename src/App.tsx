@@ -1284,7 +1284,7 @@ export default function App() {
                   {section === "ai" && <BridgeStatusBadge />}
                   {TITLE_NOTES[section] && (
                     <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
-                      {TITLE_NOTES[section]}
+                      <span className="label-trim">{TITLE_NOTES[section]}</span>
                     </span>
                   )}
                 </div>
