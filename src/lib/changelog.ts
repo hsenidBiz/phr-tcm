@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.16",
+    date: "2026-10-07",
+    items: [
+      "The switch on the Writing style card now reads Use custom writing style.",
+    ],
+  },
+  {
     version: "2.1.1-beta.15",
     date: "2026-10-07",
     items: [
