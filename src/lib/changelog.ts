@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.12",
+    date: "2026-10-07",
+    items: [
+      "Each line in Clean up test-made drafts names the delete template that will remove it.",
+      "Steps run by Replay to step say which tab they ran in.",
+      "Downloads from a run are removed with the run, and a spreadsheet too large to check is refused instead of read.",
+      "Names of areas and shared-state marks, table headers and dialog text treat unusual spaces as ordinary spaces.",
+      "A collapsed Auto Run case shows a marker when it has a suspected defect.",
+    ],
+  },
+  {
     version: "2.1.1-beta.11",
     date: "2026-10-07",
     items: [
