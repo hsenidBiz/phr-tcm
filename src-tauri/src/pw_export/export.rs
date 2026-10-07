@@ -46,8 +46,9 @@ pub struct Preview {
     pub areas: Vec<String>,
     pub accounts: Vec<String>,
     pub map: ExportMap,
-    /// A first guess for each of `areas` not placed yet, from its name
-    /// (`Placement::suggest`); the person confirms it by saving.
+    /// A first guess, from its name (`Placement::suggest`), for each area
+    /// that one of the listed cases starts in and that is not placed yet;
+    /// the person confirms it by saving.
     pub suggested: BTreeMap<String, Placement>,
     pub cases: Vec<PreviewCase>,
 }
@@ -125,6 +126,20 @@ struct Ready {
 /// nothing says where in the clone it goes.
 const NO_PLACE: &str =
     "this project has no areas recorded and the case has no Module, so nothing says where it goes in the clone - set its Module in Azure DevOps";
+
+/// Where the case starts, chosen exactly as an unattended run chooses it -
+/// the script's own area, else the one named like the case's Module
+/// (`nav::route_for`) - as the name it is placed by, the menu clicks, and
+/// whether a recorded area was found. A project with no areas runs the case
+/// from home with no menu clicks, and it is placed by its Module instead.
+fn route(ctx: &Ctx, id: i32, script: &CaseScript) -> Result<(String, Vec<Target>, bool), String> {
+    let module = ctx.modules.get(&id).map(|m| m.trim()).unwrap_or("");
+    match nav::route_for(&ctx.nav, script.area.as_deref(), Some(module), script.account.as_deref())? {
+        Some(a) => Ok((a.name().to_string(), a.clicks.clone(), true)),
+        None if module.is_empty() => Err(NO_PLACE.into()),
+        None => Ok((module.to_string(), Vec::new(), false)),
+    }
+}
 
 /// A `return_to_area` that names no area: it goes back to the case's own.
 fn bare_return_to_area(script: &CaseScript) -> bool {
@@ -236,21 +251,11 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
         return fail(pc, format!("latest run: {said}"));
     }
 
-    // Area: chosen exactly as an unattended run chooses it - the script's
-    // own, else the one named like the case's Module (`nav::route_for`).
-    let module = ctx.modules.get(&id).map(|m| m.trim()).unwrap_or("");
-    let route = match nav::route_for(&ctx.nav, script.area.as_deref(), Some(module), script.account.as_deref()) {
+    let (area_name, area_clicks, routed) = match route(ctx, id, &script) {
         Ok(r) => r,
         Err(why) => return fail(pc, why),
     };
-    // A project with no areas runs the case from home with no menu clicks,
-    // and its specs are placed by the case's Module instead.
-    let (area_name, area_clicks) = match route {
-        Some(a) => (a.name().to_string(), a.clicks.clone()),
-        None if module.is_empty() => return fail(pc, NO_PLACE.into()),
-        None => (module.to_string(), Vec::new()),
-    };
-    if route.is_none() && bare_return_to_area(&script) {
+    if !routed && bare_return_to_area(&script) {
         return fail(pc, runner::NO_AREA_IN_RUN.into());
     }
     let placement = placed(&ctx.map, &area_name).cloned();
@@ -353,26 +358,26 @@ pub fn preview_with(
 ) -> Result<Preview, String> {
     // A failure here is not the clone's: it is the caller's error.
     let ctx = Ctx::load(root, org, project, clone_path, modules)?;
-    let cases = case_ids
-        .iter()
-        .map(|&id| {
-            let script = store::load_script(root, id).ok().flatten();
-            evaluate(&ctx, id, script).0
-        })
-        .collect();
+    let mut cases = Vec::new();
+    // A guess only for an area one of these cases starts in and that is
+    // not placed yet - not for every area the project has recorded.
+    let mut suggested: BTreeMap<String, Placement> = BTreeMap::new();
+    for &id in case_ids {
+        let script = store::load_script(root, id).ok().flatten();
+        if let Some(Ok((name, _, _))) = script.as_ref().map(|s| route(&ctx, id, s)) {
+            if placed(&ctx.map, &name).is_none() && !suggested.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
+                let p = Placement::suggest(&name);
+                suggested.insert(name, p);
+            }
+        }
+        cases.push(evaluate(&ctx, id, script).0);
+    }
     Ok(Preview {
         environment: ctx.env_id.clone(),
         clone_ok: ctx.clone.is_ok(),
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
-        suggested: placement_keys(&ctx, case_ids)
-            .into_iter()
-            .filter(|a| placed(&ctx.map, a).is_none())
-            .map(|a| {
-                let p = Placement::suggest(&a);
-                (a, p)
-            })
-            .collect(),
+        suggested,
         areas: placement_keys(&ctx, case_ids),
         accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
         map: ctx.map.clone(),

@@ -549,8 +549,17 @@ fn a_project_with_no_areas_exports_with_no_menu_clicks_placed_by_module() {
 fn an_area_not_placed_yet_comes_with_a_suggestion_from_its_name() {
     let fx = Fx::new();
     fx.good(160, "One sixty");
+    // The only case starts in "Definition Wizard", which is placed: no guess,
+    // not even for the project's other, unplaced area.
     let p = preview_with(fx.root.path(), ORG, PROJECT, &[160], &fx.clone_path(), &fx.modules.borrow()).unwrap();
-    // "Definition Wizard" is placed already; only "Unplaced" is guessed.
+    assert!(p.suggested.is_empty(), "{:?}", p.suggested);
+    assert!(p.areas.contains(&"Unplaced".to_string()));
+    // A case that starts in "Unplaced" - here by its Module, as Auto Run picks
+    // it for a script with no area - brings the guess.
+    fx.click_script(161, "One sixty one", "admin", "");
+    fx.run("r161", "5", 161, "Passed");
+    fx.modules.borrow_mut().insert(161, "unplaced".into());
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[160, 161], &fx.clone_path(), &fx.modules.borrow()).unwrap();
     assert_eq!(p.suggested.len(), 1, "{:?}", p.suggested);
     assert_eq!(
         p.suggested.get("Unplaced"),

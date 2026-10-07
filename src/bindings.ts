@@ -3657,8 +3657,9 @@ export type Preview = {
 	accounts: string[],
 	map: ExportMap,
 	/**
-	 *  A first guess for each of `areas` not placed yet, from its name
-	 *  (`Placement::suggest`); the person confirms it by saving.
+	 *  A first guess, from its name (`Placement::suggest`), for each area
+	 *  that one of the listed cases starts in and that is not placed yet;
+	 *  the person confirms it by saving.
 	 */
 	suggested: { [key in string]: Placement },
 	cases: PreviewCase[],
