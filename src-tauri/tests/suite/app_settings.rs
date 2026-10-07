@@ -21,6 +21,7 @@ fn a_missing_file_is_the_defaults() {
             // Letting AI tools change the database unasked is a choice, never a default.
             db_auto_approve: false,
             stay_signed_in: true,
+            playwright_clone: String::new(),
         }
     );
 }
@@ -47,6 +48,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             start_minimized: true,
             db_auto_approve: false,
             stay_signed_in: true,
+            playwright_clone: String::new(),
         }
     );
 }
@@ -61,6 +63,7 @@ fn saved_settings_read_back() {
         start_minimized: false,
         db_auto_approve: true,
         stay_signed_in: false,
+        playwright_clone: "C:/clone".into(),
     };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);

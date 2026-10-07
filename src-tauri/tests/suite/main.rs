@@ -121,6 +121,7 @@ mod note_server;
 mod optimize;
 mod permissions;
 mod pipelines;
+mod pw_export_mapping;
 mod relink;
 mod report;
 mod run_order;

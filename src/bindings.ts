@@ -1166,6 +1166,8 @@ export const commands = {
 	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
 	/**  Whether closing the main window keeps the app running in the tray. */
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
+	/**  The folder of the Playwright automation clone scripts export into. */
+	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -1812,6 +1814,11 @@ export type AppSettings = {
 	 *  (`crate::saved_session`). Off: every launch signs in in the browser.
 	 */
 	stay_signed_in?: boolean,
+	/**
+	 *  Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
+	 *  into. Empty until the person picks one.
+	 */
+	playwright_clone?: string,
 };
 
 export type AssignedItem = {

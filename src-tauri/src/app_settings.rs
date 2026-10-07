@@ -36,6 +36,9 @@ pub struct AppSettings {
     /// and a launch goes straight in while Microsoft still accepts it
     /// (`crate::saved_session`). Off: every launch signs in in the browser.
     pub stay_signed_in: bool,
+    /// Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
+    /// into. Empty until the person picks one.
+    pub playwright_clone: String,
 }
 
 impl Default for AppSettings {
@@ -47,6 +50,7 @@ impl Default for AppSettings {
             start_minimized: true,
             db_auto_approve: false,
             stay_signed_in: true,
+            playwright_clone: String::new(),
         }
     }
 }

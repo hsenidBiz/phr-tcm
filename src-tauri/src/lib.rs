@@ -44,6 +44,7 @@ pub mod model;
 pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
+pub mod pw_export;
 pub mod report;
 pub mod run_order;
 pub mod saved_session;
@@ -309,6 +310,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             guide::guide_download,
             app_settings::get_app_settings,
             app_settings::set_close_to_tray,
+            app_settings::set_playwright_clone,
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,
