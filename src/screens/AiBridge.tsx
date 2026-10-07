@@ -729,8 +729,10 @@ export default function AiBridge() {
             Off: the assistant writes cases with the standard guide. On: it tiers each
             scenario by risk (T1 critical, T2 core, T3 low), lists the scenarios for your
             approval before writing, keeps to a budget per story, and tags every case with
-            its trace, tier and run category (Smoke, Regression or Extended). Takes effect
-            the next time the assistant reads the writing guide.
+            its trace, tier and run category (Smoke, Regression or Extended). It can also
+            review a test plan or PBI and propose which cases belong in Regression, changing
+            no tags until you say yes. Takes effect the next time the assistant reads the
+            writing guide.
           </p>
         </div>
       </section>
