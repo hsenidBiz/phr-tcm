@@ -587,6 +587,17 @@ test("power rename scoped to the selection writes the file back", async () => {
   expect(dialog).toBeInTheDocument();
 });
 
+/// Renaming lives in the selection bar only: with nothing ticked there is
+/// no Rename button at all, and ticking rows brings up Rename N.
+test("the queue has no Rename button until rows are ticked", async () => {
+  baseMocks();
+  renderQueue([makeCase({ title: "One" }), makeCase({ title: "Two" })]);
+  expect(screen.queryByRole("button", { name: /^Rename/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
+  expect(screen.getByRole("button", { name: "Rename 2" })).toBeInTheDocument();
+});
+
 /// The white window, caught by the app log on 2026-09-11: "Cannot read
 /// properties of undefined (reading 'update_id')" right after Remove all.
 /// The selection is a set of positions; Remove all emptied the queue under
