@@ -536,3 +536,100 @@ fn a_single_value_json_expectation_is_refused_with_its_own_sentence() {
     let got = one_step(json!([{ "kind": "expect_response", "url_contains": "x", "json": [1, 2] }])).run().unwrap();
     assert!(got.contains("toMatchObject([1, 2])"), "{got}");
 }
+
+/// Compares `got` with a golden file under `tests/fixtures/pw_export/`, or
+/// rewrites the file when PW_EXPORT_BLESS is set (then read the diff).
+/// `src/lib/pwExportGolden.test.ts` type-checks every golden, so each one
+/// must stay what the translator writes today.
+fn golden(name: &str, got: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw_export").join(name);
+    if std::env::var_os("PW_EXPORT_BLESS").is_some() {
+        std::fs::write(&path, got).unwrap();
+    }
+    let want = lf(&std::fs::read_to_string(&path).unwrap_or_default());
+    assert_eq!(got, want, "{name} is stale - rerun with PW_EXPORT_BLESS=1 and review the diff");
+}
+
+#[test]
+fn every_exportable_kind_becomes_the_kitchen_sink_golden() {
+    let s: CaseScript = serde_json::from_value(json!({
+        "case_id": 900,
+        "title": "Kitchen sink - every exportable action",
+        "steps": [
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": "https://app.example/hr/x?y=1#z" },
+                { "kind": "navigate", "url": "https://sso.example/login" },
+                { "kind": "click", "selector": { "role": "button", "name": "Save", "exact": true } },
+                { "kind": "fill", "selector": { "css": "input[name='q']" }, "value": "it's `x` ${y}\nline 2" },
+                { "kind": "wait_for", "selector": { "css": "#spinner", "visible": false }, "timeout_ms": 3000 },
+                { "kind": "wait_for", "selector": [{ "css": "iframe#body" }, { "text": "Ready", "exact": true }], "timeout_ms": 4000 }
+            ] },
+            { "step_number": 2, "unchecked": "A person checks the colour.", "actions": [
+                { "kind": "check_text", "value": "Welcome" },
+                { "kind": "check_url", "contains": "/hr/x?y=1" },
+                { "kind": "expect_visible", "selector": "#a", "timeout_ms": 1000 },
+                { "kind": "expect_hidden", "selector": { "css": ".toast" } },
+                { "kind": "expect_text", "selector": { "css": "select#level" }, "equals": "Senior   Expert", "timeout_ms": 2000 },
+                { "kind": "expect_contains_text", "selector": { "css": "textarea#notes" }, "value": "draft" },
+                { "kind": "expect_count", "selector": { "css": "tr.row" }, "equals": 3 },
+                { "kind": "expect_attribute", "selector": { "css": "#save", "nth": 1 }, "name": "aria-disabled", "equals": "false" },
+                { "kind": "expect_focused", "selector": "#name", "timeout_ms": 500 }
+            ] },
+            { "step_number": 3, "actions": [
+                { "kind": "when_visible", "selector": { "role": "dialog", "name": "Confirm" }, "within_ms": 1500,
+                  "then": [{ "kind": "click", "selector": { "role": "button", "name": "OK" } }] },
+                { "kind": "expect_response", "method": "post", "url_contains": "/api/Save", "status": 200, "json": { "ok": true, "ids": [1, 2] }, "timeout_ms": 8000 },
+                { "kind": "expect_response", "url_contains": "/api/list" },
+                { "kind": "api_request", "path": "/api/items", "query": { "page": "1" }, "expect": { "status": 200, "json": { "count": 2 } } },
+                { "kind": "api_request", "path": "/api/ping" }
+            ] },
+            { "step_number": 4, "actions": [
+                { "kind": "reload" },
+                { "kind": "expire_session" },
+                { "kind": "return_to_area" },
+                { "kind": "return_to_area", "area": "Goal Setting" },
+                { "kind": "press_key", "key": "shift+Tab" },
+                { "kind": "press_key", "key": "Tab", "times": 3 },
+                { "kind": "drag", "from": "#card-1", "to": "#lane-2" },
+                { "kind": "drag", "from": "#card-2", "to": "#lane-3", "position": "onto" }
+            ] },
+            { "step_number": 5, "actions": [
+                { "kind": "click", "selector": { "text": "Export" } },
+                { "kind": "expect_download", "name": "report*.xlsx" },
+                { "kind": "when_visible", "selector": "#export-pdf",
+                  "then": [{ "kind": "click", "selector": "#export-pdf" }, { "kind": "expect_download", "name": "summary.pdf", "within_ms": 9000 }] }
+            ] },
+            { "step_number": 6, "actions": [
+                { "kind": "click", "selector": "#help" },
+                { "kind": "expect_tab", "name": "help-tab", "url_contains": "/help", "within_ms": 5000 },
+                { "kind": "switch_tab", "name": "help-tab" },
+                { "kind": "click", "selector": "text=Contents" },
+                { "kind": "close_tab", "name": "help-tab" },
+                { "kind": "open_tab", "name": "second", "url": "/hr/second" },
+                { "kind": "switch_tab", "name": "main" },
+                { "kind": "click", "selector": "#close-second" },
+                { "kind": "expect_tab_closed", "name": "second", "within_ms": 3000 }
+            ] }
+        ]
+    }))
+    .unwrap();
+    let mut fx = Fx::new(s);
+    fx.signin = after_sign_in();
+    fx.by_name.insert("Goal Setting".into(), vec![target(json!({ "css": "a.goals" })), target(json!({ "role": "link", "name": "Goal Setting" }))]);
+    fx.texts = [(1, "Open the page."), (2, "Check what it shows."), (4, "Move the cards.")]
+        .into_iter()
+        .map(|(n, t)| (n, t.to_string()))
+        .collect();
+    golden("kitchen-sink.spec.ts.golden", &fx.run().unwrap());
+}
+
+#[test]
+fn open_tab_with_no_expect_tab_becomes_its_golden() {
+    let mut fx = one_step(json!([
+        { "kind": "open_tab", "name": "report", "url": "/hr/report" },
+        { "kind": "expect_visible", "selector": "#chart" },
+        { "kind": "close_tab", "name": "report" }
+    ]));
+    fx.signin = after_sign_in();
+    golden("open-tab-only.spec.ts.golden", &fx.run().unwrap());
+}
