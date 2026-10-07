@@ -13,7 +13,7 @@ import type { Action, CaseScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
-import { IconAdd, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
+import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import RunDownloads from "./RunDownloads";
 import { approvalWords, loadSetupView, setupViewKey } from "./setupApproval";
@@ -165,6 +165,18 @@ export default function CaseCard({
         </button>
         {/* The result of the case's last run, in Past runs' words and
             colours. */}
+        {/* A collapsed card says it has a suspected defect with an icon
+            only, not a button; open, the badge below says it. */}
+        {!open && defect && (
+          <span
+            role="img"
+            aria-label={`Suspected defect: ${defect.note}`}
+            title={`Suspected defect: ${defect.note}`}
+            className="shrink-0 text-warning"
+          >
+            <IconBug aria-hidden className="size-3.5" />
+          </span>
+        )}
         <span className={cn("shrink-0 text-xs font-medium", bucketTone[result])}>
           <span className="sr-only">Last result: </span>
           {result}
