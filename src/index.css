@@ -803,6 +803,22 @@ table {
     min-height: 1lh;
     align-content: center;
   }
+
+  /* At 100% scaling only: 10-12px Fira Sans capitals rasterise one device
+     row taller than the font's cap height, and the extra row grows upward
+     from the snapped baseline, so a trimmed label's ink still sat about a
+     third of a pixel high on average (measured with the tool above, 43
+     labels). A quarter pixel down, as a relative offset so no height or
+     neighbour moves, centres it: half a pixel or a whole one overshot
+     (more labels then sat low than had sat high). 125% and up are left
+     alone: there the leftover error is spread both ways and a shift made
+     it no better. */
+  @media (max-resolution: 1.24dppx) {
+    .label-trim {
+      position: relative;
+      top: 0.25px;
+    }
+  }
 }
 
 /* Long-list rows: the browser skips layout and paint for rows outside the
