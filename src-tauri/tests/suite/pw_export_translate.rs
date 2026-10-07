@@ -499,3 +499,26 @@ fn a_text_check_in_the_recipe_also_declares_the_reader() {
     let got = fx.run().unwrap();
     assert!(got.contains("const readText = "), "{got}");
 }
+
+#[test]
+fn open_tab_alone_still_declares_what_it_marks_claimed() {
+    let got = one_step(json!([{ "kind": "open_tab", "name": "t2", "url": "/x" }])).run().unwrap();
+    assert!(got.contains("claimed.add(tab_t2);"), "{got}");
+    assert!(got.contains("const claimed = new Set<typeof page>();"), "{got}");
+    assert!(got.find("const claimed").unwrap() < got.find("claimed.add(tab_t2)").unwrap(), "{got}");
+}
+
+#[test]
+fn tabs_named_in_the_recipe_are_declared_and_collected() {
+    let mut fx = one_step(json!([{ "kind": "switch_tab", "name": "main" }]));
+    fx.signin = serde_json::from_value(json!([
+        { "kind": "click", "selector": "#help" },
+        { "kind": "expect_tab", "name": "help" },
+        { "kind": "close_tab", "name": "help" }
+    ]))
+    .unwrap();
+    let got = fx.run().unwrap();
+    assert!(got.contains("    let tab_help: typeof page;\n"), "{got}");
+    assert!(got.contains("const opened: (typeof page)[] = [];"), "{got}");
+    assert!(got.find("let tab_help").unwrap() < got.find("tab_help = await nextTab(").unwrap(), "{got}");
+}

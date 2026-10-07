@@ -165,7 +165,8 @@ fn check_target(t: &Target) -> Res<()> {
 pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     check(input.script, input.origins)?;
     let mut em = Em { out: String::new(), input, scope: String::new(), cnt: Counters::default(), blocks: 0, tab_from: "0".into() };
-    let tabs = has_expect_tab(input.script);
+    // `open_tab` marks its page claimed, so it needs the collector too.
+    let tabs = uses(input, &|a| matches!(a, Action::ExpectTab { .. } | Action::OpenTab { .. }));
 
     let _ = write!(em.out, "// spec: {}\n", one_line(&input.md_path));
     em.out.push_str("// seed: suites/_generated/seed.spec.ts\n\n");
@@ -180,7 +181,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if tabs {
         em.collector();
     }
-    for name in tab_names(input.script) {
+    for name in tab_names(input) {
         em.line(4, &format!("let tab_{name}: typeof page;"));
     }
     em.line(4, "await page.goto('/');");
@@ -262,17 +263,6 @@ fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn has_expect_tab(script: &CaseScript) -> bool {
-    fn walk(a: &Action) -> bool {
-        match a {
-            Action::ExpectTab { .. } => true,
-            Action::WhenVisible { then, .. } => then.iter().any(walk),
-            _ => false,
-        }
-    }
-    script.steps.iter().any(|s| s.actions.iter().any(walk))
-}
-
 fn sanitize(name: &str) -> String {
     name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect()
 }
@@ -285,24 +275,17 @@ fn tab_ref(name: &str) -> String {
     }
 }
 
-/// Tabs the script gives a name to (`expect_tab`, `open_tab`), once each,
-/// in the order they first appear.
-fn tab_names(script: &CaseScript) -> Vec<String> {
-    fn walk(a: &Action, out: &mut Vec<String>) {
-        match a {
-            Action::ExpectTab { name, .. } | Action::OpenTab { name, .. } => {
-                let s = sanitize(name);
-                if !out.contains(&s) {
-                    out.push(s);
-                }
-            }
-            Action::WhenVisible { then, .. } => then.iter().for_each(|a| walk(a, out)),
-            _ => {}
-        }
-    }
+/// Tabs the script or the recipe's `after_sign_in` gives a name to
+/// (`expect_tab`, `open_tab`), once each, in the order they first appear.
+fn tab_names(input: &RawSpecInput) -> Vec<String> {
     let mut out = Vec::new();
-    for s in &script.steps {
-        s.actions.iter().for_each(|a| walk(a, &mut out));
+    for a in every_action(input) {
+        if let Action::ExpectTab { name, .. } | Action::OpenTab { name, .. } = a {
+            let s = sanitize(&name);
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
     }
     out
 }
