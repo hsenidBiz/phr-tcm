@@ -45,6 +45,13 @@ if ($DeltaFrom) {
     }
     $downloadArgs = @("download", "github", "--repoUrl", $DeltaFrom, "--outputDir", $out)
     if ($pre) { $downloadArgs += "--pre" }
+    # Signed in through the same gh login the release uploads with. Without
+    # it vpk asks GitHub anonymously, which allows 60 requests an hour; on a
+    # day of several releases that runs out, vpk then reports "no releases
+    # found", and the release goes out with no delta. The token is passed,
+    # never printed.
+    $token = gh auth token 2>$null
+    if ($LASTEXITCODE -eq 0 -and $token) { $downloadArgs += @("--token", $token.Trim()) }
     & vpk @downloadArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Could not download the previous release - packing the full package only, so updates download it in full."
@@ -59,3 +66,8 @@ if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit code $LASTEXITCODE" 
 Write-Host "Packed v$Version to Releases/"
 $delta = Get-ChildItem $out -Filter "*-$Version-delta.nupkg" -ErrorAction SilentlyContinue
 if ($delta) { Write-Host ("Delta package: {0:N1} MB" -f ($delta.Length / 1MB)) }
+elseif ($DeltaFrom) {
+    # vpk download can find nothing and still exit 0, so say it here: the
+    # release will go out with a full package only.
+    Write-Warning "No delta package was made - updates to v$Version will download the full package."
+}
