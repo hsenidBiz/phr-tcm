@@ -66,12 +66,17 @@ export default function PlaywrightExportDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResult | null>(null);
+  /** A preview that failed after a successful write: secondary to the summary. */
+  const [refreshError, setRefreshError] = useState("");
 
-  const refresh = useCallback(async () => {
+  /** Reads the preview again. `reseed` puts the rows back to what is saved. */
+  const refresh = useCallback(async (reseed = true) => {
     const p = await unwrapStr(commands.pwExportPreview(org, project, caseIds));
     setPreview(p);
-    setAreas((cur) => cur ?? { ...(p.map.areas ?? {}) });
-    setUsers((cur) => cur ?? { ...(p.map.accounts?.[p.environment] ?? {}) });
+    if (reseed) {
+      setAreas({ ...(p.map.areas ?? {}) });
+      setUsers({ ...(p.map.accounts?.[p.environment] ?? {}) });
+    }
   }, [org, project, caseIds]);
 
   useEffect(() => {
@@ -116,31 +121,50 @@ export default function PlaywrightExportDialog({
 
   const saveMappings = () =>
     attempt(async () => {
-      if (!preview || !areas || !users) return;
-      const placed = Object.fromEntries(
-        Object.entries(areas).filter(([, p]) => p.module.trim() && p.feature.trim()),
-      );
-      const picked = Object.fromEntries(Object.entries(users).filter(([, v]) => v));
+      if (!preview || invalid.size > 0) return;
       const map: ExportMap = {
-        areas: placed,
-        accounts: { ...(preview.map.accounts ?? {}), [preview.environment]: picked },
+        areas: draftAreas,
+        accounts: { ...(preview.map.accounts ?? {}), [preview.environment]: draftUsers },
       };
       await unwrapStr(commands.pwExportSaveMap(org, project, map));
       await refresh();
     });
 
+  // What the rows hold, as it would be saved, against what is saved. A row
+  // with one of module/feature blank, or blanked over a saved mapping, is
+  // invalid: it blocks the save instead of dropping the mapping.
+  const savedAreas = preview?.map.areas ?? {};
+  const savedUsers = preview?.map.accounts?.[preview.environment] ?? {};
+  const invalid = new Set<string>();
+  const draftAreas: Record<string, Placement> = {};
+  for (const [name, p] of Object.entries(areas ?? {})) {
+    const filled = Boolean(p.module.trim()) && Boolean(p.feature.trim());
+    const touched = Boolean(p.module.trim()) || Boolean(p.feature.trim());
+    if (filled) draftAreas[name] = { side: p.side, module: p.module.trim(), feature: p.feature.trim() };
+    else if (touched || name in savedAreas) invalid.add(name);
+  }
+  const draftUsers = Object.fromEntries(Object.entries(users ?? {}).filter(([, v]) => v));
+  const unsaved =
+    invalid.size > 0 ||
+    JSON.stringify(Object.entries(draftAreas).sort()) !== JSON.stringify(Object.entries(savedAreas).sort()) ||
+    JSON.stringify(Object.entries(draftUsers).sort()) !== JSON.stringify(Object.entries(savedUsers).sort());
+
   const cases = preview?.cases ?? [];
   const ticked = cases.filter((c) => c.exportable && !unticked.has(c.case_id)).map((c) => c.case_id);
-  const canExport = Boolean(preview?.clone_ok) && ticked.length > 0 && !busy;
+  const canExport = Boolean(preview?.clone_ok) && ticked.length > 0 && !busy && !unsaved;
 
   const doExport = () =>
     attempt(async () => {
-      setResult(
-        await unwrapStr(
-          commands.pwExportWrite(org, project, ticked, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
-        ),
+      setRefreshError("");
+      const written = await unwrapStr(
+        commands.pwExportWrite(org, project, ticked, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
       );
-      await refresh();
+      setResult(written);
+      try {
+        await refresh(false);
+      } catch (e) {
+        setRefreshError(`The export was written, but the list could not be refreshed: ${message(e)}`);
+      }
     });
 
   const place = (name: string): Placement => areas?.[name] ?? { side: "admin", module: "", feature: "" };
@@ -203,6 +227,7 @@ export default function PlaywrightExportDialog({
                     value={place(name).feature}
                     onChange={(e) => setPlace(name, { feature: e.target.value })}
                   />
+                  {invalid.has(name) && <span className="text-xs text-danger">needs module and feature</span>}
                 </div>
               ))}
             </section>
@@ -226,13 +251,15 @@ export default function PlaywrightExportDialog({
                   </Select>
                 </div>
               ))}
-              <div className="flex justify-end">
-                <Button size="sm" variant="outline" disabled={busy} onClick={() => void saveMappings()}>
-                  <IconConfirm aria-hidden />
-                  Save mappings
-                </Button>
-              </div>
             </section>
+
+            <div className="flex items-center justify-end gap-2">
+              {unsaved && <span className="text-xs text-warning">Save the mappings first</span>}
+              <Button size="sm" variant="outline" disabled={busy || invalid.size > 0} onClick={() => void saveMappings()}>
+                <IconConfirm aria-hidden />
+                Save mappings
+              </Button>
+            </div>
 
             <section className="space-y-2">
               <h3 className={sectionTitle}>Cases</h3>
@@ -312,6 +339,7 @@ export default function PlaywrightExportDialog({
             <p className="text-xs text-muted">
               Exporting a case again replaces that case's whole section in its test-case file.
             </p>
+            {refreshError && <p className="text-xs text-faint">{refreshError}</p>}
           </section>
         )}
       </div>

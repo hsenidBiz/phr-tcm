@@ -137,3 +137,38 @@ test("Export is disabled when the clone is not ok or nothing is ticked", async (
   expect(await screen.findByText("that folder is not the repo")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
 });
+
+test("unsaved mapping edits disable Export and say to save first", async () => {
+  mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
+  fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
+test("a half-filled or blanked saved area row blocks the save", async () => {
+  const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} } };
+  const { calls } = mount({}, saved);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.change(screen.getByLabelText("Feature for Definition Wizard"), { target: { value: "" } });
+  expect(screen.getByText("needs module and feature")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
+  expect(calls.some((c) => c.cmd === "pw_export_save_map")).toBe(false);
+});
+
+test("a failed refresh after a write keeps the summary and is shown separately", async () => {
+  let previews = 0;
+  mount({
+    pw_export_preview: () => {
+      if (++previews > 1) throw new Error("preview broke");
+      return PREVIEW;
+    },
+    pw_export_write: () => ({ files: ["a/b.md"], cases: [[10, "a/raw.spec.ts"]], missing_navigation: [] }),
+  });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("a/b.md")).toBeInTheDocument();
+  expect(await screen.findByText(/could not be refreshed: preview broke/)).toBeInTheDocument();
+});
