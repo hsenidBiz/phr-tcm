@@ -145,7 +145,7 @@ fn an_api_request_sends_its_query_and_checks_the_answer() {
     ]))
     .run()
     .unwrap();
-    assert!(got.contains("const a1_0 = await cur.request.get('/api/x', { params: { 'q': '1' } });"), "{got}");
+    assert!(got.contains("const a1_0 = await cur.request.get('/api/x', { params: { 'q': '1' }, maxRedirects: 0 });"), "{got}");
     assert!(got.contains("expect(a1_0.status()).toBe(200);"));
     assert!(got.contains("expect(await a1_0.json()).toMatchObject({ 'a': 'b' });"));
 }
@@ -185,7 +185,7 @@ fn first_goes_on_single_element_locators_but_not_on_nth_or_counts() {
     assert!(got.contains("await expect(cur.locator('li')).toHaveCount(3, { timeout: 900 });"), "{got}");
     assert!(got.contains(".getByRole('textbox').filter({ visible: true }).first()).toHaveAttribute('title', 'x');"), "{got}");
     assert!(got.contains("await expect(cur.locator('#gone').first()).toBeHidden({ timeout: 100 });"), "{got}");
-    assert!(got.contains("await expect(cur.locator('#f').first()).toBeFocused();"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1);"), "{got}");
 }
 
 #[test]
@@ -196,21 +196,20 @@ fn tab_switching_moves_cur() {
         { "kind": "switch_tab", "name": "help-tab" },
         { "kind": "click", "selector": "#inside" },
         { "kind": "close_tab", "name": "help-tab" },
-        { "kind": "open_tab", "name": "t2", "url": "https://host.example/path?x=1" },
+        { "kind": "open_tab", "name": "t2", "url": "/path?x=1" },
         { "kind": "switch_tab", "name": "main" },
         { "kind": "expect_tab_closed", "name": "t2", "within_ms": 3000 }
     ]))
     .run()
     .unwrap();
     assert!(got.contains("    let tab_help_tab: typeof page;\n"), "{got}");
-    let arm = got.find("const tabp1_0 = cur.context().waitForEvent('page', { timeout: 10000 });").unwrap();
-    let click = got.find("#open").unwrap();
-    assert!(arm < click, "armed before the click");
-    assert!(got.contains("tab_help_tab = await tabp1_0;"));
+    assert!(got.contains("const mark1 = opened.length;"), "{got}");
+    assert!(got.contains("tab_help_tab = await nextTab(mark1, 10000);"), "{got}");
+    assert!(got.contains("claimed.add(tab_t2);"), "{got}");
     assert!(got.contains("await expect(tab_help_tab).toHaveURL(new RegExp('a\\\\.b\\\\?c'));"), "{got}");
     assert!(got.contains("cur = tab_help_tab;\n    await cur.locator('#inside').first().click();"), "{got}");
     assert!(got.contains("await tab_help_tab.close();\n    if (cur === tab_help_tab) { cur = page; }"), "{got}");
-    assert!(got.contains("tab_t2 = await cur.context().newPage();\n    await tab_t2.goto('/path?x=1');\n    cur = tab_t2;"), "{got}");
+    assert!(got.contains("tab_t2 = await cur.context().newPage();\n    await tab_t2.goto('/path?x=1');\n    claimed.add(tab_t2);\n    cur = tab_t2;"), "{got}");
     assert!(got.contains("cur = page;\n    await tab_t2.waitForEvent('close', { timeout: 3000 });"), "{got}");
 }
 
@@ -261,7 +260,7 @@ fn text_url_download_and_session_actions() {
     ]))
     .run()
     .unwrap();
-    assert!(got.contains("await expect(cur.locator('body')).toContainText('it\\'s `x` ${y}', { ignoreCase: true });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('body')).toContainText('it\\'s `x` ${y}', { ignoreCase: true, useInnerText: true });"), "{got}");
     assert!(got.contains("await expect(cur).toHaveURL(new RegExp('\\\\/a\\\\.b\\\\?c=\\\\(1\\\\)'));"), "{got}");
     assert!(got.contains("await cur.reload();"));
     assert!(got.contains("await cur.context().clearCookies();"));
@@ -322,4 +321,112 @@ fn each_unexportable_kind_says_why() {
         { "kind": "when_visible", "selector": "#a", "then": [{ "kind": "upload", "selector": "#f", "file": "a" }] }
     ]}]));
     assert!(check(&s).unwrap_err().0.contains("upload"));
+}
+
+#[test]
+fn a_tab_opened_by_the_previous_step_is_claimed_by_the_next() {
+    let fx = Fx::new(script(json!([
+        { "step_number": 4, "actions": [{ "kind": "click", "selector": "#open" }] },
+        { "step_number": 5, "actions": [{ "kind": "expect_tab", "name": "a" }] }
+    ])));
+    let got = fx.run().unwrap();
+    assert!(got.contains("page.context().on('page', p => { opened.push(p); });"), "{got}");
+    assert!(got.contains("const mark4 = opened.length;"), "{got}");
+    assert!(got.contains("const mark5 = opened.length;"), "{got}");
+    assert!(got.contains("tab_a = await nextTab(mark4, 10000);"), "counts from the previous step: {got}");
+    assert!(got.contains("claimed.add(p);"));
+    assert!(!got.contains("waitForEvent('page'"));
+}
+
+#[test]
+fn two_expect_tabs_in_one_step_claim_distinct_pages_in_the_helper() {
+    let got = one_step(json!([
+        { "kind": "expect_tab", "name": "a" },
+        { "kind": "expect_tab", "name": "b", "within_ms": 2000 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("tab_a = await nextTab(mark1, 10000);\n    tab_b = await nextTab(mark1, 2000);"), "{got}");
+    // The helper marks what it hands out as claimed and skips claimed pages.
+    assert!(got.contains("filter(p => !claimed.has(p))"), "{got}");
+}
+
+#[test]
+fn when_visible_on_a_hidden_selector_looks_for_a_visible_match_with_the_floor() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": { "css": "#x", "visible": false }, "within_ms": 100,
+          "then": [{ "kind": "click", "selector": "#x" }] },
+        { "kind": "wait_for", "selector": { "css": "#x", "visible": false }, "timeout_ms": 900 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("if (await cur.locator('#x').filter({ visible: true }).first().waitFor({ timeout: 500 })"), "{got}");
+    assert!(got.contains("cur.locator('#x').first().waitFor({ state: 'attached', timeout: 900 });"), "{got}");
+}
+
+#[test]
+fn an_api_request_does_not_follow_redirects() {
+    let got = one_step(json!([
+        { "kind": "api_request", "path": "/a" },
+        { "kind": "api_request", "path": "/b", "query": { "q": "1" } }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("cur.request.get('/a', { maxRedirects: 0 })"), "{got}");
+    assert!(got.contains("{ params: { 'q': '1' }, maxRedirects: 0 }"), "{got}");
+}
+
+#[test]
+fn keys_are_read_the_way_the_app_reads_them() {
+    let got = one_step(json!([
+        { "kind": "press_key", "key": "ctrl+Enter" },
+        { "kind": "press_key", "key": "Shift + Tab" },
+        { "kind": "press_key", "key": "shift+ctrl+End" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("press('Control+Enter')"), "{got}");
+    assert!(got.contains("press('Shift+Tab')"), "{got}");
+    assert!(got.contains("press('Control+Shift+End')"), "{got}");
+    let why = one_step(json!([{ "kind": "press_key", "key": "Hyper+Q" }])).run().unwrap_err();
+    assert!(why.contains("press_key"), "{why}");
+}
+
+#[test]
+fn a_blank_area_name_replays_the_own_area_and_response_text_is_trimmed() {
+    let got = one_step(json!([
+        { "kind": "return_to_area", "area": "  " },
+        { "kind": "expect_response", "method": " post ", "url_contains": " Save " }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await cur.locator('a.area')"), "{got}");
+    assert!(got.contains("includes('save') && r.request().method() === 'POST'"), "{got}");
+}
+
+#[test]
+fn text_and_focus_checks_follow_the_app() {
+    let got = one_step(json!([
+        { "kind": "check_text", "value": "x" },
+        { "kind": "expect_focused", "selector": "#f", "timeout_ms": 50 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("{ ignoreCase: true, useInnerText: true }"), "{got}");
+    assert!(
+        got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 50 });"),
+        "{got}"
+    );
+}
+
+#[test]
+fn only_a_path_can_be_navigated_to() {
+    let got = one_step(json!([{ "kind": "navigate", "url": " /hr/x?y=1 " }])).run().unwrap();
+    assert!(got.contains("await cur.goto('/hr/x?y=1');"), "{got}");
+    for url in ["https://other.example/x", "file:///c:/x.html", "//host/x", "x/y"] {
+        let why = one_step(json!([{ "kind": "navigate", "url": url }])).run().unwrap_err();
+        assert!(why.contains("navigate"), "{url}: {why}");
+        let why = one_step(json!([{ "kind": "open_tab", "name": "t", "url": url }])).run().unwrap_err();
+        assert!(why.contains("open_tab"), "{url}: {why}");
+    }
 }

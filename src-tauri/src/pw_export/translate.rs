@@ -12,7 +12,8 @@ use super::ts::{lit, locator};
 use crate::autorun::recipe::RecipeStep;
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
-use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS};
+use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
+use crate::browser::keys;
 use crate::browser::locator::Target;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -49,7 +50,9 @@ pub struct RawSpecInput<'a> {
     pub step_texts: &'a BTreeMap<i32, String>,
 }
 
-/// Every action of the script can be written as Playwright.
+/// Every action of the script can be written as Playwright. It does not
+/// see the sign-in recipe's `after_sign_in` (the script does not carry it);
+/// `raw_spec` checks that too, and the named areas of `return_to_area`.
 pub fn check(script: &CaseScript) -> Res<()> {
     for step in &script.steps {
         for a in &step.actions {
@@ -61,16 +64,16 @@ pub fn check(script: &CaseScript) -> Res<()> {
 
 fn check_action(a: &Action) -> Res<()> {
     match a {
-        Action::Navigate { .. }
-        | Action::CheckText { .. }
+        Action::Navigate { url } => goto_target("navigate", url).map(|_| ()),
+        Action::CheckText { .. }
         | Action::CheckUrl { .. }
         | Action::Reload
         | Action::ExpireSession
         | Action::ReturnToArea { .. }
         | Action::ExpectTab { .. }
         | Action::SwitchTab { .. }
-        | Action::ExpectTabClosed { .. }
-        | Action::PressKey { .. } => Ok(()),
+        | Action::ExpectTabClosed { .. } => Ok(()),
+        Action::PressKey { key, .. } => key_name(key).map(|_| ()),
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
@@ -100,9 +103,15 @@ fn check_action(a: &Action) -> Res<()> {
             Some(v) => ts_json(v, "api_request").map(|_| ()),
             None => Ok(()),
         },
-        Action::OpenTab { name, .. } | Action::CloseTab { name } => {
+        Action::OpenTab { name, url } => {
             if name == "main" {
-                return no("open_tab/close_tab of the main tab cannot be exported");
+                return no("open_tab of the main tab cannot be exported");
+            }
+            goto_target("open_tab", url).map(|_| ())
+        }
+        Action::CloseTab { name } => {
+            if name == "main" {
+                return no("close_tab of the main tab cannot be exported");
             }
             Ok(())
         }
@@ -151,7 +160,8 @@ fn check_target(t: &Target) -> Res<()> {
 /// The whole raw spec for one case.
 pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     check(input.script)?;
-    let mut em = Em { out: String::new(), input, scope: String::new(), cnt: Counters::default(), blocks: 0 };
+    let mut em = Em { out: String::new(), input, scope: String::new(), cnt: Counters::default(), blocks: 0, tab_from: "0".into() };
+    let tabs = has_expect_tab(input.script);
 
     let _ = write!(em.out, "// spec: {}\n", one_line(&input.md_path));
     em.out.push_str("// seed: suites/_generated/seed.spec.ts\n\n");
@@ -160,12 +170,16 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     let _ = write!(em.out, "  test({}, async ({{ page }}) => {{\n", lit(&input.script.title));
 
     em.line(4, "let cur = page;");
+    if tabs {
+        em.collector();
+    }
     for name in tab_names(input.script) {
         em.line(4, &format!("let tab_{name}: typeof page;"));
     }
     em.line(4, "await page.goto('/');");
     em.landing(4, input.area_clicks, "page")?;
 
+    let mut prev_mark: Option<String> = None;
     for step in &input.script.steps {
         em.out.push('\n');
         let n = step.step_number;
@@ -175,6 +189,12 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         }
         if let Some(why) = &step.unchecked {
             em.line(4, &format!("// Not checked: {}", one_line(why)));
+        }
+        if tabs {
+            let mark = format!("mark{n}");
+            em.line(4, &format!("const {mark} = opened.length;"));
+            em.tab_from = prev_mark.clone().unwrap_or_else(|| mark.clone());
+            prev_mark = Some(mark);
         }
         em.block(n.to_string(), &step.actions, 4)?;
     }
@@ -187,6 +207,17 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
 /// comment (U+2028 and U+2029 are line terminators in JavaScript).
 fn one_line(s: &str) -> String {
     s.chars().map(|c| if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect()
+}
+
+fn has_expect_tab(script: &CaseScript) -> bool {
+    fn walk(a: &Action) -> bool {
+        match a {
+            Action::ExpectTab { .. } => true,
+            Action::WhenVisible { then, .. } => then.iter().any(walk),
+            _ => false,
+        }
+    }
+    script.steps.iter().any(|s| s.actions.iter().any(walk))
 }
 
 fn sanitize(name: &str) -> String {
@@ -254,6 +285,21 @@ fn matches_hidden(t: &Target) -> bool {
     }
 }
 
+/// The same selector, with its last step made to match only what can be seen.
+fn visible_only(t: &Target) -> Target {
+    let mut t = t.clone();
+    match &mut t {
+        Target::Legacy(_) => {}
+        Target::One(s) => s.visible = None,
+        Target::Chain(v) => {
+            if let Some(s) = v.last_mut() {
+                s.visible = None;
+            }
+        }
+    }
+    t
+}
+
 fn wait_opts(t: &Target, timeout: u32) -> String {
     if matches_hidden(t) {
         format!("{{ state: 'attached', timeout: {timeout} }}")
@@ -295,20 +341,21 @@ fn glob_regex(s: &str) -> String {
     o
 }
 
-/// A script's address as a page address: a full address keeps only its
-/// path, query and fragment, so the spec runs against whichever
-/// environment the repo points at.
-fn goto_target(url: &str) -> String {
+/// A script's address as a page address. Only a path on the site under test
+/// travels: a full address is tied to one environment (and may be another
+/// origin), and anything else (`file:`, a bare relative address) would be
+/// resolved by the exported spec differently from the app.
+fn goto_target(kind: &str, url: &str) -> Res<String> {
     let u = url.trim();
-    if let Some(i) = u.find("://") {
-        let rest = &u[i + 3..];
-        return match rest.find(['/', '?', '#']) {
-            Some(j) if rest[j..].starts_with('/') => rest[j..].to_string(),
-            Some(j) => format!("/{}", &rest[j..]),
-            None => "/".to_string(),
-        };
+    if u.starts_with('/') && !u.starts_with("//") {
+        return Ok(u.to_string());
     }
-    u.to_string()
+    if u.contains("://") || u.starts_with("//") || u.to_ascii_lowercase().starts_with("file:") {
+        return no(format!(
+            "{kind} to \"{u}\" cannot be exported: only a path on the site under test (starting with /) can, not a full or non-http(s) address"
+        ));
+    }
+    no(format!("{kind} to \"{u}\" cannot be exported: only a path starting with / can"))
 }
 
 /// A JSON value as a TypeScript object literal; every string through `lit`.
@@ -337,8 +384,14 @@ fn ts_json(v: &Value, kind: &str) -> Res<String> {
     })
 }
 
-fn key_name(key: &str) -> String {
-    key.split('+').map(|p| if p == "Ctrl" { "Control" } else { p }).collect::<Vec<_>>().join("+")
+/// The combination as Playwright names it, read the way the app reads it
+/// (`keys::parse`: parts trimmed, modifiers in any case).
+fn key_name(key: &str) -> Res<String> {
+    let combo = keys::parse(key).map_err(Untranslatable)?;
+    let mut parts: Vec<&str> =
+        combo.modifiers.iter().map(|m| if m.name() == "Ctrl" { "Control" } else { m.name() }).collect();
+    parts.push(combo.key_name());
+    Ok(parts.join("+"))
 }
 
 // ---------------------------------------------------------------------
@@ -348,7 +401,6 @@ fn key_name(key: &str) -> String {
 struct Counters {
     resp: usize,
     dl: usize,
-    tab: usize,
     api: usize,
 }
 
@@ -360,6 +412,11 @@ struct Em<'a> {
     scope: String,
     cnt: Counters,
     blocks: usize,
+    /// The mark an `expect_tab` counts opened tabs from: the start of the
+    /// step before the current one (the app claims the newest unnamed tab
+    /// opened since the PREVIOUS step began), or of the current step for
+    /// the first.
+    tab_from: String,
 }
 
 impl Em<'_> {
@@ -385,6 +442,32 @@ impl Em<'_> {
         Ok(())
     }
 
+    /// The tabs the page opens, as they open, for `expect_tab` to claim.
+    fn collector(&mut self) {
+        for l in [
+            "const opened: (typeof page)[] = [];",
+            "const claimed = new Set<typeof page>();",
+            "page.context().on('page', p => { opened.push(p); });",
+            "const nextTab = async (from: number, timeout: number) => {",
+            "  const end = Date.now() + timeout;",
+            "  for (;;) {",
+            "    const fresh = opened.slice(from).filter(p => !claimed.has(p));",
+            "    if (fresh.length > 0) {",
+            "      const p = fresh[fresh.length - 1];",
+            "      claimed.add(p);",
+            "      return p;",
+            "    }",
+            "    if (Date.now() >= end) {",
+            "      throw new Error(`No new tab opened within ${timeout} ms`);",
+            "    }",
+            "    await page.waitForTimeout(100);",
+            "  }",
+            "};",
+        ] {
+            self.line(4, l);
+        }
+    }
+
     /// A list of actions, with what they expect armed first.
     fn block(&mut self, scope: String, actions: &[Action], indent: usize) -> Res<()> {
         let saved_scope = std::mem::replace(&mut self.scope, scope);
@@ -408,8 +491,10 @@ impl Em<'_> {
             let sc = self.scope.clone();
             match a {
                 Action::ExpectResponse { method, url_contains, timeout_ms, .. } => {
-                    let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.to_lowercase()));
-                    if let Some(m) = method {
+                    // waitForResponse takes the FIRST match after arming while the app
+                    // judges the latest one; url and method are trimmed as the app does.
+                    let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
+                    if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
                         let _ = write!(test, " && r.request().method() === {}", lit(&m.to_uppercase()));
                     }
                     let opt = timeout_ms.map(|t| format!(", {{ timeout: {t} }}")).unwrap_or_default();
@@ -423,12 +508,6 @@ impl Em<'_> {
                     let ms = within_ms.unwrap_or(WATCHED_DOWNLOAD_WAIT_MS);
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
                 }
-                Action::ExpectTab { within_ms, .. } => {
-                    let i = n.tab;
-                    n.tab += 1;
-                    let ms = within_ms.unwrap_or(TAB_WAIT_MS);
-                    self.line(indent, &format!("const tabp{sc}_{i} = cur.context().waitForEvent('page', {{ timeout: {ms} }});"));
-                }
                 Action::WhenVisible { then, .. } => self.arm(then, indent, n),
                 _ => {}
             }
@@ -439,7 +518,7 @@ impl Em<'_> {
         check_action(a)?;
         let sc = self.scope.clone();
         match a {
-            Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target(url)))),
+            Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Fill { selector, value } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
@@ -449,7 +528,7 @@ impl Em<'_> {
             }
             Action::CheckText { value } => self.line(
                 indent,
-                &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true }});", lit(value)),
+                &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
             Action::CheckUrl { contains } => self.line(
                 indent,
@@ -486,16 +565,24 @@ impl Em<'_> {
                 ),
             ),
             Action::ExpectFocused { selector, timeout_ms } => {
-                self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeFocused", &[], *timeout_ms)))
-            }
-            Action::WhenVisible { selector, within_ms, then } => {
-                let w = within_ms.unwrap_or(2000);
                 self.line(
                     indent,
                     &format!(
-                        "if (await {}.waitFor({}).then(() => true, () => false)) {{",
+                        "await expect({}.and(cur.locator(':focus-within'))).{};",
                         one(selector),
-                        wait_opts(selector, w)
+                        call("toHaveCount", &["1".to_string()], *timeout_ms)
+                    ),
+                )
+            }
+            Action::WhenVisible { selector, within_ms, then } => {
+                // The app's look needs a VISIBLE match whatever the selector's
+                // own visible flag says, and waits at least the floor.
+                let w = within_ms.unwrap_or(WHEN_VISIBLE_MS).max(WHEN_VISIBLE_FLOOR_MS);
+                self.line(
+                    indent,
+                    &format!(
+                        "if (await {}.waitFor({{ timeout: {w} }}).then(() => true, () => false)) {{",
+                        one(&visible_only(selector)),
                     ),
                 );
                 for a in then {
@@ -518,11 +605,13 @@ impl Em<'_> {
             Action::ApiRequest { path, query, expect, .. } => {
                 let i = self.cnt.api;
                 self.cnt.api += 1;
+                // maxRedirects 0: the app fails an answer redirected elsewhere
+                // (a sign-in page answers 200 too), so a 302 must show as 302.
                 let params = if query.is_empty() {
-                    String::new()
+                    ", { maxRedirects: 0 }".to_string()
                 } else {
                     let kv: Vec<String> = query.iter().map(|(k, v)| format!("{}: {}", lit(k), lit(v))).collect();
-                    format!(", {{ params: {{ {} }} }}", kv.join(", "))
+                    format!(", {{ params: {{ {} }}, maxRedirects: 0 }}", kv.join(", "))
                 };
                 self.line(indent, &format!("const a{sc}_{i} = await cur.request.get({}{params});", lit(path)));
                 self.line(indent, &format!("expect(a{sc}_{i}.status()).toBe({});", expect.status));
@@ -535,8 +624,8 @@ impl Em<'_> {
             }
             Action::Reload => self.line(indent, "await cur.reload();"),
             Action::ExpireSession => self.line(indent, "await cur.context().clearCookies();"),
-            Action::ReturnToArea { area } => {
-                let clicks: Vec<Target> = match area {
+            Action::ReturnToArea { .. } => {
+                let clicks: Vec<Target> = match a.area_named() {
                     None => self.input.area_clicks.to_vec(),
                     Some(name) => match self.input.area_clicks_by_name.get(name) {
                         Some(c) => c.clone(),
@@ -552,7 +641,7 @@ impl Em<'_> {
             }
             Action::PressKey { key, times } => {
                 for _ in 0..times.unwrap_or(1).max(1) {
-                    self.line(indent, &format!("await cur.keyboard.press({});", lit(&key_name(key))));
+                    self.line(indent, &format!("await cur.keyboard.press({});", lit(&key_name(key)?)));
                 }
             }
             Action::Drag { from, to, .. } => {
@@ -567,11 +656,11 @@ impl Em<'_> {
                     &format!("expect(d{sc}_{j}.suggestedFilename()).toMatch(new RegExp({}, 'i'));", lit(&glob_regex(name))),
                 );
             }
-            Action::ExpectTab { name, url_contains, .. } => {
-                let k = self.cnt.tab;
-                self.cnt.tab += 1;
+            Action::ExpectTab { name, url_contains, within_ms } => {
                 let t = tab_ref(name);
-                self.line(indent, &format!("{t} = await tabp{sc}_{k};"));
+                let ms = within_ms.unwrap_or(TAB_WAIT_MS);
+                let from = self.tab_from.clone();
+                self.line(indent, &format!("{t} = await nextTab({from}, {ms});"));
                 if let Some(u) = url_contains {
                     self.line(indent, &format!("await expect({t}).toHaveURL(new RegExp({}));", lit(&escape_regex(u))));
                 }
@@ -579,7 +668,8 @@ impl Em<'_> {
             Action::OpenTab { name, url } => {
                 let t = tab_ref(name);
                 self.line(indent, &format!("{t} = await cur.context().newPage();"));
-                self.line(indent, &format!("await {t}.goto({});", lit(&goto_target(url))));
+                self.line(indent, &format!("await {t}.goto({});", lit(&goto_target("open_tab", url)?)));
+                self.line(indent, &format!("claimed.add({t});"));
                 self.line(indent, &format!("cur = {t};"));
             }
             Action::SwitchTab { name } => self.line(indent, &format!("cur = {};", tab_ref(name))),
