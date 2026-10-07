@@ -1362,21 +1362,14 @@ export default function QueueSection({
    *
    *  Rows are matched back to drafts by POSITION. A draft has no work item
    *  id and a rename can make two of them share a title, so the title is
-   *  not an identity that survives the very operation being applied. With
-   *  a selection active, the dialog covers just the selected rows - the
-   *  scope list maps the dialog's row indices back to queue positions. */
+   *  not an identity that survives the very operation being applied. The
+   *  dialog covers just the selected rows, and the scope list maps the dialog's row indices back to queue positions. */
   // Only positions that still exist: the selection is a set of indices,
   // and "Remove all" with rows selected emptied the queue under it - the
   // white window of 1.23.11 was `queue[qi].update_id` on the next render.
-  const renameScope =
-    selected.size > 0
-      ? [...selected].filter((i) => i < queue.length).sort((a, b) => a - b)
-      : queue.map((_, i) => i);
+  const renameScope = [...selected].filter((i) => i < queue.length).sort((a, b) => a - b);
   const renameTarget: RenameTarget = {
-    label:
-      selected.size > 0
-        ? `${selected.size} selected draft${selected.size === 1 ? "" : "s"}`
-        : "the queued drafts",
+    label: `${renameScope.length} selected draft${renameScope.length === 1 ? "" : "s"}`,
     cases: renameScope.map((qi) => ({ id: queue[qi].update_id, title: queue[qi].title })),
     undoable: true,
     apply: async (rows) => {
@@ -1585,15 +1578,6 @@ export default function QueueSection({
           >
             <IconShare aria-hidden />
             {share.isPending ? "Sharing" : "Share for review"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0 || submit.isPending}
-            onClick={() => setRenameOpen(true)}
-          >
-            <IconRename aria-hidden />
-            Rename
           </Button>
           {/* Last on purpose, and red on approach: this is the destroy
               action in a row of build actions, so it sits at the far end
