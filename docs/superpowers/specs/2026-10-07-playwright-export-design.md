@@ -71,7 +71,7 @@ Untouched by TCM: `suites/_generated/seed.spec.ts` (rewritten per `/gen-test` ru
 
 ### Setting up
 
-- **Settings → Auto Run → Playwright export**: the clone's folder. TCM checks it looks
+- **The Export dialog** (decided in the plan: one place for everything this feature needs): the clone's folder, stored per machine. TCM checks it looks
   like the repo (`playwright.config.ts`, `suites/_generated/index.json`,
   `src/navigation.json`, `src/users/users.json` present) and refuses anything else
   with that sentence. The path is a per-machine setting.
@@ -149,7 +149,8 @@ recorded menu clicks, each translated like any click below. Then, per step, a
 | `api_request` | `page.request.get(path, { params })` and the same checks |
 | `reload`, `return_to_area` | `page.reload()`; the opening menu clicks again |
 | `expire_session`, `press_key` | `page.context().clearCookies()`; `page.keyboard.press(...)` |
-| tabs, dialogs, downloads, table-row checks | each mapped in the implementation plan from the action's own definition; any whose meaning cannot be reproduced exactly makes the case not exportable, with that reason |
+| tabs;  by name only;  onto |  /  with a current-page variable;  + file-name match;  |
+| ,  content checks,  before/after,  /  /  /  | not exportable in this version - no exact Playwright equivalent without page scripts or new repo helpers |
 | `upload`, mid-case `sign_in` | not exportable (file not in the repo; needs the repo's `actingAs`) |
 | a step marked `unchecked` | its actions, plus `// Not checked: <reason>` |
 
