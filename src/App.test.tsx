@@ -10,7 +10,6 @@ import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
 import { saveApiWrites } from "./lib/apiTemplates";
-import { saveRiskTiered } from "./lib/riskTieredGuide";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
@@ -436,7 +435,8 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
     project: "Web",
     workingDir: "D:\\repo",
     // Off by default - never undefined, which the command would refuse.
-    switches: { dbWrites: false, apiWrites: false, riskTiered: false },
+    // The writing style is not a switch here: the guide reads it from disk.
+    switches: { dbWrites: false, apiWrites: false },
   });
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.
@@ -449,15 +449,42 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   await vi.waitFor(() =>
     expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ apiWrites: true }) }),
   );
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true });
+});
 
-  // So does the risk-tiered writing guide switch: the assistant's next read
-  // of the guide carries the trial rules.
-  act(() => saveRiskTiered(true));
-  await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]).toMatchObject({
-      switches: { dbWrites: false, apiWrites: true, riskTiered: true },
-    }),
-  );
+/// The old trial switch on the AI Bridge tab is gone: when an older version
+/// left it on, App saves the starting writing style switched on, once, at
+/// start - the AI Bridge tab need never be opened - and drops the key.
+test("App moves an old trial switch that was on into the writing style at start", async () => {
+  const saves: unknown[] = [];
+  localStorage.setItem("tcm-v2-risk-tiered-guide", "1");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [];
+    if (cmd === "writing_style_get") return { enabled: false, text: "## Rules" };
+    if (cmd === "writing_style_save") {
+      saves.push((args as { style: unknown }).style);
+      return null;
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(saves).toEqual([{ enabled: true, text: "## Rules" }]));
+  await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBeNull());
+});
+
+test("App saves no writing style when there is no old trial switch", async () => {
+  let saves = 0;
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [];
+    if (cmd === "writing_style_get") return { enabled: false, text: "## Rules" };
+    if (cmd === "writing_style_save") {
+      saves += 1;
+      return null;
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(saves).toBe(0);
 });
 
 /// Who each database signs in as - what `db_databases` answers. The login

@@ -1190,6 +1190,21 @@ export const commands = {
 	 *  once; on keeps the current one, so the very next launch goes straight in.
 	 */
 	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
+	/**
+	 *  The saved style. The starting one is created on the first read when
+	 *  this machine has none yet.
+	 */
+	writingStyleGet: () => __TAURI_INVOKE<WritingStyle>("writing_style_get"),
+	/**
+	 *  Save the style. A refusal (too large, empty while on) is the sentence
+	 *  the person reads; a disk failure is logged and reported without a path.
+	 */
+	writingStyleSave: (style: WritingStyle) => typedError<null, string>(__TAURI_INVOKE("writing_style_save", { style })),
+	/**
+	 *  The text of a `.md` or `.markdown` file the person picked with Upload
+	 *  .md, for the editor. Nothing is saved until they press Save.
+	 */
+	writingStyleReadFile: (path: string) => typedError<string, string>(__TAURI_INVOKE("writing_style_read_file", { path })),
 	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
 	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
@@ -1985,8 +2000,6 @@ export type BridgeSwitches = {
 	dbWrites: boolean,
 	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
 	apiWrites: boolean,
-	/**  The risk-tiered writing guide (see `BridgeContext::risk_tiered`). */
-	riskTiered: boolean,
 };
 
 /**  What the app hands the reporter. */
@@ -5430,6 +5443,13 @@ export type WorkRevision = {
 	state_from: string,
 	state_to: string,
 	comment_added: boolean,
+};
+
+export type WritingStyle = {
+	/**  The guide carries `text` instead of its standard sections. */
+	enabled: boolean,
+	/**  Markdown, as the person wrote it. */
+	text: string,
 };
 
 /* Tauri Specta runtime */

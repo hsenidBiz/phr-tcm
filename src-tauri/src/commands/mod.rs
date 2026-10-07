@@ -27,3 +27,4 @@ pub mod runs;
 pub mod test_files;
 pub mod testplan;
 pub mod workspace;
+pub mod writing_style;

@@ -177,9 +177,10 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
-  // The risk-tiered writing guide is offered exactly where Auto Run is too.
+  // The writing style is for everyone, so capture mode shows its card; the
+  // old trial switch is gone.
+  expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
-  expect(screen.queryByRole("switch", { name: "Risk-tiered test design (trial)" })).not.toBeInTheDocument();
   // Environments exist for Auto Run, which capture mode shows (as Enable
   // Advanced Features does), so their card shows with it.
   expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
@@ -1244,26 +1245,121 @@ test("Forget them wipes the saved logins, the choice and the write switch", asyn
   expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
 });
 
-/// The risk-tiered writing guide is a trial: off, the assistant writes cases
-/// with the standard guide. The switch is remembered on this machine, and
-/// App pushes it to the bridge with the other switches.
-test("the test design card switches the risk-tiered writing guide on and off", async () => {
-  dbMocks();
+// ------------------------------------------------------- writing style
+
+const SAVED_STYLE = { enabled: false, text: "## House rules\nOne case per screen." };
+
+function styleMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  dbMocks((cmd, args) => {
+    if (cmd === "writing_style_get") return SAVED_STYLE;
+    return extra(cmd, args);
+  });
+}
+
+async function styleCard(): Promise<HTMLElement> {
+  return (await screen.findByRole("heading", { name: "Writing style" })).closest("section")!;
+}
+
+/// The card shows what is saved, and nothing is offered to save or discard
+/// until something changes.
+test("the writing style card renders the saved style", async () => {
+  styleMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  expect(box).toHaveValue(SAVED_STYLE.text);
+  expect(within(card).getByRole("switch", { name: "Use my writing style" })).toHaveAttribute("aria-checked", "false");
+  expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled();
+  expect(within(card).getByRole("button", { name: /Discard changes/ })).toBeDisabled();
+  expect(card).toHaveTextContent(
+    "Takes effect the next time the assistant reads the writing guide. The case format and import rules always apply.",
+  );
+  expect(screen.queryByRole("switch", { name: "Risk-tiered test design (trial)" })).not.toBeInTheDocument();
+});
 
-  const card = (await screen.findByRole("heading", { name: "Test design rules" })).closest("section")!;
-  const trial = within(card).getByRole("switch", { name: "Risk-tiered test design (trial)" });
-  expect(trial).toHaveAttribute("aria-checked", "false");
-  expect(card).toHaveTextContent("Off: the assistant writes cases with the standard guide.");
-  expect(card).toHaveTextContent("lists the scenarios for your approval before writing");
+test("typing enables Save and Discard, and Discard goes back to the saved style", async () => {
+  styleMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  fireEvent.change(box, { target: { value: "## Changed" } });
+  expect(within(card).getByRole("button", { name: /^Save$/ })).toBeEnabled();
+  const discard = within(card).getByRole("button", { name: /Discard changes/ });
+  expect(discard).toBeEnabled();
 
-  fireEvent.click(trial);
-  expect(trial).toHaveAttribute("aria-checked", "true");
-  expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBe("1");
+  fireEvent.click(discard);
+  expect(box).toHaveValue(SAVED_STYLE.text);
+  expect(discard).toBeDisabled();
+  expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled();
 
-  fireEvent.click(trial);
-  expect(trial).toHaveAttribute("aria-checked", "false");
-  expect(localStorage.getItem("tcm-v2-risk-tiered-guide")).toBeNull();
+  // Typing back to the saved text is no change either.
+  fireEvent.change(box, { target: { value: "## Changed" } });
+  fireEvent.change(box, { target: { value: SAVED_STYLE.text } });
+  expect(discard).toBeDisabled();
+});
+
+test("Save sends the switch and the text together", async () => {
+  const saves: unknown[] = [];
+  styleMocks((cmd, args) => {
+    if (cmd === "writing_style_save") {
+      saves.push((args as { style: unknown }).style);
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
+  fireEvent.change(box, { target: { value: "## Mine" } });
+  fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
+
+  await waitFor(() => expect(saves).toEqual([{ enabled: true, text: "## Mine" }]));
+  expect(await screen.findByText("Writing style saved.")).toBeInTheDocument();
+  // Saved: nothing left to save or discard, and the box keeps the new text.
+  await waitFor(() => expect(within(card).getByRole("button", { name: /^Save$/ })).toBeDisabled());
+  expect(box).toHaveValue("## Mine");
+});
+
+test("a refused save shows Rust's sentence and keeps the edit", async () => {
+  styleMocks((cmd) => {
+    if (cmd === "writing_style_save") throw "the writing style is empty";
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  fireEvent.click(within(card).getByRole("switch", { name: "Use my writing style" }));
+  fireEvent.change(box, { target: { value: "   " } });
+  fireEvent.click(within(card).getByRole("button", { name: /^Save$/ }));
+
+  expect(await within(card).findByRole("alert")).toHaveTextContent("the writing style is empty");
+  expect(box).toHaveValue("   ");
+  expect(within(card).getByRole("button", { name: /Discard changes/ })).toBeEnabled();
+});
+
+test("Upload .md fills the box from the picked file without saving", async () => {
+  let saves = 0;
+  let readPath = "";
+  styleMocks((cmd, args) => {
+    if (cmd === "plugin:dialog|open") return "D:\\docs\\policy.md";
+    if (cmd === "writing_style_read_file") {
+      readPath = (args as { path: string }).path;
+      return "## From the policy";
+    }
+    if (cmd === "writing_style_save") {
+      saves += 1;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const card = await styleCard();
+  const box = await within(card).findByRole("textbox", { name: "Writing style" });
+  fireEvent.click(within(card).getByRole("button", { name: /Upload \.md/ }));
+
+  await waitFor(() => expect(box).toHaveValue("## From the policy"));
+  expect(readPath).toBe("D:\\docs\\policy.md");
+  expect(saves).toBe(0);
+  expect(within(card).getByRole("button", { name: /^Save$/ })).toBeEnabled();
 });
 
 // ------------------------------------------------------- environments

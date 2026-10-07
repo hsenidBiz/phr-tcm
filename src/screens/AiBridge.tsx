@@ -30,7 +30,7 @@ import {
   toInput,
   useEnvironments,
 } from "../lib/environments";
-import { loadRiskTiered, saveRiskTiered } from "../lib/riskTieredGuide";
+import { WritingStyleCard } from "../components/WritingStyleCard";
 import { useAutoRunVisible } from "../lib/extras";
 import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
@@ -248,13 +248,6 @@ export default function AiBridge() {
   // templates" row above), the same shape as the database's own
   // create/update/delete switch. Offered only where Auto Run is.
   const [apiWrites, setApiWritesState] = useState<boolean>(loadApiWrites);
-  // Which rules the writing guide carries: the plain ones, or the
-  // risk-tiered trial. Every assistant reads it the next time it asks.
-  const [riskTiered, setRiskTieredState] = useState<boolean>(loadRiskTiered);
-  const setRiskTiered = (on: boolean) => {
-    setRiskTieredState(on);
-    saveRiskTiered(on);
-  };
   const setApiWrites = (on: boolean) => {
     setApiWritesState(on);
     saveApiWrites(on);
@@ -709,34 +702,9 @@ export default function AiBridge() {
         )}
       </section>
 
-      {/* Which rules the writing guide carries. A trial of the team's
-          risk-tiering policy: off, the assistant writes cases exactly as
-          before. Shown only where Auto Run is, like the API templates card
-          below: capture mode and a locked release build hide it. */}
-      {autoRunToolsShown() && (
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Test design rules</h2>
-        <div className="space-y-1 rounded-md border border-border/60 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-muted">Risk-tiered test design (trial)</span>
-            <Switch
-              ariaLabel="Risk-tiered test design (trial)"
-              checked={riskTiered}
-              onCheckedChange={setRiskTiered}
-            />
-          </div>
-          <p className="text-[11px] text-faint">
-            Off: the assistant writes cases with the standard guide. On: it tiers each
-            scenario by risk (T1 critical, T2 core, T3 low), lists the scenarios for your
-            approval before writing, keeps to a budget per story, and tags every case with
-            its trace, tier and run category (Smoke, Regression or Extended). It can also
-            review a test plan or PBI and propose which cases belong in Regression, changing
-            no tags until you say yes. Takes effect the next time the assistant reads the
-            writing guide.
-          </p>
-        </div>
-      </section>
-      )}
+      {/* Which rules the writing guide carries: the standard ones, or the
+          person's own writing style. Shown to everyone. */}
+      <WritingStyleCard />
 
       </div>
 

@@ -108,3 +108,11 @@ pub fn extras() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// Where the writing style lives (`writing_style::set_dir`). Every test that
+/// reads the writing guide takes it: a style one test switches on would
+/// otherwise replace the standard sections another test is looking for.
+pub fn writing_style() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

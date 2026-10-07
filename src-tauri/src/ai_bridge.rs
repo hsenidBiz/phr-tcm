@@ -50,10 +50,6 @@ pub struct BridgeContext {
     /// running one writes to the application, so both are refused
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
-    /// The AI Bridge tab's "Risk-tiered test design (trial)" switch: the
-    /// writing guide carries the risk-tiered rules instead of the plain
-    /// granularity and edge-case sections. Off by default.
-    pub risk_tiered: bool,
 }
 
 /// Hand-written so the store - and therefore every password in it - cannot
@@ -83,7 +79,6 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
-            .field("risk_tiered", &self.risk_tiered)
             .finish()
     }
 }
@@ -4385,19 +4380,8 @@ impl Modules {
     }
 }
 
-/// Live writing guide: format rules from the importer's own constants +
-/// the org's Module values, fetched fresh (no snapshot staleness).
-/// Whether the writing guide carries the risk-tiered rules: the person's
-/// switch, and only where Auto Run is offered (a development build, or a
-/// release build whose extras are unlocked) - a switch left on before the
-/// extras were reset must not apply. Both inputs explicit, so each case is
-/// testable from this development test binary.
-pub fn risk_tiered_for(requested: bool, offered: bool) -> bool {
-    requested && offered
-}
-
-/// The writing guide's granularity section, as it reads with the
-/// risk-tiered trial switched off.
+/// The writing guide's standard granularity section, used while the
+/// person's own writing style is off.
 const GRANULARITY: &str = "\
         ## Granularity - quality over quantity\n\
         Similar checks belong in ONE case, not several. Checking a\n\
@@ -4409,8 +4393,8 @@ const GRANULARITY: &str = "\
         row someone has to execute and maintain.\n\n\
 ";
 
-/// The writing guide's edge-case section, as it reads with the risk-tiered
-/// trial switched off.
+/// The writing guide's standard edge-case section, used while the
+/// person's own writing style is off.
 const EDGE_CASES: &str = "\
         ## Edge cases worth writing\n\
         A set that only walks the happy path is not finished. For each\n\
@@ -4439,182 +4423,31 @@ const EDGE_CASES: &str = "\
         `reviewer_notes` as a note for the developers instead.\n\n\
 ";
 
-/// The risk-tiered trial (the AI Bridge tab's "Risk-tiered test design"
-/// switch): the team's Test Risk-Tiering Policy and test-generation rules,
-/// adapted to test cases in Azure DevOps. It replaces the granularity
-/// section; the rules for code-level tests (data-row attributes, method-style
-/// names, mutation testing) have no meaning here and are left out.
-const RISK_TIERED_DESIGN: &str = "\
-        ## Risk-tiered design (trial rules)\n\
-        These rules replace the plain granularity and edge-case guidance while\n\
-        the developer trials them. They cut the number of cases without\n\
-        cutting coverage: every case earns its place against an acceptance\n\
-        criterion or a named risk. If a request conflicts with these rules,\n\
-        follow the rules and say which rule the request conflicts with.\n\n\
-        ### Tier every scenario\n\
-        - T1 - Critical: financial, legal or statutory, data isolation between\n\
-        companies, or security. Payroll calculations, tax, EPF/ETF, access\n\
-        control.\n\
-        - T2 - Core: a core business workflow whose failure is visible but\n\
-        recoverable. Leave, attendance, onboarding, integrations.\n\
-        - T3 - Low: cosmetic or configuration, with a small blast radius.\n\
-        Labels, report layout, settings screens.\n\n\
-        Tier each SCENARIO, not the whole story. A check that shows or depends\n\
-        on a T1 behaviour - the label that displays a calculated figure, the\n\
-        report column that carries it - is RELATED: it belongs in the T1 case\n\
-        and is T1. A change that stands on its own - an unrelated label renamed\n\
-        in the same story - is UNRELATED: its own case, at its own tier.\n\n\
-        ### Design techniques\n\
-        - Equivalence partitioning: one case per partition, not per value.\n\
-        - Boundary values: the minimum, the maximum and just outside - nothing\n\
-        in between.\n\
-        - Pairwise for three or more interacting inputs. Never every\n\
-        combination unless the developer asks for it on a T1 scenario.\n\
-        - T1 combinations: when three or more inputs feed one calculation or\n\
-        rule, say so in the scenario list with the count - for example \"tax\n\
-        band x employee type x join date feed the EPF calculation: pairwise\n\
-        covers 12 of 48 combinations - generate all 48?\" - and let the\n\
-        developer decide.\n\
-        - Negative cases: one per distinct validation rule, not one per\n\
-        invalid input.\n\n\
-        ### Budget per story\n\
-        New scenarios at most: T1 25, T2 12, T3 5. When that is not enough,\n\
-        STOP and list the extra scenarios with a one-line justification each,\n\
-        instead of writing them.\n\n\
-        ### Consolidate\n\
-        - Before adding a case, read the PBI's existing cases (`get_test_cases`)\n\
-        and extend a matching one - keeping its `id` - rather than writing a\n\
-        near-duplicate.\n\
-        - Checks that differ only in their data are ONE case: one step per data\n\
-        row, each with its own expected result. Different branches still stay\n\
-        separate cases (see One branch per case).\n\
-        - Similar checks on the same screen with the same setup belong in one\n\
-        case. A padded case count is not coverage.\n\
-        - Do not write a case that only checks what the browser or the\n\
-        application's framework does on its own - a link opens, a field takes\n\
-        typing, a page scrolls - unless the story changes that behaviour.\n\n\
-        ### Tags on every case\n\
-        These three are required; a genuinely new tag is fine for them.\n\
-        - A trace: the acceptance criterion or named risk the case covers, as a\n\
-        tag like `AC-3` or `Risk-payroll-rounding`. Never write a case without\n\
-        one.\n\
-        - Its tier: exactly one of `T1`, `T2`, `T3`.\n\
-        - Exactly one run category: `Smoke` (the critical path, runnable in a\n\
-        few minutes with no special data), `Regression` (the default) or\n\
-        `Extended` (slow, data-heavy, or across companies).\n\n\
-        ### Ready to automate\n\
-        - Deterministic: name exact data and fixed dates in preconditions and\n\
-        steps - never \"today\", \"any employee\" or an order the tester cannot\n\
-        see.\n\
-        - Isolated: a case sets up what it needs and never depends on another\n\
-        case having run first.\n\
-        - Data isolation: a case that reads or changes one company's data also\n\
-        checks another company's data is not shown or touched (T1).\n\n\
+/// The person's writing style (`crate::writing_style`) as the guide
+/// carries it: their text under its own heading, then the line that keeps
+/// the format and import rules above it.
+fn custom_style_section(text: &str) -> String {
+    format!(
+        "## Writing style (set on this machine)\n{}\n\n\
+        If anything here conflicts with the Format section or the import rules, \
+        the Format section and the import rules win.\n\n",
+        text.trim()
+    )
+}
+
+/// The workflow line the guide carries while the person's writing style is
+/// on: where the style's own steps, if it has any, fit in.
+const CUSTOM_STYLE_STEP: &str = "\
+        1.5. If the writing style above adds steps (for example a scenario list to approve \
+        before drafting, or a summary or review at the end), follow them at the point it says.\n\
 ";
 
-/// The risk-tiered trial's edge cases: the same kinds of edge case as the
-/// plain guide, chosen by the design techniques instead of listed per input.
-const RISK_TIERED_EDGE_CASES: &str = "\
-        ## Edge cases, the tiered way\n\
-        Choose edge cases with the techniques above, not by habit - each one\n\
-        still traced, tiered and inside the budget:\n\n\
-        - Access: open the page's address without signing in, or as a role\n\
-        that should not see it; the expected result is what the application\n\
-        shows instead (the sign-in page, a permission message), named\n\
-        exactly.\n\
-        - Validation: one negative case per validation rule. A blank required\n\
-        field and a value over the maximum length are two rules; if the\n\
-        application trims input, blank and only spaces are one.\n\
-        - Boundaries: the minimum, the maximum and just outside, for each field\n\
-        the form bounds.\n\
-        - State: the same action twice (double submit, refresh after saving,\n\
-        back button after a save), where the flow allows it.\n\
-        - Absence: the list with nothing in it, a search with no matches; the\n\
-        expected result is the empty state's own words.\n\n\
-        Do NOT write cases that need developer tools, a modified request,\n\
-        a database change, a disconnected network, or a clock change: a\n\
-        tester cannot run them from the application, and a case nobody can\n\
-        run is worse than none. If a spec names such a behaviour, put it in\n\
-        `reviewer_notes` as a note for the developers instead.\n\n\
-";
-
-/// The risk-tiered trial's extra workflow step: the scenario list, approved
-/// before any case is drafted.
-const RISK_TIERED_SCENARIO_STEP: &str = "\
-        1.5. Before drafting, write the SCENARIO LIST in the conversation - one\n\
-        line each: the scenario, its trace (`AC-n` or the named risk), its\n\
-        tier, RELATED or UNRELATED where the story mixes tiers, and any T1\n\
-        combination question. Wait for the developer to approve it, unless\n\
-        they said the scenarios are pre-approved. Then write cases ONLY from\n\
-        the approved list.\n\
-";
-
-/// The risk-tiered trial's closing step: what was covered, and what was not.
-const RISK_TIERED_SUMMARY_STEP: &str = "\
-        6. End with a summary: each approved scenario and the acceptance\n\
-        criterion or risk it covers; cases added against existing cases\n\
-        extended; and every scenario deferred over the budget, with its\n\
-        justification.\n\
-";
-
-/// The risk-tiered trial's regression review (Part B of the team's testing
-/// policy): which cases under a test plan or PBI belong in the Regression
-/// suite. It only reports until the person says yes, and then changes tags
-/// through an update file the person imports - never anything else, and
-/// never directly in Azure DevOps.
-const RISK_TIERED_REGRESSION_REVIEW: &str = "\n\
-        ## Regression suite review (trial rules)\n\
-        When the developer asks you to review the test cases under a test plan\n\
-        or a PBI and decide which belong in the Regression suite, follow this\n\
-        protocol. The aim is FEWER Regression cases: keep only the\n\
-        high-critical, high-risk and high-value ones.\n\n\
-        1. Read every case: `get_suite_test_cases` for a plan or suite,\n\
-        `get_test_cases` for a PBI.\n\
-        2. Weigh each case on: business criticality; functional importance;\n\
-        regression risk; impact on core functionality; and its value for\n\
-        future regression testing. Apply the rules above alongside them:\n\
-        - The tier sets how strict to be. T1 (payroll, statutory, data\n\
-        isolation between companies, security) justifies keeping more; a T3\n\
-        case (labels, report layout, settings) should rarely be Regression.\n\
-        - Duplicates and near-duplicates (the same screen and the same\n\
-        scenario) are REMOVE candidates, or should be merged into one case\n\
-        with a step per data row.\n\
-        - A case that only checks what the browser or framework does on its\n\
-        own is a REMOVE candidate.\n\
-        - A case with no acceptance criterion or risk tag is a weak candidate.\n\
-        - A slow, data-heavy or cross-company case belongs in `Extended`, not\n\
-        `Regression`.\n\
-        3. Label every case with exactly one of: `KEEP_REGRESSION` (its\n\
-        Regression tag is justified), `ADD_REGRESSION` (it has no Regression\n\
-        tag but should), `REMOVE_REGRESSION` (its Regression tag is not\n\
-        justified).\n\
-        4. While reviewing, change NOTHING: add or remove no tag, edit or\n\
-        delete no case, and write no file. Report a summary only - no\n\
-        per-case listing beyond the id lists below.\n\
-        5. Report exactly these, in this order:\n\
-        1) Total test cases reviewed. 2) Current Regression count.\n\
-        3) Regression tags to keep. 4) Regression tags to add.\n\
-        5) Regression tags to remove. 6) Proposed final Regression count.\n\
-        7) Test case ids to ADD. 8) Test case ids to REMOVE.\n\
-        9) A brief reason for the ADD and REMOVE decisions.\n\
-        Before reporting, check that Proposed final = Current - Remove + Add\n\
-        and Keep = Current - Remove.\n\
-        6. Then ask exactly: \"Would you like me to apply these Regression tag\n\
-        changes?\" Make no change until the developer says yes in so many\n\
-        words.\n\
-        7. Only after that yes: read the approved cases with `get_test_cases`\n\
-        and use `transform_cases` to `add_tags` `Regression` on the ADD ids\n\
-        and `remove_tags` `Regression` on the REMOVE ids. Change nothing else:\n\
-        every other field of each case - its title, steps, other tags and the\n\
-        rest - stays exactly as it was, and each case keeps its `id`, so the\n\
-        file updates those cases and no others. Tell the developer to import\n\
-        the file through Import Test Cases, where they see every change\n\
-        before anything reaches Azure DevOps. Then report the ids added and\n\
-        removed and the final Regression count.\n\
-";
-
+/// Live writing guide: format rules from the importer's own constants +
+/// the org's Module values, fetched fresh (no snapshot staleness). The
+/// person's writing style is read from disk on every call, so a save takes
+/// effect the next time an assistant reads the guide.
 async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
-    let risk_tiered = risk_tiered_for(ctx.risk_tiered, crate::ai_tools::autorun_offered());
+    let custom = crate::writing_style::current_text().map(|t| custom_style_section(&t));
     let statuses = crate::model::VALID_STATUSES
         .iter()
         .map(|v| format!("\"{v}\""))
@@ -4865,14 +4698,12 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
         5. For later edits - retagging, retitling, setting a module - call\n\
-        `transform_cases` instead of rewriting the file yourself.\n{summary_step}{regression_review}",
+        `transform_cases` instead of rewriting the file yourself.\n",
         org = ctx.org,
         project = ctx.project,
-        granularity = if risk_tiered { RISK_TIERED_DESIGN } else { GRANULARITY },
-        edge_cases = if risk_tiered { RISK_TIERED_EDGE_CASES } else { EDGE_CASES },
-        scenario_step = if risk_tiered { RISK_TIERED_SCENARIO_STEP } else { "" },
-        summary_step = if risk_tiered { RISK_TIERED_SUMMARY_STEP } else { "" },
-        regression_review = if risk_tiered { RISK_TIERED_REGRESSION_REVIEW } else { "" },
+        granularity = custom.as_deref().unwrap_or(GRANULARITY),
+        edge_cases = if custom.is_some() { "" } else { EDGE_CASES },
+        scenario_step = if custom.is_some() { CUSTOM_STYLE_STEP } else { "" },
     )
 }
 
