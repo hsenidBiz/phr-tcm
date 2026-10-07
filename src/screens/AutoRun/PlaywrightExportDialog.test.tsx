@@ -113,6 +113,7 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
     pw_export_write: () => ({
       files: ["suites/sl/admin/pm/wizard/raw/a.spec.ts", "suites/sl/admin/pm/wizard/test-cases/wizard.md"],
       cases: [[10, "suites/sl/admin/pm/wizard/raw/a.spec.ts"]],
+      user_keys: [[10, "REPO_ADMIN"]],
       missing_navigation: ["pm/wizard"],
     }),
   });
@@ -125,7 +126,7 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"]];
   expect(write.args.modules).toEqual(modules);
   expect(calls.find((c) => c.cmd === "pw_export_preview")?.args.modules).toEqual(modules);
-  expect(screen.getByText("#10 → suites/sl/admin/pm/wizard/raw/a.spec.ts")).toBeInTheDocument();
+  expect(screen.getByText("#10 → suites/sl/admin/pm/wizard/raw/a.spec.ts - run as REPO_ADMIN")).toBeInTheDocument();
   expect(screen.getByText("pm/wizard")).toBeInTheDocument();
   expect(screen.getByText(/test-refactorer/)).toBeInTheDocument();
   expect(screen.getByText(/lint:tests -- --require-specs/)).toBeInTheDocument();
@@ -177,7 +178,7 @@ test("a failed refresh after a write keeps the summary and is shown separately",
       if (++previews > 1) throw new Error("preview broke");
       return PREVIEW;
     },
-    pw_export_write: () => ({ files: ["a/b.md"], cases: [[10, "a/raw.spec.ts"]], missing_navigation: [] }),
+    pw_export_write: () => ({ files: ["a/b.md"], cases: [[10, "a/raw.spec.ts"]], user_keys: [], missing_navigation: [] }),
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   fireEvent.click(screen.getByRole("button", { name: "Export" }));
@@ -207,4 +208,11 @@ test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", a
     "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" },
     "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" },
   });
+});
+
+test("a_saved_user_the_clone_no_longer_has_is_shown_with_a_hint", async () => {
+  mount({}, { ...PREVIEW, map: { areas: {}, accounts: { env1: { "hr.admin": "GONE_KEY" } } } });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByText("GONE_KEY is not in this clone's users.json")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "User for hr.admin" })).toHaveTextContent("GONE_KEY");
 });

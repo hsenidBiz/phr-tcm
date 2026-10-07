@@ -21,6 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const TMP_SUFFIX: &str = ".tcm-export-tmp";
+/// `suites/_generated/seed.spec.ts` is the repo's own: never a raw spec's name.
+const SEED_SPEC: &str = "seed.spec.ts";
 const MAX_RAW_NAME: usize = 60;
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -56,6 +58,8 @@ pub struct ExportResult {
     pub files: Vec<String>,
     /// Case id and the raw spec file it is in.
     pub cases: Vec<(i32, String)>,
+    /// Case id and the clone's user key its raw spec is run as (the seed's user).
+    pub user_keys: Vec<(i32, String)>,
     /// `<module>/<feature>` pairs the clone's navigation.json lacks.
     pub missing_navigation: Vec<String>,
 }
@@ -271,6 +275,9 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
         Err(problem) => return fail(pc, problem.clone()),
     };
     if let Some((_, f)) = repo.index.iter().find(|(k, _)| *k == id.to_string()) {
+        if f.eq_ignore_ascii_case(SEED_SPEC) {
+            return fail(pc, format!("index.json maps case {id} to \"{f}\", the repo's seed spec, which the export never writes"));
+        }
         if !bare_spec_name(f) {
             return fail(pc, format!("index.json maps case {id} to \"{f}\", which is not a plain .spec.ts file name"));
         }
@@ -478,7 +485,8 @@ pub fn write_with(
             None => {
                 let base = kebab_name(&r.script.title, id);
                 let taken = |n: &str| {
-                    repo.generated_files.iter().any(|g| g == n)
+                    n.eq_ignore_ascii_case(SEED_SPEC)
+                        || repo.generated_files.iter().any(|g| g == n)
                         || repo.index.iter().any(|(_, f)| f == n)
                         || chosen.contains(n)
                 };
@@ -530,7 +538,8 @@ pub fn write_with(
     }
 
     commit(&repo.root, &outs)?;
-    Ok(ExportResult { files: outs.into_iter().map(|o| o.rel).collect(), cases, missing_navigation })
+    let user_keys = ready.iter().map(|(id, r)| (*id, r.user_key.clone())).collect();
+    Ok(ExportResult { files: outs.into_iter().map(|o| o.rel).collect(), cases, user_keys, missing_navigation })
 }
 
 

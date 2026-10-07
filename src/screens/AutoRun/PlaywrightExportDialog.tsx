@@ -241,22 +241,30 @@ export default function PlaywrightExportDialog({
             <section className="space-y-2">
               <h3 className={sectionTitle}>Accounts</h3>
               {preview.accounts.length === 0 && <p className="text-xs text-muted">No accounts yet.</p>}
-              {preview.accounts.map((key) => (
-                <div key={key} className="flex flex-wrap items-center gap-2">
-                  <span className="w-48 text-sm text-text">{key}</span>
-                  <Select
-                    aria-label={`User for ${key}`}
-                    className="w-64"
-                    value={users[key] ?? ""}
-                    onChange={(e) => setUsers((cur) => ({ ...(cur ?? {}), [key]: e.target.value }))}
-                  >
-                    <option value="">Not mapped</option>
-                    {preview.user_keys.map((k) => (
-                      <option key={k} value={k}>{k}</option>
-                    ))}
-                  </Select>
-                </div>
-              ))}
+              {preview.accounts.map((key) => {
+                // A saved pick the clone no longer has: shown, and said, not left blank.
+                const stale = Boolean(users[key]) && !preview.user_keys.includes(users[key]);
+                return (
+                  <div key={key} className="flex flex-wrap items-center gap-2">
+                    <span className="w-48 text-sm text-text">{key}</span>
+                    <Select
+                      aria-label={`User for ${key}`}
+                      className="w-64"
+                      value={users[key] ?? ""}
+                      onChange={(e) => setUsers((cur) => ({ ...(cur ?? {}), [key]: e.target.value }))}
+                    >
+                      <option value="">Not mapped</option>
+                      {stale && <option value={users[key]}>{users[key]}</option>}
+                      {preview.user_keys.map((k) => (
+                        <option key={k} value={k}>{k}</option>
+                      ))}
+                    </Select>
+                    {stale && (
+                      <span className="text-xs text-warning">{`${users[key]} is not in this clone's users.json`}</span>
+                    )}
+                  </div>
+                );
+              })}
             </section>
 
             <div className="flex items-center justify-end gap-2">
@@ -322,9 +330,10 @@ export default function PlaywrightExportDialog({
               ))}
             </ul>
             <ul className="space-y-0.5 text-xs text-muted">
-              {result.cases.map(([id, file]) => (
-                <li key={id}>{`#${id} → ${file}`}</li>
-              ))}
+              {result.cases.map(([id, file]) => {
+                const user = result.user_keys.find(([u]) => u === id)?.[1];
+                return <li key={id}>{user ? `#${id} → ${file} - run as ${user}` : `#${id} → ${file}`}</li>;
+              })}
             </ul>
             {result.missing_navigation.length > 0 && (
               <div className="space-y-0.5 text-xs text-warning">

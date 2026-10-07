@@ -560,3 +560,21 @@ fn an_area_not_placed_yet_comes_with_a_suggestion_from_its_name() {
     let saved = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
     assert!(!saved.areas.contains_key("Unplaced"));
 }
+
+#[test]
+fn the_seed_spec_is_never_a_raw_specs_name() {
+    let fx = Fx::new();
+    // A title that kebabs to "seed" takes the next free name instead.
+    fx.good(170, "Seed");
+    let r = export(&fx, &[170], &docs(&[(170, "Seed")])).unwrap();
+    assert_eq!(r.cases, vec![(170, "seed-2.spec.ts".to_string())]);
+    assert_eq!(r.user_keys, vec![(170, "REPO_KEY".to_string())]);
+    assert!(!fx.exists("suites/_generated/seed.spec.ts"));
+    // An index entry that points at it, in any case, refuses the case.
+    write(fx.clone.path().join("suites/_generated/index.json"), "{\n  \"171\": \"Seed.Spec.ts\"\n}\n");
+    fx.good(171, "One seventy one");
+    let pc = preview_of(&fx, 171);
+    assert!(!pc.exportable && pc.reason.as_deref().unwrap_or("").contains("seed spec"), "{:?}", pc.reason);
+    assert!(export(&fx, &[171], &docs(&[(171, "One seventy one")])).is_err());
+    assert!(!fx.exists("suites/_generated/Seed.Spec.ts"));
+}

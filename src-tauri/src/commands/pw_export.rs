@@ -59,7 +59,7 @@ pub async fn pw_export_write(
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
     if case_ids.is_empty() {
-        return Ok(ExportResult { files: vec![], cases: vec![], missing_navigation: vec![] });
+        return Ok(ExportResult { files: vec![], cases: vec![], user_keys: vec![], missing_navigation: vec![] });
     }
     let root = super::autorun::root(&app)?;
     let modules: BTreeMap<i32, String> = modules.into_iter().collect();

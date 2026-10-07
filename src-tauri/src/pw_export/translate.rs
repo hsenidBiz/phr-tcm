@@ -100,11 +100,11 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
             then.iter().try_for_each(|a| check_action(a, origins))
         }
         Action::ExpectResponse { json, .. } => match json {
-            Some(v) => ts_json(v, "expect_response").map(|_| ()),
+            Some(v) => match_json(v, "expect_response").map(|_| ()),
             None => Ok(()),
         },
         Action::ApiRequest { expect, .. } => match &expect.json {
-            Some(v) => ts_json(v, "api_request").map(|_| ()),
+            Some(v) => match_json(v, "api_request").map(|_| ()),
             None => Ok(()),
         },
         Action::OpenTab { name, url } => {
@@ -417,6 +417,17 @@ fn goto_target(kind: &str, url: &str, origins: &[String]) -> Res<String> {
     no(format!("{kind} to \"{u}\" cannot be exported: only a path starting with / or a full address on the project's origins can"))
 }
 
+/// The expected body of a `toMatchObject`, which compares objects and lists
+/// only: a single value at the top cannot be written as one.
+fn match_json(v: &Value, kind: &str) -> Res<String> {
+    if !(v.is_object() || v.is_array()) {
+        return no(format!(
+            "{kind} json that is a single value ({v}) cannot be exported: Playwright's toMatchObject compares only objects and lists"
+        ));
+    }
+    ts_json(v, kind)
+}
+
 /// A JSON value as a TypeScript object literal; every string through `lit`.
 fn ts_json(v: &Value, kind: &str) -> Res<String> {
     Ok(match v {
@@ -678,7 +689,7 @@ impl Em<'_> {
                 if let Some(j) = json {
                     self.line(
                         indent,
-                        &format!("expect(await r{sc}_{i}.json()).toMatchObject({});", ts_json(j, "expect_response")?),
+                        &format!("expect(await r{sc}_{i}.json()).toMatchObject({});", match_json(j, "expect_response")?),
                     );
                 }
             }
@@ -698,7 +709,7 @@ impl Em<'_> {
                 if let Some(j) = &expect.json {
                     self.line(
                         indent,
-                        &format!("expect(await a{sc}_{i}.json()).toMatchObject({});", ts_json(j, "api_request")?),
+                        &format!("expect(await a{sc}_{i}.json()).toMatchObject({});", match_json(j, "api_request")?),
                     );
                 }
             }

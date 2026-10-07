@@ -2835,6 +2835,8 @@ export type ExportResult = {
 	files: string[],
 	/**  Case id and the raw spec file it is in. */
 	cases: ([number, string])[],
+	/**  Case id and the clone's user key its raw spec is run as (the seed's user). */
+	user_keys: ([number, string])[],
 	/**  `<module>/<feature>` pairs the clone's navigation.json lacks. */
 	missing_navigation: string[],
 };

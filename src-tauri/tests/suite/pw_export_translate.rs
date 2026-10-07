@@ -522,3 +522,17 @@ fn tabs_named_in_the_recipe_are_declared_and_collected() {
     assert!(got.contains("const opened: (typeof page)[] = [];"), "{got}");
     assert!(got.find("let tab_help").unwrap() < got.find("tab_help = await nextTab(").unwrap(), "{got}");
 }
+
+#[test]
+fn a_single_value_json_expectation_is_refused_with_its_own_sentence() {
+    for v in [json!(5), json!("ok"), json!(true)] {
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "expect_response", "url_contains": "x", "json": v }] }]));
+        let e = check(&s, &origins()).unwrap_err().0;
+        assert!(e.contains("single value") && e.contains("toMatchObject"), "{e}");
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "api_request", "path": "/api/x", "expect": { "status": 200, "json": v } }] }]));
+        assert!(check(&s, &origins()).unwrap_err().0.starts_with("api_request json that is a single value"));
+    }
+    // An object or a list at the top still exports.
+    let got = one_step(json!([{ "kind": "expect_response", "url_contains": "x", "json": [1, 2] }])).run().unwrap();
+    assert!(got.contains("toMatchObject([1, 2])"), "{got}");
+}
