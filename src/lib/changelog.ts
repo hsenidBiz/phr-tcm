@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.13",
+    date: "2026-10-07",
+    items: [
+      "The status dots in Auto Run's Setup summary line up with their labels.",
+    ],
+  },
+  {
     version: "2.1.1-beta.12",
     date: "2026-10-07",
     items: [
