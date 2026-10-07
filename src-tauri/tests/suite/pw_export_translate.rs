@@ -106,7 +106,7 @@ fn a_sibling_script_becomes_the_golden_raw_spec() {
         origins: &origins(),
     })
     .unwrap();
-    assert_eq!(got, lf(include_str!("../fixtures/pw_export/raw-135560.spec.ts.golden")));
+    golden("raw-135560.spec.ts.golden", &got);
 }
 
 #[test]
@@ -632,4 +632,26 @@ fn open_tab_with_no_expect_tab_becomes_its_golden() {
     ]));
     fx.signin = after_sign_in();
     golden("open-tab-only.spec.ts.golden", &fx.run().unwrap());
+}
+
+#[test]
+fn an_armed_wait_never_rejects_unhandled_when_its_guard_is_skipped() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": "#export", "then": [
+            { "kind": "click", "selector": "#export" },
+            { "kind": "expect_download", "name": "a.xlsx" },
+            { "kind": "expect_response", "url_contains": "/api/x" }
+        ] }
+    ]))
+    .run()
+    .unwrap();
+    // Handled at once, beside the arming, before the guard...
+    let dl = got.find("const dl1_0 = ").unwrap();
+    let dl_settled = got.find("dl1_0.catch(() => {});").unwrap();
+    let resp_settled = got.find("resp1_0.catch(() => {});").unwrap();
+    let guard = got.find("if (await cur.locator('#export')").unwrap();
+    assert!(dl < dl_settled && dl_settled < guard && resp_settled < guard, "{got}");
+    // ...while the check inside still awaits the wait itself, which rejects.
+    assert!(got.contains("      const d1_0 = await dl1_0;\n"), "{got}");
+    assert!(got.contains("      const r1_0 = await resp1_0;\n"), "{got}");
 }

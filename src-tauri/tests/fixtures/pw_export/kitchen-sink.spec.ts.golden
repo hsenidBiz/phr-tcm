@@ -67,7 +67,9 @@ test.describe('F', () => {
     // 3.
     const mark3 = opened.length;
     const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST', { timeout: 8000 });
+    resp3_0.catch(() => {});
     const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'));
+    resp3_1.catch(() => {});
     if (await cur.getByRole('dialog', { name: 'Confirm' }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) {
       await cur.getByRole('button', { name: 'OK' }).filter({ visible: true }).first().click();
     }
@@ -115,7 +117,9 @@ test.describe('F', () => {
     // 5.
     const mark5 = opened.length;
     const dl5_0 = cur.waitForEvent('download', { timeout: 30000 });
+    dl5_0.catch(() => {});
     const dl5_1 = cur.waitForEvent('download', { timeout: 9000 });
+    dl5_1.catch(() => {});
     await cur.getByText('Export').filter({ visible: true }).first().click();
     const d5_0 = await dl5_0;
     expect(d5_0.suggestedFilename()).toMatch(new RegExp('^report.*\\.xlsx$', 'i'));

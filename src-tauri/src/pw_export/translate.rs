@@ -564,6 +564,14 @@ impl Em<'_> {
         r
     }
 
+    /// Every armed wait gets a no-op rejection handler at once: one whose
+    /// check sits in a `when_visible` that is skipped is never awaited, and
+    /// its timeout must not surface as an unhandled rejection. Awaiting the
+    /// wait itself still rejects when its check does run.
+    fn settle(&mut self, indent: usize, var: &str) {
+        self.line(indent, &format!("{var}.catch(() => {{}});"));
+    }
+
     fn arm(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
         for a in actions {
             let sc = self.scope.clone();
@@ -579,12 +587,14 @@ impl Em<'_> {
                     let i = n.resp;
                     n.resp += 1;
                     self.line(indent, &format!("const resp{sc}_{i} = cur.waitForResponse(r => {test}{opt});"));
+                    self.settle(indent, &format!("resp{sc}_{i}"));
                 }
                 Action::ExpectDownload { within_ms, .. } => {
                     let i = n.dl;
                     n.dl += 1;
                     let ms = within_ms.unwrap_or(WATCHED_DOWNLOAD_WAIT_MS);
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
+                    self.settle(indent, &format!("dl{sc}_{i}"));
                 }
                 Action::WhenVisible { then, .. } => self.arm(then, indent, n),
                 _ => {}
