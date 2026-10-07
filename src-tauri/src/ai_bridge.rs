@@ -4449,7 +4449,8 @@ const RISK_TIERED_DESIGN: &str = "\
         These rules replace the plain granularity and edge-case guidance while\n\
         the developer trials them. They cut the number of cases without\n\
         cutting coverage: every case earns its place against an acceptance\n\
-        criterion or a named risk.\n\n\
+        criterion or a named risk. If a request conflicts with these rules,\n\
+        follow the rules and say which rule the request conflicts with.\n\n\
         ### Tier every scenario\n\
         - T1 - Critical: financial, legal or statutory, data isolation between\n\
         companies, or security. Payroll calculations, tax, EPF/ETF, access\n\
@@ -4488,7 +4489,10 @@ const RISK_TIERED_DESIGN: &str = "\
         row, each with its own expected result. Different branches still stay\n\
         separate cases (see One branch per case).\n\
         - Similar checks on the same screen with the same setup belong in one\n\
-        case. A padded case count is not coverage.\n\n\
+        case. A padded case count is not coverage.\n\
+        - Do not write a case that only checks what the browser or the\n\
+        application's framework does on its own - a link opens, a field takes\n\
+        typing, a page scrolls - unless the story changes that behaviour.\n\n\
         ### Tags on every case\n\
         These three are required; a genuinely new tag is fine for them.\n\
         - A trace: the acceptance criterion or named risk the case covers, as a\n\
@@ -4551,6 +4555,62 @@ const RISK_TIERED_SUMMARY_STEP: &str = "\
         criterion or risk it covers; cases added against existing cases\n\
         extended; and every scenario deferred over the budget, with its\n\
         justification.\n\
+";
+
+/// The risk-tiered trial's regression review (Part B of the team's testing
+/// policy): which cases under a test plan or PBI belong in the Regression
+/// suite. It only reports until the person says yes, and then changes tags
+/// through an update file the person imports - never anything else, and
+/// never directly in Azure DevOps.
+const RISK_TIERED_REGRESSION_REVIEW: &str = "\n\
+        ## Regression suite review (trial rules)\n\
+        When the developer asks you to review the test cases under a test plan\n\
+        or a PBI and decide which belong in the Regression suite, follow this\n\
+        protocol. The aim is FEWER Regression cases: keep only the\n\
+        high-critical, high-risk and high-value ones.\n\n\
+        1. Read every case: `get_suite_test_cases` for a plan or suite,\n\
+        `get_test_cases` for a PBI.\n\
+        2. Weigh each case on: business criticality; functional importance;\n\
+        regression risk; impact on core functionality; and its value for\n\
+        future regression testing. Apply the rules above alongside them:\n\
+        - The tier sets how strict to be. T1 (payroll, statutory, data\n\
+        isolation between companies, security) justifies keeping more; a T3\n\
+        case (labels, report layout, settings) should rarely be Regression.\n\
+        - Duplicates and near-duplicates (the same screen and the same\n\
+        scenario) are REMOVE candidates, or should be merged into one case\n\
+        with a step per data row.\n\
+        - A case that only checks what the browser or framework does on its\n\
+        own is a REMOVE candidate.\n\
+        - A case with no acceptance criterion or risk tag is a weak candidate.\n\
+        - A slow, data-heavy or cross-company case belongs in `Extended`, not\n\
+        `Regression`.\n\
+        3. Label every case with exactly one of: `KEEP_REGRESSION` (its\n\
+        Regression tag is justified), `ADD_REGRESSION` (it has no Regression\n\
+        tag but should), `REMOVE_REGRESSION` (its Regression tag is not\n\
+        justified).\n\
+        4. While reviewing, change NOTHING: add or remove no tag, edit or\n\
+        delete no case, and write no file. Report a summary only - no\n\
+        per-case listing beyond the id lists below.\n\
+        5. Report exactly these, in this order:\n\
+        1) Total test cases reviewed. 2) Current Regression count.\n\
+        3) Regression tags to keep. 4) Regression tags to add.\n\
+        5) Regression tags to remove. 6) Proposed final Regression count.\n\
+        7) Test case ids to ADD. 8) Test case ids to REMOVE.\n\
+        9) A brief reason for the ADD and REMOVE decisions.\n\
+        Before reporting, check that Proposed final = Current - Remove + Add\n\
+        and Keep = Current - Remove.\n\
+        6. Then ask exactly: \"Would you like me to apply these Regression tag\n\
+        changes?\" Make no change until the developer says yes in so many\n\
+        words.\n\
+        7. Only after that yes: read the approved cases with `get_test_cases`\n\
+        and use `transform_cases` to `add_tags` `Regression` on the ADD ids\n\
+        and `remove_tags` `Regression` on the REMOVE ids. Change nothing else:\n\
+        every other field of each case - its title, steps, other tags and the\n\
+        rest - stays exactly as it was, and each case keeps its `id`, so the\n\
+        file updates those cases and no others. Tell the developer to import\n\
+        the file through Import Test Cases, where they see every change\n\
+        before anything reaches Azure DevOps. Then report the ids added and\n\
+        removed and the final Regression count.\n\
 ";
 
 async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
@@ -4805,13 +4865,14 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
         5. For later edits - retagging, retitling, setting a module - call\n\
-        `transform_cases` instead of rewriting the file yourself.\n{summary_step}",
+        `transform_cases` instead of rewriting the file yourself.\n{summary_step}{regression_review}",
         org = ctx.org,
         project = ctx.project,
         granularity = if risk_tiered { RISK_TIERED_DESIGN } else { GRANULARITY },
         edge_cases = if risk_tiered { RISK_TIERED_EDGE_CASES } else { EDGE_CASES },
         scenario_step = if risk_tiered { RISK_TIERED_SCENARIO_STEP } else { "" },
         summary_step = if risk_tiered { RISK_TIERED_SUMMARY_STEP } else { "" },
+        regression_review = if risk_tiered { RISK_TIERED_REGRESSION_REVIEW } else { "" },
     )
 }
 

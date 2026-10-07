@@ -3748,6 +3748,39 @@ async fn switched_off_the_guide_keeps_its_plain_sections() {
     assert!(!g.contains("Risk-tiered"), "{g}");
     assert!(!g.contains("1.5. Before drafting"), "{g}");
     assert!(!g.contains("6. End with a summary"), "{g}");
+    assert!(!g.contains("Regression suite review"), "{g}");
+}
+
+/// Switched on, the guide also carries the regression review: report first,
+/// the exact question, nothing changed before a yes, and then only the
+/// Regression tag, through an update file the person imports.
+#[tokio::test]
+async fn switched_on_the_guide_carries_the_regression_review() {
+    let g = guide_with(true).await;
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "## Regression suite review (trial rules)",
+        "`get_suite_test_cases` for a plan or suite",
+        "`KEEP_REGRESSION`",
+        "`ADD_REGRESSION`",
+        "`REMOVE_REGRESSION`",
+        "While reviewing, change NOTHING",
+        "Proposed final = Current - Remove + Add and Keep = Current - Remove",
+        "\"Would you like me to apply these Regression tag changes?\"",
+        "`add_tags` `Regression` on the ADD ids",
+        "`remove_tags` `Regression` on the REMOVE ids",
+        "each case keeps its `id`",
+        "import the file through Import Test Cases",
+        "follow the rules and say which rule the request conflicts with",
+    ] {
+        assert!(flat.contains(needle), "missing {needle:?} in:\n{g}");
+    }
+    // It closes the guide, after the workflow's summary step.
+    let summary = g.find("6. End with a summary").expect("the summary step");
+    let review = g.find("## Regression suite review").expect("the review");
+    assert!(summary < review);
+    let section = &g[review..];
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes in the review");
 }
 
 #[tokio::test]
