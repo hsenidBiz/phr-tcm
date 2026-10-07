@@ -456,3 +456,46 @@ fn other_addresses_are_refused_by_check_and_by_the_spec() {
         assert!(check(&s, &origins()).is_err(), "{url}");
     }
 }
+
+#[test]
+fn text_checks_read_the_element_the_way_auto_run_does() {
+    let got = one_step(json!([
+        { "kind": "expect_text", "selector": "#name", "equals": "  Senior \n  Expert ", "timeout_ms": 900 },
+        { "kind": "expect_contains_text", "selector": "#list", "value": "Step\t2" }
+    ]))
+    .run()
+    .unwrap();
+    // Whitespace collapsed on the wanted side too, compared whole or as a part, case kept.
+    assert!(
+        got.contains("await expect.poll(() => cur.locator('#name').first().evaluate(readText), { timeout: 900 }).toBe('Senior Expert');"),
+        "{got}"
+    );
+    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText)).toContain('Step 2');"), "{got}");
+    assert!(!got.contains("toHaveText") && !got.contains("toContainText"), "{got}");
+    // The reader is declared once, before the steps.
+    assert_eq!(got.matches("const readText = ").count(), 1, "{got}");
+    assert!(got.find("const readText = ").unwrap() < got.find("// 1.").unwrap(), "{got}");
+}
+
+#[test]
+fn the_exported_text_reader_is_the_apps_own() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    use v2_lib::pw_export::translate::read_text_ts;
+    let ts = read_text_ts(0).join("\n");
+    // Undo the two TypeScript additions and the constant comes back word for word.
+    let back = ts
+        .replacen("const readText = (e: Element) => (function (this: HTMLElement) {", "function() {", 1)
+        .replacen("}).call(e as HTMLElement);", "}", 1);
+    assert_eq!(back, READ_TEXT_JS.replace("\r\n", "\n"));
+    // A spec with no text check carries no reader.
+    let got = one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap();
+    assert!(!got.contains("readText"), "{got}");
+}
+
+#[test]
+fn a_text_check_in_the_recipe_also_declares_the_reader() {
+    let mut fx = one_step(json!([{ "kind": "click", "selector": "#a" }]));
+    fx.signin = serde_json::from_value(json!([{ "kind": "expect_text", "selector": "#who", "equals": "Me" }])).unwrap();
+    let got = fx.run().unwrap();
+    assert!(got.contains("const readText = "), "{got}");
+}

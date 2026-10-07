@@ -13,6 +13,7 @@ use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
 use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
+use crate::browser::expect::READ_TEXT_JS;
 use crate::browser::keys;
 use crate::browser::locator::Target;
 use serde_json::Value;
@@ -173,6 +174,9 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     let _ = write!(em.out, "  test({}, async ({{ page }}) => {{\n", lit(&input.script.title));
 
     em.line(4, "let cur = page;");
+    if uses(input, &|a| matches!(a, Action::ExpectText { .. } | Action::ExpectContainsText { .. })) {
+        em.read_text();
+    }
     if tabs {
         em.collector();
     }
@@ -210,6 +214,52 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
 /// comment (U+2028 and U+2029 are line terminators in JavaScript).
 fn one_line(s: &str) -> String {
     s.chars().map(|c| if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect()
+}
+
+/// Every action the spec can play: the recipe's `after_sign_in`, then the
+/// script's steps, with what a `when_visible` guards included.
+fn every_action(input: &RawSpecInput) -> Vec<Action> {
+    fn walk(a: &Action, out: &mut Vec<Action>) {
+        out.push(a.clone());
+        if let Action::WhenVisible { then, .. } = a {
+            then.iter().for_each(|t| walk(t, out));
+        }
+    }
+    let mut out = Vec::new();
+    for a in input.after_sign_in.iter().map(recipe_action) {
+        walk(&a, &mut out);
+    }
+    for s in &input.script.steps {
+        s.actions.iter().for_each(|a| walk(a, &mut out));
+    }
+    out
+}
+
+fn uses(input: &RawSpecInput, pred: &dyn Fn(&Action) -> bool) -> bool {
+    every_action(input).iter().any(pred)
+}
+
+/// The app's own text reader (`READ_TEXT_JS`) as a TypeScript function of
+/// the element, one line per entry: the body is the constant's, word for
+/// word; only `this` is given a type, so the spec type-checks.
+pub fn read_text_ts(indent: usize) -> Vec<String> {
+    let typed = READ_TEXT_JS.replacen("function() {", "function (this: HTMLElement) {", 1);
+    assert!(typed != READ_TEXT_JS, "READ_TEXT_JS no longer starts with `function() {{`");
+    let pad = " ".repeat(indent);
+    let mut lines: Vec<String> = typed.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = lines.first_mut() {
+        *first = format!("{pad}const readText = (e: Element) => ({}", first.trim_start());
+    }
+    if let Some(last) = lines.last_mut() {
+        last.push_str(").call(e as HTMLElement);");
+    }
+    lines
+}
+
+/// Whitespace runs as one space, ends trimmed - what the app does to both
+/// sides of a text check.
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn has_expect_tab(script: &CaseScript) -> bool {
@@ -317,6 +367,10 @@ fn call(name: &str, args: &[String], timeout: Option<u32>) -> String {
         all.push(format!("{{ timeout: {t} }}"));
     }
     format!("{name}({})", all.join(", "))
+}
+
+fn poll_opts(timeout: Option<u32>) -> String {
+    timeout.map(|t| format!(", {{ timeout: {t} }}")).unwrap_or_default()
 }
 
 /// Escape for a RegExp source built with `new RegExp(<lit>)`.
@@ -464,6 +518,14 @@ impl Em<'_> {
         Ok(())
     }
 
+    /// The app's text reader, for `expect_text` and `expect_contains_text`.
+    fn read_text(&mut self) {
+        for l in read_text_ts(4) {
+            self.out.push_str(&l);
+            self.out.push('\n');
+        }
+    }
+
     /// The tabs the page opens, as they open, for `expect_tab` to claim.
     fn collector(&mut self) {
         for l in [
@@ -562,13 +624,26 @@ impl Em<'_> {
             Action::ExpectHidden { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeHidden", &[], *timeout_ms)))
             }
+            // The app reads a field's value, a list's chosen label, else the
+            // rendered text (READ_TEXT_JS), collapses whitespace on both sides
+            // and compares case-sensitively: whole, or as a substring.
             Action::ExpectText { selector, equals, timeout_ms } => self.line(
                 indent,
-                &format!("await expect({}).{};", one(selector), call("toHaveText", &[lit(equals)], *timeout_ms)),
+                &format!(
+                    "await expect.poll(() => {}.evaluate(readText){}).toBe({});",
+                    one(selector),
+                    poll_opts(*timeout_ms),
+                    lit(&collapse(equals))
+                ),
             ),
             Action::ExpectContainsText { selector, value, timeout_ms } => self.line(
                 indent,
-                &format!("await expect({}).{};", one(selector), call("toContainText", &[lit(value)], *timeout_ms)),
+                &format!(
+                    "await expect.poll(() => {}.evaluate(readText){}).toContain({});",
+                    one(selector),
+                    poll_opts(*timeout_ms),
+                    lit(&collapse(value))
+                ),
             ),
             Action::ExpectCount { selector, equals, timeout_ms } => self.line(
                 indent,

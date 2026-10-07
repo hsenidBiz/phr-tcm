@@ -142,7 +142,8 @@ recorded menu clicks, each translated like any click below. Then, per step, a
 |---|---|
 | selector `{role,name,exact}` / `{text}` / `{css}`, `visible:false`, `nth` | `page.getByRole(...)` / `getByText` / `locator(css)`, `.nth(n)`; a chain narrows left to right; an iframe step becomes `frameLocator` |
 | `click`, `fill`, `wait_for`, `drag` | `.click()`, `.fill()`, `.waitFor({ timeout })`, `.dragTo()` |
-| `expect_visible/hidden/text/contains_text/count/attribute/focused` | `expect(l).toBeVisible()/toBeHidden()/toHaveText()/toContainText()/toHaveCount()/toHaveAttribute()/toBeFocused()`, keeping `timeout_ms` |
+| `expect_visible/hidden/count/attribute/focused` | `expect(l).toBeVisible()/toBeHidden()/toHaveCount()/toHaveAttribute()/toBeFocused()`, keeping `timeout_ms` |
+| `expect_text`, `expect_contains_text` | read the text the way Auto Run does - a field's value, a list's chosen option label, otherwise the rendered text, whitespace collapsed (the app's own `READ_TEXT_JS`, declared once in the spec as `readText`) - and compare it case-sensitively, whole or as a part, with the wanted text collapsed too: `await expect.poll(() => l.evaluate(readText), { timeout }).toBe(...)` / `.toContain(...)` |
 | `check_text`, `check_url` | `expect(page.locator('body')).toContainText()`, `expect(page).toHaveURL()` |
 | `when_visible` | `if (await l.waitFor({ timeout }).then(() => true, () => false)) { ... }` |
 | `expect_response` | `page.waitForResponse(...)` started before the step's triggering action, then status / JSON-subset `expect`s |
