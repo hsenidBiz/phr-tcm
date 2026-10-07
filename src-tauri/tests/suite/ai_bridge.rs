@@ -3763,7 +3763,7 @@ async fn guide_now() -> String {
 const CONFLICT_LINE: &str =
     "If anything here conflicts with the Format section or the import rules, the Format section and the import rules win.";
 
-const STEP_1_5: &str = "1.5. If the writing style above adds steps (for example a scenario list to approve before drafting, or a summary or review at the end), follow them at the point it says.";
+const STEP_1_5: &str = "1.5. If the team test design style above adds steps (for example a scenario list to approve before drafting, or a summary or review at the end), follow them at the point it says.";
 
 /// The guide as main builds it, made independently of the off path: the
 /// guide with a style switched on, with the style's section swapped back

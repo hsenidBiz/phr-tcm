@@ -4438,7 +4438,7 @@ fn custom_style_section(text: &str) -> String {
 /// The workflow line the guide carries while the person's writing style is
 /// on: where the style's own steps, if it has any, fit in.
 const CUSTOM_STYLE_STEP: &str = "\
-        1.5. If the writing style above adds steps (for example a scenario list to approve \
+        1.5. If the team test design style above adds steps (for example a scenario list to approve \
         before drafting, or a summary or review at the end), follow them at the point it says.\n\
 ";
 
