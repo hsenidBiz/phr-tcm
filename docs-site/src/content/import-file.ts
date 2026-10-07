@@ -177,14 +177,6 @@ export const importFile: Screen = {
         "No test cases are created. It needs a connection, so it is greyed out while you are offline.",
     },
     {
-      id: "export-json",
-      shot: QUEUE,
-      group: "the-queue",
-      locate: { role: "button", name: "Export JSON" },
-      name: "Export JSON",
-      does: "Saves the queue to a JSON file you choose.",
-    },
-    {
       id: "rename",
       shot: QUEUE,
       group: "the-queue",
