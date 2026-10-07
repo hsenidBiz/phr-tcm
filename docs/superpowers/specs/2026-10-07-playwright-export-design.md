@@ -149,8 +149,8 @@ recorded menu clicks, each translated like any click below. Then, per step, a
 | `api_request` | `page.request.get(path, { params })` and the same checks |
 | `reload`, `return_to_area` | `page.reload()`; the opening menu clicks again |
 | `expire_session`, `press_key` | `page.context().clearCookies()`; `page.keyboard.press(...)` |
-| tabs;  by name only;  onto |  /  with a current-page variable;  + file-name match;  |
-| ,  content checks,  before/after,  /  /  /  | not exportable in this version - no exact Playwright equivalent without page scripts or new repo helpers |
+| tabs; `expect_download` by name only; `drag` onto | `waitForEvent('page')` / `newPage()` with a current-page variable; `waitForEvent('download')` + file-name match; `dragTo` |
+| `expect_dialog`, `expect_download` content checks, `drag` before/after, `expect_row` / `expect_no_row` / `expect_sorted` / `expect_row_count` | not exportable in this version - no exact Playwright equivalent without page scripts or new repo helpers |
 | `upload`, mid-case `sign_in` | not exportable (file not in the repo; needs the repo's `actingAs`) |
 | a step marked `unchecked` | its actions, plus `// Not checked: <reason>` |
 
