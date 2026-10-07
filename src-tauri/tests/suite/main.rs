@@ -23,6 +23,7 @@ mod serial;
 mod activity_log;
 mod ado;
 mod ado_boards;
+mod ado_case_meta;
 mod ado_git;
 mod ado_network;
 mod ado_share;

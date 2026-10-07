@@ -991,6 +991,40 @@ impl AdoClient {
         Ok(cases)
     }
 
+    /// State, area path and iteration path for each id, read with the
+    /// work-item batch route (one POST per 200 ids; the POST only reads).
+    /// A field a work item lacks comes back empty; ADO's order is kept.
+    pub async fn get_case_meta(
+        &self,
+        organization: &str,
+        ids: &[i32],
+    ) -> Result<Vec<super::CaseMeta>, AdoError> {
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let url = format!(
+                "{}/{}/_apis/wit/workitemsbatch?api-version=7.1",
+                self.base_url,
+                percent_encode_segment(organization)
+            );
+            let body = serde_json::json!({
+                "ids": chunk,
+                "fields": ["System.Id", "System.State", "System.AreaPath", "System.IterationPath"],
+            });
+            let fetched = self.post_json(url, &body).await?;
+            for w in fetched["value"].as_array().cloned().unwrap_or_default() {
+                let f = &w["fields"];
+                let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+                out.push(super::CaseMeta {
+                    id: w["id"].as_i64().unwrap_or_default() as i32,
+                    state: str_of("System.State"),
+                    area_path: str_of("System.AreaPath"),
+                    iteration_path: str_of("System.IterationPath"),
+                });
+            }
+        }
+        Ok(out)
+    }
+
     /// A test case's steps as they stood at `as_of` (ISO 8601 UTC), read with
     /// the work item's `asOf` - a repair compares them with the steps now to
     /// see what the case itself changed since its script was saved. Read only.
