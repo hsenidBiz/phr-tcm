@@ -599,16 +599,16 @@ test("the queue has no Rename button until rows are ticked", async () => {
 });
 
 /// The white window, caught by the app log on 2026-09-11: "Cannot read
-/// properties of undefined (reading 'update_id')" right after Remove all.
-/// The selection is a set of positions; Remove all emptied the queue under
+/// properties of undefined (reading 'update_id')" right after Clear queue.
+/// The selection is a set of positions; Clear queue emptied the queue under
 /// it and the next render indexed the empty queue with a stale position.
-test("Remove all with every row selected does not crash the screen", async () => {
+test("Clear queue with every row selected does not crash the screen", async () => {
   baseMocks();
   renderQueue([makeCase({ title: "One" }), makeCase({ title: "Two" })]);
   const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear queue" }));
   } finally {
     quiet.mockRestore();
   }
@@ -1221,7 +1221,7 @@ test("stopping at the duplicate gate also stops the glow", async () => {
   }
 });
 
-/// "Remove all" stays enabled during review (it is only gated on an empty
+/// "Clear queue" stays enabled during review (it is only gated on an empty
 /// queue or a submit in flight), so emptying the queue while armed is
 /// reachable - and the effect that leaves review mode on an empty queue
 /// must disarm the same way every other exit does.
@@ -1237,7 +1237,7 @@ test("emptying the queue during review also stops the glow", async () => {
     // Armed while reviewing a queue that creates anything.
     await waitFor(() => expect(glows[glows.length - 1]).toBe(true));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear queue" }));
     await waitFor(() => expect(glows[glows.length - 1]).toBe(false));
   } finally {
     window.removeEventListener("tcm-pbi-glow", onGlow);

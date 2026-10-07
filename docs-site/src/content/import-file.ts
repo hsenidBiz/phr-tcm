@@ -186,8 +186,8 @@ export const importFile: Screen = {
       id: "remove-all",
       shot: QUEUE,
       group: "the-queue",
-      locate: { role: "button", name: "Remove all" },
-      name: "Remove all",
+      locate: { role: "button", name: "Clear queue" },
+      name: "Clear queue",
       does: "Empties the queue and stops watching the imported files. Nothing in Azure DevOps is touched.",
     },
     {

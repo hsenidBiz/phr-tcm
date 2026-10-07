@@ -176,7 +176,7 @@ export default function QueueSection({
    * the browser view knows which file to be written back into. Manual
    * Entry passes none - its cases live only in the app. */
   watches?: WatchedFile[];
-  /** Called when Remove all empties the queue. The Import screen uses it
+  /** Called when Clear queue empties the queue. The Import screen uses it
    * to stop watching the files that fed it: the queue was the only reason
    * those watches existed, so leaving them armed means a later save to a
    * finished file quietly refills a queue the user deliberately emptied. */
@@ -435,7 +435,7 @@ export default function QueueSection({
   // Never leave the chip glowing if this screen unmounts mid-confirmation.
   useEffect(() => () => setPbiGlow(false), []);
 
-  // An emptied queue (Remove all, removing the last item) has nothing to
+  // An emptied queue (Clear queue, removing the last item) has nothing to
   // review - leave review mode so the confirm controls disappear too.
   //
   // The duplicate answer needs no clearing here: `dupsPending` is derived
@@ -443,7 +443,7 @@ export default function QueueSection({
   // warning by itself, and an acceptance stays attached to the title it
   // was given for.
   useEffect(() => {
-    // Remove all stays enabled during review, so this is a real exit from
+    // Clear queue stays enabled during review, so this is a real exit from
     // the armed confirmation too - the chip must stop glowing with it.
     if (queue.length === 0) {
       arm(false);
@@ -1220,7 +1220,7 @@ export default function QueueSection({
   // wrong rows.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Positions are only meaningful while the rows exist. When the queue
-  // shrinks beneath a selection (Remove all, an import that replaces the
+  // shrinks beneath a selection (Clear queue, an import that replaces the
   // queue, a single removal) the indices past its end are dropped.
   useEffect(() => {
     setSelected((prev) => {
@@ -1365,7 +1365,7 @@ export default function QueueSection({
    *  not an identity that survives the very operation being applied. The
    *  dialog covers just the selected rows, and the scope list maps the dialog's row indices back to queue positions. */
   // Only positions that still exist: the selection is a set of indices,
-  // and "Remove all" with rows selected emptied the queue under it - the
+  // and "Clear queue" with rows selected emptied the queue under it - the
   // white window of 1.23.11 was `queue[qi].update_id` on the next render.
   const renameScope = [...selected].filter((i) => i < queue.length).sort((a, b) => a - b);
   const renameTarget: RenameTarget = {
@@ -1598,7 +1598,7 @@ export default function QueueSection({
             }}
           >
             <IconRemove aria-hidden />
-            Remove all
+            Clear queue
           </Button>
         </div>
       </div>
