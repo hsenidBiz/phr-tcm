@@ -7,6 +7,10 @@ use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::Target;
 use v2_lib::pw_export::translate::{check, raw_spec, RawSpecInput};
 
+fn origins() -> Vec<String> {
+    vec!["https://app.example".into(), "https://sso.example".into()]
+}
+
 fn lf(s: &str) -> String {
     s.replace("\r\n", "\n")
 }
@@ -64,6 +68,7 @@ impl Fx {
             area_clicks: &self.area,
             area_clicks_by_name: &self.by_name,
             step_texts: &self.texts,
+            origins: &origins(),
         })
         .map_err(|e| e.0)
     }
@@ -98,6 +103,7 @@ fn a_sibling_script_becomes_the_golden_raw_spec() {
         area_clicks: &area,
         area_clicks_by_name: &by_name,
         step_texts: &texts,
+        origins: &origins(),
     })
     .unwrap();
     assert_eq!(got, lf(include_str!("../fixtures/pw_export/raw-135560.spec.ts")));
@@ -311,7 +317,7 @@ fn each_unexportable_kind_says_why() {
     ];
     for (kind, action) in table {
         let s = script(json!([{ "step_number": 1, "actions": [action.clone()] }]));
-        let why = check(&s).unwrap_err().0;
+        let why = check(&s, &origins()).unwrap_err().0;
         assert!(why.contains(kind), "{kind}: {why}");
         let why = one_step(json!([action])).run().unwrap_err();
         assert!(why.contains(kind), "{kind}: {why}");
@@ -320,7 +326,7 @@ fn each_unexportable_kind_says_why() {
     let s = script(json!([{ "step_number": 1, "actions": [
         { "kind": "when_visible", "selector": "#a", "then": [{ "kind": "upload", "selector": "#f", "file": "a" }] }
     ]}]));
-    assert!(check(&s).unwrap_err().0.contains("upload"));
+    assert!(check(&s, &origins()).unwrap_err().0.contains("upload"));
 }
 
 #[test]
@@ -420,13 +426,33 @@ fn text_and_focus_checks_follow_the_app() {
 }
 
 #[test]
-fn only_a_path_can_be_navigated_to() {
-    let got = one_step(json!([{ "kind": "navigate", "url": " /hr/x?y=1 " }])).run().unwrap();
+fn same_site_addresses_export_as_paths() {
+    let got = one_step(json!([
+        { "kind": "navigate", "url": " /hr/x?y=1 " },
+        { "kind": "navigate", "url": "https://app.example/hr/a?b=2#c" },
+        { "kind": "navigate", "url": "HTTPS://App.Example" },
+        { "kind": "navigate", "url": "https://app.example?q=1" },
+        { "kind": "navigate", "url": "https://sso.example/login?r=1" },
+        { "kind": "open_tab", "name": "t", "url": "https://app.example/p?x=1" }
+    ]))
+    .run()
+    .unwrap();
     assert!(got.contains("await cur.goto('/hr/x?y=1');"), "{got}");
-    for url in ["https://other.example/x", "file:///c:/x.html", "//host/x", "x/y"] {
+    assert!(got.contains("await cur.goto('/hr/a?b=2#c');"), "{got}");
+    assert!(got.contains("await cur.goto('/');"), "{got}");
+    assert!(got.contains("await cur.goto('/?q=1');"), "{got}");
+    assert!(got.contains("await cur.goto('https://sso.example/login?r=1');"), "another allowed origin stays whole: {got}");
+    assert!(got.contains("await tab_t.goto('/p?x=1');"), "{got}");
+}
+
+#[test]
+fn other_addresses_are_refused_by_check_and_by_the_spec() {
+    for url in ["https://other.example/x", "file:///c:/x.html", "//host/x", "x/y", "ftp://app.example/x"] {
         let why = one_step(json!([{ "kind": "navigate", "url": url }])).run().unwrap_err();
         assert!(why.contains("navigate"), "{url}: {why}");
         let why = one_step(json!([{ "kind": "open_tab", "name": "t", "url": url }])).run().unwrap_err();
         assert!(why.contains("open_tab"), "{url}: {why}");
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": url }] }]));
+        assert!(check(&s, &origins()).is_err(), "{url}");
     }
 }

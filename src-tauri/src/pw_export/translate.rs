@@ -9,7 +9,7 @@
 //! Counting (`expect_count`) never gets one.
 
 use super::ts::{lit, locator};
-use crate::autorun::recipe::RecipeStep;
+use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
 use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
@@ -48,23 +48,26 @@ pub struct RawSpecInput<'a> {
     pub area_clicks_by_name: &'a BTreeMap<String, Vec<Target>>,
     /// The case's own step action text, by step number.
     pub step_texts: &'a BTreeMap<i32, String>,
+    /// The project's origins as `Recipe::origins()` gives them: the start
+    /// address's first (it is Playwright's baseURL), then the allowed ones.
+    pub origins: &'a [String],
 }
 
 /// Every action of the script can be written as Playwright. It does not
 /// see the sign-in recipe's `after_sign_in` (the script does not carry it);
 /// `raw_spec` checks that too, and the named areas of `return_to_area`.
-pub fn check(script: &CaseScript) -> Res<()> {
+pub fn check(script: &CaseScript, origins: &[String]) -> Res<()> {
     for step in &script.steps {
         for a in &step.actions {
-            check_action(a)?;
+            check_action(a, origins)?;
         }
     }
     Ok(())
 }
 
-fn check_action(a: &Action) -> Res<()> {
+fn check_action(a: &Action, origins: &[String]) -> Res<()> {
     match a {
-        Action::Navigate { url } => goto_target("navigate", url).map(|_| ()),
+        Action::Navigate { url } => goto_target("navigate", url, origins).map(|_| ()),
         Action::CheckText { .. }
         | Action::CheckUrl { .. }
         | Action::Reload
@@ -93,7 +96,7 @@ fn check_action(a: &Action) -> Res<()> {
         }
         Action::WhenVisible { selector, then, .. } => {
             check_target(selector)?;
-            then.iter().try_for_each(check_action)
+            then.iter().try_for_each(|a| check_action(a, origins))
         }
         Action::ExpectResponse { json, .. } => match json {
             Some(v) => ts_json(v, "expect_response").map(|_| ()),
@@ -107,7 +110,7 @@ fn check_action(a: &Action) -> Res<()> {
             if name == "main" {
                 return no("open_tab of the main tab cannot be exported");
             }
-            goto_target("open_tab", url).map(|_| ())
+            goto_target("open_tab", url, origins).map(|_| ())
         }
         Action::CloseTab { name } => {
             if name == "main" {
@@ -159,7 +162,7 @@ fn check_target(t: &Target) -> Res<()> {
 
 /// The whole raw spec for one case.
 pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
-    check(input.script)?;
+    check(input.script, input.origins)?;
     let mut em = Em { out: String::new(), input, scope: String::new(), cnt: Counters::default(), blocks: 0, tab_from: "0".into() };
     let tabs = has_expect_tab(input.script);
 
@@ -341,21 +344,40 @@ fn glob_regex(s: &str) -> String {
     o
 }
 
-/// A script's address as a page address. Only a path on the site under test
-/// travels: a full address is tied to one environment (and may be another
-/// origin), and anything else (`file:`, a bare relative address) would be
-/// resolved by the exported spec differently from the app.
-fn goto_target(kind: &str, url: &str) -> Res<String> {
+/// A script's address as a page address. A `/` path stays as it is; a full
+/// address on the project's start origin (Playwright's baseURL, the first of
+/// `origins`) becomes its path, query and hash; one on another allowed origin
+/// stays a full address (`page.goto` takes one). Anything else - an origin
+/// the project does not list, `//host`, `file:` or another scheme, a bare
+/// relative address - would behave differently in the exported spec.
+fn goto_target(kind: &str, url: &str, origins: &[String]) -> Res<String> {
     let u = url.trim();
     if u.starts_with('/') && !u.starts_with("//") {
         return Ok(u.to_string());
     }
-    if u.contains("://") || u.starts_with("//") || u.to_ascii_lowercase().starts_with("file:") {
+    if u.contains("://") && !u.starts_with("//") {
+        let Some(o) = origin_of(u) else {
+            return no(format!("{kind} to \"{u}\" cannot be exported: it is not an http(s) address"));
+        };
+        if !origins.contains(&o) {
+            return no(format!("{kind} to \"{u}\" cannot be exported: {o} is not one of the project's origins"));
+        }
+        if origins.first() != Some(&o) {
+            return Ok(u.to_string());
+        }
+        let rest = &u[u.find("://").unwrap_or(0) + 3..];
+        return Ok(match rest.find(['/', '?', '#']) {
+            Some(j) if rest[j..].starts_with('/') => rest[j..].to_string(),
+            Some(j) => format!("/{}", &rest[j..]),
+            None => "/".to_string(),
+        });
+    }
+    if u.starts_with("//") || u.to_ascii_lowercase().starts_with("file:") {
         return no(format!(
-            "{kind} to \"{u}\" cannot be exported: only a path on the site under test (starting with /) can, not a full or non-http(s) address"
+            "{kind} to \"{u}\" cannot be exported: only an http(s) address on the project's origins or a path starting with / can"
         ));
     }
-    no(format!("{kind} to \"{u}\" cannot be exported: only a path starting with / can"))
+    no(format!("{kind} to \"{u}\" cannot be exported: only a path starting with / or a full address on the project's origins can"))
 }
 
 /// A JSON value as a TypeScript object literal; every string through `lit`.
@@ -515,10 +537,10 @@ impl Em<'_> {
     }
 
     fn action(&mut self, a: &Action, indent: usize) -> Res<()> {
-        check_action(a)?;
+        check_action(a, self.input.origins)?;
         let sc = self.scope.clone();
         match a {
-            Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url)?))),
+            Action::Navigate { url } => self.line(indent, &format!("await cur.goto({});", lit(&goto_target("navigate", url, self.input.origins)?))),
             Action::Click { selector } => self.line(indent, &format!("await {}.click();", one(selector))),
             Action::Fill { selector, value } => {
                 self.line(indent, &format!("await {}.fill({});", one(selector), lit(value)))
@@ -668,7 +690,7 @@ impl Em<'_> {
             Action::OpenTab { name, url } => {
                 let t = tab_ref(name);
                 self.line(indent, &format!("{t} = await cur.context().newPage();"));
-                self.line(indent, &format!("await {t}.goto({});", lit(&goto_target("open_tab", url)?)));
+                self.line(indent, &format!("await {t}.goto({});", lit(&goto_target("open_tab", url, self.input.origins)?)));
                 self.line(indent, &format!("claimed.add({t});"));
                 self.line(indent, &format!("cur = {t};"));
             }
@@ -692,7 +714,7 @@ impl Em<'_> {
             | Action::ExpectRow { .. }
             | Action::ExpectNoRow { .. }
             | Action::ExpectSorted { .. }
-            | Action::ExpectRowCount { .. } => return check_action(a),
+            | Action::ExpectRowCount { .. } => return check_action(a, self.input.origins),
         }
         Ok(())
     }
