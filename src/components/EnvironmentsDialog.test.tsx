@@ -295,7 +295,7 @@ test("Remove asks first, and removing the active environment shows the refusal",
   expect(await screen.findByText(/Its accounts and saved sign-ins are deleted/)).toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "env_remove")).toBe(false);
 
-  fireEvent.click(screen.getByRole("button", { name: "Confirm remove" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
   expect(
     await screen.findByText("the active environment cannot be removed - switch to another one first"),
   ).toBeInTheDocument();
@@ -307,7 +307,7 @@ test("Keep backs out of a removal without sending anything", async () => {
   await screen.findByText("QA");
   fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
   fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
-  expect(screen.queryByRole("button", { name: "Confirm remove" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "env_remove")).toBe(false);
 });
 
@@ -317,7 +317,7 @@ test("a removed environment leaves the list", async () => {
   });
   await screen.findByText("QA");
   fireEvent.click(screen.getByRole("button", { name: "Remove QA" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Confirm remove" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
   await waitFor(() => expect(screen.queryByText("QA")).not.toBeInTheDocument());
   const rows = screen.getAllByRole("listitem");
   expect(within(rows[0]).getByText("Default")).toBeInTheDocument();

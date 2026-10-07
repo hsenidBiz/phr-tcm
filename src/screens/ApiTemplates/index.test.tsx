@@ -209,7 +209,7 @@ test("a row shows its effect badge and last run, and keeps its parameters and pr
   renderScreen();
 
   const create = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
-  const badge = within(create).getByText("create");
+  const badge = within(create).getByText("create").parentElement!;
   expect(badge.className).toContain("text-success");
   expect(badge.className).toContain("bg-success/15");
   // The count and the proof are in the details, not the line to scan.
@@ -220,15 +220,27 @@ test("a row shows its effect badge and last run, and keeps its parameters and pr
   expect(within(create).getByText("succeeded")).toBeInTheDocument();
 
   const publish = screen.getByRole("listitem", { name: "Publish a performance cycle" });
-  const edit = within(publish).getByText("edit");
+  const edit = within(publish).getByText("edit").parentElement!;
   expect(edit.className).toContain("text-warning");
   expect(edit.className).toContain("bg-warning/15");
   expect(within(publish).getByText("never run")).toBeInTheDocument();
 
   const goal = screen.getByRole("listitem", { name: "Remove a goal" });
-  const del = within(goal).getByText("delete");
+  const del = within(goal).getByText("delete").parentElement!;
   expect(del.className).toContain("text-danger");
   expect(del.className).toContain("bg-danger/15");
+});
+
+// jsdom does no layout, so this pins the class that keeps the title from
+// being squeezed into a column of word fragments by a long stage line.
+test("a row's title keeps a readable width, so the items beside it wrap instead", async () => {
+  mockOverview(OVERVIEW);
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  const title = within(row).getByText("Create a draft performance cycle");
+  expect(title.className).toContain("min-w-[16rem]");
+  expect(title.className).toContain("break-words");
 });
 
 test("expanding a row shows params, steps, sources, evidence and runs, read-only", async () => {
@@ -337,8 +349,8 @@ test("Remove asks first, names the template and its effect, then removes it", as
     "It is removed from this machine with its run history. There is no undo; the assistant can prove it again.",
   );
 
-  // Keep it: nothing is removed.
-  fireEvent.click(within(dialog).getByRole("button", { name: "Keep it" }));
+  // Keep: nothing is removed.
+  fireEvent.click(within(dialog).getByRole("button", { name: "Keep" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(calls.filter((c) => c.cmd === "api_templates_remove")).toHaveLength(0);
 
@@ -364,7 +376,7 @@ test("the remove dialog names the effect of an edit and a delete template", asyn
   const publish = await screen.findByRole("listitem", { name: "Publish a performance cycle" });
   fireEvent.click(within(publish).getByRole("button", { name: "Remove Publish a performance cycle" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("This template edits data.");
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep it" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Keep" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
   const goal = screen.getByRole("listitem", { name: "Remove a goal" });
@@ -578,7 +590,7 @@ test("the map marks the optional stage and the stages no template performs yet",
   expect(within(rules).queryByText("No template yet")).toBeNull();
 
   // A template on a stage shows its effect badge, as in the list.
-  const badge = within(rules).getByText("edit");
+  const badge = within(rules).getByText("edit").parentElement!;
   expect(badge.className).toContain("text-warning");
 });
 
@@ -1060,7 +1072,7 @@ test("an imported template is marked Unproven and never claims a proof or this v
   renderScreen();
 
   const replaced = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
-  const pill = within(replaced).getByText("Unproven");
+  const pill = within(replaced).getByText("Unproven").parentElement!;
   expect(pill).toHaveAttribute("title", expect.stringContaining("Prove it here before relying on it"));
   fireEvent.click(within(replaced).getByRole("button", { name: "Show details of Create a draft performance cycle" }));
   let details = within(replaced).getByTestId("template-details");
@@ -1091,7 +1103,7 @@ test("the flow map marks an unproven template on its stage, in the drawing and i
 
   const flow = await screen.findByRole("region", { name: "Performance cycle wizard" });
   const stage = within(flow).getByRole("group", { name: "Evaluation rules" });
-  expect(within(stage).getByText("Unproven")).toHaveAttribute("title", expect.stringContaining("not proven on this site"));
+  expect(within(stage).getByText("Unproven").parentElement!).toHaveAttribute("title", expect.stringContaining("not proven on this site"));
   const list = within(flow).getByRole("list", { name: "Stages of Performance cycle wizard" });
   expect(list).toHaveTextContent("Evaluation rules. Requires: Cycle setup. Templates: Save the rules (unproven).");
 });
@@ -1107,7 +1119,7 @@ test("a delete template saved before Clean up names no kind, and its row says so
   });
   renderScreen();
   const old = await screen.findByRole("listitem", { name: "Remove a goal" });
-  const note = within(old).getByText("needs a kind");
+  const note = within(old).getByText("needs a kind").parentElement!;
   expect(note).toHaveAttribute("title", expect.stringContaining("names the kind of thing it deletes"));
   // Still an ordinary row: its effect badge and its Remove button are there.
   expect(within(old).getByText("delete")).toBeInTheDocument();

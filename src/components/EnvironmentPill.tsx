@@ -13,7 +13,7 @@ export default function EnvironmentPill({ name, className }: { name: string; cla
         className,
       )}
     >
-      {name}
+      <span className="label-trim">{name}</span>
     </span>
   );
 }

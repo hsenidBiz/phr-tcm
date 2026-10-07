@@ -10,7 +10,7 @@ export default function BetaPill({ className }: { className?: string }) {
         className,
       )}
     >
-      Beta
+      <span className="label-trim">Beta</span>
     </span>
   );
 }

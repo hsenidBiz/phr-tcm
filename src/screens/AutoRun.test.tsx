@@ -1022,7 +1022,7 @@ test("a case with a suspected-defect mark shows a badge that names the step and 
   renderAutoRun();
   await expandCards();
 
-  const badge = await screen.findByText("Suspected defect");
+  const badge = (await screen.findByText("Suspected defect")).parentElement!;
   expect(badge).toHaveClass("text-warning");
   expect(badge).toHaveAccessibleDescription(/step 3/i);
   expect(badge).toHaveAccessibleDescription(/never shows the lockout message/);

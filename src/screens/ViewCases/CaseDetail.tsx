@@ -34,7 +34,7 @@ export default function CaseDetail({
                 key={t}
                 className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
               >
-                {t}
+                <span className="label-trim">{t}</span>
               </span>
             ))}
         </div>

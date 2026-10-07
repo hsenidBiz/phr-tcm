@@ -484,7 +484,7 @@ export default function WorkItemDrawer({
                       }
                       onClick={() => setDocTab(t.key)}
                     >
-                      {t.label}
+                      <span className="label-trim">{t.label}</span>
                     </button>
                   ))}
                 </div>
@@ -499,7 +499,7 @@ export default function WorkItemDrawer({
                       }
                       onClick={() => setMode(m)}
                     >
-                      {m === "write" ? "Write" : "Preview"}
+                      <span className="label-trim">{m === "write" ? "Write" : "Preview"}</span>
                     </button>
                   ))}
                 </div>
@@ -629,7 +629,7 @@ export default function WorkItemDrawer({
                         }
                         onClick={() => setBottomTab(t)}
                       >
-                        {t === "discussion" ? "Discussion" : "History"}
+                        <span className="label-trim">{t === "discussion" ? "Discussion" : "History"}</span>
                       </button>
                     ))}
                   </div>

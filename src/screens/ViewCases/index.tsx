@@ -467,7 +467,7 @@ export default function ViewCases({
                           }}
                         >
                           <MessageSquare size={11} />
-                          Comment
+                          <span className="label-trim">Comment</span>
                         </button>
                       )}
                       <span className="ml-auto text-xs text-faint">

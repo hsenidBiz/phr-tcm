@@ -299,7 +299,7 @@ export default function ApiTemplates({
             writesOn ? "bg-success/15 text-success" : "bg-surface-2 text-muted",
           )}
         >
-          API templates {writesOn ? "on" : "off"}
+          <span className="label-trim">API templates {writesOn ? "on" : "off"}</span>
         </button>
         <div className="ml-auto flex items-center gap-2">
           <Button
@@ -368,7 +368,9 @@ export default function ApiTemplates({
                 )}
                 onClick={() => setView(id)}
               >
-                {label} <span className="text-xs text-faint">{count}</span>
+                <span className="label-trim">
+                  {label} <span className="text-xs text-faint">{count}</span>
+                </span>
               </button>
             ))}
           </div>
@@ -388,7 +390,7 @@ export default function ApiTemplates({
               cleanupSlot={
                 <Button size="sm" variant="outline" onClick={() => setCleaningUp(true)}>
                   <IconRemove aria-hidden />
-                  Clean up test-made drafts
+                  Clean up drafts
                 </Button>
               }
             />

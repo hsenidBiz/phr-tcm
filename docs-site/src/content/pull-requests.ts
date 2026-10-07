@@ -305,8 +305,8 @@ export const pullRequests: Screen = {
       id: "open-run",
       shot: PIPELINE,
       group: "pipeline",
-      locate: { role: "button", name: "Open run in Azure DevOps" },
-      name: "Open run in Azure DevOps",
+      locate: { role: "button", name: "Open in Azure DevOps" },
+      name: "Open in Azure DevOps",
       does: "Opens the run in your browser. A run that was deployed also lists its environments, each with a button to open the release.",
     },
 

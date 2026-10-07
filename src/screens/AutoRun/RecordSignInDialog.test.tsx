@@ -447,10 +447,10 @@ test("a recording left open from before can be cancelled when the dialog opens",
       return null;
     }
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Cancel that recording" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel recording" }));
   await waitFor(() => expect(cancels).toBe(1));
   await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument(),
   );
 });
 

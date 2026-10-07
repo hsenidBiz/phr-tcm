@@ -194,7 +194,7 @@ export default function MoreActionsMenu({
           window.setTimeout(() => menu.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not(:disabled)")?.focus(), 0);
         }}
       >
-        {text}
+        <span className="label-trim">{text}</span>
         <ChevronDown size={12} aria-hidden />
       </span>
       {open != null &&

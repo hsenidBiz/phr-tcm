@@ -353,7 +353,7 @@ export default function RecordSignInDialog({
               </span>
               <Button size="sm" variant="outline" onClick={cancelLeftOpen}>
                 <IconCancel aria-hidden />
-                Cancel that recording
+                Cancel recording
               </Button>
             </div>
           )}

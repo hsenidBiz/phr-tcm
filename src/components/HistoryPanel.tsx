@@ -202,7 +202,7 @@ export default function HistoryPanel({
                     s.current ? "bg-accent-soft text-accent" : "bg-surface-2 text-muted",
                   )}
                 >
-                  {s.state}
+                  <span className="label-trim">{s.state}</span>
                 </span>
                 {s.current && <span className="text-[10px] text-accent">now</span>}
                 <span className="ml-auto flex items-baseline gap-2 text-faint">
@@ -231,7 +231,7 @@ export default function HistoryPanel({
             )}
             onClick={() => setFilter(f.id)}
           >
-            {f.label}
+            <span className="label-trim">{f.label}</span>
           </button>
         ))}
       </div>

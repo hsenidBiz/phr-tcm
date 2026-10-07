@@ -173,7 +173,8 @@ test("a mention wears the Mention label and opens its work item in the app", () 
   const opened: unknown[] = [];
   render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
   fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
-  expect(screen.getByText("Mention")).toHaveClass("text-danger");
+  // The label sits in its centring span; the chip is that span's parent.
+  expect(screen.getByText("Mention").parentElement).toHaveClass("text-danger");
   expect(screen.getByText("@Avin can you check this?")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Sam mentioned you on Product Backlog Item #41" }));
   expect(opened).toEqual([{ kind: "work-item", id: 41, project: "Web" }]);

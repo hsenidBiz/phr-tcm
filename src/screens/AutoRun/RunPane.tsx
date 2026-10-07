@@ -752,11 +752,11 @@ export default function RunPane({
         {o.screenshot && (
           <button
             type="button"
-            aria-label={`View screenshot for action ${i + 1}`}
+            aria-label={`Screenshot for action ${i + 1}`}
             className="ml-2 text-muted underline hover:text-accent"
             onClick={() => openShot(o.screenshot!)}
           >
-            View screenshot
+            Screenshot
           </button>
         )}
       </p>

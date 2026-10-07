@@ -203,7 +203,7 @@ test("keeping a fixture in the dialog removes nothing", async () => {
   await openTab();
   await screen.findByRole("listitem", { name: "Alpha" });
   fireEvent.click(screen.getByRole("button", { name: "Remove Alpha" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Keep it" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
   expect(calls.some((c) => c.cmd === "api_fixture_remove")).toBe(false);
   expect(screen.getByRole("listitem", { name: "Alpha" })).toBeInTheDocument();
 });

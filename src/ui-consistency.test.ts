@@ -10,7 +10,9 @@
  * - raw hex and white/black are allowed only where they are deliberate
  *   (modal backdrops, avatar initials over hashed colors, DevOps-defined
  *   type/state colors) - the allowlists below name every one;
- * - no text below 10px: smaller is unreadable at normal DPI.
+ * - no text below 10px: smaller is unreadable at normal DPI;
+ * - a small label pill centres its text by the letters (`label-trim`),
+ *   never by a hand-tuned pixel nudge.
  *
  * A failure here is not a broken feature - it is a new file quietly
  * introducing a second design language. Fix it by using tokens, or, when
@@ -199,6 +201,36 @@ describe("button icons", () => {
       for (const m of text.matchAll(/<Icon[A-Za-z]+[^>]*\bsize=\{?\d/g)) {
         hits.push(`${file}  ${m[0]}`);
       }
+    }
+    expect(hits).toEqual([]);
+  });
+});
+
+describe("label centring", () => {
+  // CSS centres a label's line box, not its letters, so a pill's text rode
+  // high or low depending on its size and the screen's scale. The cure is
+  // the one shared class, `label-trim` (index.css), which trims the label
+  // to cap height and baseline. The old per-size nudges must not come back.
+  test("no hand-tuned label nudges", () => {
+    expect(violations(/\bpill-label(?:-ink)?\b/, new Set())).toEqual([]);
+  });
+
+  // Source heuristic: a small rounded label (10-11px text with horizontal
+  // padding) must have `label-trim` on its text within the element, or get
+  // it from trimLabels (Button, Badge). A box aligned to its first line
+  // (items-start) holds a message, not a one-line label, and is exempt.
+  test("every small label pill centres its text with label-trim", () => {
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      const lines = text.split("\n");
+      lines.forEach((line, i) => {
+        for (const m of line.matchAll(/"[^"]*\brounded(?:-full|-sm|-md)?\b[^"]*"/g)) {
+          const cls = m[0];
+          if (!/\btext-\[1[01]px\]/.test(cls) || !/\bpx-/.test(cls) || /\bitems-start\b/.test(cls)) continue;
+          const element = lines.slice(i, i + 20).join("\n");
+          if (!/label-trim|trimLabels/.test(element)) hits.push(`${file}:${i + 1}  ${cls}`);
+        }
+      });
     }
     expect(hits).toEqual([]);
   });

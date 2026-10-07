@@ -125,7 +125,7 @@ export const autoRun: Screen = {
     { id: RUNS, route: TO_RUNS, alt: "Past runs: an unattended run with a passed, a failed, a blocked and a retried case" },
     {
       id: REVIEW,
-      route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept every proposal" } }],
+      route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept all" } }],
       alt: "Reviewing an unattended run before sending it to Azure DevOps",
     },
     { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: site address, sign-in, accounts, areas, test files and save words" },
@@ -533,7 +533,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Run step 1" },
       name: "Run step N",
       does:
-        "Does that step's actions in the browser and lists what each one did. A failed action is shown in red, with **View screenshot** when the browser took one. Run the steps in order, and look at the browser as they run.",
+        "Does that step's actions in the browser and lists what each one did. A failed action is shown in red, with **Screenshot** when the browser took one. Run the steps in order, and look at the browser as they run.",
     },
     {
       id: "your-verdict",
@@ -712,8 +712,8 @@ export const autoRun: Screen = {
       id: "accept-all",
       shot: REVIEW,
       group: "runs",
-      locate: { role: "button", name: "Accept every proposal" },
-      name: "Accept every proposal",
+      locate: { role: "button", name: "Accept all" },
+      name: "Accept all",
       does: "Confirms every case's proposed result in one press. Beside it, how many cases are confirmed so far.",
     },
     {
@@ -923,7 +923,7 @@ export const autoRun: Screen = {
         "Select the cases, or filter the list and press **Select all shown**.",
         "Press **Run N unattended**.",
         "Choose who to sign in as and whether to watch, then press **Start**.",
-        "When the run finishes its review opens: confirm each case, or press **Accept every proposal**, then **Send to Azure DevOps**.",
+        "When the run finishes its review opens: confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
       ],
     },
     {

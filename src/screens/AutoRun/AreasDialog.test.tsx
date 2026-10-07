@@ -425,10 +425,10 @@ test("a recording left open from before can be cancelled from a freshly opened d
       return null;
     }
   });
-  fireEvent.click(await screen.findByRole("button", { name: "Cancel that recording" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel recording" }));
   await waitFor(() => expect(cancels).toBe(1));
   await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument(),
   );
 });
 
@@ -445,10 +445,10 @@ test("the leftover-recording offer is gone once Record starts", async () => {
       return null;
     }
   });
-  await screen.findByRole("button", { name: "Cancel that recording" });
+  await screen.findByRole("button", { name: "Cancel recording" });
   await chooseAndStart();
   expect(await screen.findByText(/Opening the browser and signing in/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument();
   expect(cancels).toBe(0);
 });
 
@@ -466,11 +466,11 @@ test("a stale leftover-recording offer asks again and cancels nothing once the r
       return null;
     }
   });
-  const offer = await screen.findByRole("button", { name: "Cancel that recording" });
+  const offer = await screen.findByRole("button", { name: "Cancel recording" });
   open = false;
   fireEvent.click(offer);
   await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument(),
   );
   expect(cancels).toBe(0);
   expect(toast.info).not.toHaveBeenCalled();
@@ -487,7 +487,7 @@ test("nothing is offered to cancel when nothing was left open", async () => {
   });
   await waitFor(() => expect(asked).toBe(1));
   expect(await screen.findByRole("button", { name: "Record an area…" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Cancel that recording" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancel recording" })).not.toBeInTheDocument();
 });
 
 test("Escape while starting cancels instead of being ignored", async () => {
@@ -588,7 +588,7 @@ test("an area name that is already recorded asks Replace before recording over i
   expect(await screen.findByText("Replace Manage Cycle?")).toBeInTheDocument();
   expect(started).toEqual([]);
   // Keeping it goes back to the form with nothing started.
-  fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+  fireEvent.click(screen.getByRole("button", { name: "Keep" }));
   expect(started).toEqual([]);
   expect(screen.getByRole("textbox", { name: "Area name" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Start recording" }));

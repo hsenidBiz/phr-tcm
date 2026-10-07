@@ -59,7 +59,7 @@ export default function RemoveTemplate({
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={onClose}>
           <IconCancel aria-hidden />
-          Keep it
+          Keep
         </Button>
         <Button size="sm" variant="danger" disabled={remove.isPending} onClick={() => remove.mutate()}>
           <IconRemove aria-hidden />

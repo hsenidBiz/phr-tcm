@@ -454,7 +454,7 @@ export default function AiBridge() {
                 )}
                 onClick={() => saveScope(s)}
               >
-                {s === "project" ? "This repository" : "Machine-wide"}
+                <span className="label-trim">{s === "project" ? "This repository" : "Machine-wide"}</span>
               </button>
             ))}
           </div>
@@ -697,7 +697,7 @@ export default function AiBridge() {
             }}
           >
             <IconConfirm aria-hidden />
-            Turn all back on
+            Turn all on
           </Button>
         )}
       </section>
@@ -846,7 +846,7 @@ export default function AiBridge() {
                         </Button>
                         <Button size="sm" variant="outline" disabled={removeBusy} onClick={() => void removeDb(d)}>
                           <IconRemove aria-hidden />
-                          Confirm remove
+                          Remove
                         </Button>
                       </div>
                     )}

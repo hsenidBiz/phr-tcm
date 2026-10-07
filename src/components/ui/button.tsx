@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
+import { trimLabels } from "./labelText";
 
 const buttonVariants = cva(
   // A leading icon is sized by the button rather than by each call site, so
@@ -31,12 +32,14 @@ export interface ButtonProps
     VariantProps<typeof buttonVariants> {}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, ...props }, ref) => (
+  ({ className, variant, size, children, ...props }, ref) => (
     <button
       ref={ref}
       className={cn(buttonVariants({ variant, size }), className)}
       {...props}
-    />
+    >
+      {trimLabels(children)}
+    </button>
   ),
 );
 Button.displayName = "Button";

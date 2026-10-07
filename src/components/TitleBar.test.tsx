@@ -15,14 +15,15 @@ test("a stable build shows the title alone", () => {
 
 test("a beta build shows the Beta pill beside the title", () => {
   render(<TitleBar title="Test Case Manager" beta />);
-  const pill = screen.getByText("Beta");
+  // The text sits in the pill's centring span.
+  const pill = screen.getByText("Beta").parentElement!;
   // In the same group as the title, inside the drag region.
   expect(pill.parentElement).toBe(screen.getByText("Test Case Manager").parentElement);
 });
 
 test("the environment pill names the active environment, beside the title", () => {
   render(<TitleBar title="Test Case Manager" environment="QA" />);
-  const pill = screen.getByText("QA");
+  const pill = screen.getByText("QA").parentElement!;
   expect(pill.parentElement).toBe(screen.getByText("Test Case Manager").parentElement);
 });
 

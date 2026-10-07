@@ -33,7 +33,7 @@ export function SuspectedDefectBadge({
         aria-describedby={describedBy}
         className="shrink-0 rounded-md border border-warning/50 px-2 py-0.5 text-xs font-medium text-warning"
       >
-        Suspected defect
+        <span className="label-trim">Suspected defect</span>
       </span>
       <span id={describedBy} className="sr-only">
         {detail}

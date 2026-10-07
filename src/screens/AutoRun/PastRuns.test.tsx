@@ -100,7 +100,8 @@ test("a supervised run of another PBI keeps its rows exactly as today", async ()
 test("a run names the environment it was made in, when it has one", async () => {
   renderPastRuns([runOf({ environment: "QA" }), runOf({ id: "run-2", started_at: "1786000100000" })], 42);
 
-  const badge = await screen.findByText("QA");
+  // Badge text sits in its centring span; the badge is its parent.
+  const badge = (await screen.findByText("QA")).parentElement!;
   expect(badge).toHaveAttribute("title", "The environment this run was made in");
   // The older run, saved before environments existed, shows nothing extra.
   expect(screen.getAllByText("unattended")).toHaveLength(2);
@@ -227,7 +228,7 @@ test("a case run a second time after a transient failure is labelled Retried", a
   );
 
   const retried = await screen.findByRole("listitem", { name: "Run of Valid login" });
-  const label = within(retried).getByText("Retried");
+  const label = within(retried).getByText("Retried").parentElement!;
   expect(label).toHaveAttribute("title", `Run a second time after a transient failure: ${first}`);
   expect(label).toHaveClass("text-warning");
   const plain = screen.getByRole("listitem", { name: "Run of Locked account" });
@@ -248,7 +249,7 @@ test("a case whose script flagged page errors carries the count", async () => {
   );
 
   const flagged = await screen.findByRole("listitem", { name: "Run of Valid login" });
-  const label = within(flagged).getByText("page errors seen: 3");
+  const label = within(flagged).getByText("page errors seen: 3").parentElement!;
   expect(label).toHaveClass("text-warning");
   expect(label).toHaveAttribute("title", expect.stringContaining("5xx"));
   const plain = screen.getByRole("listitem", { name: "Run of Locked account" });
@@ -270,7 +271,7 @@ test("a case whose preconditions were not checked is labelled Not checked, with 
   );
 
   const unchecked = await screen.findByRole("listitem", { name: "Run of Valid login" });
-  const label = within(unchecked).getByText("Not checked");
+  const label = within(unchecked).getByText("Not checked").parentElement!;
   expect(label).toHaveAttribute("title", notice);
   expect(label).toHaveClass("text-warning");
   const plain = screen.getByRole("listitem", { name: "Run of Locked account" });

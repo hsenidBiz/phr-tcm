@@ -116,7 +116,7 @@ export default function NotificationBell({
             aria-hidden
             className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
           >
-            {unread > 9 ? "9+" : unread}
+            <span className="label-trim">{unread > 9 ? "9+" : unread}</span>
           </span>
         )}
       </button>
@@ -156,7 +156,7 @@ export default function NotificationBell({
                           KIND_CLASS[n.kind],
                         )}
                       >
-                        {KIND_LABEL[n.kind]}
+                        <span className="label-trim">{KIND_LABEL[n.kind]}</span>
                       </span>
                       <span className="text-[11px] text-faint">{ago(n.at)}</span>
                       {/* The title goes to the thing itself, in the app;

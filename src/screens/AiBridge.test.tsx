@@ -566,7 +566,7 @@ test("Remove asks first, and a database an environment uses shows the refusal in
   expect(await within(card).findByText(/Its saved login is deleted from this machine/)).toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
 
-  fireEvent.click(within(card).getByRole("button", { name: "Confirm remove" }));
+  fireEvent.click(within(card).getByRole("button", { name: "Remove" }));
   expect(await within(card).findByText(refusal)).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "db_remove_custom")!.args).toEqual({ id: STAGING.id });
   // Refused means still there.
@@ -579,7 +579,7 @@ test("Keep backs out of removing a database without sending anything", async () 
   const card = dbCard();
   fireEvent.click(await within(card).findByRole("button", { name: "Remove Staging" }));
   fireEvent.click(await within(card).findByRole("button", { name: "Keep" }));
-  expect(within(card).queryByRole("button", { name: "Confirm remove" })).not.toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   expect(calls.some((c) => c.cmd === "db_remove_custom")).toBe(false);
 });
 
@@ -595,7 +595,7 @@ test("removing the chosen database clears the card's choice", async () => {
   await waitFor(() => expect(picker).toHaveTextContent("Staging"));
 
   fireEvent.click(within(dbCard()).getByRole("button", { name: "Remove Staging" }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Confirm remove" }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove" }));
   await waitFor(() => expect(selectedDbSnapshot()).toBe(""));
   expect(localStorage.getItem("tcm-v2-db-selected")).toBeNull();
   expect(told).toHaveBeenCalled();
@@ -609,7 +609,7 @@ test("removing another database leaves the card's choice alone", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-read");
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove Staging" }));
-  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Confirm remove" }));
+  fireEvent.click(await within(dbCard()).findByRole("button", { name: "Remove" }));
   await waitFor(() => expect(within(dbCard()).queryByText("HR on sql.staging")).not.toBeInTheDocument());
   expect(selectedDbSnapshot()).toBe("dev-read");
 });

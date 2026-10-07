@@ -197,7 +197,7 @@ export default function ImportFile({
     }[]
   >([]);
   // The watches the user asked to drop, pending the "and their cases?"
-  // answer. A list rather than one file so Stop and Remove all go through
+  // answer. A list rather than one file so Stop and Stop all go through
   // the same confirmation - the question is identical, only the count
   // differs, and two dialogs would be two things to keep in step.
   const [dropping, setDropping] = useState<WatchedFile[] | null>(null);
@@ -695,7 +695,7 @@ export default function ImportFile({
                   onClick={() => setDropping(watches)}
                 >
                   <IconStopWatching aria-hidden />
-                  Remove all
+                  Stop all
                 </Button>
               )}
             </div>
@@ -798,7 +798,7 @@ export default function ImportFile({
         recentImports={recents}
         onOpenRecent={(path) => importFile.mutate(path)}
         onForgetRecent={(path) => setRecents(forgetRecentImport(path))}
-        // Called both by Remove all and by a submit that emptied the queue.
+        // Called both by Stop all and by a submit that emptied the queue.
         // Either way the import is finished, and everything that existed to
         // service it goes with it: the file watches (which would otherwise
         // let a later save refill a queue already dealt with), the change

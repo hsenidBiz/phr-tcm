@@ -258,13 +258,13 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
   return (
     <div className="space-y-1.5 rounded-md border border-border bg-bg p-2">
       <div className="flex items-center gap-2">
-        <span className={cn("pill-label rounded-full px-1.5 text-[10px] font-medium", tone(b.status, b.result))}>
-          {label(b.result || b.status)}
+        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(b.status, b.result))}>
+          <span className="label-trim">{label(b.result || b.status)}</span>
         </span>
         <span className="truncate text-text">{b.name}</span>
         <span className="id-mono shrink-0 text-faint">{b.number}</span>
-        <span className="pill-label shrink-0 rounded bg-surface-2 px-1 text-[10px] text-muted">
-          {b.is_validation ? "PR validation" : "CI"}
+        <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] text-muted">
+          <span className="label-trim">{b.is_validation ? "PR validation" : "CI"}</span>
         </span>
         {b.web_url && (
           <span
@@ -286,10 +286,10 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
           {b.stages.map((s, i) => (
             <span
               key={i}
-              className={cn("pill-label rounded px-1.5 text-[10px]", tone(s.state, s.result))}
+              className={cn("rounded px-1.5 py-0.5 text-[10px]", tone(s.state, s.result))}
               title={`Stage ${s.name}: ${label(s.result || s.state)}`}
             >
-              {s.name}
+              <span className="label-trim">{s.name}</span>
             </span>
           ))}
         </div>
@@ -302,12 +302,12 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
           {b.deployments.map((d, i) => (
             <span
               key={i}
-              className={cn("pill-label rounded-full px-1.5 text-[10px] font-medium", tone(d.status))}
+              className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(d.status))}
               title={`${d.release} → ${d.environment}: ${label(d.status)}${
                 d.on ? ` (${new Date(d.on).toLocaleString()})` : ""
               }`}
             >
-              {d.environment}
+              <span className="label-trim">{d.environment}</span>
             </span>
           ))}
         </div>
@@ -368,15 +368,15 @@ function PipelinePill({ state }: { state?: string }) {
     // a running build means. Amber is shared with Conflicts, which is
     // fine: both say "not settled yet", and the words tell them apart.
     return (
-      <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
-        Pipeline In Progress
+      <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+        <span className="label-trim">Pipeline In Progress</span>
       </span>
     );
   }
   if (state === "failed") {
     return (
-      <span className="pill-label rounded-full bg-danger/15 px-2 text-[10px] font-medium text-danger">
-        Pipeline Error
+      <span className="rounded-full bg-danger/15 px-2 py-0.5 text-[10px] font-medium text-danger">
+        <span className="label-trim">Pipeline Error</span>
       </span>
     );
   }
@@ -523,28 +523,30 @@ function PrRow({
               <span className="id-mono text-faint">!{pr.id}</span> {pr.title}
             </span>
             {pr.is_draft && (
-              <span className="pill-label rounded-full bg-surface-2 px-2 text-[10px] font-medium text-muted">
-                Draft
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
+                <span className="label-trim">Draft</span>
               </span>
             )}
             {pr.has_conflicts && (
-              <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
-                Conflicts
+              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+                <span className="label-trim">Conflicts</span>
               </span>
             )}
             {/* Quiet when everything is settled, like the pipeline pill -
                 the pill exists to pick out rows that still need someone. */}
             {toResolve > 0 && (
-              <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
-                {toResolve} comment{toResolve === 1 ? "" : "s"} to resolve
+              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+                <span className="label-trim">
+                  {toResolve} comment{toResolve === 1 ? "" : "s"} to resolve
+                </span>
               </span>
             )}
             <PipelinePill state={buildState} />
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             {/* Same repo-pill treatment as the board's PR chips. */}
-            <span className="pill-label rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent">
-              {pr.repo}
+            <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
+              <span className="label-trim">{pr.repo}</span>
             </span>
             <span className="flex items-center gap-1">
               <GitBranch size={11} />
@@ -625,7 +627,7 @@ function PrRow({
                       className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-border-strong hover:text-text"
                       onClick={() => setShowPipeline(true)}
                     >
-                      View history
+                      <span className="label-trim">View history</span>
                     </button>
                   )}
                 </div>
@@ -925,7 +927,7 @@ export default function PrPanel({
               aria-pressed={prStatus === s}
               onClick={() => setPrStatus(s)}
             >
-              {s}
+              <span className="label-trim">{s}</span>
             </button>
           ))}
         </div>
@@ -1068,7 +1070,7 @@ function RepoPrSection({
             disabled={active.isFetchingNextPage}
             onClick={() => active.fetchNextPage()}
           >
-            {active.isFetchingNextPage ? "Loading…" : "Load more"}
+            <span className="label-trim">{active.isFetchingNextPage ? "Loading…" : "Load more"}</span>
           </button>
         </div>
       )}

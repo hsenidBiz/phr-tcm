@@ -66,7 +66,7 @@ export default function FixturesTab({
 }: {
   org: string;
   project: string;
-  /** Where Clean up test-made drafts sits, above the list. */
+  /** Where Clean up drafts sits, above the list. */
   cleanupSlot?: ReactNode;
 }) {
   const qc = useQueryClient();

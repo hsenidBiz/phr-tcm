@@ -253,8 +253,8 @@ test("a failed action offers the screenshot taken when it failed", async () => {
 
   expect(await screen.findByText(/button "Save" not found/)).toBeInTheDocument();
   // Only the failed action has one, and its name says which action.
-  expect(screen.getAllByRole("button", { name: /View screenshot/ })).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "View screenshot for action 2" }));
+  expect(screen.getAllByRole("button", { name: /^Screenshot/ })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Screenshot for action 2" }));
   const img = await screen.findByRole("img", { name: "Screenshot of the failed action" });
   expect(img).toHaveAttribute("src", "data:image/jpeg;base64,AAAA");
 
@@ -867,7 +867,7 @@ test("a replay stopped at step 2 marks step 1, shows step 2's outcomes as failed
   const failed = await stepRow(2);
   expect(within(failed).queryByText("replayed")).not.toBeInTheDocument();
   expect(within(failed).getByText(/^button "Save" not found/)).toHaveClass("text-danger");
-  expect(within(failed).getByRole("button", { name: "View screenshot for action 2" })).toBeInTheDocument();
+  expect(within(failed).getByRole("button", { name: "Screenshot for action 2" })).toBeInTheDocument();
   expect(within(failed).getByRole("button", { name: "Run step 2" })).toBeEnabled();
   expect(within(await stepRow(3)).queryByText("replayed")).not.toBeInTheDocument();
 });

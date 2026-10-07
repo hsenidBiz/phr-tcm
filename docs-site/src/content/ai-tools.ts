@@ -41,9 +41,9 @@ export const aiBridge: Screen = {
       route: [
         NAV,
         { click: { role: "switch", name: "Run results" } },
-        { scrollTo: { role: "button", name: "Turn all back on" } },
+        { scrollTo: { role: "button", name: "Turn all on" } },
       ],
-      alt: "One tool switched off, with Turn all back on under the list",
+      alt: "One tool switched off, with Turn all on under the list",
     },
     {
       id: CREDENTIALS,
@@ -216,7 +216,7 @@ export const aiBridge: Screen = {
       name: "Edit environments",
       does:
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
-        "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up test-made drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -.",
+        "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -.",
     },
     {
       id: "api-templates-switch",
@@ -324,8 +324,8 @@ export const aiBridge: Screen = {
       id: "turn-all-on",
       shot: SWITCHED_OFF,
       group: "tools",
-      locate: { role: "button", name: "Turn all back on" },
-      name: "Turn all back on",
+      locate: { role: "button", name: "Turn all on" },
+      name: "Turn all on",
       does: "Switches every tool on again. It shows while any tool is off.",
     },
 
@@ -383,7 +383,8 @@ export const aiBridge: Screen = {
       id: "credentials-save",
       shot: CREDENTIALS,
       group: "company-database",
-      locate: { role: "button", name: "Save" },
+      // The writing style card behind the window has a Save of its own.
+      locate: { css: `xpath=//*[@role="dialog"]//button[normalize-space(.) = "Save"]` },
       name: "Save",
       does: "Saves the login in Windows Credential Manager on this computer and closes the window.",
     },
