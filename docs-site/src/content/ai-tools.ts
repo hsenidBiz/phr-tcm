@@ -430,7 +430,7 @@ export const aiBridge: Screen = {
       title: "Use your own writing style",
       steps: [
         "In the **Writing style** card, type your team's rules for designing test cases in Markdown, or press **Upload .md** to load them from a file.",
-        "Switch on **Use my writing style** and press **Save**. **Discard changes** goes back to what you saved last.",
+        "Switch on **Use custom writing style**. If you have changed the text, press **Save** to apply both. **Discard changes** goes back to what you saved last.",
         "The assistant follows your style the next time it reads the writing guide. It replaces the standard advice on how many cases to write and which edge cases to cover. The case format and import rules always apply.",
       ],
     },
