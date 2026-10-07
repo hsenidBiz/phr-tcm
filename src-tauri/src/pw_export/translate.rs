@@ -16,6 +16,7 @@ use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS
 use crate::browser::expect::READ_TEXT_JS;
 use crate::browser::keys;
 use crate::browser::locator::Target;
+use crate::browser::timing::Timing;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -344,16 +345,21 @@ fn wait_opts(t: &Target, timeout: u32) -> String {
     }
 }
 
+/// How long an expectation looks: its own `timeout_ms`, else the app's
+/// default (`Timing::expect_ms`, what `actions::wait` and `expect_response`
+/// fall back to) - never Playwright's shorter 5 s default.
+fn expect_timeout(own: Option<u32>) -> u64 {
+    own.map(u64::from).unwrap_or_else(|| Timing::default().expect_ms)
+}
+
 fn call(name: &str, args: &[String], timeout: Option<u32>) -> String {
     let mut all: Vec<String> = args.to_vec();
-    if let Some(t) = timeout {
-        all.push(format!("{{ timeout: {t} }}"));
-    }
+    all.push(format!("{{ timeout: {} }}", expect_timeout(timeout)));
     format!("{name}({})", all.join(", "))
 }
 
 fn poll_opts(timeout: Option<u32>) -> String {
-    timeout.map(|t| format!(", {{ timeout: {t} }}")).unwrap_or_default()
+    format!(", {{ timeout: {} }}", expect_timeout(timeout))
 }
 
 /// Escape for a RegExp source built with `new RegExp(<lit>)`.
@@ -583,7 +589,7 @@ impl Em<'_> {
                     if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
                         let _ = write!(test, " && r.request().method() === {}", lit(&m.to_uppercase()));
                     }
-                    let opt = timeout_ms.map(|t| format!(", {{ timeout: {t} }}")).unwrap_or_default();
+                    let opt = format!(", {{ timeout: {} }}", expect_timeout(*timeout_ms));
                     let i = n.resp;
                     n.resp += 1;
                     self.line(indent, &format!("const resp{sc}_{i} = cur.waitForResponse(r => {test}{opt});"));

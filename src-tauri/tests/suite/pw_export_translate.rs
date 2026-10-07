@@ -118,7 +118,7 @@ fn a_response_is_armed_before_the_click_and_awaited_after() {
     ]))
     .run()
     .unwrap();
-    let arm = got.find("const resp1_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/save') && r.request().method() === 'POST');").expect("armed");
+    let arm = got.find("const resp1_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/save') && r.request().method() === 'POST', { timeout: 10000 });").expect("armed");
     let click = got.find("await cur.locator('#save').first().click();").unwrap();
     let wait = got.find("const r1_0 = await resp1_0;").expect("awaited");
     assert!(arm < click && click < wait, "{got}");
@@ -189,9 +189,9 @@ fn first_goes_on_single_element_locators_but_not_on_nth_or_counts() {
     .unwrap();
     assert!(got.contains("getByRole('button', { name: 'Save' }).filter({ visible: true }).nth(1).click();"), "{got}");
     assert!(got.contains("await expect(cur.locator('li')).toHaveCount(3, { timeout: 900 });"), "{got}");
-    assert!(got.contains(".getByRole('textbox').filter({ visible: true }).first()).toHaveAttribute('title', 'x');"), "{got}");
+    assert!(got.contains(".getByRole('textbox').filter({ visible: true }).first()).toHaveAttribute('title', 'x', { timeout: 10000 });"), "{got}");
     assert!(got.contains("await expect(cur.locator('#gone').first()).toBeHidden({ timeout: 100 });"), "{got}");
-    assert!(got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1);"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 10000 });"), "{got}");
 }
 
 #[test]
@@ -470,7 +470,7 @@ fn text_checks_read_the_element_the_way_auto_run_does() {
         got.contains("await expect.poll(() => cur.locator('#name').first().evaluate(readText), { timeout: 900 }).toBe('Senior Expert');"),
         "{got}"
     );
-    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText)).toContain('Step 2');"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText), { timeout: 10000 }).toContain('Step 2');"), "{got}");
     assert!(!got.contains("toHaveText") && !got.contains("toContainText"), "{got}");
     // The reader is declared once, before the steps.
     assert_eq!(got.matches("const readText = ").count(), 1, "{got}");
@@ -654,4 +654,33 @@ fn an_armed_wait_never_rejects_unhandled_when_its_guard_is_skipped() {
     // ...while the check inside still awaits the wait itself, which rejects.
     assert!(got.contains("      const d1_0 = await dl1_0;\n"), "{got}");
     assert!(got.contains("      const r1_0 = await resp1_0;\n"), "{got}");
+}
+
+#[test]
+fn an_expectation_with_no_timeout_waits_as_long_as_auto_run_does() {
+    let ms = v2_lib::browser::timing::Timing::default().expect_ms;
+    let got = one_step(json!([
+        { "kind": "expect_visible", "selector": "#a" },
+        { "kind": "expect_hidden", "selector": "#b" },
+        { "kind": "expect_text", "selector": "#c", "equals": "x" },
+        { "kind": "expect_contains_text", "selector": "#d", "value": "y" },
+        { "kind": "expect_count", "selector": "li", "equals": 2 },
+        { "kind": "expect_attribute", "selector": "#e", "name": "n", "equals": "v" },
+        { "kind": "expect_focused", "selector": "#f" },
+        { "kind": "expect_response", "url_contains": "/api" },
+        { "kind": "expect_visible", "selector": "#own", "timeout_ms": 1234 }
+    ]))
+    .run()
+    .unwrap();
+    let default = format!("{{ timeout: {ms} }}");
+    // Seven expect lines, the text polls and the response wait: all the app's default.
+    assert_eq!(got.matches(&default).count(), 8, "{got}");
+    assert!(got.contains("toBeVisible({ timeout: 1234 })"), "{got}");
+    // Nothing falls back to Playwright's own 5 s.
+    for l in got.lines().filter(|l| l.contains("await expect(") || l.contains("expect.poll(") || l.contains("waitForResponse(")) {
+        if l.contains("toHaveURL(") {
+            continue;
+        }
+        assert!(l.contains("timeout: "), "no timeout on: {l}");
+    }
 }

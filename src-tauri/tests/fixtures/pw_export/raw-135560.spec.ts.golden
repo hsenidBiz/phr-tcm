@@ -42,12 +42,12 @@ test.describe('Definition Wizard', () => {
     await expect(cur.locator('#phr-methods-list [data-role=\'method-name\']').filter({ visible: true }).nth(0)).toBeVisible({ timeout: 15000 });
     await cur.locator('#btnRatingMethodsContinue-button').filter({ visible: true }).first().click();
     await expect(cur.locator('#phr-proficiency-levels-step').filter({ visible: true }).getByRole('heading', { name: 'Proficiency Levels', exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: 20000 });
-    await expect.poll(() => cur.locator('#phr-shell-progress-bar .phr-progress-title').filter({ visible: true }).first().evaluate(readText)).toContain('Step 2 of 6');
+    await expect.poll(() => cur.locator('#phr-shell-progress-bar .phr-progress-title').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toContain('Step 2 of 6');
 
     // 4. On the "Performance-based" card, click "Activate", then click "Activate" in the "Activate Template" dialog.
     await cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().click();
     await cur.getByRole('dialog', { name: 'Activate Template' }).filter({ visible: true }).getByRole('button', { name: 'Activate', exact: true }).filter({ visible: true }).first().click();
-    await expect.poll(() => cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().evaluate(readText)).toBe('Active');
+    await expect.poll(() => cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toBe('Active');
 
     // 5. Click "Add Level". Copy the two lines Senior and Expert from a text editor and paste them into the "Level name" field of the new row.
     // Not checked: A clipboard paste cannot be driven - the script commits the two-line text with fill instead - and the case does not say what the one-line text reads, so whether it shows on one line is left for a person.
@@ -57,9 +57,9 @@ test.describe('Definition Wizard', () => {
     // 6. Click the "Confirm edit" check icon, then click "Use Custom Levels".
     await cur.locator('#phr-proficiency-custom-panel').filter({ visible: true }).getByRole('button', { name: 'Confirm edit', exact: true }).filter({ visible: true }).first().click();
     await cur.locator('#phr-proficiency-custom-panel').filter({ visible: true }).getByRole('button', { name: 'Use Custom Levels' }).filter({ visible: true }).first().click();
-    await expect.poll(() => cur.locator('#phr-proficiency-preview-status').filter({ visible: true }).first().evaluate(readText)).toBe('Custom scale');
-    await expect.poll(() => cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-number\']').filter({ visible: true }).first().evaluate(readText)).toBe('1');
-    await expect.poll(() => cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-name\']').filter({ visible: true }).first().evaluate(readText)).toContain('Senior');
-    await expect(cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile').filter({ visible: true })).toHaveCount(6);
+    await expect.poll(() => cur.locator('#phr-proficiency-preview-status').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toBe('Custom scale');
+    await expect.poll(() => cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-number\']').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toBe('1');
+    await expect.poll(() => cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile:last-child [data-role=\'tile-name\']').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toContain('Senior');
+    await expect(cur.locator('#phr-proficiency-preview-tiles .phr-dw-scale-tile').filter({ visible: true })).toHaveCount(6, { timeout: 10000 });
   });
 });

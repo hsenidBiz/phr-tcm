@@ -41,7 +41,7 @@ test.describe('F', () => {
     await tab_report.goto('/hr/report');
     claimed.add(tab_report);
     cur = tab_report;
-    await expect(cur.locator('#chart').first()).toBeVisible();
+    await expect(cur.locator('#chart').first()).toBeVisible({ timeout: 10000 });
     await tab_report.close();
     if (cur === tab_report) { cur = page; }
   });

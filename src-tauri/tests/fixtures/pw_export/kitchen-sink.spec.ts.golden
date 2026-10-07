@@ -57,18 +57,18 @@ test.describe('F', () => {
     await expect(cur.locator('body')).toContainText('Welcome', { ignoreCase: true, useInnerText: true });
     await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'));
     await expect(cur.locator('#a').first()).toBeVisible({ timeout: 1000 });
-    await expect(cur.locator('.toast').filter({ visible: true }).first()).toBeHidden();
+    await expect(cur.locator('.toast').filter({ visible: true }).first()).toBeHidden({ timeout: 10000 });
     await expect.poll(() => cur.locator('select#level').filter({ visible: true }).first().evaluate(readText), { timeout: 2000 }).toBe('Senior Expert');
-    await expect.poll(() => cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readText)).toContain('draft');
-    await expect(cur.locator('tr.row').filter({ visible: true })).toHaveCount(3);
-    await expect(cur.locator('#save').filter({ visible: true }).nth(1)).toHaveAttribute('aria-disabled', 'false');
+    await expect.poll(() => cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toContain('draft');
+    await expect(cur.locator('tr.row').filter({ visible: true })).toHaveCount(3, { timeout: 10000 });
+    await expect(cur.locator('#save').filter({ visible: true }).nth(1)).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
     await expect(cur.locator('#name').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 500 });
 
     // 3.
     const mark3 = opened.length;
     const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST', { timeout: 8000 });
     resp3_0.catch(() => {});
-    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'));
+    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'), { timeout: 10000 });
     resp3_1.catch(() => {});
     if (await cur.getByRole('dialog', { name: 'Confirm' }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) {
       await cur.getByRole('button', { name: 'OK' }).filter({ visible: true }).first().click();
