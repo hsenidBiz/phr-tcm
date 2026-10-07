@@ -380,8 +380,12 @@ export default function SetupPanel({
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
             {summaryLines(s).map(({ label, status, value }) => (
-              <li key={label} className="flex items-baseline gap-2 text-sm">
-                <span aria-hidden className={cn("size-2 shrink-0 translate-y-px self-center rounded-full", DOT[status])} />
+              <li key={label} className="flex items-start gap-2 text-sm">
+                {/* One line tall and centred in it, so the dot sits beside
+                    the label's first line even when the value wraps. */}
+                <span aria-hidden className="flex h-5 shrink-0 items-center">
+                  <span className={cn("size-2 rounded-full", DOT[status])} />
+                </span>
                 <span className="w-24 shrink-0 text-muted">{label}</span>
                 {/* Never cut short: the site address in particular is only
                     useful whole. It breaks inside the URL; the rest wrap at
