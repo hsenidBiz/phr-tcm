@@ -3644,6 +3644,8 @@ export type Precondition_Serialize = {
 };
 
 export type Preview = {
+	/**  The active environment id: the key the dialog edits in `map.accounts`. */
+	environment: string,
 	clone_ok: boolean,
 	clone_problem: string | null,
 	user_keys: string[],

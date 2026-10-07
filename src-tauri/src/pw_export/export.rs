@@ -35,6 +35,8 @@ pub struct PreviewCase {
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct Preview {
+    /// The active environment id: the key the dialog edits in `map.accounts`.
+    pub environment: String,
     pub clone_ok: bool,
     pub clone_problem: Option<String>,
     pub user_keys: Vec<String>,
@@ -296,6 +298,7 @@ pub fn preview_with(
         })
         .collect();
     Ok(Preview {
+        environment: ctx.env_id.clone(),
         clone_ok: ctx.clone.is_ok(),
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),

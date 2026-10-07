@@ -183,6 +183,7 @@ fn preview_lists_each_reason() {
     let ids = [10, 11, 12, 13, 14, 15, 16, 17, 18];
     let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path()).unwrap();
     assert!(p.clone_ok, "{:?}", p.clone_problem);
+    assert!(!p.environment.is_empty());
     assert_eq!(p.user_keys, vec!["REPO_KEY"]);
     assert!(p.areas.contains(&"Definition Wizard".to_string()));
     assert!(p.accounts.contains(&"admin".to_string()));
