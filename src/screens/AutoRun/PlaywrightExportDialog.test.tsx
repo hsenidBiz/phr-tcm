@@ -51,7 +51,14 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
   const onClose = vi.fn();
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <PlaywrightExportDialog org="acme" project="Web" pbiId={7} caseIds={[10, 11, 12]} onClose={onClose} />
+      <PlaywrightExportDialog
+        org="acme"
+        project="Web"
+        pbiId={7}
+        caseIds={[10, 11, 12]}
+        modules={[[10, "Definition Wizard"], [11, ""], [12, "Performance"]]}
+        onClose={onClose}
+      />
     </QueryClientProvider>,
   );
   return { calls, onClose };
@@ -113,6 +120,10 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   expect(await screen.findByText("suites/sl/admin/pm/wizard/test-cases/wizard.md")).toBeInTheDocument();
   const write = calls.find((c) => c.cmd === "pw_export_write")!;
   expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10] });
+  // The same Modules the preview was given, so the write picks the same areas.
+  const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"]];
+  expect(write.args.modules).toEqual(modules);
+  expect(calls.find((c) => c.cmd === "pw_export_preview")?.args.modules).toEqual(modules);
   expect(screen.getByText("#10 → suites/sl/admin/pm/wizard/raw/a.spec.ts")).toBeInTheDocument();
   expect(screen.getByText("pm/wizard")).toBeInTheDocument();
   expect(screen.getByText(/test-refactorer/)).toBeInTheDocument();

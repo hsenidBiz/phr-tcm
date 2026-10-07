@@ -1169,7 +1169,7 @@ export const commands = {
 	/**  The folder of the Playwright automation clone scripts export into. */
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
 	/**  Which of `case_ids` can be exported, and why not for the rest. */
-	pwExportPreview: (organization: string, project: string, caseIds: number[]) => typedError<Preview, string>(__TAURI_INVOKE("pw_export_preview", { organization, project, caseIds })),
+	pwExportPreview: (organization: string, project: string, caseIds: number[], modules: ([number, string])[]) => typedError<Preview, string>(__TAURI_INVOKE("pw_export_preview", { organization, project, caseIds, modules })),
 	/**
 	 *  Keeps the area placements and account choices. One bad placement refuses
 	 *  the whole map and nothing is saved.
@@ -1177,9 +1177,11 @@ export const commands = {
 	pwExportSaveMap: (organization: string, project: string, map: ExportMap) => typedError<null, string>(__TAURI_INVOKE("pw_export_save_map", { organization, project, map })),
 	/**
 	 *  Writes the cases into the clone. Reads each case's title, steps, state
-	 *  and paths from Azure DevOps first (read-only).
+	 *  and paths from Azure DevOps first (read-only). `modules` is each case's
+	 *  Module as the screen has it - the same the preview was given, so the
+	 *  write picks the same areas the preview showed.
 	 */
-	pwExportWrite: (organization: string, project: string, caseIds: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, moduleRef, preconditionsRef })),
+	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never

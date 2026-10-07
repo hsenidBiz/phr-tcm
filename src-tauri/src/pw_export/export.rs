@@ -13,7 +13,8 @@ use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
 use crate::autorun::nav::{self, NavFile};
 use crate::autorun::recipe::{self, SignInRecipe};
-use crate::autorun::{accounts, store, CaseScript, LocalRun};
+use crate::autorun::{accounts, runner, store, CaseScript, LocalRun};
+use crate::browser::actions::Action;
 use crate::browser::locator::Target;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,6 +60,9 @@ pub struct ExportResult {
 /// Everything read once per preview or write.
 struct Ctx {
     clone: Result<ClonedRepo, String>,
+    /// Each case's Module, as Azure DevOps has it: what Auto Run picks a
+    /// script's area by when the script names none (`nav::route_for`).
+    modules: BTreeMap<i32, String>,
     map: ExportMap,
     nav: NavFile,
     recipe: Option<SignInRecipe>,
@@ -69,7 +73,13 @@ struct Ctx {
 }
 
 impl Ctx {
-    fn load(root: &Path, org: &str, project: &str, clone_path: &str) -> Result<Ctx, String> {
+    fn load(
+        root: &Path,
+        org: &str,
+        project: &str,
+        clone_path: &str,
+        modules: &BTreeMap<i32, String>,
+    ) -> Result<Ctx, String> {
         let env_id = crate::environments::active_id(root)?;
         let accounts = accounts::load_accounts_for(root, &env_id)?
             .into_iter()
@@ -82,6 +92,7 @@ impl Ctx {
         };
         Ok(Ctx {
             clone,
+            modules: modules.clone(),
             map: mapping::load(root, org, project)?,
             nav: nav::load_nav(root, org, project)?,
             recipe: recipe::load_effective_recipe_if_any(root, org, project)?,
@@ -101,6 +112,37 @@ struct Ready {
     /// Every area a `return_to_area` names, under the script's own spelling.
     by_name: BTreeMap<String, Vec<Target>>,
     origins: Vec<String>,
+}
+
+/// A case with no Module in a project with no areas: Auto Run runs it, but
+/// nothing says where in the clone it goes.
+const NO_PLACE: &str =
+    "this project has no areas recorded and the case has no Module, so nothing says where it goes in the clone - set its Module in Azure DevOps";
+
+/// A `return_to_area` that names no area: it goes back to the case's own.
+fn bare_return_to_area(script: &CaseScript) -> bool {
+    script
+        .steps
+        .iter()
+        .flat_map(|s| s.actions.iter().flat_map(|a| a.each()))
+        .any(|a| matches!(a, Action::ReturnToArea { .. }) && a.area_named().is_none())
+}
+
+/// The names the dialog places: the recorded areas, or - in a project with
+/// none - the selected cases' Modules, which is what such cases are placed by.
+fn placement_keys(ctx: &Ctx, case_ids: &[i32]) -> Vec<String> {
+    if !ctx.nav.modules.is_empty() {
+        return ctx.nav.modules.iter().map(|m| m.name().to_string()).collect();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for id in case_ids {
+        if let Some(m) = ctx.modules.get(id).map(|m| m.trim()).filter(|m| !m.is_empty()) {
+            if !out.iter().any(|o| o.eq_ignore_ascii_case(m)) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// An index.json file name is used only if it is a bare `*.spec.ts` name.
@@ -179,21 +221,23 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
         return fail(pc, format!("latest run: {said}"));
     }
 
-    // Area.
-    let named = script.area.as_deref().map(str::trim).unwrap_or("");
-    let area = if named.is_empty() {
-        if ctx.nav.modules.len() == 1 {
-            &ctx.nav.modules[0]
-        } else {
-            return fail(pc, "script has no area - set one in Auto Run".into());
-        }
-    } else {
-        match nav::find_area(&ctx.nav, named) {
-            Some(a) => a,
-            None => return fail(pc, format!("area \"{named}\" is not recorded in Auto Run")),
-        }
+    // Area: chosen exactly as an unattended run chooses it - the script's
+    // own, else the one named like the case's Module (`nav::route_for`).
+    let module = ctx.modules.get(&id).map(|m| m.trim()).unwrap_or("");
+    let route = match nav::route_for(&ctx.nav, script.area.as_deref(), Some(module), script.account.as_deref()) {
+        Ok(r) => r,
+        Err(why) => return fail(pc, why),
     };
-    let area_name = area.name().to_string();
+    // A project with no areas runs the case from home with no menu clicks,
+    // and its specs are placed by the case's Module instead.
+    let (area_name, area_clicks) = match route {
+        Some(a) => (a.name().to_string(), a.clicks.clone()),
+        None if module.is_empty() => return fail(pc, NO_PLACE.into()),
+        None => (module.to_string(), Vec::new()),
+    };
+    if route.is_none() && bare_return_to_area(&script) {
+        return fail(pc, runner::NO_AREA_IN_RUN.into());
+    }
     let placement = ctx.map.areas.get(&area_name).cloned().or_else(|| {
         ctx.map.areas.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case(&area_name)).map(|(_, v)| v.clone())
     });
@@ -267,7 +311,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
         md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature),
         feature_title: title_case(&placement.feature),
         after_sign_in: &recipe.after_sign_in,
-        area_clicks: &area.clicks,
+        area_clicks: &area_clicks,
         area_clicks_by_name: &by_name,
         step_texts: &BTreeMap::new(),
         origins: &origins,
@@ -277,19 +321,22 @@ fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Opt
     }
 
     pc.exportable = true;
-    let ready = Ready { script, placement, user_key, area_clicks: area.clicks.clone(), by_name, origins };
+    let ready = Ready { script, placement, user_key, area_clicks, by_name, origins };
     (pc, Some(ready))
 }
 
+/// `modules` is each case's Module (case id to value), as the Auto Run
+/// screen's rows have it.
 pub fn preview_with(
     root: &Path,
     org: &str,
     project: &str,
     case_ids: &[i32],
     clone_path: &str,
+    modules: &BTreeMap<i32, String>,
 ) -> Result<Preview, String> {
     // A failure here is not the clone's: it is the caller's error.
-    let ctx = Ctx::load(root, org, project, clone_path)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
     let cases = case_ids
         .iter()
         .map(|&id| {
@@ -302,7 +349,7 @@ pub fn preview_with(
         clone_ok: ctx.clone.is_ok(),
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
-        areas: ctx.nav.modules.iter().map(|m| m.name().to_string()).collect(),
+        areas: placement_keys(&ctx, case_ids),
         accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
         map: ctx.map.clone(),
         cases,
@@ -331,8 +378,15 @@ fn eligible(ctx: &Ctx, root: &Path, case_ids: &[i32]) -> Result<Vec<(i32, Ready)
     Ok(ready)
 }
 
-pub fn ensure_exportable(root: &Path, org: &str, project: &str, case_ids: &[i32], clone_path: &str) -> Result<(), String> {
-    let ctx = Ctx::load(root, org, project, clone_path)?;
+pub fn ensure_exportable(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+) -> Result<(), String> {
+    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
     ctx.clone.as_ref().map_err(|e| e.clone())?;
     eligible(&ctx, root, case_ids).map(|_| ())
 }
@@ -348,9 +402,10 @@ pub fn write_with(
     project: &str,
     case_ids: &[i32],
     clone_path: &str,
+    modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
 ) -> Result<ExportResult, String> {
-    let ctx = Ctx::load(root, org, project, clone_path)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
 
     // Refuse everything unless every case is exportable.

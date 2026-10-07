@@ -46,12 +46,15 @@ export default function PlaywrightExportDialog({
   project,
   pbiId,
   caseIds,
+  modules,
   onClose,
 }: {
   org: string;
   project: string;
   pbiId: number;
   caseIds: number[];
+  /** Each case's Module: Auto Run picks the area of a script that names none by it. */
+  modules: [number, string][];
   onClose: () => void;
 }) {
   const titleId = useId();
@@ -71,13 +74,13 @@ export default function PlaywrightExportDialog({
 
   /** Reads the preview again. `reseed` puts the rows back to what is saved. */
   const refresh = useCallback(async (reseed = true) => {
-    const p = await unwrapStr(commands.pwExportPreview(org, project, caseIds));
+    const p = await unwrapStr(commands.pwExportPreview(org, project, caseIds, modules));
     setPreview(p);
     if (reseed) {
       setAreas({ ...(p.map.areas ?? {}) });
       setUsers({ ...(p.map.accounts?.[p.environment] ?? {}) });
     }
-  }, [org, project, caseIds]);
+  }, [org, project, caseIds, modules]);
 
   useEffect(() => {
     let live = true;
@@ -157,7 +160,7 @@ export default function PlaywrightExportDialog({
     attempt(async () => {
       setRefreshError("");
       const written = await unwrapStr(
-        commands.pwExportWrite(org, project, ticked, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
+        commands.pwExportWrite(org, project, ticked, modules, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
       );
       setResult(written);
       try {

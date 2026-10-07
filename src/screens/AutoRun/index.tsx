@@ -915,6 +915,7 @@ export default function AutoRun({
           project={project}
           pbiId={pbi.id}
           caseIds={rows.map((c) => c.id)}
+          modules={rows.map((c): [number, string] => [c.id, c.module_value])}
           onClose={() => setExportOpen(false)}
         />
       )}

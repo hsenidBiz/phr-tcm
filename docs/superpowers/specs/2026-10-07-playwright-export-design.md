@@ -94,6 +94,12 @@ scripts. A case is tickable only when:
 - every action in it has a faithful translation (below), and
 - its area is mapped and its account is mapped to an existing repo key.
 
+A script that names no area gets the one an unattended Auto Run gives it
+(`nav::route_for`): the area named like the case's Module, or that Module's only area,
+and Auto Run's own sentence when there is none. In a project with no areas recorded the
+case runs from home with no menu clicks, so it is exported with none and placed by its
+Module instead of an area name.
+
 Every other case is listed with the one reason it cannot be exported ("latest run:
 Failed", "uses upload - its file is in TCM's Test files, not the repo", "account
 hr.admin has no repo user key - map it, or add one with the command below").

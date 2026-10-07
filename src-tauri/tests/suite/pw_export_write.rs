@@ -20,6 +20,8 @@ const MD_REL: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/
 struct Fx {
     root: tempfile::TempDir,
     clone: tempfile::TempDir,
+    /// Each case's Module, as the Auto Run screen passes it.
+    modules: std::cell::RefCell<BTreeMap<i32, String>>,
 }
 
 fn write(p: PathBuf, s: &str) {
@@ -33,7 +35,11 @@ fn placement() -> Placement {
 
 impl Fx {
     fn new() -> Fx {
-        let fx = Fx { root: tempfile::tempdir().unwrap(), clone: tempfile::tempdir().unwrap() };
+        let fx = Fx {
+            root: tempfile::tempdir().unwrap(),
+            clone: tempfile::tempdir().unwrap(),
+            modules: Default::default(),
+        };
         let c = fx.clone.path();
         write(c.join("playwright.config.ts"), "export default {};");
         write(c.join("suites/_generated/index.json"), "{\n  \"1\": \"old.spec.ts\"\n}\n");
@@ -142,7 +148,7 @@ fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
 }
 
 fn export(fx: &Fx, ids: &[i32], d: &BTreeMap<i32, CaseDoc>) -> Result<ExportResult, String> {
-    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), d)
+    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow(), d)
 }
 
 #[test]
@@ -181,7 +187,7 @@ fn preview_lists_each_reason() {
     fx.run("h", "3", 18, "Passed");
 
     let ids = [10, 11, 12, 13, 14, 15, 16, 17, 18];
-    let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path()).unwrap();
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path(), &fx.modules.borrow()).unwrap();
     assert!(p.clone_ok, "{:?}", p.clone_problem);
     assert!(!p.environment.is_empty());
     assert_eq!(p.user_keys, vec!["REPO_KEY"]);
@@ -363,7 +369,7 @@ fn directories_created_for_a_failed_write_are_removed() {
 }
 
 fn preview_of(fx: &Fx, id: i32) -> v2_lib::pw_export::export::PreviewCase {
-    preview_with(fx.root.path(), ORG, PROJECT, &[id], &fx.clone_path()).unwrap().cases.remove(0)
+    preview_with(fx.root.path(), ORG, PROJECT, &[id], &fx.clone_path(), &fx.modules.borrow()).unwrap().cases.remove(0)
 }
 
 #[test]
@@ -461,6 +467,80 @@ fn an_unreadable_accounts_file_is_an_error_not_a_clone_problem() {
     let fx = Fx::new();
     let env_id = v2_lib::environments::active_id(fx.root.path()).unwrap();
     write(v2_lib::autorun::accounts::accounts_path_for(fx.root.path(), &env_id), "not json");
-    let e = preview_with(fx.root.path(), ORG, PROJECT, &[1], &fx.clone_path());
+    let e = preview_with(fx.root.path(), ORG, PROJECT, &[1], &fx.clone_path(), &BTreeMap::new());
     assert!(e.is_err());
+}
+
+fn spec_of(fx: &Fx, r: &ExportResult, id: i32) -> String {
+    let file = &r.cases.iter().find(|(i, _)| *i == id).unwrap().1;
+    fx.read_clone(&format!("suites/_generated/{file}"))
+}
+
+#[test]
+fn a_script_with_no_area_goes_where_auto_run_takes_it_by_the_cases_module() {
+    let fx = Fx::new();
+    // Named like an area: that area, as an unattended run picks it.
+    fx.click_script(140, "One forty", "admin", "");
+    fx.run("r140", "5", 140, "Passed");
+    fx.modules.borrow_mut().insert(140, " definition wizard ".into());
+    let pc = preview_of(&fx, 140);
+    assert!(pc.exportable, "{:?}", pc.reason);
+    let r = export(&fx, &[140], &docs(&[(140, "One forty")])).unwrap();
+    assert!(spec_of(&fx, &r, 140).contains("cur.locator('a.dw')"));
+
+    // A Module with several areas and none named like it: Auto Run's own refusal.
+    fx.click_script(141, "One forty one", "admin", "");
+    fx.run("r141", "5", 141, "Passed");
+    fx.modules.borrow_mut().insert(141, "Performance".into());
+    let want = v2_lib::autorun::nav::route_for(
+        &v2_lib::autorun::nav::load_nav(fx.root.path(), ORG, PROJECT).unwrap(),
+        None,
+        Some("Performance"),
+        Some("admin"),
+    )
+    .unwrap_err();
+    assert_eq!(preview_of(&fx, 141).reason.as_deref(), Some(want.as_str()));
+    assert!(export(&fx, &[141], &docs(&[(141, "One forty one")])).unwrap_err().contains(&want));
+
+    // No Module at all.
+    fx.click_script(142, "One forty two", "admin", "");
+    fx.run("r142", "5", 142, "Passed");
+    assert_eq!(preview_of(&fx, 142).reason.as_deref(), Some(v2_lib::autorun::nav::NO_MODULE));
+}
+
+#[test]
+fn a_project_with_no_areas_exports_with_no_menu_clicks_placed_by_module() {
+    let fx = Fx::new();
+    write(nav::nav_path(fx.root.path(), ORG, PROJECT), &json!({ "modules": [] }).to_string());
+    fx.click_script(150, "One fifty", "admin", "");
+    fx.run("r150", "5", 150, "Passed");
+    fx.modules.borrow_mut().insert(150, "Performance".into());
+
+    // The Module is what the dialog places, and it is not placed yet.
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[150], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    assert_eq!(p.areas, vec!["Performance".to_string()]);
+    assert!(p.cases[0].reason.as_deref().unwrap_or("").contains("\"Performance\" is not placed"), "{:?}", p.cases[0]);
+
+    let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    map.areas.insert("Performance".into(), placement());
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+    let pc = preview_of(&fx, 150);
+    assert!(pc.exportable, "{:?}", pc.reason);
+    let r = export(&fx, &[150], &docs(&[(150, "One fifty")])).unwrap();
+    let spec = spec_of(&fx, &r, 150);
+    // Home, the recipe's steps, then straight into step 1: no area clicks.
+    assert!(!spec.contains("a.dw") && !spec.contains("a.up"), "{spec}");
+    assert!(spec.contains("await cur.locator('#go').first().click();"), "{spec}");
+
+    // A bare return_to_area has nowhere to go - as in Auto Run.
+    fx.script(151, "One fifty one", "admin", "", json!([{ "kind": "return_to_area" }]));
+    fx.run("r151", "5", 151, "Passed");
+    fx.modules.borrow_mut().insert(151, "Performance".into());
+    assert_eq!(preview_of(&fx, 151).reason.as_deref(), Some(v2_lib::autorun::runner::NO_AREA_IN_RUN));
+
+    // No Module and no areas: nothing says where it goes.
+    fx.click_script(152, "One fifty two", "admin", "");
+    fx.run("r152", "5", 152, "Passed");
+    let why = preview_of(&fx, 152).reason.unwrap();
+    assert!(why.contains("no areas recorded") && why.contains("Module"), "{why}");
 }
