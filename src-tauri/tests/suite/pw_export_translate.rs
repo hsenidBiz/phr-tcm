@@ -106,7 +106,7 @@ fn a_sibling_script_becomes_the_golden_raw_spec() {
         origins: &origins(),
     })
     .unwrap();
-    assert_eq!(got, lf(include_str!("../fixtures/pw_export/raw-135560.spec.ts")));
+    assert_eq!(got, lf(include_str!("../fixtures/pw_export/raw-135560.spec.ts.golden")));
 }
 
 #[test]
