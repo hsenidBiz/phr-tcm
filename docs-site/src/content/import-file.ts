@@ -81,8 +81,14 @@ export const importFile: Screen = {
     },
     {
       id: RENAME,
-      route: [{ nav: "Import Test Cases" }, { click: { role: "button", name: "Rename" } }, { waitFor: { role: "textbox", name: "Find" } }],
-      alt: "The rename window for the queued cases",
+      route: [
+        { nav: "Import Test Cases" },
+        { click: { role: "checkbox", name: `Select ${FIRST}` } },
+        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "button", nameRe: "^Rename \\d+$" } },
+        { waitFor: { role: "textbox", name: "Find" } },
+      ],
+      alt: "The rename window for two ticked queued cases",
     },
     {
       id: REVIEW,
@@ -175,14 +181,6 @@ export const importFile: Screen = {
       does:
         "Attaches the draft to the Product Backlog Item in Azure DevOps as a file and copies a one-time link to it, ready to send to a reviewer, who imports it with **Import shared**. " +
         "No test cases are created. It needs a connection, so it is greyed out while you are offline.",
-    },
-    {
-      id: "rename",
-      shot: QUEUE,
-      group: "the-queue",
-      locate: { role: "button", name: "Rename" },
-      name: "Rename",
-      does: "Opens the rename window for every queued title, or only the ticked ones when some are ticked.",
     },
     {
       id: "remove-all",
@@ -602,7 +600,7 @@ export const importFile: Screen = {
       id: "rename-apply",
       shot: RENAME,
       group: "many-at-once",
-      locate: { role: "button", nameRe: "^Rename \\d+$" },
+      locate: { css: '[role="dialog"] button:text-matches("^Rename [0-9]+$")' },
       name: "Rename",
       does: "Renames the titles shown in the preview. Afterwards **Undo rename** puts them back.",
     },
