@@ -211,6 +211,29 @@ test("a suspected defect shows on the open card, with its step and note", () => 
   expect(onAskClear).toHaveBeenCalledTimes(1);
 });
 
+test("a collapsed card with a suspected defect shows an icon marker, and still no extra button", () => {
+  renderCard({
+    open: false,
+    script: { ...BARE, suspected_defect: { step_number: 1, note: "No lockout message", marked_at: "1" } } as CaseScript,
+  });
+  const mark = screen.getByRole("img", { name: "Suspected defect: No lockout message" });
+  expect(mark).toHaveAttribute("title", "Suspected defect: No lockout message");
+  expect(screen.getAllByRole("button")).toHaveLength(2);
+});
+
+test("a collapsed card without a suspected defect shows no marker", () => {
+  renderCard({ open: false, script: BARE });
+  expect(screen.queryByRole("img", { name: /Suspected defect/ })).toBeNull();
+});
+
+test("the open card shows the badge, not the marker", () => {
+  renderCard({
+    open: true,
+    script: { ...BARE, suspected_defect: { step_number: 1, note: "No lockout message", marked_at: "1" } } as CaseScript,
+  });
+  expect(screen.queryByRole("img", { name: /Suspected defect/ })).toBeNull();
+});
+
 test("scriptFacts and scriptFiles skip what is not there", () => {
   expect(scriptFacts(BARE)).toEqual([{ label: "Step count", value: "1 step" }]);
   expect(scriptFiles(BARE)).toEqual({ uploads: [], downloads: [] });
