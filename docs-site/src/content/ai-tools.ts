@@ -383,7 +383,8 @@ export const aiBridge: Screen = {
       id: "credentials-save",
       shot: CREDENTIALS,
       group: "company-database",
-      locate: { role: "button", name: "Save" },
+      // The writing style card behind the window has a Save of its own.
+      locate: { css: `xpath=//*[@role="dialog"]//button[normalize-space(.) = "Save"]` },
       name: "Save",
       does: "Saves the login in Windows Credential Manager on this computer and closes the window.",
     },

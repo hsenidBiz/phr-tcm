@@ -674,6 +674,13 @@ async function capture({ browser, main, mode, shots, staging, guard, only }) {
         const dir = join(staging, pass.dir);
         mkdirSync(dir, { recursive: true });
         await captureSharp(target, size, join(dir, `${shot.id}.jpg`));
+        // Leaving the density override also drops Playwright's viewport, and
+        // Playwright skips a resize to the size it believes is set. With
+        // the app's window minimised or any size but the shot's, the next
+        // shot was laid out at the window's size: nudge it so the viewport
+        // is really sent again.
+        await target.setViewportSize(viewportOf({ w: size.w + 1, h: size.h })).catch(() => {});
+        await target.setViewportSize(viewportOf(size)).catch(() => {});
       }
 
       console.log(`  ${shot.id}  ${placed}/${controls.length} controls`);
