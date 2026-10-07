@@ -56,6 +56,14 @@ test("prompts for scope when no PBI is chosen", () => {
   expect(screen.getByText(/Pick an organization, project and PBI/)).toBeInTheDocument();
 });
 
+test("the queue has no Export JSON button", async () => {
+  baseMocks();
+  renderScreen();
+  addCase("Queued case");
+  expect(await screen.findByRole("button", { name: /Share for review/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Export JSON/ })).not.toBeInTheDocument();
+});
+
 test("manual add, review gate, submit reports results", async () => {
   baseMocks((cmd, args) => {
     if (cmd === "submit_queue") {

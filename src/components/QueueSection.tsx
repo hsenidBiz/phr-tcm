@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import ActionDock from "./ActionDock";
@@ -18,7 +17,6 @@ import {
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
-import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
 import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
@@ -69,7 +67,6 @@ import {
   IconBack,
   IconClear,
   IconConfirm,
-  IconExport,
   IconOpenInBrowser,
   IconRemove,
   IconReview,
@@ -538,21 +535,6 @@ export default function QueueSection({
         .catch(() => toast.success(`Share link ready: ${link}`));
     },
     onError: (e) => toast.error(`Could not share: ${e.message}`),
-  });
-
-  const exportJson = useMutation({
-    mutationFn: async () => {
-      const path = await save({
-        defaultPath: exportPathFor("test-case-queue.json"),
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
-      rememberExportPath(path);
-      const r = await commands.exportQueueJson(path, queue);
-      if (r.status === "error") throw new Error(r.error);
-      toast.success("Queue exported.");
-    },
-    onError: (e) => toast.error(`Export failed: ${e.message}`),
   });
 
   // v1's "View": render to a temp file and open the browser - no download.
@@ -1603,15 +1585,6 @@ export default function QueueSection({
           >
             <IconShare aria-hidden />
             {share.isPending ? "Sharing" : "Share for review"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0}
-            onClick={() => exportJson.mutate()}
-          >
-            <IconExport aria-hidden />
-            Export JSON
           </Button>
           <Button
             variant="outline"

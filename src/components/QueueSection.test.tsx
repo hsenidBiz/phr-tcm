@@ -434,7 +434,7 @@ test("offline disables the network writes and says why", async () => {
     expect(share).toHaveAttribute("title", expect.stringContaining("No internet"));
     // Local work is untouched by the gate.
     expect(screen.getByRole("button", { name: /^Edit / })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /Export JSON/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Export JSON/ })).not.toBeInTheDocument();
 
     Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
     window.dispatchEvent(new Event("online"));
