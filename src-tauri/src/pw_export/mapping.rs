@@ -30,6 +30,7 @@ fn is_kebab(s: &str) -> bool {
     !s.is_empty()
         && !s.starts_with('-')
         && !s.ends_with('-')
+        && !s.contains("--")
         && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
@@ -47,7 +48,9 @@ fn check(label: &str, value: &str) -> Result<(), String> {
 
 impl Placement {
     pub fn validate(&self) -> Result<(), String> {
-        check("side", &self.side)?;
+        if self.side != "admin" && self.side != "self" {
+            return Err(format!("The side \"{}\" must be exactly \"admin\" or \"self\".", self.side));
+        }
         check("module", &self.module)?;
         check("feature", &self.feature)
     }

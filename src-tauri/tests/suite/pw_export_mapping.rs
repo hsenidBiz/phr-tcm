@@ -29,6 +29,15 @@ fn placement_rules() {
     assert!(placement("admin", "performance", "proficiency-levels").validate().is_ok());
     let side = placement("Admin", "performance", "x").validate().unwrap_err();
     assert!(side.to_lowercase().contains("side"), "{side}");
+    for bad in ["foo", "user", ""] {
+        let e = placement(bad, "performance", "x").validate().unwrap_err();
+        assert!(e.to_lowercase().contains("side"), "{e}");
+    }
+    assert!(placement("self", "performance", "x").validate().is_ok());
+    let dbl_m = placement("admin", "a--b", "x").validate().unwrap_err();
+    assert!(dbl_m.to_lowercase().contains("module"), "{dbl_m}");
+    let dbl_f = placement("admin", "performance", "a--b").validate().unwrap_err();
+    assert!(dbl_f.to_lowercase().contains("feature"), "{dbl_f}");
     let module = placement("admin", "Perf Mgmt", "x").validate().unwrap_err();
     assert!(module.to_lowercase().contains("module"), "{module}");
     let feature = placement("admin", "performance", "-x").validate().unwrap_err();
