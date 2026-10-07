@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.1-beta.14",
+    date: "2026-10-07",
+    items: [
+      "The risk-tiered test design trial on the AI Bridge tab follows the updated testing policy, and the assistant can review a test plan or PBI and propose which cases belong in the Regression suite. It changes no tags until you say yes, and then only through a file you import.",
+    ],
+  },
+  {
     version: "2.1.1-beta.13",
     date: "2026-10-07",
     items: [
