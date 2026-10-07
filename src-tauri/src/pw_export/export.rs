@@ -1,0 +1,467 @@
+//! The preview (which cases can be exported, and why not) and the
+//! all-or-nothing write of raw specs, test-case sections and `index.json`
+//! into a PHR-PLAYWRIGHT-AUTOMATION clone.
+//!
+//! This module only ever writes: `suites/<seg>/test-cases/<feature>.md`,
+//! `suites/_generated/<file>.spec.ts` and `suites/_generated/index.json`.
+//! It never touches `users.json`, `navigation.json`, `seed.spec.ts` or
+//! `auth.setup.ts`, and never runs git, npm or Playwright.
+
+use super::clone::{index_with, open, ClonedRepo};
+use super::mapping::{self, ExportMap, Placement};
+use super::test_case::{self, CaseDoc};
+use super::translate::{self, RawSpecInput};
+use crate::autorun::nav::{self, NavFile};
+use crate::autorun::recipe::{self, SignInRecipe};
+use crate::autorun::{accounts, store, CaseScript, LocalRun};
+use crate::browser::locator::Target;
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+const TMP_SUFFIX: &str = ".tcm-export-tmp";
+const MAX_RAW_NAME: usize = 60;
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PreviewCase {
+    pub case_id: i32,
+    pub title: String,
+    pub exportable: bool,
+    pub reason: Option<String>,
+    pub seg: Option<String>,
+    pub user_key: Option<String>,
+    pub add_user_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct Preview {
+    pub clone_ok: bool,
+    pub clone_problem: Option<String>,
+    pub user_keys: Vec<String>,
+    pub areas: Vec<String>,
+    pub accounts: Vec<String>,
+    pub map: ExportMap,
+    pub cases: Vec<PreviewCase>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ExportResult {
+    /// Relative to the clone, forward slashes.
+    pub files: Vec<String>,
+    /// Case id and the raw spec file it is in.
+    pub cases: Vec<(i32, String)>,
+    /// `<module>/<feature>` pairs the clone's navigation.json lacks.
+    pub missing_navigation: Vec<String>,
+}
+
+/// Everything read once per preview or write.
+struct Ctx {
+    clone: Result<ClonedRepo, String>,
+    map: ExportMap,
+    nav: NavFile,
+    recipe: Option<SignInRecipe>,
+    env_id: String,
+    /// `(key, username)` only; a password is never read out of an Account.
+    accounts: Vec<(String, String)>,
+    runs: Vec<LocalRun>,
+}
+
+impl Ctx {
+    fn load(root: &Path, org: &str, project: &str, clone_path: &str) -> Result<Ctx, String> {
+        let env_id = crate::environments::active_id(root)?;
+        let accounts = accounts::load_accounts_for(root, &env_id)?
+            .into_iter()
+            .map(|a| (a.key, a.username))
+            .collect();
+        let clone = if clone_path.trim().is_empty() {
+            Err("no Playwright clone folder is chosen yet".to_string())
+        } else {
+            open(Path::new(clone_path.trim()))
+        };
+        Ok(Ctx {
+            clone,
+            map: mapping::load(root, org, project)?,
+            nav: nav::load_nav(root, org, project)?,
+            recipe: recipe::load_effective_recipe_if_any(root, org, project)?,
+            env_id,
+            accounts,
+            runs: store::list_runs(root),
+        })
+    }
+}
+
+/// What a case needs to be written.
+struct Ready {
+    script: CaseScript,
+    placement: Placement,
+    user_key: String,
+    area_clicks: Vec<Target>,
+    origins: Vec<String>,
+}
+
+fn title_case(kebab: &str) -> String {
+    kebab
+        .split('-')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn kebab_name(title: &str, id: i32) -> String {
+    let mut out = String::new();
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.truncate(MAX_RAW_NAME);
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        out = format!("case-{id}");
+    }
+    out
+}
+
+fn evaluate(ctx: &Ctx, id: i32, script: Option<CaseScript>) -> (PreviewCase, Option<Ready>) {
+    let mut pc = PreviewCase {
+        case_id: id,
+        title: String::new(),
+        exportable: false,
+        reason: None,
+        seg: None,
+        user_key: None,
+        add_user_command: None,
+    };
+    let fail = |mut pc: PreviewCase, why: String| {
+        pc.reason = Some(why);
+        (pc, None)
+    };
+
+    let Some(script) = script else {
+        return fail(pc, "no script - record or write one in Auto Run".into());
+    };
+    pc.title = script.title.clone();
+
+    // The person's verdict on the newest run that holds the case.
+    let record = ctx.runs.iter().find_map(|r| r.cases.iter().find(|c| c.case_id == id));
+    let verdict = record.map(|c| c.verdict.trim()).unwrap_or("");
+    if verdict != "Passed" {
+        let said = if verdict.is_empty() { "not reviewed" } else { verdict };
+        return fail(pc, format!("latest run: {said}"));
+    }
+
+    // Area.
+    let named = script.area.as_deref().map(str::trim).unwrap_or("");
+    let area = if named.is_empty() {
+        if ctx.nav.modules.len() == 1 {
+            &ctx.nav.modules[0]
+        } else {
+            return fail(pc, "script has no area - set one in Auto Run".into());
+        }
+    } else {
+        match nav::find_area(&ctx.nav, named) {
+            Some(a) => a,
+            None => return fail(pc, format!("area \"{named}\" is not recorded in Auto Run")),
+        }
+    };
+    let area_name = area.name().to_string();
+    let placement = ctx.map.areas.get(&area_name).cloned().or_else(|| {
+        ctx.map.areas.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case(&area_name)).map(|(_, v)| v.clone())
+    });
+    let Some(placement) = placement else {
+        return fail(pc, format!("area \"{area_name}\" is not placed yet - choose where it goes in the clone"));
+    };
+    if let Err(e) = placement.validate() {
+        return fail(pc, format!("area \"{area_name}\" has a placement that is not valid: {e}"));
+    }
+    pc.seg = Some(placement.seg());
+
+    // Account.
+    let Some(account) = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty()) else {
+        return fail(pc, "script has no account".into());
+    };
+    let Some(user_key) = ctx.map.accounts.get(&ctx.env_id).and_then(|m| m.get(account)).cloned() else {
+        return fail(pc, format!("account \"{account}\" is not mapped to a repo user"));
+    };
+    pc.user_key = Some(user_key.clone());
+    let repo = match &ctx.clone {
+        Ok(r) => r,
+        Err(problem) => return fail(pc, problem.clone()),
+    };
+    if !repo.user_keys.contains(&user_key) {
+        let username = ctx
+            .accounts
+            .iter()
+            .find(|(k, _)| k == account)
+            .map(|(_, u)| u.clone())
+            .unwrap_or_else(|| "<username>".to_string());
+        pc.add_user_command =
+            Some(format!("npm run users -- add {user_key} --username {username} --password <password> --apply"));
+        return fail(pc, format!("repo user \"{user_key}\" is not in the clone's users.json"));
+    }
+
+    // Translation.
+    let Some(recipe) = &ctx.recipe else {
+        return fail(pc, "no sign-in recipe for this project".into());
+    };
+    let origins = recipe.origins();
+    if let Err(e) = translate::check(&script, &origins) {
+        return fail(pc, e.0);
+    }
+
+    pc.exportable = true;
+    let ready = Ready { script, placement, user_key, area_clicks: area.clicks.clone(), origins };
+    (pc, Some(ready))
+}
+
+pub fn preview_with(root: &Path, org: &str, project: &str, case_ids: &[i32], clone_path: &str) -> Preview {
+    let ctx = match Ctx::load(root, org, project, clone_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return Preview {
+                clone_ok: false,
+                clone_problem: Some(e.clone()),
+                user_keys: vec![],
+                areas: vec![],
+                accounts: vec![],
+                map: ExportMap::default(),
+                cases: case_ids
+                    .iter()
+                    .map(|&id| PreviewCase {
+                        case_id: id,
+                        title: String::new(),
+                        exportable: false,
+                        reason: Some(e.clone()),
+                        seg: None,
+                        user_key: None,
+                        add_user_command: None,
+                    })
+                    .collect(),
+            }
+        }
+    };
+    let cases = case_ids
+        .iter()
+        .map(|&id| {
+            let script = store::load_script(root, id).ok().flatten();
+            evaluate(&ctx, id, script).0
+        })
+        .collect();
+    Preview {
+        clone_ok: ctx.clone.is_ok(),
+        clone_problem: ctx.clone.as_ref().err().cloned(),
+        user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
+        areas: ctx.nav.modules.iter().map(|m| m.name().to_string()).collect(),
+        accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
+        map: ctx.map.clone(),
+        cases,
+    }
+}
+
+struct Out {
+    rel: String,
+    content: String,
+}
+
+pub fn write_with(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    docs: &BTreeMap<i32, CaseDoc>,
+) -> Result<ExportResult, String> {
+    let ctx = Ctx::load(root, org, project, clone_path)?;
+    let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
+
+    // Refuse everything unless every case is exportable.
+    let mut ready: Vec<(i32, Ready)> = Vec::new();
+    for &id in case_ids {
+        if ready.iter().any(|(i, _)| *i == id) {
+            continue;
+        }
+        let script = store::load_script(root, id)?;
+        match evaluate(&ctx, id, script) {
+            (_, Some(r)) => ready.push((id, r)),
+            (pc, None) => {
+                return Err(format!(
+                    "case {id} cannot be exported: {}. Nothing was written.",
+                    pc.reason.unwrap_or_default()
+                ))
+            }
+        }
+    }
+    if let Some((id, _)) = ready.iter().find(|(id, _)| !docs.contains_key(id)) {
+        return Err(format!("case {id} could not be read from Azure DevOps. Nothing was written."));
+    }
+
+    let by_name: BTreeMap<String, Vec<Target>> =
+        ctx.nav.modules.iter().map(|m| (m.name().to_string(), m.clicks.clone())).collect();
+    let recipe = ctx.recipe.as_ref().ok_or("no sign-in recipe for this project")?;
+
+    let mut md_files: BTreeMap<String, String> = BTreeMap::new();
+    let mut raw_files: Vec<Out> = Vec::new();
+    let mut cases: Vec<(i32, String)> = Vec::new();
+    let mut missing_navigation: Vec<String> = Vec::new();
+    let mut chosen: BTreeSet<String> = BTreeSet::new();
+    let mut index = repo.index.clone();
+
+    for (id, r) in &ready {
+        let id = *id;
+        let p = &r.placement;
+        let seg = p.seg();
+        let md_rel = format!("suites/{seg}/test-cases/{}.md", p.feature);
+        let nav_key = format!("{}/{}", p.module, p.feature);
+        let captured = repo.navigation_keys.contains(&nav_key);
+        if !captured && !missing_navigation.contains(&nav_key) {
+            missing_navigation.push(nav_key);
+        }
+        let feature_title = title_case(&p.feature);
+
+        let mut doc = docs[&id].clone();
+        doc.side = p.side.clone();
+        doc.navigation_captured = captured;
+        doc.feature_title = feature_title.clone();
+
+        // Several cases of one feature accumulate into one file in memory.
+        if !md_files.contains_key(&md_rel) {
+            let path = repo.root.join(&md_rel);
+            let start = if path.is_file() {
+                std::fs::read_to_string(&path).map_err(|e| format!("could not read {md_rel}: {e}"))?
+            } else {
+                test_case::new_file(&feature_title, &p.feature, &r.user_key)
+            };
+            md_files.insert(md_rel.clone(), start);
+        }
+        let current = md_files.get_mut(&md_rel).expect("inserted above");
+        *current = test_case::splice(current, id, &test_case::section(&doc));
+
+        // The raw file: the index's own for this id, else a fresh unique name.
+        let key = id.to_string();
+        let file = match index.iter().find(|(k, _)| *k == key) {
+            Some((_, f)) => f.clone(),
+            None => {
+                let base = kebab_name(&r.script.title, id);
+                let taken = |n: &str| repo.generated_files.iter().any(|g| g == n) || chosen.contains(n);
+                let mut name = format!("{base}.spec.ts");
+                let mut n = 2;
+                while taken(&name) {
+                    name = format!("{base}-{n}.spec.ts");
+                    n += 1;
+                }
+                name
+            }
+        };
+        chosen.insert(file.clone());
+
+        let step_texts: BTreeMap<i32, String> =
+            doc.steps.iter().enumerate().map(|(i, (action, _))| (i as i32 + 1, action.clone())).collect();
+        let spec = translate::raw_spec(&RawSpecInput {
+            script: &r.script,
+            md_path: md_rel,
+            feature_title,
+            after_sign_in: &recipe.after_sign_in,
+            area_clicks: &r.area_clicks,
+            area_clicks_by_name: &by_name,
+            step_texts: &step_texts,
+            origins: &r.origins,
+        })
+        .map_err(|e| format!("case {id} cannot be exported: {}. Nothing was written.", e.0))?;
+        raw_files.push(Out { rel: format!("suites/_generated/{file}"), content: spec });
+
+        match index.iter_mut().find(|(k, _)| *k == key) {
+            Some(entry) => entry.1 = file.clone(),
+            None => index.push((key, file.clone())),
+        }
+        cases.push((id, file));
+    }
+
+    // Order matters for the rename phase: test-case files, then raw specs,
+    // then index.json, so the index never points at a file that is missing.
+    let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
+    outs.extend(raw_files);
+    let last_id = ready.last().map(|(i, _)| *i);
+    if let (Some(id), Some((_, file))) = (last_id, cases.last()) {
+        outs.push(Out { rel: "suites/_generated/index.json".into(), content: index_with(&index, id, file) });
+    }
+
+    commit(&repo.root, &outs)?;
+    Ok(ExportResult { files: outs.into_iter().map(|o| o.rel).collect(), cases, missing_navigation })
+}
+
+
+fn tmp_of(target: &Path) -> PathBuf {
+    let mut name = target.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(TMP_SUFFIX);
+    target.with_file_name(name)
+}
+
+/// All-or-nothing as far as the file system allows: every file is first
+/// written beside its target as `<name>.tcm-export-tmp` (a failure there
+/// removes every temp and every directory this call created that is still
+/// empty), then the temps are renamed over their targets in the given order.
+/// A failure DURING the rename phase removes the temps still left but cannot
+/// undo renames already made, so earlier files may be in place; the order
+/// (test-case files, raw specs, index.json last) keeps the index from ever
+/// naming a file that does not exist.
+fn commit(root: &Path, outs: &[Out]) -> Result<(), String> {
+    let mut temps: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut created: Vec<PathBuf> = Vec::new();
+
+    let cleanup = |temps: &[(PathBuf, PathBuf)], created: &mut Vec<PathBuf>| {
+        for (tmp, _) in temps {
+            let _ = std::fs::remove_file(tmp);
+        }
+        created.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+        for d in created.iter() {
+            let _ = std::fs::remove_dir(d); // only succeeds while empty
+        }
+    };
+
+    for o in outs {
+        let target = root.join(&o.rel);
+        if let Some(parent) = target.parent() {
+            let mut missing: Vec<PathBuf> = Vec::new();
+            let mut p = parent;
+            while !p.exists() {
+                missing.push(p.to_path_buf());
+                match p.parent() {
+                    Some(up) => p = up,
+                    None => break,
+                }
+            }
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                created.extend(missing);
+                cleanup(&temps, &mut created);
+                return Err(format!("could not create {}: {e}. Nothing was changed.", parent.display()));
+            }
+            created.extend(missing);
+        }
+        let tmp = tmp_of(&target);
+        if let Err(e) = std::fs::write(&tmp, &o.content) {
+            let _ = std::fs::remove_file(&tmp);
+            cleanup(&temps, &mut created);
+            return Err(format!("could not write {}: {e}. Nothing was changed.", o.rel));
+        }
+        temps.push((tmp, target));
+    }
+
+    for (i, (tmp, target)) in temps.iter().enumerate() {
+        if let Err(e) = std::fs::rename(tmp, target) {
+            cleanup(&temps[i..], &mut created);
+            return Err(format!("could not replace {}: {e}", target.display()));
+        }
+    }
+    Ok(())
+}

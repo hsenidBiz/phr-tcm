@@ -20,6 +20,7 @@ pub mod discovery;
 pub mod environments;
 pub mod guide;
 pub mod misc;
+pub mod pw_export;
 pub mod prs;
 pub mod queue;
 pub mod run_order;

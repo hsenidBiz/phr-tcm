@@ -126,6 +126,7 @@ mod pw_export_clone;
 mod pw_export_mapping;
 mod pw_export_test_case;
 mod pw_export_translate;
+mod pw_export_write;
 mod pw_export_ts;
 mod relink;
 mod report;

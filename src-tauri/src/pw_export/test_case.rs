@@ -6,6 +6,7 @@
 //! are not treated specially.
 
 /// Everything one case section needs.
+#[derive(Clone)]
 pub struct CaseDoc {
     pub id: i32,
     pub title: String,

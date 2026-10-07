@@ -1,0 +1,362 @@
+//! Playwright export: the preview (what can be exported and why not) and the
+//! all-or-nothing write into the clone.
+
+use serde_json::json;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use v2_lib::autorun::accounts::{save_accounts_for, Account};
+use v2_lib::autorun::{nav, recipe, store, CaseScript, LocalRun};
+use v2_lib::pw_export::export::{preview_with, write_with, ExportResult};
+use v2_lib::pw_export::mapping::{save, ExportMap, Placement};
+use v2_lib::pw_export::test_case::CaseDoc;
+
+const ORG: &str = "org";
+const PROJECT: &str = "proj";
+const REAL_PASSWORD: &str = "S3cretPw!";
+const CLONE_PASSWORD: &str = "clone-pass-9";
+const MD_REL: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md";
+
+struct Fx {
+    root: tempfile::TempDir,
+    clone: tempfile::TempDir,
+}
+
+fn write(p: PathBuf, s: &str) {
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, s).unwrap();
+}
+
+fn placement() -> Placement {
+    Placement { side: "admin".into(), module: "performance".into(), feature: "proficiency-levels".into() }
+}
+
+impl Fx {
+    fn new() -> Fx {
+        let fx = Fx { root: tempfile::tempdir().unwrap(), clone: tempfile::tempdir().unwrap() };
+        let c = fx.clone.path();
+        write(c.join("playwright.config.ts"), "export default {};");
+        write(c.join("suites/_generated/index.json"), "{\n  \"1\": \"old.spec.ts\"\n}\n");
+        write(c.join("suites/_generated/old.spec.ts"), "// old\n");
+        write(c.join("src/navigation.json"), "{ \"entries\": { \"performance/proficiency-levels\": {} } }");
+        write(
+            c.join("src/users/users.json"),
+            &format!("{{\"REPO_KEY\": {{\"username\": \"u\", \"password\": \"{CLONE_PASSWORD}\"}}}}"),
+        );
+
+        let r = fx.root.path();
+        let env_id = v2_lib::environments::active_id(r).unwrap();
+        let acct = |key: &str, user: &str| Account {
+            key: key.into(),
+            label: key.into(),
+            username: user.into(),
+            password: REAL_PASSWORD.into(),
+        };
+        save_accounts_for(
+            r,
+            &env_id,
+            &[acct("admin", "hr.admin"), acct("other", "hr.other"), acct("ghost", "hr.ghost")],
+        )
+        .unwrap();
+
+        let mut rc = recipe::builtin_recipe();
+        rc.start_url = "https://app.example/login".into();
+        recipe::save_recipe(r, ORG, PROJECT, &rc).unwrap();
+
+        let navjson = json!({ "modules": [
+            { "area": "Definition Wizard", "module": "Performance", "clicks": ["a.dw"], "arrived": "/dw", "recorded": "2026-01-01T00:00:00Z" },
+            { "area": "Unplaced", "module": "Performance", "clicks": ["a.up"], "arrived": "/up", "recorded": "2026-01-01T00:00:00Z" }
+        ]});
+        write(nav::nav_path(r, ORG, PROJECT), &navjson.to_string());
+
+        let mut map = ExportMap::default();
+        map.areas.insert("Definition Wizard".into(), placement());
+        let mut accts = BTreeMap::new();
+        accts.insert("admin".to_string(), "REPO_KEY".to_string());
+        accts.insert("other".to_string(), "MISSING_KEY".to_string());
+        map.accounts.insert(env_id, accts);
+        save(r, ORG, PROJECT, &map).unwrap();
+        fx
+    }
+
+    fn script(&self, id: i32, title: &str, account: &str, area: &str, actions: serde_json::Value) {
+        let s: CaseScript = serde_json::from_value(json!({
+            "case_id": id, "title": title, "account": account, "area": area,
+            "steps": [{ "step_number": 1, "actions": actions }]
+        }))
+        .unwrap();
+        store::save_script(self.root.path(), &s).unwrap();
+    }
+
+    fn click_script(&self, id: i32, title: &str, account: &str, area: &str) {
+        self.script(id, title, account, area, json!([{ "kind": "click", "selector": "#go" }]));
+    }
+
+    fn good(&self, id: i32, title: &str) {
+        self.click_script(id, title, "admin", "Definition Wizard");
+        self.run(&format!("r{id}"), "5", id, "Passed");
+    }
+
+    fn run(&self, run_id: &str, started: &str, case: i32, verdict: &str) {
+        let run: LocalRun = serde_json::from_value(json!({
+            "id": run_id, "pbi_id": 1, "started_at": started,
+            "cases": [{ "case_id": case, "title": "t", "verdict": verdict, "note": "", "steps": [] }]
+        }))
+        .unwrap();
+        store::save_run(self.root.path(), &run).unwrap();
+    }
+
+    fn clone_path(&self) -> String {
+        self.clone.path().to_string_lossy().to_string()
+    }
+
+    fn read_clone(&self, rel: &str) -> String {
+        fs::read_to_string(self.clone.path().join(rel)).unwrap()
+    }
+
+    fn exists(&self, rel: &str) -> bool {
+        self.clone.path().join(rel).exists()
+    }
+}
+
+fn doc(id: i32, title: &str) -> CaseDoc {
+    CaseDoc {
+        id,
+        title: title.into(),
+        state: "Ready".into(),
+        area_path: "P\\A".into(),
+        iteration_path: "P\\I".into(),
+        project: PROJECT.into(),
+        module: "Performance".into(),
+        tags: "t1".into(),
+        preconditions: "pre".into(),
+        steps: vec![("Click go".into(), "It goes".into())],
+        side: String::new(),
+        navigation_captured: false,
+        feature_title: String::new(),
+    }
+}
+
+fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
+    list.iter().map(|(i, t)| (*i, doc(*i, t))).collect()
+}
+
+fn export(fx: &Fx, ids: &[i32], d: &BTreeMap<i32, CaseDoc>) -> Result<ExportResult, String> {
+    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), d)
+}
+
+#[test]
+fn preview_lists_each_reason() {
+    let fx = Fx::new();
+    // 10: no script.
+    // 11: newest run Failed (an older run passed).
+    fx.click_script(11, "Eleven", "admin", "Definition Wizard");
+    fx.run("a", "1", 11, "Passed");
+    fx.run("b", "2", 11, "Failed");
+    // 12: never reviewed.
+    fx.click_script(12, "Twelve", "admin", "Definition Wizard");
+    fx.run("c", "3", 12, "");
+    // 13: area recorded but not placed.
+    fx.click_script(13, "Thirteen", "admin", "Unplaced");
+    fx.run("d", "3", 13, "Passed");
+    // 14: account not mapped.
+    fx.click_script(14, "Fourteen", "ghost", "Definition Wizard");
+    fx.run("e", "3", 14, "Passed");
+    // 15: account mapped to a key the clone lacks.
+    fx.click_script(15, "Fifteen", "other", "Definition Wizard");
+    fx.run("f", "3", 15, "Passed");
+    // 16: cannot translate.
+    fx.script(
+        16,
+        "Sixteen",
+        "admin",
+        "Definition Wizard",
+        json!([{ "kind": "expect_response", "url_contains": "x", "json": { "rows": [{ "a": 1 }] } }]),
+    );
+    fx.run("g", "3", 16, "Passed");
+    // 17: exportable.
+    fx.good(17, "Seventeen");
+    // 18: area not recorded.
+    fx.click_script(18, "Eighteen", "admin", "Nowhere");
+    fx.run("h", "3", 18, "Passed");
+
+    let ids = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &ids, &fx.clone_path());
+    assert!(p.clone_ok, "{:?}", p.clone_problem);
+    assert_eq!(p.user_keys, vec!["REPO_KEY"]);
+    assert!(p.areas.contains(&"Definition Wizard".to_string()));
+    assert!(p.accounts.contains(&"admin".to_string()));
+    let by: BTreeMap<i32, _> = p.cases.iter().map(|c| (c.case_id, c)).collect();
+    let reason = |id: i32| by[&id].reason.clone().unwrap_or_default();
+
+    assert!(!by[&10].exportable);
+    assert!(reason(10).contains("no script"), "{}", reason(10));
+    assert_eq!(reason(11), "latest run: Failed");
+    assert_eq!(reason(12), "latest run: not reviewed");
+    assert!(reason(13).contains("Unplaced"), "{}", reason(13));
+    assert!(reason(14).contains("ghost"), "{}", reason(14));
+    assert!(by[&14].add_user_command.is_none());
+    assert!(reason(15).contains("MISSING_KEY"), "{}", reason(15));
+    let cmd = by[&15].add_user_command.clone().unwrap();
+    assert_eq!(cmd, "npm run users -- add MISSING_KEY --username hr.other --password <password> --apply");
+    assert!(!cmd.contains(REAL_PASSWORD));
+    assert!(!reason(16).is_empty() && !by[&16].exportable);
+    assert!(reason(18).contains("Nowhere"), "{}", reason(18));
+
+    let ok = by[&17];
+    assert!(ok.exportable, "{:?}", ok.reason);
+    assert_eq!(ok.reason, None);
+    assert_eq!(ok.seg.as_deref(), Some("sl/admin/performance/proficiency-levels"));
+    assert_eq!(ok.user_key.as_deref(), Some("REPO_KEY"));
+    let json = serde_json::to_string(&p).unwrap();
+    assert!(!json.contains(REAL_PASSWORD) && !json.contains(CLONE_PASSWORD));
+}
+
+#[test]
+fn write_creates_raw_spec_index_and_section() {
+    let fx = Fx::new();
+    fx.good(20, "Pasting newlines is sanitized");
+    let r = export(&fx, &[20], &docs(&[(20, "Pasting newlines is sanitized")])).unwrap();
+    assert_eq!(r.cases, vec![(20, "pasting-newlines-is-sanitized.spec.ts".to_string())]);
+    assert!(r.files.contains(&"suites/_generated/pasting-newlines-is-sanitized.spec.ts".to_string()));
+    assert!(r.files.contains(&"suites/_generated/index.json".to_string()));
+    assert!(r.files.contains(&MD_REL.to_string()));
+    assert!(r.missing_navigation.is_empty());
+
+    let spec = fx.read_clone("suites/_generated/pasting-newlines-is-sanitized.spec.ts");
+    assert!(
+        spec.starts_with(&format!(
+            "// spec: suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md\n// seed: suites/_generated/seed.spec.ts\n\n"
+        )),
+        "{spec}"
+    );
+    assert!(spec.contains("test.describe('Proficiency Levels'"));
+    assert!(!spec.contains(CLONE_PASSWORD) && !spec.contains(REAL_PASSWORD));
+    assert_eq!(
+        fx.read_clone("suites/_generated/index.json"),
+        "{\n  \"1\": \"old.spec.ts\",\n  \"20\": \"pasting-newlines-is-sanitized.spec.ts\"\n}\n"
+    );
+
+    let md = fx.read_clone(MD_REL);
+    assert!(md.starts_with("# Test Case Set: Proficiency Levels"));
+    assert!(md.contains("**User:** REPO_KEY"));
+    assert!(md.contains("## 20 \u{2014} Pasting newlines is sanitized"));
+    assert!(!fx.exists("suites/_generated/index.json.tcm-export-tmp"));
+}
+
+#[test]
+fn several_cases_land_in_one_feature_file_with_unique_names() {
+    let fx = Fx::new();
+    fx.good(30, "Same title");
+    fx.good(31, "Same title");
+    let r = export(&fx, &[30, 31], &docs(&[(30, "Same title"), (31, "Same title")])).unwrap();
+    assert_eq!(r.cases, vec![(30, "same-title.spec.ts".to_string()), (31, "same-title-2.spec.ts".to_string())]);
+    let md = fx.read_clone(MD_REL);
+    assert!(md.contains("## 30 \u{2014} Same title") && md.contains("## 31 \u{2014} Same title"));
+    assert_eq!(md.matches("**User:**").count(), 1);
+}
+
+#[test]
+fn reexport_reuses_the_file_and_replaces_the_section() {
+    let fx = Fx::new();
+    fx.good(40, "First title");
+    export(&fx, &[40], &docs(&[(40, "First title")])).unwrap();
+    let mut d = docs(&[(40, "First title")]);
+    d.get_mut(&40).unwrap().steps = vec![("Brand new action".into(), "x".into())];
+    let r = export(&fx, &[40], &d).unwrap();
+    assert_eq!(r.cases, vec![(40, "first-title.spec.ts".to_string())]);
+    let md = fx.read_clone(MD_REL);
+    assert_eq!(md.matches("## 40 \u{2014}").count(), 1);
+    assert!(md.contains("Brand new action") && !md.contains("Click go"));
+    assert_eq!(fx.read_clone("suites/_generated/index.json").matches("\"40\"").count(), 1);
+    assert!(!fx.exists("suites/_generated/first-title-2.spec.ts"));
+}
+
+#[test]
+fn other_sections_and_index_entries_are_untouched() {
+    let fx = Fx::new();
+    let existing =
+        "# Test Case Set: Proficiency Levels\n\n**User:** SOMEONE_ELSE\n\n## 7 \u{2014} Hand written\n\n**Assertion floor:** 3\n\nbody\n\n";
+    write(fx.clone.path().join(MD_REL), existing);
+    fx.good(50, "Fifty");
+    export(&fx, &[50], &docs(&[(50, "Fifty")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(md.starts_with(existing), "{md}");
+    assert!(md.contains("**User:** SOMEONE_ELSE") && !md.contains("**User:** REPO_KEY"));
+    assert!(md.contains("## 50 \u{2014} Fifty"));
+    assert!(fx.read_clone("suites/_generated/index.json").starts_with("{\n  \"1\": \"old.spec.ts\",\n"));
+    assert_eq!(fx.read_clone("suites/_generated/old.spec.ts"), "// old\n");
+}
+
+#[test]
+fn missing_navigation_is_reported_not_written() {
+    let fx = Fx::new();
+    let nav_path = fx.clone.path().join("src/navigation.json");
+    write(nav_path.clone(), "{ \"entries\": { \"admin/users\": {} } }");
+    let before = fs::read(&nav_path).unwrap();
+    fx.good(60, "Sixty");
+    fx.good(61, "Sixty one");
+    let r = export(&fx, &[60, 61], &docs(&[(60, "Sixty"), (61, "Sixty one")])).unwrap();
+    assert_eq!(r.missing_navigation, vec!["performance/proficiency-levels"]);
+    assert_eq!(fs::read(&nav_path).unwrap(), before);
+}
+
+#[test]
+fn users_json_is_never_written() {
+    let fx = Fx::new();
+    let users = fx.clone.path().join("src/users/users.json");
+    let before = fs::read(&users).unwrap();
+    fx.good(70, "Seventy");
+    export(&fx, &[70], &docs(&[(70, "Seventy")])).unwrap();
+    assert_eq!(fs::read(&users).unwrap(), before);
+}
+
+#[test]
+fn an_unexportable_case_refuses_the_whole_export() {
+    let fx = Fx::new();
+    fx.good(80, "Eighty");
+    let before = fx.read_clone("suites/_generated/index.json");
+    let e = export(&fx, &[80, 81], &docs(&[(80, "Eighty"), (81, "x")])).unwrap_err();
+    assert!(e.contains("81"), "{e}");
+    assert_eq!(fx.read_clone("suites/_generated/index.json"), before);
+    assert!(!fx.exists("suites/_generated/eighty.spec.ts"));
+    assert!(!fx.exists("suites/sl"));
+}
+
+fn stray_temps(p: &Path, out: &mut Vec<String>) {
+    for e in fs::read_dir(p).unwrap().flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        if n.ends_with(".tcm-export-tmp") {
+            out.push(n);
+        }
+        if e.path().is_dir() {
+            stray_temps(&e.path(), out);
+        }
+    }
+}
+
+#[test]
+fn a_failed_write_changes_nothing() {
+    let fx = Fx::new();
+    fx.good(90, "Ninety");
+    // The test-case file's target is a directory: its rename must fail.
+    fs::create_dir_all(fx.clone.path().join(MD_REL)).unwrap();
+    let before = fx.read_clone("suites/_generated/index.json");
+    assert!(export(&fx, &[90], &docs(&[(90, "Ninety")])).is_err());
+    assert!(!fx.exists("suites/_generated/ninety.spec.ts"));
+    assert_eq!(fx.read_clone("suites/_generated/index.json"), before);
+    let mut stray = vec![];
+    stray_temps(fx.clone.path(), &mut stray);
+    assert!(stray.is_empty(), "{stray:?}");
+}
+
+#[test]
+fn directories_created_for_a_failed_write_are_removed() {
+    let fx = Fx::new();
+    fx.good(91, "Ninety one");
+    // The raw spec's temp file cannot be created (a directory sits at its
+    // path), after the test-case file's directories and temp were made.
+    fs::create_dir_all(fx.clone.path().join("suites/_generated/ninety-one.spec.ts.tcm-export-tmp")).unwrap();
+    assert!(export(&fx, &[91], &docs(&[(91, "Ninety one")])).is_err());
+    assert!(!fx.exists("suites/sl"), "created dirs left behind");
+}
