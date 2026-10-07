@@ -59,6 +59,7 @@ pub mod updater;
 pub mod webtheme;
 pub mod workspace;
 pub mod work_board;
+pub mod writing_style;
 
 use std::sync::Mutex;
 use tauri_specta::{collect_commands, collect_events, Builder};
@@ -75,7 +76,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
         autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
-        test_files, testplan, workspace,
+        test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -314,6 +315,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_autostart,
             app_settings::set_beta_updates,
             app_settings::set_stay_signed_in,
+            writing_style::writing_style_get,
+            writing_style::writing_style_save,
+            writing_style::writing_style_read_file,
             api_templates::api_templates_overview,
             api_templates::api_templates_remove,
             api_templates::api_templates_remove_flow,
@@ -500,6 +504,9 @@ pub fn run() {
                 extras::init(dir.clone());
                 // Close-to-tray and beta updates: read before any page (see app_settings.rs).
                 crate::app_settings::init(dir.clone());
+                // The AI Bridge tab's writing style, read by the guide on each
+                // call (see writing_style.rs).
+                crate::writing_style::init(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands

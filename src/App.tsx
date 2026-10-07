@@ -45,7 +45,7 @@ import {
   subscribeDbSettings,
 } from "./lib/dbServer";
 import { apiWritesSnapshot, subscribeApiWrites } from "./lib/apiTemplates";
-import { riskTieredSnapshot, subscribeRiskTiered } from "./lib/riskTieredGuide";
+import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "./lib/writingStyle";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -701,7 +701,6 @@ export default function App() {
   // tab's own switch, pushed the moment it changes for the same reason the
   // database write switch is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
-  const riskTiered = useSyncExternalStore(subscribeRiskTiered, riskTieredSnapshot);
   // Who each database signs in as - the same list, under the same key, the
   // AI Bridge card reads and refreshes when a login is saved.
   const databases = useQuery({
@@ -725,6 +724,12 @@ export default function App() {
     // Switches an older version kept for the AI Bridge tab, gone with the
     // controls they drove.
     dropRetiredAiSwitches();
+    // The old risk-tiered trial switch becomes the starting writing style
+    // switched on - here, not on the AI Bridge tab, so it moves over even
+    // if that tab is never opened.
+    void migrateOldTrialSwitch().then((saved) => {
+      if (saved) void qc.invalidateQueries({ queryKey: WRITING_STYLE_QUERY });
+    });
     migrateLegacyDbConnection().finally(() => {
       if (live) setDbMigrated(true);
     });
@@ -755,9 +760,7 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            // The risk-tiered guide is offered only where Auto Run is: a
-            // switch left on before the extras were reset must not apply.
-            { dbWrites: dbWrites && devLogin, apiWrites, riskTiered: riskTiered && autoRunShown },
+            { dbWrites: dbWrites && devLogin, apiWrites },
           ),
         )
         .catch(() => {});
@@ -780,8 +783,6 @@ export default function App() {
     dbWrites,
     devLogin,
     apiWrites,
-    riskTiered,
-    autoRunShown,
     tourOpen,
     dbMigrated,
   ]);

@@ -465,7 +465,6 @@ fn ctx() -> BridgeContext {
         db_secrets: None,
         db_writes: false,
         api_writes: false,
-        risk_tiered: false,
     }
 }
 

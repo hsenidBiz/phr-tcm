@@ -134,8 +134,6 @@ pub struct BridgeSwitches {
     pub db_writes: bool,
     /// Proving and running API templates (see `BridgeContext::api_writes`).
     pub api_writes: bool,
-    /// The risk-tiered writing guide (see `BridgeContext::risk_tiered`).
-    pub risk_tiered: bool,
 }
 
 /// The frontend pushes its current org/project + detected field refs so
@@ -172,7 +170,6 @@ pub fn set_bridge_context(
             db_secrets: Some(secrets),
             db_writes: switches.db_writes,
             api_writes: switches.api_writes,
-            risk_tiered: switches.risk_tiered,
         };
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.

@@ -16,7 +16,6 @@ fn ctx() -> BridgeContext {
         db_secrets: None,
         db_writes: false,
         api_writes: false,
-        risk_tiered: false,
     }
 }
 
@@ -334,6 +333,7 @@ async fn a_misordered_quote_is_told_where_the_checker_reads_it() {
 
 #[tokio::test]
 async fn guide_carries_format_rules_and_live_modules() {
+    let _style = crate::serial::writing_style();
     let (server, client) = ado_stub().await;
     // Module picklist: allowedValues empty -> falls back to values-in-use,
     // exactly like the app's own module picker.
@@ -490,6 +490,7 @@ fn section<'a>(body: &'a str, heading: &str) -> &'a str {
 /// the button are never confused.
 #[tokio::test]
 async fn the_guide_asks_for_reasonable_edge_cases_and_quoted_names() {
+    let _style = crate::serial::writing_style();
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
@@ -529,6 +530,7 @@ async fn the_guide_asks_for_reasonable_edge_cases_and_quoted_names() {
 /// left "no quote" as a silent third option nobody was told to justify.
 #[tokio::test]
 async fn the_guide_teaches_the_quote_rule_and_its_exemptions() {
+    let _style = crate::serial::writing_style();
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
@@ -1718,7 +1720,6 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_secrets: None,
         db_writes: false,
         api_writes: false,
-        risk_tiered: false,
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
@@ -1744,6 +1745,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
 /// assistant to copy the intake's documents into the file's `specs`.
 #[tokio::test]
 async fn the_guide_asks_for_the_specs_list() {
+    let _style = crate::serial::writing_style();
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
@@ -3715,125 +3717,242 @@ mod api_template_routes {
     }
 }
 
-// ============================================================ risk-tiered trial
-//
-// The AI Bridge tab's "Risk-tiered test design (trial)" switch swaps the
-// guide's granularity and edge-case sections for the team's risk-tiering
-// rules, and adds the scenario-list step and the closing summary. Off, the
-// guide is exactly the plain one.
 
-async fn guide_with(risk_tiered: bool) -> String {
+// ============================================================ writing style
+//
+// The AI Bridge tab's Writing style card: switched on, the person's own
+// Markdown replaces the guide's granularity and edge-case sections; off or
+// missing, the guide is exactly the standard one. The guide reads the file
+// on every call, so a save takes effect at once.
+
+use v2_lib::writing_style::{self as style, WritingStyle};
+
+/// Points the writing style at a temp dir for one test, and back at nothing
+/// when it ends - pass or fail - so no other test reads its style.
+struct StyleDir(tempfile::TempDir);
+
+impl StyleDir {
+    fn new() -> Self {
+        let d = tempfile::tempdir().unwrap();
+        style::set_dir(Some(d.path().to_path_buf()));
+        StyleDir(d)
+    }
+    fn save(&self, enabled: bool, text: &str) {
+        style::save(self.0.path(), &WritingStyle { enabled, text: text.into() }).unwrap();
+    }
+}
+
+impl Drop for StyleDir {
+    fn drop(&mut self) {
+        style::set_dir(None);
+    }
+}
+
+async fn guide_now() -> String {
     let (server, client) = ado_stub().await;
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "allowedValues": ["Login"] })))
         .mount(&server)
         .await;
-    let c = BridgeContext { risk_tiered, ..ctx() };
-    let (status, g) = route(&c, Some(&client), "GET", "/guide", "", "1.23.2").await;
+    let (status, g) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.23.2").await;
     assert_eq!(status, 200, "{g}");
     g
 }
 
-#[test]
-fn the_risk_tiered_trial_is_off_by_default() {
-    assert!(!BridgeContext::default().risk_tiered);
+const CONFLICT_LINE: &str =
+    "If anything here conflicts with the Format section or the import rules, the Format section and the import rules win.";
+
+const STEP_1_5: &str = "1.5. If the team test design style above adds steps (for example a scenario list to approve before drafting, or a summary or review at the end), follow them at the point it says.";
+
+/// The guide as main builds it, made independently of the off path: the
+/// guide with a style switched on, with the style's section swapped back
+/// for the standard `GRANULARITY` text, the 1.5 line taken out, and the
+/// standard `EDGE_CASES` text put back before the Module values.
+async fn standard_guide_built_from_its_sections() -> String {
+    use v2_lib::ai_bridge::{EDGE_CASES, GRANULARITY};
+    let dir = StyleDir::new();
+    let text = "## Probe\nA style that exists only to be swapped out.";
+    dir.save(true, text);
+    let on = guide_now().await;
+    drop(dir);
+    let section = format!("## Team test design style (set on this machine)\n{text}\n\n{CONFLICT_LINE}\n\n");
+    assert_eq!(on.matches(&section).count(), 1, "{on}");
+    assert_eq!(on.matches(&format!("{STEP_1_5}\n")).count(), 1, "{on}");
+    let modules = "## Allowed Module values (live)";
+    assert_eq!(on.matches(modules).count(), 1, "{on}");
+    on.replace(&section, GRANULARITY)
+        .replace(&format!("{STEP_1_5}\n"), "")
+        .replace(modules, &format!("{EDGE_CASES}{modules}"))
 }
 
 #[tokio::test]
-async fn switched_off_the_guide_keeps_its_plain_sections() {
-    let g = guide_with(false).await;
+async fn with_no_style_or_a_disabled_one_the_guide_is_exactly_the_standard_one() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    assert!(standard.contains("## Granularity - quality over quantity"), "{standard}");
+    assert!(standard.contains("## Edge cases worth writing"), "{standard}");
+    assert!(!standard.contains("(set on this machine)"), "{standard}");
+    assert!(!standard.contains("1.5."), "{standard}");
+
+    // No style at all (the --mcp proxy, or setup never ran).
+    style::set_dir(None);
+    assert_eq!(guide_now().await, standard, "no style dir");
+
+    // A dir with no file yet.
+    let dir = StyleDir::new();
+    assert_eq!(guide_now().await, standard, "a missing file");
+
+    // The starting style, which is off.
+    style::get_or_create(dir.0.path());
+    assert_eq!(guide_now().await, standard, "the starting style");
+
+    // Text saved but switched off.
+    dir.save(false, "## Mine\nWrite one case per screen.");
+    assert_eq!(guide_now().await, standard, "a disabled style");
+}
+
+/// A file that cannot be parsed is not used: the guide is the standard one.
+#[tokio::test]
+async fn a_corrupt_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    for body in ["{ not json", "", "[]", r#"{"enabled":true}"#, r#"{"enabled":"yes","text":"Mine"}"#] {
+        std::fs::write(dir.0.path().join(style::FILE), body).unwrap();
+        assert_eq!(guide_now().await, standard, "body {body:?}");
+    }
+}
+
+/// A file written by a later version, with fields this one does not know,
+/// still applies its style.
+#[tokio::test]
+async fn a_style_file_with_extra_future_fields_still_applies() {
+    let _lock = crate::serial::writing_style();
+    let dir = StyleDir::new();
+    let body = serde_json::json!({
+        "enabled": true,
+        "text": "## Future rules\nOne case per screen.",
+        "version": 2,
+        "history": [{ "at": "2027-01-01" }],
+    });
+    std::fs::write(dir.0.path().join(style::FILE), body.to_string()).unwrap();
+    let g = guide_now().await;
+    assert!(g.contains("## Team test design style (set on this machine)\n## Future rules\nOne case per screen."), "{g}");
+    assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
+}
+
+/// A file over the limit is ignored before it is used, switched on or not:
+/// a text over 64 KB, and a file too large to read at all.
+#[tokio::test]
+async fn an_oversized_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    let path = dir.0.path().join(style::FILE);
+
+    let over = serde_json::json!({ "enabled": true, "text": "a".repeat(style::MAX_BYTES + 1) });
+    std::fs::write(&path, over.to_string()).unwrap();
+    assert_eq!(guide_now().await, standard, "a text over 64 KB");
+
+    // Valid JSON, switched on, a short text - padded past the file limit
+    // with whitespace, so only the size check can refuse it.
+    let short = serde_json::json!({ "enabled": true, "text": "## Short" }).to_string();
+    let padded = format!("{short}{}", " ".repeat(style::MAX_FILE_BYTES as usize));
+    std::fs::write(&path, padded).unwrap();
+    assert_eq!(guide_now().await, standard, "a file over the file limit");
+
+    // Just under it, the same style applies - the limit is what refused it.
+    let fits = format!("{short}{}", " ".repeat(style::MAX_FILE_BYTES as usize - short.len()));
+    std::fs::write(&path, fits).unwrap();
+    assert!(guide_now().await.contains("## Short"));
+}
+
+/// A folder where the file should be is not a style: the standard guide.
+#[tokio::test]
+async fn a_folder_in_place_of_the_style_file_gives_the_standard_guide() {
+    let _lock = crate::serial::writing_style();
+    let standard = standard_guide_built_from_its_sections().await;
+    let dir = StyleDir::new();
+    std::fs::create_dir(dir.0.path().join(style::FILE)).unwrap();
+    assert_eq!(guide_now().await, standard);
+}
+
+#[tokio::test]
+async fn an_enabled_style_replaces_the_granularity_and_edge_case_sections() {
+    let _lock = crate::serial::writing_style();
+    let dir = StyleDir::new();
+    dir.save(true, "## House rules\nWrite one case per screen, and tag each with its screen.\n");
+    let g = guide_now().await;
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    assert!(g.contains("## Team test design style (set on this machine)\n## House rules\nWrite one case per screen"), "{g}");
+    assert!(flat.contains(CONFLICT_LINE), "{g}");
+    assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
+    assert!(!g.contains("## Edge cases worth writing"), "{g}");
+    for kept in [
+        "## Format",
+        "## One branch per case",
+        "## Allowed Module values (live)",
+        "## Workflow",
+        "## Writing style - sound like a tester, not a model",
+    ] {
+        assert!(g.contains(kept), "lost {kept:?}");
+    }
+    // The style sits where the granularity section was: after Format, before
+    // the standard case-text style rules.
+    let format = g.find("## Format").unwrap();
+    let custom = g.find("## Team test design style (set on this machine)").unwrap();
+    let tester = g.find("## Writing style - sound like a tester").unwrap();
+    assert!(format < custom && custom < tester);
+
+    // The 1.5 line sits between reading the existing cases and drafting.
+    assert!(flat.contains(STEP_1_5), "{g}");
+    let step1 = flat.find("1. Call `get_test_cases`").unwrap();
+    let step15 = flat.find(STEP_1_5).unwrap();
+    let step2 = flat.find("2. Draft your cases.").unwrap();
+    assert!(step1 < step15 && step15 < step2);
+    // The workflow still ends at step 5.
+    assert!(g.trim_end().ends_with("`transform_cases` instead of rewriting the file yourself."), "{g}");
+}
+
+#[tokio::test]
+async fn a_save_takes_effect_on_the_next_guide_call() {
+    let _lock = crate::serial::writing_style();
+    let dir = StyleDir::new();
+    dir.save(true, "First version of the rules.");
+    assert!(guide_now().await.contains("First version of the rules."));
+
+    dir.save(true, "Second version of the rules.");
+    let g = guide_now().await;
+    assert!(g.contains("Second version of the rules."), "{g}");
+    assert!(!g.contains("First version of the rules."), "{g}");
+
+    dir.save(false, "Second version of the rules.");
+    let g = guide_now().await;
+    assert!(!g.contains("Second version of the rules."), "{g}");
     assert!(g.contains("## Granularity - quality over quantity"), "{g}");
-    assert!(g.contains("## Edge cases worth writing"), "{g}");
-    assert!(!g.contains("Risk-tiered"), "{g}");
-    assert!(!g.contains("1.5. Before drafting"), "{g}");
-    assert!(!g.contains("6. End with a summary"), "{g}");
-    assert!(!g.contains("Regression suite review"), "{g}");
 }
 
-/// Switched on, the guide also carries the regression review: report first,
-/// the exact question, nothing changed before a yes, and then only the
-/// Regression tag, through an update file the person imports.
+/// The starting style switched on carries the old trial's rules, and its
+/// text has no em or en dashes.
 #[tokio::test]
-async fn switched_on_the_guide_carries_the_regression_review() {
-    let g = guide_with(true).await;
+async fn the_starting_style_switched_on_carries_the_old_trial_rules() {
+    let _lock = crate::serial::writing_style();
+    let dir = StyleDir::new();
+    dir.save(true, style::DEFAULT_RISK_TIERED);
+    let g = guide_now().await;
     let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
     for needle in [
+        "## Edge cases, the tiered way",
+        "## Scenario list before drafting",
+        "## Closing summary",
         "## Regression suite review (trial rules)",
-        "`get_suite_test_cases` for a plan or suite",
+        "T1 25, T2 12, T3 5",
         "`KEEP_REGRESSION`",
-        "`ADD_REGRESSION`",
-        "`REMOVE_REGRESSION`",
-        "While reviewing, change NOTHING",
-        "Proposed final = Current - Remove + Add and Keep = Current - Remove",
         "\"Would you like me to apply these Regression tag changes?\"",
-        "`add_tags` `Regression` on the ADD ids",
-        "`remove_tags` `Regression` on the REMOVE ids",
-        "each case keeps its `id`",
-        "import the file through Import Test Cases",
-        "follow the rules and say which rule the request conflicts with",
     ] {
         assert!(flat.contains(needle), "missing {needle:?} in:\n{g}");
     }
-    // It closes the guide, after the workflow's summary step.
-    let summary = g.find("6. End with a summary").expect("the summary step");
-    let review = g.find("## Regression suite review").expect("the review");
-    assert!(summary < review);
-    let section = &g[review..];
-    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes in the review");
-}
-
-#[tokio::test]
-async fn switched_on_the_guide_carries_the_risk_tiered_rules() {
-    let g = guide_with(true).await;
-    // The plain granularity and edge-case sections are replaced...
-    assert!(!g.contains("## Granularity - quality over quantity"), "{g}");
-    assert!(!g.contains("## Edge cases worth writing"), "{g}");
-    // ...by the tiers, the techniques, the budget, consolidation and tags.
-    for needle in [
-        "## Risk-tiered design (trial rules)",
-        "Tier each SCENARIO, not the whole story.",
-        "is RELATED: it belongs in the T1 case",
-        "is UNRELATED: its own case, at its own tier",
-        "Equivalence partitioning: one case per partition, not per value.",
-        "pairwise\n        covers 12 of 48 combinations",
-        "one per distinct validation rule",
-        "T1 25, T2 12, T3 5",
-        "STOP and list the extra scenarios",
-        "one step per data\nrow",
-        "exactly one of `T1`, `T2`, `T3`",
-        "`Smoke`",
-        "`Regression`",
-        "`Extended`",
-        "## Edge cases, the tiered way",
-    ] {
-        let flat_needle = needle.split_whitespace().collect::<Vec<_>>().join(" ");
-        let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(flat.contains(&flat_needle), "missing {needle:?} in:\n{g}");
-    }
-    // Everything else stays.
-    for kept in ["## Format", "## One branch per case", "## Allowed Module values (live)", "## Workflow"] {
-        assert!(g.contains(kept), "lost {kept:?}");
-    }
-    // The scenario list comes between reading the existing cases and
-    // drafting, and the summary closes the workflow.
-    let step1 = g.find("1. Call `get_test_cases`").expect("step 1");
-    let scen = g.find("1.5. Before drafting, write the SCENARIO LIST").expect("the scenario step");
-    let step2 = g.find("2. Draft your cases.").expect("step 2");
-    assert!(step1 < scen && scen < step2, "the scenario list sits between steps 1 and 2");
-    let step5 = g.find("5. For later edits").expect("step 5");
-    let summary = g.find("6. End with a summary").expect("the summary step");
-    assert!(step5 < summary, "the summary closes the workflow");
-}
-
-/// The risk-tiered guide is offered only where Auto Run is: a switch left on
-/// in a release build whose extras were reset (or never unlocked) does not
-/// change the guide.
-#[test]
-fn the_risk_tiered_guide_applies_only_where_auto_run_is_offered() {
-    use v2_lib::ai_bridge::risk_tiered_for;
-    assert!(risk_tiered_for(true, true));
-    assert!(!risk_tiered_for(true, false), "locked: the switch does not apply");
-    assert!(!risk_tiered_for(false, true));
-    assert!(!risk_tiered_for(false, false));
+    assert!(!style::DEFAULT_RISK_TIERED.contains('\u{2014}') && !style::DEFAULT_RISK_TIERED.contains('\u{2013}'));
 }
