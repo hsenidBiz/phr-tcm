@@ -219,3 +219,36 @@ fn matched_links_are_added_once_and_writes_are_kept() {
     assert_eq!(els[2].kind, "other");
     assert_eq!(a.writes.len(), 1);
 }
+
+#[test]
+fn an_iframe_chain_puts_every_link_in_seen_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some("iframe#pay".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Save".into()), ..LocatorStep::default() },
+    ]);
+    let framed = SnapLine { role: "button".into(), name: "Save".into(), locator: chain, required: false };
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[framed, line("button", "Save")], None, true, 1).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    // The same name in the page and in the frame stays two elements.
+    assert_eq!(map.areas[0].pages[0].elements.len(), 2);
+    let keys = seen_keys(&map, &["A"]);
+    assert!(keys.contains(&SeenKey::Css("iframe#pay".into())));
+    assert!(keys.contains(&role_key("button", "save")));
+}
+
+#[test]
+fn record_write_stores_the_path_only() {
+    let dir = tempfile::tempdir().unwrap();
+    record_write(
+        dir.path(),
+        "Acme",
+        "Web",
+        "A",
+        WriteEntry { method: "POST".into(), path: "https://h/api/x?token=abc".into(), at: 1, step: "Save".into() },
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(map_path(dir.path(), "Acme", "Web")).unwrap();
+    assert!(text.contains("/api/x"));
+    assert!(!text.contains("token") && !text.contains("https://h"), "{text}");
+}

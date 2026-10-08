@@ -172,7 +172,9 @@ pub fn record_seen(
         for line in lines {
             // The last link names the element; earlier links are frames.
             let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
-            if page.elements.iter().any(|e| e.key == key) {
+            // The full locator is the identity: the same name in two frames
+            // is two elements.
+            if page.elements.iter().any(|e| e.locator == line.locator) {
                 continue;
             }
             page.elements.push(SeenElement {
@@ -222,6 +224,7 @@ pub fn record_matched(
 }
 
 pub fn record_write(root: &Path, org: &str, project: &str, area: &str, w: WriteEntry) -> Result<(), String> {
+    let w = WriteEntry { path: path_only(&w.path), ..w };
     update(root, org, project, |map| area_mut(map, area).writes.push(w))
 }
 
@@ -259,7 +262,11 @@ pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
         .filter(|a| a.area.is_empty() || areas.contains(&a.area.as_str()))
         .flat_map(|a| a.pages.iter())
         .flat_map(|p| p.elements.iter())
-        .map(|e| e.key.clone())
+        .flat_map(|e| {
+            let mut keys: Vec<SeenKey> = e.locator.links().iter().filter_map(LocatorStep::seen_key).collect();
+            keys.push(e.key.clone());
+            keys
+        })
         .collect()
 }
 
