@@ -375,6 +375,20 @@ export const commands = {
 	 *  empty map. Hands back where it was moved, project-relative.
 	 */
 	autoRunResetMap: (organization: string, project: string) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_reset_map", { organization, project })),
+	/**  The project's components, for the Components dialog and its Setup row. */
+	autoRunLoadComponents: (organization: string, project: string) => typedError<ComponentsView, string>(__TAURI_INVOKE("auto_run_load_components", { organization, project })),
+	/**
+	 *  Remove a component no saved script uses (`components::remove_unused`,
+	 *  as the assistant's retire): one in use stays, and the refusal names the
+	 *  cases that use it. Hands back its saved name.
+	 */
+	autoRunRemoveComponent: (organization: string, project: string, name: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_remove_component", { organization, project, name })),
+	/**
+	 *  Reset in the Components dialog, offered when the file cannot be read:
+	 *  the damaged file is moved aside (never deleted). Hands back where it was
+	 *  moved, project-relative.
+	 */
+	autoRunResetComponents: (organization: string, project: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_reset_components", { organization, project })),
 	/**
 	 *  End Discovery on Auto Run's Setup card: ends the discovery under way the
 	 *  way the assistant's `end_autorun_discovery` does, closing its browser,
@@ -2555,6 +2569,12 @@ export type CleanupResult = {
 	outcome: string,
 };
 
+export type ComponentInput = {
+	name: string,
+	kind: InputKind,
+	description: string,
+};
+
 /**
  *  One `use_component` a step ran: the component's saved name and the
  *  version it had then, kept on the step's record.
@@ -2562,6 +2582,30 @@ export type CleanupResult = {
 export type ComponentUse = {
 	name: string,
 	version: number,
+};
+
+/**  One saved component, as the Components dialog shows it. */
+export type ComponentView = {
+	name: string,
+	description: string,
+	inputs: ComponentInput[],
+	tried_area: string,
+	/**
+	 *  When it last ran on the live app, milliseconds since the epoch;
+	 *  `None` when never.
+	 */
+	tried_at: number | null,
+	version: number,
+	/**  Changes an assistant made since a person last saved it. */
+	changes: number,
+	/**  How many changes an assistant may make before a person looks. */
+	cap: number,
+	/**  The saved scripts that use it, by case id. While any do, it stays. */
+	used_by_cases: number[],
+};
+
+export type ComponentsView = {
+	components: ComponentView[],
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -3119,6 +3163,8 @@ export type InlineImage = {
 	url: string,
 	data: string,
 };
+
+export type InputKind = "text" | "target";
 
 /**
  *  Emitted when `begin_test_case_writing` settles on where the finished

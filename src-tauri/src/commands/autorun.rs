@@ -347,6 +347,89 @@ pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: 
     crate::autorun::discovery_map::reset_map(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
 }
 
+/// One saved component, as the Components dialog shows it.
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct ComponentView {
+    pub name: String,
+    pub description: String,
+    pub inputs: Vec<crate::autorun::components::ComponentInput>,
+    pub tried_area: String,
+    /// When it last ran on the live app, milliseconds since the epoch;
+    /// `None` when never.
+    #[specta(type = Option<f64>)]
+    pub tried_at: Option<u64>,
+    pub version: u32,
+    /// Changes an assistant made since a person last saved it.
+    pub changes: u32,
+    /// How many changes an assistant may make before a person looks.
+    pub cap: u32,
+    /// The saved scripts that use it, by case id. While any do, it stays.
+    pub used_by_cases: Vec<i32>,
+}
+
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct ComponentsView {
+    pub components: Vec<ComponentView>,
+}
+
+/// The project's components, each with the scripts that use it.
+pub fn components_view(root: &std::path::Path, org: &str, project: &str) -> Result<ComponentsView, String> {
+    use crate::autorun::components::{load_components, users_of, CHANGE_CAP};
+    let file = load_components(root, org, project)?;
+    let components = file
+        .components
+        .into_iter()
+        .map(|c| ComponentView {
+            used_by_cases: users_of(root, &c.name).cases,
+            tried_at: (c.tried_at > 0).then_some(c.tried_at),
+            name: c.name,
+            description: c.description,
+            inputs: c.inputs,
+            tried_area: c.tried_area,
+            version: c.version,
+            changes: c.changes,
+            cap: CHANGE_CAP,
+        })
+        .collect();
+    Ok(ComponentsView { components })
+}
+
+/// The project's components, for the Components dialog and its Setup row.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_components(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<ComponentsView, String> {
+    components_view(&root(&app)?, &organization, &project)
+}
+
+/// Remove a component no saved script uses (`components::remove_unused`,
+/// as the assistant's retire): one in use stays, and the refusal names the
+/// cases that use it. Hands back its saved name.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_remove_component(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    name: String,
+) -> Result<String, String> {
+    let removed = crate::autorun::components::remove_unused(&root(&app)?, &organization, &project, &name)?;
+    crate::applog::info(format!("Auto Run component {removed} removed"));
+    Ok(removed)
+}
+
+/// Reset in the Components dialog, offered when the file cannot be read:
+/// the damaged file is moved aside (never deleted). Hands back where it was
+/// moved, project-relative.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_reset_components(app: tauri::AppHandle, organization: String, project: String) -> Result<String, String> {
+    crate::autorun::components::reset_components(&root(&app)?, &organization, &project)
+}
+
 /// Said when something wants the browser a session holds. A discovery's
 /// names the assistant's own way out.
 pub fn busy_browser_sentence(discovering: bool) -> &'static str {

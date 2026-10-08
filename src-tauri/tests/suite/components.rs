@@ -626,3 +626,44 @@ fn an_unclosed_placeholder_is_refused() {
         assert_eq!(err, "A component has an unclosed {{ placeholder.", "{stray}");
     }
 }
+
+// ---- the Components dialog's view ----
+
+#[test]
+fn load_components_command_counts_users() {
+    use v2_lib::commands::autorun::components_view;
+    let dir = tempfile::tempdir().unwrap();
+    assert!(components_view(dir.path(), "o", "p").unwrap().components.is_empty());
+    let mut used = component("Pick-Date");
+    used.changes = 2;
+    used.tried_at = 1_759_000_000_000;
+    put(dir.path(), "o", "p", used).unwrap();
+    put(dir.path(), "o", "p", component("unused")).unwrap();
+    save_script(dir.path(), &script(12, vec![use_it("pick-date")])).unwrap();
+    save_script(dir.path(), &script(4, vec![use_it("PICK-DATE")])).unwrap();
+
+    let view = components_view(dir.path(), "o", "p").unwrap();
+    assert_eq!(view.components.len(), 2);
+    let pick = view.components.iter().find(|c| c.name == "Pick-Date").unwrap();
+    assert_eq!(pick.used_by_cases, vec![4, 12]);
+    assert_eq!(pick.description, "pick a date");
+    assert_eq!(pick.inputs.len(), 1);
+    assert_eq!(pick.tried_area, "Leave");
+    assert_eq!(pick.tried_at, Some(1_759_000_000_000));
+    assert_eq!(pick.version, 1);
+    assert_eq!(pick.changes, 2);
+    assert_eq!(pick.cap, v2_lib::autorun::components::CHANGE_CAP);
+    let unused = view.components.iter().find(|c| c.name == "unused").unwrap();
+    assert!(unused.used_by_cases.is_empty());
+
+    // Never tried reads as no date, not the epoch.
+    let mut never = component("never");
+    never.tried_at = 0;
+    put(dir.path(), "o", "p", never).unwrap();
+    let view = components_view(dir.path(), "o", "p").unwrap();
+    assert_eq!(view.components.iter().find(|c| c.name == "never").unwrap().tried_at, None);
+
+    // A damaged file is the load's refusal, which offers Reset.
+    std::fs::write(components_path(dir.path(), "o", "p"), "{ not json").unwrap();
+    assert!(components_view(dir.path(), "o", "p").unwrap_err().contains("Reset it in Auto Run"));
+}

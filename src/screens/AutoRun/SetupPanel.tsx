@@ -21,6 +21,7 @@ import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/env
 import { unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
+  IconComponents,
   IconDiscoveryMap,
   IconHideDetails,
   IconModulePaths,
@@ -35,6 +36,7 @@ import {
 import { useDiscoveryActive } from "../../lib/discoveryActive";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
+import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import RecipeEditor from "./RecipeEditor";
 import RecordSignInDialog from "./RecordSignInDialog";
@@ -92,6 +94,10 @@ export function useAutoRunSetup({
   // Forget map there updates the row.
   const discoveryMap = useDiscoveryMap(org, project);
   const discoveryLine = discoverySummary(discoveryMap.data);
+  // The project's components. Shares its key with the Components dialog,
+  // so Remove there updates the row.
+  const components = useComponents(org, project);
+  const componentsLine = componentsSummary(components.data);
 
   const saved = recipe.data;
   // Where a run goes now: the active environment's address when it has one,
@@ -168,6 +174,8 @@ export function useAutoRunSetup({
     testFiles,
     discoveryMap,
     discoveryLine,
+    components,
+    componentsLine,
     databases,
     activeDb,
     accountCount,
@@ -288,6 +296,13 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
         : s.discoveryLine === "Not explored yet"
           ? ["quiet", s.discoveryLine]
           : [discoveryStale ? "warning" : "ready", s.discoveryLine];
+  const components: [Status, string] = !s.setupReady
+    ? ["quiet", pickProject]
+    : s.components.isError
+      ? ["warning", "Could not be read"]
+      : s.componentsLine == null
+        ? ["quiet", "Loading…"]
+        : [s.componentsLine === "None yet" ? "quiet" : "ready", s.componentsLine];
   const missingFiles = s.readiness.missingTestFiles.length;
   const files: [Status, string] = !s.setupReady
     ? ["quiet", pickProject]
@@ -317,6 +332,7 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
     { label: "Accounts", status: accounts[0], value: accounts[1] },
     { label: "Areas", status: areas[0], value: areas[1] },
     { label: "Discovery", status: discovery[0], value: discovery[1] },
+    { label: "Components", status: components[0], value: components[1] },
     { label: "Test files", status: files[0], value: files[1] },
     { label: "Database", status: db[0], value: db[1] },
   ];
@@ -349,6 +365,7 @@ export default function SetupPanel({
   const [recordOpen, setRecordOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [componentsOpen, setComponentsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   const [saveWordsOpen, setSaveWordsOpen] = useState(false);
@@ -631,6 +648,36 @@ export default function SetupPanel({
                 </p>
               )}
 
+              {/* Steps saved once that scripts use by name. */}
+              <SetupRow
+                label="Components"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : s.components.isError ? (
+                    <span className="text-danger">The components could not be read</span>
+                  ) : s.componentsLine == null ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : s.componentsLine === "None yet" ? (
+                    <span className="text-muted">{s.componentsLine}</span>
+                  ) : (
+                    s.componentsLine
+                  )
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="View components"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setComponentsOpen(true)}
+                >
+                  <IconComponents aria-hidden />
+                  View
+                </Button>
+              </SetupRow>
+
               <SetupRow
                 label="Test files"
                 state={
@@ -716,6 +763,9 @@ export default function SetupPanel({
       )}
       {discoveryOpen && (
         <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />
+      )}
+      {componentsOpen && (
+        <ComponentsDialog org={org} project={project} onClose={() => setComponentsOpen(false)} />
       )}
       {navOpen && (
         <AreasDialog org={org} project={project} caseModules={caseModules} onClose={() => setNavOpen(false)} />
