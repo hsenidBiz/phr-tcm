@@ -1334,14 +1334,23 @@ fn check_imported_seen(
 ) -> Result<(), String> {
     let cases = cases.ok_or_else(|| IMPORT_NEEDS_CASES.to_string())?;
     let map = crate::autorun::discovery_map::load_map(root, organization, project)?;
+    // Read only when a script uses a component.
+    let components = if scripts.iter().any(crate::autorun::seen_check::uses_components) {
+        crate::autorun::components::load_components(root, organization, project)?
+    } else {
+        crate::autorun::components::ComponentFile::default()
+    };
     let mut lines: Vec<String> = Vec::new();
     for sc in scripts {
         let Some(text) = cases.get(&sc.case_id) else {
             lines.push(format!("Case {}: Azure DevOps has no test case with this id.", sc.case_id));
             continue;
         };
-        for u in crate::autorun::seen_check::check_seen_all(&map, sc, text, None) {
-            lines.push(format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator));
+        for u in crate::autorun::seen_check::check_seen_all(&map, &components, sc, text, None) {
+            lines.push(match &u.refused {
+                Some(why) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
+                None => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
+            });
         }
     }
     if lines.is_empty() {

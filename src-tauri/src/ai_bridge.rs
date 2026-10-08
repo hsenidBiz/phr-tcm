@@ -4057,6 +4057,21 @@ async fn save_autorun_scripts(
             Ok(m) => m,
             Err(e) => return (400, e),
         };
+        // Read only when a checked script uses a component, so a damaged
+        // file never holds up a save that does not need it.
+        let uses_components = seen_scope.iter().any(|(case_id, _)| {
+            prepared
+                .iter()
+                .any(|s| s.case_id == *case_id && crate::autorun::seen_check::uses_components(s))
+        });
+        let components = if uses_components {
+            match crate::autorun::components::load_components(&root, &ctx.org, &ctx.project) {
+                Ok(c) => c,
+                Err(e) => return (400, e),
+            }
+        } else {
+            crate::autorun::components::ComponentFile::default()
+        };
         for (case_id, only) in &seen_scope {
             let (Some(script), Some(case)) = (
                 prepared.iter().find(|s| s.case_id == *case_id),
@@ -4067,7 +4082,7 @@ async fn save_autorun_scripts(
             let case_text: Vec<String> =
                 case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
             if let Err(why) =
-                crate::autorun::seen_check::check_seen(&map, script, &case_text, only.as_deref())
+                crate::autorun::seen_check::check_seen(&map, &components, script, &case_text, only.as_deref())
             {
                 return (400, why);
             }

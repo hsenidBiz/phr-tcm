@@ -2813,3 +2813,47 @@ async fn an_unreadable_map_refuses_the_save() {
     assert!(!out.contains(&dir.path().to_string_lossy().to_string()), "a full path reached the assistant: {out}");
     assert_eq!(load_script(dir.path(), 7).unwrap(), None);
 }
+
+/// "Edit a row" saved in the test project: click the row the script names.
+fn put_edit_a_row(root: &std::path::Path) {
+    let c: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Edit a row", "description": "d", "version": 1,
+        "inputs": [{ "name": "row", "kind": "target", "description": "" }],
+        "actions": [{ "kind": "click", "selector": { "input": "row" } }]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(root, "acme", "Web", c).unwrap();
+}
+
+/// A script that uses a component saves once the component is in the
+/// project and the row it is given was seen; before that, each is refused.
+#[tokio::test]
+async fn a_script_using_a_component_saves() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Edit a request", &[""])]).await;
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Edit a request",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "use_component", "component": "Edit a row", "inputs": { "row": { "role": "row", "name": "Alpha" } } }
+        ]}]
+    }])
+    .to_string();
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "Step 1: Edit a row is not saved in this project"));
+
+    put_edit_a_row(dir.path());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, never_seen(1, "row \"Alpha\"")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    let row: v2_lib::browser::locator::Target =
+        serde_json::from_value(serde_json::json!({ "role": "row", "name": "Alpha" })).unwrap();
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", None, "/", &row, 0).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+}

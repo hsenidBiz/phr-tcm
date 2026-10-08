@@ -491,3 +491,38 @@ fn an_import_without_its_test_cases_is_refused() {
     assert_eq!(err, v2_lib::autorun::discovery_map::load_map(&root, "acme", "Web").unwrap_err());
     assert!(load_script(&root, 7).unwrap().is_none());
 }
+
+/// An import names a component the project does not have, and a target
+/// input that was never seen, beside every other refusal.
+#[test]
+fn an_import_names_a_component_it_cannot_use() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    seen_ratings(&root);
+    let c: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Press", "description": "d", "version": 1,
+        "inputs": [{ "name": "what", "kind": "target", "description": "" }],
+        "actions": [{ "kind": "click", "selector": { "input": "what" } }]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(&root, "acme", "Web", c).unwrap();
+    let bundle = serde_json::json!([ratings_script(7, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "use_component", "component": "Ghost", "inputs": {} }] },
+        { "step_number": 2, "actions": [{ "kind": "use_component", "component": "Press", "inputs": { "what": button("Publish") } }] },
+        { "step_number": 3, "actions": [{ "kind": "use_component", "component": "Press", "inputs": { "what": button("Save") } }] }
+    ]))]);
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, bundle.to_string()).unwrap();
+    let cases = case_texts(&[(7, &[])]);
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), Some(&cases)).unwrap_err();
+    assert_eq!(
+        err,
+        [
+            "Case 7, step 1: Ghost is not saved in this project.",
+            "Case 7, step 2: button \"Publish\" was never seen on the live app.",
+            IMPORT_UNSEEN_THEN,
+        ]
+        .join("\n")
+    );
+    assert!(load_script(&root, 7).unwrap().is_none());
+}
