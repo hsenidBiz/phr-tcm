@@ -853,6 +853,12 @@ pub fn guide_section(nav: &NavFile) -> String {
     out
 }
 
+/// The one rule for a script's `area`, said word for word here and in the
+/// guide's "Discovering the app": the save check credits a script only with
+/// what was seen in the area it names, so it always names one.
+/// `tests/suite/autorun_guide.rs` holds the two texts together.
+pub const SET_AREA_RULE: &str = "Set the script's `area` to the area you explored, every time, even when it is the module's default area: a script with no `area` only gets credit for locators not tied to an area.";
+
 /// The recorded areas, one line each: name - module - the address path it
 /// lands on.
 fn areas_section(nav: &NavFile) -> String {
@@ -864,11 +870,11 @@ fn areas_section(nav: &NavFile) -> String {
     for m in &nav.modules {
         out.push_str(&format!("- {} - {} - {}\n", m.name(), m.module.trim(), m.arrived));
     }
-    out.push_str(
+    out.push_str(&format!(
         "\n- A script with no `area` goes to its module's default area: the area named like the case's Module, or, when none is, the module's only area.\n\
-         - Set `area` on the script, to one of the names above, whenever the case's screen is not its module's default area.\n\
+         - {SET_AREA_RULE} Use one of the names above.\n\
          - A script that names an area not listed here is refused when it is saved.\n",
-    );
+    ));
     out
 }
 

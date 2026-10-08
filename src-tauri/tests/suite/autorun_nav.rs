@@ -639,7 +639,7 @@ fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
     ] {
         assert!(text.contains(line), "missing {line:?}: {text}");
     }
-    for must in ["`area`", "is not its module's default area", "named like the case's Module", "the module's only area"] {
+    for must in ["`area`", v2_lib::autorun::nav::SET_AREA_RULE, "named like the case's Module", "the module's only area"] {
         assert!(text.contains(must), "missing {must:?}: {text}");
     }
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");

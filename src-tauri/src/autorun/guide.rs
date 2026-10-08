@@ -1030,11 +1030,19 @@ What the app sees on a live page is kept in this project's map, area by
 area: while you explore, in the person's browser, and in replays. A save
 is checked against that map.
 
-Set the script's `area` to the area you explored: the name
-`save_autorun_area` gave it, or the area you started discovery in. A
-script gets credit for what was seen in its own area and in the areas it
-goes to with `return_to_area`; a script with no `area` only gets credit
-for locators not tied to an area.
+Set the script's `area` to the area you explored, every time, even when
+it is the module's default area: a script with no `area` only gets credit
+for locators not tied to an area. That is the name `save_autorun_area`
+gave it, or the area you started discovery in. A script also gets credit
+for what was seen in the areas it goes to with `return_to_area`.
+
+Write the script the way you explored: carry each step's actions out
+live with `discover_autorun_action` as you write them, in order, and fix
+a step that does not do what the case says before you go on. Save with
+`save_autorun_script` only once every step has been carried out. After
+the save you may replay to the last step with `replay_autorun_to_step`
+to confirm, but any fix after the save is a repair: declared in `edits`,
+and counted toward the repair cap.
 
 What a save checks:
 

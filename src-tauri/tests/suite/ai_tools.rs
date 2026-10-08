@@ -1634,8 +1634,8 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "start_autorun_discovery",
         "save_autorun_area",
         "discover_autorun_action",
-        // Saved before the replay: a replay needs a saved script.
         "save_autorun_script",
+        // Optional, after the save: never part of writing the script.
         "replay_autorun_to_step",
         "end_autorun_discovery",
     ];
@@ -1653,8 +1653,16 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     for name in named {
         assert!(is_tool(name), "/tcm:discover names `{name}`, which mcp.rs does not expose");
     }
+    let save_at = body.find("`save_autorun_script`").unwrap();
+    assert!(
+        !body[..save_at].contains("replay_autorun_to_step"),
+        "a script is carried out live while it is written, not replayed before it is saved: {body}"
+    );
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
+        "carrying each step's actions out live with `discover_autorun_action` as you write them",
+        "Only once every step has been carried out, save it",
+        "Any fix after the save is a repair, declared in `edits`, and counts toward the repair cap",
         "ask the person to record the area in Auto Run",
         "test name prefix",
         "delete only records carrying that prefix",

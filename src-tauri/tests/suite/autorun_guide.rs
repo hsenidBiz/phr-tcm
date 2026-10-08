@@ -910,3 +910,43 @@ fn areas_without_a_map_or_stale_are_listed() {
     assert_eq!(explore_section(&[], &map, now), "");
     assert!(!s.contains('\u{2014}') && !s.contains('\u{2013}'), "no em or en dashes");
 }
+
+/// Writing a script follows the generator pattern: each step is carried
+/// out live while it is written, and the script is saved once, after every
+/// step has run. A replay comes only after the save, and a fix then is a
+/// repair - the repair cap is not spent on first drafts.
+#[test]
+fn the_guide_saves_a_script_only_after_every_step_was_carried_out() {
+    let g = autorun_guide();
+    let section = g.split("## Discovering the app").nth(1).unwrap().split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "carry each step's actions out live with `discover_autorun_action` as you write them",
+        "Save with `save_autorun_script` only once every step has been carried out",
+        "any fix after the save is a repair: declared in `edits`, and counted toward the repair cap",
+    ] {
+        assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
+    }
+}
+
+/// The recorded-areas section and the discovery section say the same rule
+/// for a script's `area`, word for word, so the two cannot drift apart: the
+/// save check credits a script only with what was seen in the area it
+/// names, so it always names one - default area or not.
+#[test]
+fn the_areas_section_and_the_guide_give_one_rule_for_area() {
+    use v2_lib::autorun::nav::{guide_section, NavFile, SET_AREA_RULE};
+    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let guide = flat(&autorun_guide());
+    let nav: NavFile = serde_json::from_value(serde_json::json!({
+        "direct_urls": true,
+        "modules": [{ "area": "Leave Apply", "module": "Leave", "clicks": [], "arrived": "/hr/leave/apply", "recorded": "2026-10-08T10:00:00Z" }],
+    }))
+    .expect("a nav file");
+    let areas = flat(&guide_section(&nav));
+    assert!(guide.contains(SET_AREA_RULE), "the guide's discovery section lost the rule: {guide}");
+    assert!(areas.contains(SET_AREA_RULE), "the areas section lost the rule: {areas}");
+    for text in [&guide, &areas] {
+        assert!(!text.contains("whenever the case's screen is not its module's default area"), "{text}");
+    }
+}
