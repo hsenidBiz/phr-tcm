@@ -1083,6 +1083,11 @@ never seen on the live app.` Find it on the page with
 `probe_autorun_locator` or `discover_autorun_action`, then save again.
 Never swap in a locator you did not see to get past the check.
 
+Save every script you write with `save_autorun_script`. Do not hand the
+person a file to bring in with Import scripts instead: an import is
+checked the same way, every step of every script against the live app and
+its test case, and is refused whole when any locator was never seen.
+
 Saving while you explore is allowed. Name anything you create with the
 environment's test name prefix. Delete only records whose name carries
 that prefix. The app logs every write discovery sends.

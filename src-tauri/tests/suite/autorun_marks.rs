@@ -150,7 +150,7 @@ async fn every_save_path_refuses_an_invalid_mark() {
         .to_string(),
     )
     .unwrap();
-    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err(), expected(9));
+    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err(), expected(9));
     assert!(load_script(&root, 8).unwrap().is_none());
 
     // The assistant's save, refused before it needs Azure DevOps.

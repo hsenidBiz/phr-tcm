@@ -3,7 +3,7 @@
 
 use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement};
 use v2_lib::autorun::edits::Edit;
-use v2_lib::autorun::seen_check::{check_seen, steps_to_check};
+use v2_lib::autorun::seen_check::{check_seen, check_seen_all, steps_to_check, Unseen};
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::{LocatorStep, Target};
 
@@ -330,4 +330,36 @@ fn a_row_holding_the_typed_record_is_exempt() {
         ]),
     );
     assert_eq!(check_seen(&map, &s, &[], None), Ok(()));
+}
+
+/// An import names every unseen locator, step by step, where a save names
+/// only the first.
+#[test]
+fn check_seen_all_lists_every_unseen_locator_and_check_seen_still_stops_at_the_first() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let s = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [
+                { "kind": "click", "selector": { "role": "button", "name": "Publish" } },
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+            ] },
+            { "step_number": 2, "actions": [
+                { "kind": "navigate", "url": "/elsewhere" },
+                { "kind": "click", "selector": { "role": "button", "name": "Archive" } }
+            ] }
+        ]),
+    );
+    let unseen = |step: i32, what: &str| Unseen { step, locator: what.to_string() };
+    assert_eq!(
+        check_seen_all(&map, &s, &[], None),
+        vec![unseen(1, "button \"Publish\""), unseen(2, "/elsewhere"), unseen(2, "button \"Archive\"")]
+    );
+    assert_eq!(check_seen(&map, &s, &[], None), Err(refusal(1, "button \"Publish\"")));
+    assert_eq!(check_seen_all(&map, &s, &[], Some(&[2])).len(), 2, "only the declared steps");
+    let ok = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] }]),
+    );
+    assert!(check_seen_all(&map, &ok, &[], None).is_empty());
 }

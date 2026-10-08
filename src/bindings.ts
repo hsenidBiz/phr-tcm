@@ -617,6 +617,12 @@ export const commands = {
 	 *  leaves the tester unable to tell which cases are current. Returns the
 	 *  case ids that landed, so the screen can say what changed rather than
 	 *  just "done".
+	 * 
+	 *  Every script is checked against the live app as an assistant's save is
+	 *  (`seen_check`), in full, before anything is written, so the test cases
+	 *  are read from Azure DevOps first: a case's own words may name what a
+	 *  check looks for. With no way to read them the import is refused, never
+	 *  let through unchecked.
 	 */
 	autoRunImportScripts: (organization: string, project: string, path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { organization, project, path })),
 	autoRunSaveRun: (run: LocalRun_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
