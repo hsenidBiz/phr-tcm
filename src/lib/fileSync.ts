@@ -216,6 +216,14 @@ export type SyncChange = {
   full: TestCase;
 };
 
+/** The row-sized version of a "changed" entry: which fields moved and how
+ * many steps, e.g. "Title, 2 steps changed". */
+export function fileChangeSummary(c: SyncChange): string {
+  const parts = c.fields.map((f) => f.name);
+  if (c.steps.length) parts.push(`${c.steps.length} step${c.steps.length === 1 ? "" : "s"}`);
+  return `${parts.join(", ")} changed`;
+}
+
 export type SyncResult = {
   queue: TestCase[];
   changes: SyncChange[];

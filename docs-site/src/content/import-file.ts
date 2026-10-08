@@ -702,7 +702,7 @@ export const importFile: Screen = {
     "While a file is watched, a line under **Import JSON** names it and how many cases it added. **Stop** stops following that file (**Stop all** there stops every one) and asks whether to keep the cases it added or remove them too. Cases you typed by hand are never removed.",
     "Under each watched file, **Attach spec…** adds specification documents (Markdown files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page. Nothing else can be a spec: any other file or link is refused with the reason.",
     "**General comments**, under the watched files, holds notes about the whole set, such as a question you asked a developer. They are saved into the file.",
-    "When a watched file changes, a panel says what was added, changed or removed, and the rows it touched are outlined in the queue. **Show details** lists each change; the x closes the panel.",
+    "When a watched file changes, a panel says what was added, changed or removed, and the rows it touched are outlined in the queue. **Show details** lists each change; the x closes the panel. A new case the file changed also gets a link on its own row, such as \"Title, 2 steps changed\", that opens the old and new wording right there; closing the panel removes the link.",
     "With the queue empty, **Recent JSON Imports** lists files you imported before. **Open** imports one again as it is now; the x takes it off the list.",
     "Warnings about an imported file, such as a field it could not read, are listed under the share link.",
     "While an upload runs, a bar under the queue says what it is doing (checking what changed, then uploading) and how many cases are done.",

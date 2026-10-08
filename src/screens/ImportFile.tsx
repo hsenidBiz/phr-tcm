@@ -499,6 +499,19 @@ export default function ImportFile({
     return m;
   }, [reports]);
 
+  // The same rows' own changes, so a NEW row can show what the file did to
+  // it. Newest report wins when two cover one row. Gone with the report.
+  const fileChanges = useMemo(() => {
+    if (reports.length === 0) return undefined;
+    const m: Record<string, SyncChange> = {};
+    for (const r of reports) {
+      for (const c of r.changes) {
+        if (c.kind === "changed") m[c.key] = c;
+      }
+    }
+    return m;
+  }, [reports]);
+
   useEffect(() => {
     if (!pendingFor || pbi?.id !== pendingFor.pbiId) return;
     const { pbiId: forPbi, data, extraWarnings } = pendingFor;
@@ -794,6 +807,7 @@ export default function ImportFile({
         queue={queue}
         setQueue={setQueue}
         flash={flash}
+        fileChanges={fileChanges}
         watches={watches}
         recentImports={recents}
         onOpenRecent={(path) => importFile.mutate(path)}

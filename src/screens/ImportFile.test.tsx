@@ -546,6 +546,68 @@ test("an edit on disk lands in the queue and is reported", async () => {
   expect(await screen.findByText(/then/)).toBeInTheDocument();
 });
 
+// The change report is the only other place an edit to a NEW row can be
+// read, so the row carries its own link to it until the report is dismissed.
+const FILE_LINK = /by the file, in /;
+
+test("a NEW row the file changed shows its edit on the row, until the report is dismissed", async () => {
+  seedWatchedImport();
+  mockWatched(
+    [jsonCase("Login works", { tags: "smoke", steps: [{ action: "do", expected: "fine" }] })],
+    "stamp-1",
+  );
+  renderScreen();
+  await screen.findByText("cases.json");
+  await act(async () => {
+    await fileChanged("stamp-2");
+  });
+  const link = await screen.findByRole("button", { name: /Tags, 1 step changed by the file, in Login works/ });
+  expect(link).toHaveTextContent("Tags, 1 step changed ▸");
+  expect(link).toHaveAttribute("aria-expanded", "false");
+
+  fireEvent.click(link);
+  expect(link).toHaveAttribute("aria-expanded", "true");
+  // Old and new words: the field's new text and both versions of the step.
+  expect(await screen.findByText("smoke")).toBeInTheDocument();
+  expect(screen.getAllByText(/ok/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/fine/).length).toBeGreaterThan(0);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss the change report for cases.json" }),
+  );
+  expect(screen.queryByRole("button", { name: FILE_LINK })).not.toBeInTheDocument();
+  expect(screen.queryByText("smoke")).not.toBeInTheDocument();
+});
+
+test("a row the file ADDED has no changes link", async () => {
+  seedWatchedImport();
+  mockWatched([jsonCase("Login works"), jsonCase("Brand new case")], "stamp-1");
+  renderScreen();
+  await screen.findByText("cases.json");
+  await act(async () => {
+    await fileChanged("stamp-2");
+  });
+  expect(await screen.findByText("Brand new case")).toBeInTheDocument();
+  expect(screen.getByText("+1 added")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: FILE_LINK })).not.toBeInTheDocument();
+});
+
+test("an UPDATE row the file changed gets no file link", async () => {
+  localStorage.setItem("tcm-v2-draft:acme/42", JSON.stringify([jsonCase("Login works", { update_id: 99 })]));
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify({ path: CASE_PATH, stamp: "stamp-1", snapshot: [jsonCase("Login works", { update_id: 99 })] }),
+  );
+  mockWatched([jsonCase("Login works", { update_id: 99, tags: "smoke" })], "stamp-1");
+  renderScreen();
+  await screen.findByText("cases.json");
+  await act(async () => {
+    await fileChanged("stamp-2");
+  });
+  expect(await screen.findByText("~1 changed")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: FILE_LINK })).not.toBeInTheDocument();
+});
+
 /** The watcher only reports changes from the moment it starts, so an edit
  * made while the app was closed has to be caught when the watch re-arms. */
 test("an edit made while the app was closed is caught on arming", async () => {
