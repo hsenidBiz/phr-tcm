@@ -3,10 +3,10 @@ import { memo } from "react";
 import type { TestCase } from "../bindings";
 import { diffSummary, retypedLines, type CaseDiff } from "../lib/caseDiff";
 import { cn } from "../lib/cn";
+import { fileChangeSummary, type SyncChange } from "../lib/fileSync";
 import CaseStepsTable from "./CaseStepsTable";
-import InlineDiff from "./InlineDiff";
 import QueueCaseEditor from "./QueueCaseEditor";
-import StepDiffLines from "./StepDiffLines";
+import CaseChangeDetail from "./CaseChangeDetail";
 import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { Collapse } from "./ui/collapse";
@@ -37,6 +37,10 @@ export type QueueRowProps = {
   ambiguous: boolean;
   /** A watched-file sync just added or changed this row. */
   touched: "added" | "changed" | undefined;
+  /** What an open change report says the watched file did to this NEW row,
+   * when it CHANGED it. Absent for an added row, an UPDATE row, and once
+   * the report is dismissed. Opens with the same toggle as `diff`. */
+  fileChange?: SyncChange;
   reviewing: boolean;
   /** Validation problem, shown in review. */
   problem: string | null;
@@ -78,6 +82,7 @@ export function QueueRowInner({
   held,
   ambiguous,
   touched,
+  fileChange,
   reviewing,
   problem,
   duplicate,
@@ -92,6 +97,8 @@ export function QueueRowInner({
   onSave,
   onCancelEdit,
 }: QueueRowProps) {
+  // A NEW row only: an UPDATE row keeps its Azure DevOps diff and nothing else.
+  const showFileDiff = fileChange != null && tc.update_id == null;
   return (
     <li
       className={cn(
@@ -161,6 +168,16 @@ export function QueueRowInner({
               {diffSummary(diff)} {diffOpen ? "▾" : "▸"}
             </button>
           )}
+          {fileChange && tc.update_id == null && (
+            <button
+              aria-label={`${fileChangeSummary(fileChange)} by the file, in ${tc.title}`}
+              aria-expanded={diffOpen}
+              className="text-xs text-accent hover:underline"
+              onClick={() => onToggleDiff(i)}
+            >
+              {fileChangeSummary(fileChange)} {diffOpen ? "▾" : "▸"}
+            </button>
+          )}
           {diffFailed && <span className="text-xs text-faint">diff unavailable</span>}
           {reviewing && problem && <span className="text-xs text-danger">{problem}</span>}
           {reviewing && !problem && duplicate && (
@@ -215,24 +232,7 @@ export function QueueRowInner({
       <Collapse open={Boolean(diff && !diff.noop && diffOpen)}>
       {diff && !diff.noop && (
         <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
-          {/* Word-level, like the step lines below: editing one
-              word of a title must not read as the whole title
-              being replaced. */}
-          {diff.fields.map((f) => (
-            <div key={f.name}>
-              <span className="font-medium text-muted">{f.name}:</span> <InlineDiff old={f.old} next={f.new} />
-            </div>
-          ))}
-          {diff.steps.detail.length > 0 && (
-            <div className="space-y-1">
-              <span className="font-medium text-muted">Steps:</span>
-              {/* git word-diff style: -/+ lines with only the
-                  actually-changed words highlighted. */}
-              {diff.steps.detail.map((d) => (
-                <StepDiffLines key={d.index} d={d} org={org} />
-              ))}
-            </div>
-          )}
+          <CaseChangeDetail fields={diff.fields} steps={diff.steps.detail} org={org} />
           {/* A step-type repair has no text change to draw, so it is
               said in words - without this, a case whose only change is
               its step types opened an empty panel. */}
@@ -252,6 +252,13 @@ export function QueueRowInner({
           )}
         </div>
       )}
+      </Collapse>
+      <Collapse open={Boolean(showFileDiff && diffOpen)}>
+        {showFileDiff && (
+          <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
+            <CaseChangeDetail fields={fileChange.fields} steps={fileChange.steps} org={org} />
+          </div>
+        )}
       </Collapse>
     </li>
   );
