@@ -1154,6 +1154,59 @@ impl Action {
         }
     }
 
+    /// Every target this action points at, wherever it is written: inside a
+    /// `when_visible`, both ends of a `drag`, a table action's `table`.
+    /// Matched without a catch-all, so a new action kind will not compile
+    /// until it is classified here.
+    pub fn targets(&self) -> Vec<&Target> {
+        match self {
+            Action::Click { selector }
+            | Action::Fill { selector, .. }
+            | Action::WaitFor { selector, .. }
+            | Action::ExpectVisible { selector, .. }
+            | Action::ExpectHidden { selector, .. }
+            | Action::ExpectText { selector, .. }
+            | Action::ExpectContainsText { selector, .. }
+            | Action::ExpectCount { selector, .. }
+            | Action::ExpectAttribute { selector, .. }
+            | Action::Upload { selector, .. }
+            | Action::ExpectFocused { selector, .. } => vec![selector],
+            Action::WhenVisible { selector, then, .. } => {
+                std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
+            }
+            Action::Drag { from, to, .. } => vec![from, to],
+            Action::ExpectRow { table, .. }
+            | Action::ExpectNoRow { table, .. }
+            | Action::ExpectSorted { table, .. }
+            | Action::ExpectRowCount { table, .. } => vec![table],
+            Action::Navigate { .. }
+            | Action::CheckText { .. }
+            | Action::CheckUrl { .. }
+            | Action::SignIn { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ApiRequest { .. }
+            | Action::Reload
+            | Action::ExpireSession
+            | Action::ReturnToArea { .. }
+            | Action::PressKey { .. }
+            | Action::ExpectDownload { .. }
+            | Action::ExpectTab { .. }
+            | Action::OpenTab { .. }
+            | Action::SwitchTab { .. }
+            | Action::CloseTab { .. }
+            | Action::ExpectTabClosed { .. }
+            | Action::ExpectDialog { .. } => Vec::new(),
+        }
+    }
+
+    /// The text a `fill` types; `None` for any other action.
+    pub fn typed_value(&self) -> Option<&str> {
+        match self {
+            Action::Fill { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
     /// The area a `return_to_area` names, trimmed; `None` for any other
     /// action, and for one that names none or a blank one - both go to the
     /// case's own area, as a script's blank `area` means its default one.

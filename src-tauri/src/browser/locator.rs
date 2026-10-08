@@ -96,6 +96,22 @@ impl From<String> for Target {
     }
 }
 
+/// How a locator is remembered once the live page has named the element it
+/// found: a role with its accessible name, or the exact text or css it used.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type)]
+pub enum SeenKey {
+    Role { role: String, name: String },
+    Text(String),
+    Css(String),
+}
+
+/// A name the way two people would call it the same: trimmed, every unusual
+/// space (no-break, narrow no-break, figure, thin, tab, newline) one space,
+/// runs collapsed, lowercase.
+pub fn fold_name(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 fn blank(s: &Option<String>) -> bool {
     s.as_deref().is_some_and(|v| v.trim().is_empty())
 }
@@ -122,6 +138,22 @@ impl LocatorStep {
             return Err("nth counts from 0 and cannot be negative".to_string());
         }
         Ok(())
+    }
+
+    /// What this link is called, for comparison with what the page showed.
+    /// `exact`, `visible` and `nth` do not change which element is meant by
+    /// name, so they are left out. `None` when the link names nothing.
+    pub fn seen_key(&self) -> Option<SeenKey> {
+        if let Some(role) = &self.role {
+            return Some(SeenKey::Role {
+                role: fold_name(role),
+                name: fold_name(self.name.as_deref().unwrap_or("")),
+            });
+        }
+        if let Some(text) = &self.text {
+            return Some(SeenKey::Text(text.trim().to_string()));
+        }
+        self.css.as_ref().map(|c| SeenKey::Css(c.trim().to_string()))
     }
 
     fn describe(&self) -> String {
@@ -152,6 +184,14 @@ impl Target {
             Target::Legacy(_) => &[],
             Target::One(s) => std::slice::from_ref(s),
             Target::Chain(v) => v,
+        }
+    }
+
+    /// Every link of this target as a step: a legacy string is one css link.
+    pub fn links(&self) -> Vec<LocatorStep> {
+        match self {
+            Target::Legacy(s) => vec![LocatorStep { css: Some(s.clone()), ..LocatorStep::default() }],
+            _ => self.steps().to_vec(),
         }
     }
 

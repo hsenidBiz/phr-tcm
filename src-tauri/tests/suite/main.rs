@@ -104,6 +104,7 @@ mod db_guard;
 mod db_schema;
 mod db_sqlcmd;
 mod deletion;
+mod discovery_locators;
 mod draft_comments;
 mod draft_merge;
 mod environments;
