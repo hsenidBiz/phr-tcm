@@ -55,6 +55,9 @@ pub struct DiscoveryState {
     /// When the discovery started (milliseconds since the epoch): a page it
     /// reads again keeps the locators matched since then.
     pub started_at: u64,
+    /// The components tried in this discovery that worked, by
+    /// `components::draft_fingerprint`. It goes with the discovery.
+    pub tried: Vec<String>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -188,8 +191,12 @@ pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String>
     let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
     open_into(Ok(root), &mut slot, Browser::from_name(browser_name)).await?;
     if let Some(session) = slot.as_mut() {
-        session.discovery =
-            Some(DiscoveryState { area: None, account: None, started_at: crate::autorun::sessions::now_ms() });
+        session.discovery = Some(DiscoveryState {
+            area: None,
+            account: None,
+            started_at: crate::autorun::sessions::now_ms(),
+            tried: Vec::new(),
+        });
     }
     publish_discovery(&slot);
     Ok(())

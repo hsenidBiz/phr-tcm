@@ -115,6 +115,31 @@ pub fn find<'a>(f: &'a ComponentFile, name: &str) -> Option<&'a Component> {
     f.components.iter().find(|c| key(&c.name) == k)
 }
 
+/// `v` with every object's keys in sorted order, so the same value always
+/// writes the same text.
+fn canonical(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            Value::Object(keys.into_iter().map(|k| (k.clone(), canonical(&map[k]))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
+}
+
+/// What a component does, as a sha256 hex string: its name's key, its
+/// inputs and its actions, written as canonical JSON. Its description,
+/// version and when it was tried do not count, so a component tried in a
+/// discovery is recognised when it is saved unchanged.
+pub fn draft_fingerprint(c: &Component) -> String {
+    use sha2::{Digest, Sha256};
+    let doc = serde_json::json!({ "name_key": key(&c.name), "inputs": c.inputs, "actions": c.actions });
+    let text = serde_json::to_string(&canonical(&doc)).unwrap_or_default();
+    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Load, change and write back under the lock; a change that leaves the
 /// file as it was writes nothing.
 fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut ComponentFile)) -> Result<(), String> {

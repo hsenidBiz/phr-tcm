@@ -2225,8 +2225,13 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     named(area).map(|a| crate::autorun::discovery_map::canonical_area(root, organization, project, &a));
                 let started_at =
                     p.discovery.as_ref().map_or_else(crate::autorun::sessions::now_ms, |s| s.started_at);
-                *p.discovery =
-                    Some(crate::commands::autorun::DiscoveryState { area, account: Some(key.to_string()), started_at });
+                let tried = p.discovery.as_mut().map(|s| std::mem::take(&mut s.tried)).unwrap_or_default();
+                *p.discovery = Some(crate::commands::autorun::DiscoveryState {
+                    area,
+                    account: Some(key.to_string()),
+                    started_at,
+                    tried,
+                });
                 // The landing page is filed, but does not mark the area
                 // explored: nothing of the area itself has been seen yet.
                 let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
@@ -2254,6 +2259,15 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     (409, failed)
 }
 
+/// What one action a discovery ran did: its outcome, the dialog it raised,
+/// the writes the page sent and the path it ended on.
+struct Discovered {
+    outcome: crate::browser::actions::ActionOutcome,
+    dialogs: Vec<String>,
+    writes: Vec<serde_json::Value>,
+    after: String,
+}
+
 /// One action in the discovery's browser, run as `/autorun-try` runs one
 /// (`try_action`, case 0), with what it set off: `{ok, detail, path,
 /// dialogs, writes, page}`. Every write request the page sent (`SAVE_METHODS`)
@@ -2261,12 +2275,21 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
 /// the page it ended on is filed, and a line saying what the action led to
 /// goes into the area's outcomes. Neither ever holds a value a `fill` typed.
 /// A non-blank `area` moves the discovery to that area first.
+///
+/// A `use_component` is expanded before the browser is touched: from
+/// `draft` when one is given, so a component can be tried before it is
+/// saved, else from the saved one. Each of its actions then runs as a
+/// single action does, and the try stops at the first that fails, as a
+/// script step does. Its answer adds `steps: [{action, ok, detail}]`, with
+/// `ok` and `detail` the try's as a whole, and a try that worked is kept
+/// on the discovery by `components::draft_fingerprint`.
 pub async fn discover_action_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
     organization: &str,
     project: &str,
     action: &crate::browser::actions::Action,
+    draft: Option<&crate::autorun::components::Component>,
     area: Option<&str>,
 ) -> (u16, String) {
     let Some(browser) = slot.as_mut() else {
@@ -2276,21 +2299,142 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     let Some(state) = p.discovery.as_mut() else {
         return (409, NO_DISCOVERY.to_string());
     };
+    let component = match action {
+        crate::browser::actions::Action::UseComponent { component, inputs } => {
+            match component_to_try(root, organization, project, component, inputs, draft) {
+                Ok(found) => Some(found),
+                Err(refused) => return refused,
+            }
+        }
+        _ => None,
+    };
     if let Some(moved) = named(area) {
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let area_name = state.area.clone();
     let d = p.driver;
+    let runs: Vec<&crate::browser::actions::Action> = match &component {
+        Some((_, actions)) => actions.iter().collect(),
+        None => vec![action],
+    };
+    let (mut steps, mut writes, mut dialogs) = (Vec::new(), Vec::new(), Vec::new());
+    let mut last = None;
+    let mut after = String::new();
+    for one in runs {
+        let ran =
+            match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), one).await {
+                Ok(ran) => ran,
+                Err(refused) => return refused,
+            };
+        steps.push(serde_json::json!({
+            "action": describe_action(one),
+            "ok": ran.outcome.ok,
+            "detail": ran.outcome.detail,
+        }));
+        writes.extend(ran.writes);
+        dialogs.extend(ran.dialogs);
+        after = ran.after;
+        let failed = !ran.outcome.ok;
+        last = Some(ran.outcome);
+        if failed {
+            break;
+        }
+    }
+    let Some(outcome) = last else {
+        return (500, "the action produced no outcome".to_string());
+    };
+    if let (Some((c, _)), true) = (&component, outcome.ok) {
+        let print = crate::autorun::components::draft_fingerprint(c);
+        if let Some(state) = p.discovery.as_mut() {
+            if !state.tried.contains(&print) {
+                state.tried.push(print);
+            }
+        }
+    }
+    let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
+    let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+    let mut answer = serde_json::json!({
+        "ok": outcome.ok,
+        "detail": outcome.detail,
+        "path": after,
+        "dialogs": dialogs,
+        "writes": writes,
+        "page": if status == 200 { page.as_str() } else { "" },
+    });
+    if component.is_some() {
+        answer["steps"] = serde_json::json!(steps);
+    }
+    if status != 200 {
+        answer["page_unavailable"] = serde_json::json!(page);
+    }
+    if let Some(shot) = &outcome.screenshot {
+        answer["picture"] = serde_json::json!(shot);
+    }
+    (200, answer.to_string())
+}
+
+/// The component a discovery's `use_component` tries, and its actions with
+/// the inputs put in: `draft` when given (it must be the component the
+/// action names), else the saved one. Each expanded action is refused as a
+/// tried action is, and one that would go to a site outside the sign-in
+/// recipe's is refused too, all before the browser is touched.
+fn component_to_try(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    inputs: &serde_json::Map<String, serde_json::Value>,
+    draft: Option<&crate::autorun::components::Component>,
+) -> Result<(crate::autorun::components::Component, Vec<crate::browser::actions::Action>), (u16, String)> {
+    use crate::autorun::components;
+    let key = crate::autorun::nav::module_key;
+    let c = match draft {
+        Some(c) if key(&c.name) == key(name) => c.clone(),
+        Some(c) => {
+            return Err((400, format!("the draft is {}, but the action uses {}", c.name.trim(), name.trim())));
+        }
+        None => {
+            let file = components::load_components(root, organization, project).map_err(|why| (409, why))?;
+            components::find(&file, name).cloned().ok_or_else(|| (400, components::not_saved(name)))?
+        }
+    };
+    let actions = components::expand(&c, inputs).map_err(|why| (400, why))?;
+    if actions.is_empty() {
+        return Err((400, format!("{} has no actions to try", c.name.trim())));
+    }
+    for a in &actions {
+        refuse_as_a_tried_action(a)?;
+    }
+    if actions.iter().any(|a| !tried_addresses(a).is_empty()) {
+        let recipe =
+            crate::autorun::recipe::load_effective_recipe(root, organization, project).map_err(|why| (409, why))?;
+        let policy = crate::autorun::runner::policy_for(Some(&recipe));
+        for a in &actions {
+            refuse_outside_the_recipe(&policy, a)?;
+        }
+    }
+    Ok((c, actions))
+}
+
+/// One action of a discovery, with the writes it set off logged and the
+/// line saying what it led to filed (`discover_action_in`).
+#[allow(clippy::too_many_arguments)]
+async fn discover_one<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    signed_in: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area_name: Option<&str>,
+    action: &crate::browser::actions::Action,
+) -> Result<Discovered, (u16, String)> {
     let recording = !project.trim().is_empty();
-    let bucket = area_name.as_deref().unwrap_or("");
+    let bucket = area_name.unwrap_or("");
     let before = current_page(d).await.0;
     let notes_before = status_texts(d).await;
     let mark = crate::browser::cdp::Driver::net_mark(d);
-    let tried =
-        match try_action(d, p.signed_in, p.lease, root, organization, project, 0, area_name.as_deref(), action).await {
-            Ok(tried) => tried,
-            Err(refused) => return refused,
-        };
+    let tried = try_action(d, signed_in, lease, root, organization, project, 0, area_name, action).await?;
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
@@ -2328,23 +2472,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
             unrecorded(&why);
         }
     }
-    let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
-    let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
-    let mut answer = serde_json::json!({
-        "ok": tried.outcome.ok,
-        "detail": tried.outcome.detail,
-        "path": after,
-        "dialogs": dialogs,
-        "writes": writes,
-        "page": if status == 200 { page.as_str() } else { "" },
-    });
-    if status != 200 {
-        answer["page_unavailable"] = serde_json::json!(page);
-    }
-    if let Some(shot) = &tried.outcome.screenshot {
-        answer["picture"] = serde_json::json!(shot);
-    }
-    (200, answer.to_string())
+    Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
 }
 
 /// End the discovery in `slot`: its browser is closed. A browser the
@@ -2571,9 +2699,10 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
 /// `/autorun-discover-action`: one action in the discovery's browser
 /// (`discover_action_in`). Refused as a tried action is (`sign_in`, a local
 /// file), and a `navigate` or `open_tab` to a site outside the sign-in
-/// recipe's, before the browser is touched.
+/// recipe's, before the browser is touched. A `use_component` may carry a
+/// `draft` component, tried in place of the saved one.
 async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"action\": <one script action>, \"area\": <an area name, optional> }";
+    const SHAPE: &str = "{ \"action\": <one script action>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }";
     let raw = match body_field(body, "action", SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -2592,6 +2721,17 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     }
     let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
     let area = named(v.get("area").and_then(|a| a.as_str()));
+    // A component not saved yet, tried by the `use_component` that names it.
+    let draft: Option<crate::autorun::components::Component> = match v.get("draft") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(raw) => match serde_json::from_value(raw.clone()) {
+            Ok(c) => Some(c),
+            Err(e) => return (400, format!("that draft is not a component: {e}. Expected {SHAPE}.")),
+        },
+    };
+    if draft.is_some() && !matches!(action, crate::browser::actions::Action::UseComponent { .. }) {
+        return (400, format!("a draft is tried by a use_component action that names it. Expected {SHAPE}."));
+    }
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -2603,24 +2743,35 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
         Ok(r) => r,
         Err(why) => return (409, why),
     };
-    // A relative address names no site: the runner makes it absolute on the
-    // page and holds it to the same list.
     let policy = crate::autorun::runner::policy_for(Some(&recipe));
-    for url in tried_addresses(&action) {
+    if let Err(refused) = refuse_outside_the_recipe(&policy, &action) {
+        return refused;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await
+}
+
+/// A discovery's `navigate` or `open_tab` to a site outside `policy`'s,
+/// refused. A relative address names no site: the runner makes it absolute
+/// on the page and holds it to the same list.
+fn refuse_outside_the_recipe(
+    policy: &crate::browser::actions::Policy,
+    action: &crate::browser::actions::Action,
+) -> Result<(), (u16, String)> {
+    for url in tried_addresses(action) {
         if let Some(origin) = crate::autorun::recipe::origin_of(url) {
             if !policy.allows(url) {
-                return (
+                return Err((
                     400,
                     format!(
                         "{origin} is not one of {} - a discovery goes only where the sign-in recipe does",
                         crate::browser::actions::ALLOWED_ORIGINS
                     ),
-                );
+                ));
             }
         }
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
-    discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, area.as_deref()).await
+    Ok(())
 }
 
 /// `/autorun-discover-area`: save the clicks a discovery found as an area
