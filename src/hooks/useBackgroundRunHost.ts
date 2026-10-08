@@ -26,6 +26,8 @@ import { toast } from "../lib/toast";
  */
 export function useBackgroundRunHost(goToReview: (r: ReviewRequest) => void): void {
   const qc = useQueryClient();
+  /** The toast a background end raised, while it still means something. */
+  const endToast = useRef<string | null>(null);
   useEffect(
     () =>
       onRunEnded((e) => {
@@ -35,13 +37,13 @@ export function useBackgroundRunHost(goToReview: (r: ReviewRequest) => void): vo
         void qc.invalidateQueries({ queryKey: ["autorun-script"] });
         if (!e.inBackground) return;
         if (e.ok) {
-          toast.success("The unattended run finished", {
+          endToast.current = toast.success("The unattended run finished", {
             description: "Its cases are waiting for your review.",
             duration: 10_000,
             action: { label: "Review", onClick: reviewFinishedRun },
           });
         } else {
-          toast.error("The unattended run stopped with an error", {
+          endToast.current = toast.error("The unattended run stopped with an error", {
             duration: 10_000,
             action: { label: "Show", onClick: openRunWindow },
           });
@@ -50,7 +52,16 @@ export function useBackgroundRunHost(goToReview: (r: ReviewRequest) => void): vo
     [qc],
   );
 
-  const review = useBackgroundRun().review;
+  const { run, review } = useBackgroundRun();
+  // Seen through the pill instead (its window open, or the run handed to
+  // its review): the toast's own button would now do nothing, so it goes.
+  const seen = !run || run.open;
+  useEffect(() => {
+    if (seen && endToast.current) {
+      toast.dismiss(endToast.current);
+      endToast.current = null;
+    }
+  }, [seen]);
   // The latest callback, read when a request arrives: it closes over App's
   // section and scope, which must not re-run the move when they change.
   const goTo = useRef(goToReview);

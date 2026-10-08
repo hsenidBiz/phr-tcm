@@ -20,7 +20,7 @@ import AutoRun from "./index";
 import ReplayPane from "./ReplayPane";
 
 vi.mock("../../lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(() => "t1"), error: vi.fn(() => "t2"), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
 
 afterEach(() => {
@@ -216,6 +216,8 @@ test("a run that finishes in the background waits for Review, which opens it on 
   expect(screen.getByRole("tab", { name: /^Past runs/ })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("button", { name: /^Run finished/ })).not.toBeInTheDocument();
   expect(backgroundRunSnapshot()).toEqual({ run: null, review: null });
+  // Its toast's Review would now do nothing, so the toast goes too.
+  expect(toast.dismiss).toHaveBeenCalledWith("t1");
 });
 
 test("the toast's Review does what the pill's does", async () => {
