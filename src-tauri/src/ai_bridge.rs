@@ -1752,16 +1752,11 @@ pub async fn read_page<D: crate::browser::cdp::Driver>(
     (200, text)
 }
 
-/// Files each locator in `targets` at `at` under the page the browser is on.
-async fn record_matched_targets<D: crate::browser::cdp::Driver>(
-    d: &mut D,
-    at: &Sighting,
-    targets: &[&crate::browser::locator::Target],
-) {
+/// Files each locator in `targets` at `at` under the page at `path`.
+fn record_matched_targets(at: &Sighting, path: &str, targets: &[&crate::browser::locator::Target]) {
     if targets.is_empty() || at.project.trim().is_empty() {
         return;
     }
-    let (path, _) = current_page(d).await;
     if path.is_empty() {
         unrecorded("the page's address could not be read");
         return;
@@ -1770,10 +1765,67 @@ async fn record_matched_targets<D: crate::browser::cdp::Driver>(
     for target in targets {
         let area = at.area.as_deref();
         if let Err(why) =
-            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, &path, target, now)
+            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, path, target, now)
         {
             unrecorded(&why);
         }
+    }
+}
+
+/// The locators an action that WORKED must have matched at least once.
+/// Kinds that pass while matching nothing give none: `expect_hidden`, an
+/// `expect_count` of 0, `expect_no_row`, a `expect_row_count` with no
+/// positive bound, and `when_visible`, whose outcome does not say whether
+/// its selector was there. Matched without a catch-all, so a new kind will
+/// not compile until it is classified here.
+fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::browser::locator::Target> {
+    use crate::browser::actions::Action;
+    match action {
+        Action::Click { selector }
+        | Action::Fill { selector, .. }
+        | Action::Upload { selector, .. }
+        | Action::WaitFor { selector, .. }
+        | Action::ExpectVisible { selector, .. }
+        | Action::ExpectText { selector, .. }
+        | Action::ExpectContainsText { selector, .. }
+        | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectFocused { selector, .. } => vec![selector],
+        Action::ExpectCount { selector, equals, .. } => {
+            if *equals >= 1 {
+                vec![selector]
+            } else {
+                vec![]
+            }
+        }
+        Action::Drag { from, to, .. } => vec![from, to],
+        Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![table],
+        Action::ExpectRowCount { table, equals, at_least, .. } => {
+            if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
+                vec![table]
+            } else {
+                vec![]
+            }
+        }
+        Action::ExpectHidden { .. }
+        | Action::ExpectNoRow { .. }
+        | Action::WhenVisible { .. }
+        | Action::Navigate { .. }
+        | Action::CheckText { .. }
+        | Action::CheckUrl { .. }
+        | Action::SignIn { .. }
+        | Action::ExpectResponse { .. }
+        | Action::ApiRequest { .. }
+        | Action::Reload
+        | Action::ExpireSession
+        | Action::ReturnToArea { .. }
+        | Action::PressKey { .. }
+        | Action::ExpectDownload { .. }
+        | Action::ExpectTab { .. }
+        | Action::OpenTab { .. }
+        | Action::SwitchTab { .. }
+        | Action::CloseTab { .. }
+        | Action::ExpectTabClosed { .. }
+        | Action::ExpectDialog { .. } => vec![],
     }
 }
 
@@ -1797,7 +1849,8 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
-        record_matched_targets(d, at, &[target]).await;
+        let (path, _) = current_page(d).await;
+        record_matched_targets(at, &path, &[target]);
     }
     (200, text)
 }
@@ -2196,6 +2249,10 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     // SAVED, not here: a tried `fill` is not on its way into a file, and
     // it types the literal text it was given rather than standing in for
     // anything a recipe would have substituted.
+    // The page the try starts on: a click that navigates was matched on
+    // this page, not the one it leads to.
+    let matched = matched_targets(action);
+    let started_on = if matched.is_empty() { String::new() } else { current_page(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -2233,7 +2290,7 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
             account: None,
             discovering: false,
         };
-        record_matched_targets(d, &at, &action.targets()).await;
+        record_matched_targets(&at, &started_on, &matched);
     }
     let mut text =
         format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);

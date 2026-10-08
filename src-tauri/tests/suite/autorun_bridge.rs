@@ -1657,6 +1657,50 @@ async fn recordings_use_the_tried_cases_area() {
     assert_eq!(recording_area(dir.path(), None, None), None);
 }
 
+/// An `expect_hidden` passes because nothing matched: it never saw its
+/// locator, so it files nothing.
+#[tokio::test]
+async fn an_ok_expect_hidden_try_records_nothing() {
+    let dir = TempDir::new();
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut d = crate::common::FakePage { found: 0, ..crate::common::FakePage::default() }.driver();
+    let gone = Action::ExpectHidden { selector: "#gone".into(), timeout_ms: None };
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &gone).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with("ok:"), "{text}");
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty());
+}
+
+/// A click that takes the page somewhere else was matched on the page it
+/// started on, and is filed there.
+#[tokio::test]
+async fn a_click_that_navigates_is_recorded_under_the_page_it_was_on() {
+    let dir = TempDir::new();
+    let page = crate::common::FakePage::default();
+    let clicked = std::sync::atomic::AtomicBool::new(false);
+    let mut d = crate::common::ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" {
+            clicked.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        if method == "Runtime.evaluate"
+            && params["expression"] == "location.href"
+            && clicked.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(serde_json::json!({ "result": { "value": "https://app.example/after" } }));
+        }
+        page.answer(method, params)
+    });
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let (_, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert!(text.starts_with("ok:"), "{text}");
+    let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+    let page = area.pages.iter().find(|p| p.path == "/home").expect("not filed under the starting page");
+    assert!(holds_css(page, "#save"), "{:?}", page.elements);
+    assert!(area.pages.iter().all(|p| p.path != "/after"), "{:?}", area.pages);
+}
+
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {
