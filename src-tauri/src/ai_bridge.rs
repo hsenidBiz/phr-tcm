@@ -3921,7 +3921,7 @@ async fn save_autorun_scripts(
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
                 // disk and this branch is reached with nothing declared.
-                seen_scope.push((sent.case_id, Some(declared.map(|e| e.steps.clone()).unwrap_or_default())));
+                seen_scope.push((sent.case_id, crate::autorun::seen_check::steps_to_check(declared)));
                 if let Some(e) = declared {
                     let why = e.why.trim();
                     crate::applog::info(format!(
@@ -4028,7 +4028,7 @@ async fn save_autorun_scripts(
                 prepared.iter().find(|s| s.case_id == *case_id),
                 cases.iter().find(|c| c.id == *case_id),
             ) else {
-                continue;
+                return (400, format!("case {case_id} could not be checked against the live app, so it was not saved"));
             };
             let case_text: Vec<String> =
                 case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();

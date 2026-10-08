@@ -8,13 +8,32 @@
 //! expected result the step is checking for).
 
 use super::discovery_map::{path_only, seen_keys, seen_paths, DiscoveryMap};
+use super::edits::Edit;
 use super::CaseScript;
 use crate::browser::actions::Action;
 use crate::browser::locator::{fold_name, LocatorStep};
 
-/// A typed value shorter than this exempts nothing: two characters are
-/// inside far too many names to say the script made them.
+/// A typed value, or a name taken from the test case, shorter than this
+/// exempts nothing: two characters are inside far too many names to say
+/// where they came from.
 const MIN_TYPED_LEN: usize = 3;
+
+/// The steps a changed script's check reads: the declared ones, or every
+/// step (`None`) when nothing is declared, so a missing declaration can
+/// never skip the check.
+pub fn steps_to_check(declared: Option<&Edit>) -> Option<Vec<i32>> {
+    declared.map(|e| e.steps.clone())
+}
+
+/// Is `phrase` in `text` as whole words: bounded on each side by a
+/// character that is not a letter or digit, or by an end of the text?
+fn has_phrase(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + phrase.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
 
 fn refusal(step: i32, what: &str) -> String {
     format!(
@@ -78,7 +97,7 @@ pub fn check_seen(
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
-                if let Action::Navigate { url } = action {
+                if let Action::Navigate { url } | Action::OpenTab { url, .. } = action {
                     let path = path_only(url);
                     if !paths.contains(&path) {
                         return Err(refusal(step.step_number, &path));
@@ -98,7 +117,9 @@ pub fn check_seen(
                         let own = words(&link);
                         let typed_here = own.iter().any(|w| typed.iter().any(|t| w.contains(t.as_str())));
                         let in_case = is_check(action)
-                            && own.iter().any(|w| case_text.iter().any(|c| c.contains(w.as_str())));
+                            && own.iter().any(|w| {
+                                w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|c| has_phrase(c, w))
+                            });
                         if !typed_here && !in_case {
                             return Err(refusal(step.step_number, &target.describe()));
                         }

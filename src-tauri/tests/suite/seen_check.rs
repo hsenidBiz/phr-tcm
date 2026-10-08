@@ -2,7 +2,8 @@
 //! page, unless the script typed it itself or the test case says it.
 
 use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement};
-use v2_lib::autorun::seen_check::check_seen;
+use v2_lib::autorun::edits::Edit;
+use v2_lib::autorun::seen_check::{check_seen, steps_to_check};
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::{LocatorStep, Target};
 
@@ -208,4 +209,72 @@ fn two_character_typed_values_do_not_exempt() {
         ]),
     );
     assert_eq!(check_seen(&map, &s, &[], None), Err(refusal(2, "option \"Abacus\"")));
+}
+
+#[test]
+fn open_tab_needs_a_seen_path() {
+    let map = map_with("Ratings", "/ratings", &[]);
+    let seen = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "open_tab", "name": "two", "url": "https://app.example/ratings?x=1" }] }]),
+    );
+    assert_eq!(check_seen(&map, &seen, &[], None), Ok(()));
+    let unseen = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "open_tab", "name": "two", "url": "https://app.example/payroll#x" }] }]),
+    );
+    assert_eq!(check_seen(&map, &unseen, &[], None), Err(refusal(1, "/payroll")));
+}
+
+#[test]
+fn a_changed_script_with_no_declared_steps_is_checked_in_full() {
+    // No declaration: every step is checked.
+    assert_eq!(steps_to_check(None), None);
+    let edit: Edit = serde_json::from_value(serde_json::json!({ "case_id": 7, "steps": [2], "why": "w" })).unwrap();
+    assert_eq!(steps_to_check(Some(&edit)), Some(vec![2]));
+
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let s = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Old" } }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] }
+        ]),
+    );
+    assert_eq!(check_seen(&map, &s, &[], steps_to_check(None).as_deref()), Err(refusal(1, "button \"Old\"")));
+}
+
+#[test]
+fn a_short_or_partial_word_from_the_case_does_not_exempt_a_check() {
+    let map = map_with("Ratings", "/ratings", &[]);
+    let case_text = vec!["The token is shown".to_string(), "Ratings are listed".to_string()];
+    let short = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "role": "button", "name": "OK" } }] }]),
+    );
+    assert_eq!(check_seen(&map, &short, &case_text, None), Err(refusal(1, "button \"OK\"")));
+    // Long enough, but only part of a word.
+    let partial = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "oken" } }] }]),
+    );
+    assert_eq!(check_seen(&map, &partial, &case_text, None), Err(refusal(1, "text \"oken\"")));
+    let inside = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "Rating" } }] }]),
+    );
+    assert_eq!(check_seen(&map, &inside, &case_text, None), Err(refusal(1, "text \"Rating\"")));
+}
+
+#[test]
+fn a_whole_phrase_from_the_case_exempts_a_check() {
+    let map = map_with("Ratings", "/ratings", &[]);
+    let case_text = vec!["A toast says \"Rating saved.\"".to_string(), "Token shown".to_string()];
+    for name in ["Rating saved", "token", "token shown", "a toast says"] {
+        let s = script(
+            Some("Ratings"),
+            serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": name } }] }]),
+        );
+        assert_eq!(check_seen(&map, &s, &case_text, None), Ok(()), "{name}");
+    }
 }
