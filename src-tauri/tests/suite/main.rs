@@ -62,6 +62,7 @@ mod autorun_plan;
 mod autorun_preconditions;
 mod autorun_publish;
 mod autorun_quirks;
+mod discovery_map;
 mod autorun_recipe;
 mod autorun_record_signin;
 mod autorun_recorder;

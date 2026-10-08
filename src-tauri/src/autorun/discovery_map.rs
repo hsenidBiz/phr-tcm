@@ -1,0 +1,268 @@
+//! The per-project discovery map: what Auto Run has seen on the live
+//! application, area by area, so a script is written against elements that
+//! exist rather than guessed ones.
+//!
+//! Saved beside the project's other files as `<slug>-map.json`. It keeps
+//! page PATHS (no host, query or fragment) and locators only - never a page
+//! URL, a typed value or any text that came from a record. An area whose
+//! `explored_at` is old, or which has failed since, is stale and wants
+//! exploring again. `""` is the bucket for sightings that belong to no area.
+
+use super::recipe::project_slug;
+use crate::browser::locator::{LocatorStep, SeenKey, Target};
+use crate::browser::snapshot::SnapLine;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+pub const STALE_AFTER_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+const MAX_OUTCOMES: usize = 200;
+
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
+pub struct DiscoveryMap {
+    pub areas: Vec<AreaMap>,
+}
+
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
+pub struct AreaMap {
+    /// `""` is the unattributed bucket.
+    pub area: String,
+    pub explored_at: Option<u64>,
+    pub account: Option<String>,
+    pub failed_since: bool,
+    pub pages: Vec<PageMap>,
+    pub outcomes: Vec<String>,
+    pub writes: Vec<WriteEntry>,
+}
+
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
+pub struct PageMap {
+    pub path: String,
+    pub title: String,
+    pub elements: Vec<SeenElement>,
+}
+
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct SeenElement {
+    pub key: SeenKey,
+    pub locator: Target,
+    pub role: String,
+    pub name: String,
+    /// `button | field | link | table | dialog | other`, from the role.
+    pub kind: String,
+    pub required: bool,
+}
+
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct WriteEntry {
+    pub method: String,
+    pub path: String,
+    pub at: u64,
+    pub step: String,
+}
+
+pub fn map_path(root: &Path, org: &str, project: &str) -> PathBuf {
+    root.join("projects").join(format!("{}-map.json", project_slug(org, project)))
+}
+
+/// Every read-change-write of a map holds this: a discovery, a probe, a
+/// run's evidence and the person's "forget" can land together.
+fn write_lock() -> &'static Mutex<()> {
+    static L: Mutex<()> = Mutex::new(());
+    &L
+}
+
+pub fn load_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, String> {
+    match std::fs::read_to_string(map_path(root, org, project)) {
+        Ok(s) => {
+            let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
+            serde_json::from_str(s).map_err(|e| format!("the discovery map could not be read: {e}"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DiscoveryMap::default()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Load, change and write back under the lock.
+fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut DiscoveryMap)) -> Result<(), String> {
+    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = load_map(root, org, project)?;
+    change(&mut map);
+    let path = map_path(root, org, project);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+    crate::ai_tools::atomic_write(&path, &text)
+}
+
+fn area_mut<'a>(map: &'a mut DiscoveryMap, area: &str) -> &'a mut AreaMap {
+    if let Some(i) = map.areas.iter().position(|a| a.area == area) {
+        return &mut map.areas[i];
+    }
+    map.areas.push(AreaMap { area: area.to_string(), ..AreaMap::default() });
+    map.areas.last_mut().expect("just pushed")
+}
+
+fn page_mut<'a>(area: &'a mut AreaMap, path: &str, title: &str) -> &'a mut PageMap {
+    if let Some(i) = area.pages.iter().position(|p| p.path == path) {
+        let page = &mut area.pages[i];
+        if page.title.is_empty() && !title.is_empty() {
+            page.title = title.to_string();
+        }
+        return page;
+    }
+    area.pages.push(PageMap { path: path.to_string(), title: title.to_string(), elements: vec![] });
+    area.pages.last_mut().expect("just pushed")
+}
+
+fn kind_for(role: &str) -> &'static str {
+    match role {
+        "button" => "button",
+        "textbox" | "combobox" | "searchbox" | "spinbutton" | "checkbox" | "radio" | "listbox" | "slider"
+        | "switch" => "field",
+        "link" => "link",
+        "table" | "grid" | "treegrid" => "table",
+        "dialog" | "alertdialog" => "dialog",
+        _ => "other",
+    }
+}
+
+/// The path of a page address: no scheme, host, query or fragment.
+pub fn path_only(url_or_path: &str) -> String {
+    let s = url_or_path.trim();
+    let s = s.split(['?', '#']).next().unwrap_or("");
+    let rest = match s.find("://") {
+        Some(i) => {
+            let after = &s[i + 3..];
+            after.find('/').map(|j| &after[j..]).unwrap_or("")
+        }
+        None => s,
+    };
+    if rest.is_empty() {
+        "/".to_string()
+    } else {
+        rest.to_string()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn record_seen(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: Option<&str>,
+    page_path: &str,
+    title: &str,
+    lines: &[SnapLine],
+    account: Option<&str>,
+    discovering: bool,
+    now: u64,
+) -> Result<(), String> {
+    let path = path_only(page_path);
+    update(root, org, project, |map| {
+        let a = area_mut(map, area.unwrap_or(""));
+        if discovering {
+            a.explored_at = Some(now);
+            a.failed_since = false;
+            a.account = account.map(str::to_string);
+        }
+        let page = page_mut(a, &path, title);
+        for line in lines {
+            // The last link names the element; earlier links are frames.
+            let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
+            if page.elements.iter().any(|e| e.key == key) {
+                continue;
+            }
+            page.elements.push(SeenElement {
+                key,
+                locator: line.locator.clone(),
+                role: line.role.clone(),
+                name: line.name.clone(),
+                kind: kind_for(&line.role).to_string(),
+                required: line.required,
+            });
+        }
+    })
+}
+
+/// Adds each link of a target a probe or try matched, unless the page
+/// already has it.
+pub fn record_matched(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: Option<&str>,
+    page_path: &str,
+    target: &Target,
+    _now: u64,
+) -> Result<(), String> {
+    let path = path_only(page_path);
+    update(root, org, project, |map| {
+        let a = area_mut(map, area.unwrap_or(""));
+        let page = page_mut(a, &path, "");
+        for link in target.links() {
+            let Some(key) = link.seen_key() else { continue };
+            if page.elements.iter().any(|e| e.key == key) {
+                continue;
+            }
+            let role = link.role.clone().unwrap_or_default();
+            let kind = if role.is_empty() { "other" } else { kind_for(&role) };
+            page.elements.push(SeenElement {
+                key,
+                role,
+                name: link.name.clone().unwrap_or_default(),
+                kind: kind.to_string(),
+                required: false,
+                locator: Target::One(link),
+            });
+        }
+    })
+}
+
+pub fn record_write(root: &Path, org: &str, project: &str, area: &str, w: WriteEntry) -> Result<(), String> {
+    update(root, org, project, |map| area_mut(map, area).writes.push(w))
+}
+
+pub fn record_outcome(root: &Path, org: &str, project: &str, area: &str, line: &str) -> Result<(), String> {
+    update(root, org, project, |map| {
+        let a = area_mut(map, area);
+        a.outcomes.push(line.to_string());
+        if a.outcomes.len() > MAX_OUTCOMES {
+            let drop = a.outcomes.len() - MAX_OUTCOMES;
+            a.outcomes.drain(..drop);
+        }
+    })
+}
+
+pub fn mark_failed(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
+    update(root, org, project, |map| area_mut(map, area).failed_since = true)
+}
+
+pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
+    update(root, org, project, |map| map.areas.retain(|a| a.area != area))
+}
+
+/// Never explored, failed since, or explored more than 30 days ago.
+pub fn is_stale(a: &AreaMap, now: u64) -> bool {
+    match a.explored_at {
+        None => true,
+        Some(at) => a.failed_since || now.saturating_sub(at) > STALE_AFTER_MS,
+    }
+}
+
+/// Every key seen in the named areas and in the unattributed bucket.
+pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
+    map.areas
+        .iter()
+        .filter(|a| a.area.is_empty() || areas.contains(&a.area.as_str()))
+        .flat_map(|a| a.pages.iter())
+        .flat_map(|p| p.elements.iter())
+        .map(|e| e.key.clone())
+        .collect()
+}
+
+pub fn seen_paths(map: &DiscoveryMap) -> HashSet<String> {
+    map.areas.iter().flat_map(|a| a.pages.iter()).map(|p| p.path.clone()).collect()
+}
