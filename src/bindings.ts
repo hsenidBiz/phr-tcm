@@ -358,6 +358,18 @@ export const commands = {
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
+	 *  Whether the assistant is exploring the app in the Auto Run browser:
+	 *  Auto Run's runs and Open browser wait while it is.
+	 */
+	autoRunDiscoveryActive: () => __TAURI_INVOKE<boolean>("auto_run_discovery_active"),
+	/**  What discovery has mapped of this project, for the Discovery card. */
+	autoRunLoadMap: (organization: string, project: string) => typedError<MapView, string>(__TAURI_INVOKE("auto_run_load_map", { organization, project })),
+	/**
+	 *  Forget what discovery mapped of `area`. Saved scripts keep running;
+	 *  new saves there need the area explored again.
+	 */
+	autoRunForgetMapArea: (organization: string, project: string, area: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_map_area", { organization, project, area })),
+	/**
 	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
 	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
 	 *  Replay to step button. The browser open is used; with none, the one last
@@ -1268,6 +1280,7 @@ export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
+	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunReplayRequest: makeEvent<AutorunReplayRequest>("autorun-replay-request"),
 	autorunReplayRequestEnded: makeEvent<AutorunReplayRequestEnded>("autorun-replay-request-ended"),
@@ -1829,6 +1842,21 @@ export type AppSettings = {
 	stay_signed_in?: boolean,
 };
 
+/**  One area of the discovery map, as the Discovery card shows it. */
+export type AreaView = {
+	/**  `""` is the bucket for what belongs to no area. */
+	area: string,
+	/**  Milliseconds since the epoch; a JavaScript number holds it exactly. */
+	explored_at: number | null,
+	account: string | null,
+	stale: boolean,
+	/**  Why it is stale, as a sentence; `None` when it is not. */
+	stale_reason: string | null,
+	pages: number,
+	elements: number,
+	writes: WriteEntry[],
+};
+
 export type AssignedItem = {
 	id: number,
 	title: string,
@@ -1878,6 +1906,15 @@ export type AutorunCleanupProgress = {
 	kind: string,
 	id: string,
 	outcome: string,
+};
+
+/**
+ *  Emitted when a discovery starts or ends in the Auto Run browser: while
+ *  `active`, the assistant is exploring the app there and Auto Run's own
+ *  runs and Open browser wait for it.
+ */
+export type AutorunDiscoveryChanged = {
+	active: boolean,
 };
 
 /**
@@ -3156,6 +3193,10 @@ export type LogLine = {
 	/**  "debug" | "info" | "warn" | "error". */
 	level: string,
 	message: string,
+};
+
+export type MapView = {
+	areas: AreaView[],
 };
 
 export type MaterializedDraft = {
@@ -5443,6 +5484,14 @@ export type WorkRevision = {
 	state_from: string,
 	state_to: string,
 	comment_added: boolean,
+};
+
+export type WriteEntry = {
+	method: string,
+	path: string,
+	/**  Milliseconds since the epoch; a JavaScript number holds it exactly. */
+	at: number | null,
+	step: string,
 };
 
 export type WritingStyle = {

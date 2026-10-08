@@ -752,3 +752,64 @@ async fn saving_an_area_needs_a_discovery_session() {
         assert_eq!(status, 400, "{bad}: {out}");
     }
 }
+
+/// The Discovery card's read: each area with its pages, elements, writes
+/// and whether it is stale, with why. The unattributed bucket is listed
+/// for its writes but is never stale: it is no area to explore.
+#[test]
+fn load_map_command_reports_stale_and_counts() {
+    use v2_lib::autorun::discovery_map::STALE_AFTER_MS;
+    use v2_lib::commands::autorun::map_view;
+    let dir = TempDir::new();
+    let now: u64 = 100 * STALE_AFTER_MS;
+    let element = |n: &str| {
+        json!({
+            "key": { "Role": { "role": "button", "name": n } },
+            "locator": { "css": format!("#{n}") },
+            "role": "button", "name": n, "kind": "button", "required": false
+        })
+    };
+    let area = |name: &str, explored: Option<u64>, failed: bool, pages: Value, writes: Value| {
+        json!({
+            "area": name, "explored_at": explored, "account": explored.map(|_| "admin"),
+            "failed_since": failed, "pages": pages, "outcomes": [], "writes": writes
+        })
+    };
+    let map = json!({ "areas": [
+        area("Leave Apply", Some(now - 1000), false, json!([
+            { "path": "/hr/leave", "title": "Leave", "elements": [element("save"), element("cancel")] },
+            { "path": "/hr/leave/new", "title": "New", "elements": [element("submit")] }
+        ]), json!([{ "method": "POST", "path": "/api/leave", "at": now - 900, "step": "click Save" }])),
+        area("Payroll", Some(now - STALE_AFTER_MS - 1), false, json!([]), json!([])),
+        area("Claims", Some(now - 1000), true, json!([]), json!([])),
+        area("Reports", None, false, json!([]), json!([])),
+        area("", None, false, json!([]), json!([{ "method": "PUT", "path": "/api/x", "at": 1, "step": "s" }])),
+    ]});
+    let path = map_path(dir.path(), ORG, PROJECT);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, map.to_string()).unwrap();
+
+    let view = map_view(dir.path(), ORG, PROJECT, now).unwrap();
+    let names: Vec<&str> = view.areas.iter().map(|a| a.area.as_str()).collect();
+    assert_eq!(names, ["Leave Apply", "Payroll", "Claims", "Reports", ""]);
+
+    let leave = &view.areas[0];
+    assert_eq!((leave.pages, leave.elements), (2, 3));
+    assert_eq!(leave.account.as_deref(), Some("admin"));
+    assert_eq!(leave.explored_at, Some(now - 1000));
+    assert!(!leave.stale);
+    assert_eq!(leave.stale_reason, None);
+    assert_eq!(leave.writes.len(), 1);
+    assert_eq!((leave.writes[0].method.as_str(), leave.writes[0].path.as_str()), ("POST", "/api/leave"));
+
+    let reason = |i: usize| (view.areas[i].stale, view.areas[i].stale_reason.clone());
+    assert_eq!(reason(1), (true, Some("Explored more than 30 days ago".to_string())));
+    assert_eq!(reason(2), (true, Some("A script failed there since it was explored".to_string())));
+    assert_eq!(reason(3), (true, Some("No map yet".to_string())));
+    assert_eq!(reason(4), (false, None), "the unattributed bucket is never stale");
+    assert_eq!(view.areas[4].writes.len(), 1);
+
+    // No map file at all: no areas, not an error.
+    let empty = TempDir::new();
+    assert!(map_view(empty.path(), ORG, PROJECT, now).unwrap().areas.is_empty());
+}

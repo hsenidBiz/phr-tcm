@@ -89,8 +89,11 @@ export default function RunReview(props: {
    * `step`, its first failed step. Not offered on a run of another PBI: the
    * pane it opens saves under the PBI now selected. */
   onReplay?: (caseId: number, title: string, step: number) => void;
+  /** Why Replay to step waits, when it does: something else (a
+   * discovery) holds the Auto Run browser. */
+  replayBlocked?: string;
 }) {
-  const { runId, onClose, onReplay } = props;
+  const { runId, onClose, onReplay, replayBlocked } = props;
   const queryClient = useQueryClient();
 
   const query = useQuery<LocalRun_Serialize | null>({
@@ -384,6 +387,8 @@ export default function RunReview(props: {
                       size="sm"
                       variant="outline"
                       aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                      disabled={Boolean(replayBlocked)}
+                      title={replayBlocked}
                       onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                     >
                       Replay to step {replayTo}

@@ -58,6 +58,8 @@ pub struct SeenElement {
 pub struct WriteEntry {
     pub method: String,
     pub path: String,
+    /// Milliseconds since the epoch; a JavaScript number holds it exactly.
+    #[specta(type = f64)]
     pub at: u64,
     pub step: String,
 }
@@ -255,6 +257,19 @@ pub fn is_stale(a: &AreaMap, now: u64) -> bool {
     }
 }
 
+/// Why `a` is stale at `now`, or `None` when it is not.
+pub fn stale_reason(a: &AreaMap, now: u64) -> Option<&'static str> {
+    if !is_stale(a, now) {
+        None
+    } else if a.explored_at.is_none() {
+        Some("no map yet")
+    } else if a.failed_since {
+        Some("a script failed there since it was explored")
+    } else {
+        Some("explored more than 30 days ago")
+    }
+}
+
 /// Every key seen in the named areas and in the unattributed bucket.
 pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
     map.areas
@@ -282,10 +297,10 @@ pub fn explore_section(areas: &[&str], map: &DiscoveryMap, now: u64) -> String {
     for name in areas {
         let reason = match map.areas.iter().find(|a| a.area == *name) {
             None => "no map yet",
-            Some(a) if !is_stale(a, now) => continue,
-            Some(a) if a.explored_at.is_none() => "no map yet",
-            Some(a) if a.failed_since => "a script failed there since it was explored",
-            Some(_) => "explored more than 30 days ago",
+            Some(a) => match stale_reason(a, now) {
+                Some(why) => why,
+                None => continue,
+            },
         };
         lines.push_str(&format!("- {name}: {reason}\n"));
     }

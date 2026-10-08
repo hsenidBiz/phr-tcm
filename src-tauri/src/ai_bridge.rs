@@ -2533,7 +2533,7 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         return (409, why);
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
-    discover_start_in(
+    let answer = discover_start_in(
         &mut slot,
         &root,
         &ctx.org,
@@ -2542,7 +2542,10 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         area.as_deref(),
         &crate::browser::timing::Timing::default(),
     )
-    .await
+    .await;
+    // A sign-in that failed closed the browser, and the discovery with it.
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
 }
 
 /// `/autorun-discover-action`: one action in the discovery's browser

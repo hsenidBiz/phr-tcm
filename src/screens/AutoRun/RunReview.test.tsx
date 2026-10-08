@@ -80,6 +80,7 @@ function renderReview(
      * `auto_run_publish` to do something other than answer null. */
     extra?: (cmd: string, args: unknown) => unknown;
     onReplay?: (caseId: number, title: string, step: number) => void;
+    replayBlocked?: string;
   } = {},
 ) {
   mockIPC((cmd, args) => {
@@ -104,6 +105,7 @@ function renderReview(
         sharedSteps={overrides.sharedSteps ?? {}}
         onClose={onClose}
         onReplay={overrides.onReplay}
+        replayBlocked={overrides.replayBlocked}
       />
     </QueryClientProvider>,
   );
@@ -927,4 +929,16 @@ test("saving a review keeps the run's reset points", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Save review" }));
   await waitFor(() => expect(saved).not.toBeNull());
   expect(saved!.run.resets).toEqual(RESET_RUN.resets);
+});
+
+test("while discovery holds the browser, Replay to step is off and says why", async () => {
+  const onReplay = vi.fn();
+  renderReview(RUN, { onReplay, replayBlocked: "Discovery is using the Auto Run browser" });
+
+  const failed = await screen.findByRole("listitem", { name: "Case #201 Valid login" });
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
+  expect(replay).toBeDisabled();
+  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  fireEvent.click(replay);
+  expect(onReplay).not.toHaveBeenCalled();
 });

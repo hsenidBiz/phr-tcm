@@ -528,6 +528,30 @@ test("the Setup card's Areas button opens its dialog", async () => {
   expect(await screen.findByRole("heading", { name: "Areas" })).toBeInTheDocument();
 });
 
+test("the Setup card's Discovery row says what is mapped, and View opens the Discovery dialog", async () => {
+  const day = 24 * 60 * 60 * 1000;
+  const areaOf = (area: string, stale: boolean) => ({
+    area,
+    explored_at: Date.now() - day,
+    account: "admin",
+    stale,
+    stale_reason: stale ? "A script failed there since it was explored" : null,
+    pages: 1,
+    elements: 2,
+    writes: [],
+  });
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "auto_run_load_map" ? { areas: [areaOf("Leave", false), areaOf("Payroll", true)] } : null,
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  expect(await within(row("Discovery")).findByText("2 areas explored, 1 stale")).toBeInTheDocument();
+  fireEvent.click(within(row("Discovery")).getByRole("button", { name: "View discovery" }));
+  expect(await screen.findByRole("heading", { name: "Discovery" })).toBeInTheDocument();
+  expect(await screen.findByRole("listitem", { name: "Payroll" })).toHaveTextContent("Stale");
+});
+
 // ---- Last result filter ----
 
 const rec = (case_id: number, verdict: string, proposed = "") => ({
@@ -1605,4 +1629,51 @@ test("a pause that comes while the run's own dialog is closed shows the panel", 
     await emit("autorun-reset-needed", WAITING);
   });
   expect(await screen.findByRole("region", { name: "Reset needed" })).toBeInTheDocument();
+});
+
+// ---- Discovery holds the Auto Run browser ----
+
+test("run_buttons_are_disabled_while_discovery_is_active", async () => {
+  let active = true;
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "auto_run_discovery_active") return active;
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "pbi_test_cases_full") return [caseRow(1, "Alpha check")];
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
+      if (cmd === "auto_run_list_runs") return [];
+      if (cmd === "auto_run_list_accounts") return [];
+      void args;
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  const supervised = await screen.findByRole("button", { name: "Run 1 selected" });
+  const unattended = screen.getByRole("button", { name: "Run 1 unattended" });
+  await waitFor(() => expect(supervised).toBeDisabled());
+  expect(unattended).toBeDisabled();
+  expect(supervised).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  expect(unattended).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+
+  openCard(1);
+  const cardRun = screen.getByRole("button", { name: "Run #1" });
+  expect(cardRun).toBeDisabled();
+  expect(cardRun).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  fireEvent.click(cardRun);
+  expect(screen.queryByRole("button", { name: "Open browser" })).not.toBeInTheDocument();
+
+  // The discovery ends: the runs are back.
+  active = false;
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-discovery-changed", { active: false });
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run 1 selected" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Run 1 unattended" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Run #1" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Run #1" })).not.toHaveAttribute("title");
 });

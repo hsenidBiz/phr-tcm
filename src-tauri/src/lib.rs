@@ -97,6 +97,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::ReplayProgress,
             events::AutorunReplayProgress,
             events::AutorunSessionChanged,
+            events::AutorunDiscoveryChanged,
             events::AutorunReplayRequest,
             events::AutorunReplayRequestEnded,
             events::AutorunResetNeeded,
@@ -193,6 +194,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             environments::env_add_proposals,
             autorun::auto_run_open_browser,
             autorun::auto_run_close_browser,
+            autorun::auto_run_discovery_active,
+            autorun::auto_run_load_map,
+            autorun::auto_run_forget_map_area,
             autorun::auto_run_replay_to_step,
             autorun::auto_run_stop_replay,
             autorun::auto_run_answer_replay_request,
@@ -468,6 +472,9 @@ pub fn run() {
             // `autorun::store::set_root` below, same fix: stash the handle
             // once, here, where `app` is in scope.
             ado::throttle::set_app_handle(app.handle().clone());
+            // A discovery starts and ends in the AI bridge, which has no
+            // AppHandle either: Auto Run hears it through this one.
+            commands::autorun::set_discovery_events(app.handle().clone());
 
             use tauri::Manager;
             // Each database's saved login, and the list naming the person's

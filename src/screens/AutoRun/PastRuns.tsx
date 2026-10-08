@@ -56,6 +56,7 @@ export default function PastRuns({
   pbiId,
   onReview,
   onReplay,
+  replayBlocked,
   filter,
   onFilterChange,
 }: {
@@ -70,6 +71,9 @@ export default function PastRuns({
    * `step`, its first failed step. Offered only on a run of the PBI now
    * selected: the pane it opens saves under this PBI. */
   onReplay?: (caseId: number, title: string, step: number) => void;
+  /** Why Replay to step waits, when it does: something else (a
+   * discovery) holds the Auto Run browser. */
+  replayBlocked?: string;
   /** Which results the list shows. Held by the screen, not here: this panel
    * unmounts whenever another tab is shown, and a person who picked Failed
    * expects it to still be Failed when they come back. */
@@ -255,6 +259,8 @@ export default function PastRuns({
                               size="sm"
                               variant="outline"
                               aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                              disabled={Boolean(replayBlocked)}
+                              title={replayBlocked}
                               onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                             >
                               Replay to step {replayTo}
